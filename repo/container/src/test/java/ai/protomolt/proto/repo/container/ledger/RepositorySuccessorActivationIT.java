@@ -21,11 +21,27 @@ import static org.assertj.core.api.Assertions.*;
 class RepositorySuccessorActivationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @Test void exactRetryKeepsLeasesAndRejectsChangedPlan() {
-        try (var c = context(POSTGRES)) {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void exactRetryKeepsLeasesAndRejectsChangedPlan(boolean migrateExisting) {
+        try (var c = migrateExisting ? context(POSTGRES, "95") : context(POSTGRES)) {
             var plan = installed(c); var budget = new PayloadBudget(64_000_000);
             var before = leases(c, plan);
             RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, plan, NONE);
+            if (migrateExisting) {
+                var schema = c.pool().getSchema();
+                org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
+                        .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
+                boolean validated = c.tx().readOnly(em -> (Boolean) em.createNativeQuery("""
+                        SELECT convalidated FROM pg_constraint WHERE conrelid='repository_successor_installs'::regclass
+                        AND conname='repository_successor_install_reservation'
+                        """).getSingleResult());
+                assertThat(validated).isTrue();
+                boolean open = c.tx().readOnly(em -> (Boolean) em.createNativeQuery("""
+                        SELECT repository_successor_execution_open(:a,:p,:o)
+                        """).setParameter("a", plan.next().key().account()).setParameter("p", plan.next().key().principal())
+                        .setParameter("o", plan.next().key().operationId()).getSingleResult());
+                assertThat(open).isTrue();
+            }
             RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, plan, NONE);
             assertThat(leases(c, plan)).containsExactly(before);
             assertThat(count(c)).isEqualTo(1);

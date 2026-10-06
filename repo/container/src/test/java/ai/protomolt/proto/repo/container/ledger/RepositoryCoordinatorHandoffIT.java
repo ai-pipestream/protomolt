@@ -17,8 +17,10 @@ import static org.assertj.core.api.Assertions.*;
 class RepositoryCoordinatorHandoffIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @Test void exactRetryAfterSuccessorExpiryDoesNotRenewOrOpenExecution() {
-        try (var c = context(POSTGRES)) {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void exactRetryAfterSuccessorExpiryDoesNotRenewOrOpenExecution(boolean migrateExisting) {
+        try (var c = migrateExisting ? context(POSTGRES, "95") : context(POSTGRES)) {
             var initial = input(c); var incarnation = UUID.randomUUID();
             var value = new DocumentPublicationPreparationRecord(initial.key(), initial.command(), initial.seeds(),
                     initial.placements(), Duration.ofSeconds(1), 0);
@@ -32,6 +34,28 @@ class RepositoryCoordinatorHandoffIT {
                     .hasStackTraceContaining("expired predecessor");
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             var stamp = RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
+            if (migrateExisting) {
+                var schema = c.pool().getSchema();
+                org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
+                        .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
+            }
+            var reservation = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                    SELECT kind,predecessor_remote_state,successor_token,successor_incarnation,recorded_at
+                    FROM repository_coordinator_reservations WHERE operation_id=:o
+                    """).setParameter("o", value.key().operationId()).getSingleResult());
+            assertThat(reservation).containsExactly("GRACEFUL", "UNKNOWN", proposal.successorToken(),
+                    proposal.successorIncarnation(), stamp);
+            // The parent is evidence-backed, not an alternate reservation entry point.
+            for (String mutation : java.util.List.of(
+                    "jsonb_build_object('operation_id', gen_random_uuid())",
+                    "jsonb_build_object('successor_token', gen_random_uuid())",
+                    "jsonb_build_object('recorded_at', clock_timestamp()+interval '1 second')")) {
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    em.createNativeQuery("INSERT INTO repository_coordinator_reservations SELECT "
+                            + "(jsonb_populate_record(NULL::repository_coordinator_reservations,to_jsonb(r)||" + mutation + ")).* "
+                            + "FROM repository_coordinator_reservations r").executeUpdate();
+                })).hasStackTraceContaining("requires exact source evidence");
+            }
             Object lease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
                     .setParameter("o", value.key().operationId()).getSingleResult());
             assertThatThrownBy(() -> c.tx().inTransaction(em -> { return em.createNativeQuery("SELECT require_repository_execution_claim(:a,:p,:o)")
@@ -48,6 +72,10 @@ class RepositoryCoordinatorHandoffIT {
                     "UPDATE repository_coordinator_handoffs SET recorded_at=clock_timestamp()"))
                 assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(sql).executeUpdate(); }))
                         .hasStackTraceContaining("handoff is immutable");
+            for (String sql : java.util.List.of("DELETE FROM repository_coordinator_reservations",
+                    "UPDATE repository_coordinator_reservations SET recorded_at=clock_timestamp()"))
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(sql).executeUpdate(); }))
+                        .hasStackTraceContaining("reservation is immutable");
         }
     }
 
@@ -77,6 +105,47 @@ class RepositoryCoordinatorHandoffIT {
             assertThatThrownBy(() -> RepositoryCoordinatorHandoff.reserve(c.tx(), untrusted, proposal, NONE))
                     .hasMessageContaining("private process authority");
             assertThat(RepositoryCoordinatorHandoff.confirm(c.tx(), CALLER, proposal, NONE)).isEmpty();
+            RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
+        }
+    }
+
+    @Test void parentPublicationFailureRollsBackClaimAndHandoff() {
+        try (var c = context(POSTGRES)) {
+            var initial = input(c); var incarnation = UUID.randomUUID();
+            var value = new DocumentPublicationPreparationRecord(initial.key(), initial.command(), initial.seeds(),
+                    initial.placements(), Duration.ofSeconds(1), 0);
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), new PayloadBudget(64_000_000))
+                    .acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
+            var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(), 1, claim.token(), incarnation);
+            RepositoryCoordinatorLocalDrain.record(c.tx(), CALLER, identity, NONE);
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var proposal = new RepositoryCoordinatorHandoff.Proposal(identity, UUID.randomUUID(), UUID.randomUUID(), LEASE);
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION fail_reservation_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN RAISE EXCEPTION 'injected reservation publication failure'; END; $$
+                        """).executeUpdate();
+                em.createNativeQuery("""
+                        CREATE TRIGGER fail_reservation_publication AFTER INSERT ON repository_coordinator_reservations
+                        FOR EACH ROW EXECUTE FUNCTION fail_reservation_publication()
+                        """).executeUpdate();
+            });
+            assertThatThrownBy(() -> RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE))
+                    .hasStackTraceContaining("injected reservation publication failure");
+            var retained = c.tx().readOnly(em -> (Object[]) em.createNativeQuery(
+                    "SELECT claim_epoch,claim_token FROM repository_execution_claims WHERE operation_id=:id")
+                    .setParameter("id", value.key().operationId()).getSingleResult());
+            assertThat(((Number) retained[0]).longValue()).isEqualTo(1);
+            assertThat(retained[1]).isEqualTo(claim.token());
+            for (var table : java.util.List.of("repository_coordinator_handoffs", "repository_coordinator_reservations")) {
+                int count = c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table)
+                        .getSingleResult()).intValue());
+                assertThat(count).isZero();
+            }
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER fail_reservation_publication ON repository_coordinator_reservations").executeUpdate();
+            });
             RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
         }
     }

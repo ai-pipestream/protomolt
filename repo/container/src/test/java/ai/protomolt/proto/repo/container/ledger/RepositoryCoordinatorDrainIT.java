@@ -19,13 +19,19 @@ import static org.assertj.core.api.Assertions.*;
 class RepositoryCoordinatorDrainIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @Test void undrainedCoordinatorTransferCannotOpenMutationFenceWithoutActivation() {
-        try (var c = context(POSTGRES)) {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void undrainedCoordinatorTransferCannotOpenMutationFenceWithoutActivation(boolean migrateExisting) {
+        try (var c = migrateExisting ? context(POSTGRES, "94") : context(POSTGRES)) {
             var original = input(c); var budget = new PayloadBudget(64_000_000);
             var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
                     original.placements(), java.time.Duration.ofSeconds(1), 0);
             new DocumentPublicationPreparationJournal(c.tx(), budget)
                     .acquireInitial(CALLER, value, UUID.randomUUID(), UUID.randomUUID(), NONE);
+            if (migrateExisting) {
+                var schema = c.pool().getSchema();
+                org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
+                        .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
+            }
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             var transferred = new RepositoryExecutionClaimLedger(c.tx())
                     .takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);

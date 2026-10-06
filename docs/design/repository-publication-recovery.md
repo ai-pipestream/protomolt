@@ -1216,3 +1216,46 @@ revocation, delayed provider effects, retained read/schema evidence, and a real
 process termination followed by restart. A paused-but-live predecessor is required
 to establish fencing independently of operating-system termination. Automatic host
 recovery remains unavailable until the protocol and those cases are implemented.
+
+#### Shared reservation foundation
+
+V96 introduces `repository_coordinator_reservations` as the immutable identity
+referenced by successor installation. Existing V92 handoffs are backfilled and new
+handoffs publish their reservation in the same transaction as claim transfer. The
+parent insertion guard requires exact matching source evidence; a caller cannot
+insert a reservation alone. V92 retains its original local-drain foreign key and
+validation. V93 retains a declarative foreign key, now targeting the common parent,
+and compares the exact reserved successor tuple before installation.
+
+Only GRACEFUL is currently accepted. The predecessor's remote state is UNKNOWN even
+for a graceful reservation: local drain cannot prove that a buffered provider write
+will never arrive. Adding EXPIRED_UNQUIESCED requires a separate immutable source
+record and validation path, not a relaxed V92 check. That path must bind the exact
+expired owner generation/nonce as well as the expired coordinator claim and
+recheck both under their locks. A V90-only interruption can use that future path;
+a V91-attested predecessor uses the graceful path.
+
+The subsequent Java change will give installation and its retry fingerprint a
+common proposal including reservation kind. Graceful and uncertain reservation
+entry points remain distinct. No schema-worker or reader lifetime is released by
+either reservation, and no automatic recovery is enabled by V96.
+
+Use distinct common-proposal variants rather than optional owner fields:
+`Graceful` retains the existing handoff proposal; `ExpiredUnquiesced` requires the
+previous owner generation and nonce. Both expose the exact coordinator and successor
+tuples. Kind and old owner must participate in plan/fingerprint equality and exact
+reservation confirmation. The future parent extension must require owner fields for
+the uncertain kind and forbid them for graceful records. V93 must compare those
+fields to the locked predecessor owner and retained preparation; Java plan creation
+must make the same comparison before SQL.
+
+A fresh recovery process cannot load the previous preparation using an expired
+claim: `DocumentPublicationPreparationJournal.load` correctly requires a live
+identity. Discover bounded command/identity metadata under private authority, reserve
+the replacement with authoritative SQL checks, then load the retained predecessor
+preparation under the exact live successor claim. Do not widen the loader to accept
+expired claims or treat a historical reservation confirmation as permission to run.
+Attachment must also confirm the reservation kind and old-owner fields, alongside
+its existing live claim/owner and current authorization checks. V93/V94 readback
+alone does not currently encode the proposal variant; manager fingerprint equality
+is necessary but does not replace this durable attachment check.

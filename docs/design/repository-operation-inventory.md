@@ -6468,3 +6468,17 @@ mutation fence and mode registration afterward, with no mode row committed.
 **Unchanged:** protobuf contracts, unbound operation behavior and V93's restricted
 atomic install path. This does not implement abrupt-death recovery. Raw claim
 transfer may still strand a bound operation; it cannot grant mutation authority.
+
+### Shared coordinator reservation identity
+
+**New:** V96 adds an immutable, source-validated coordinator reservation identity.
+Only graceful reservations are currently accepted; remote predecessor state remains
+UNKNOWN because local drain does not settle remote writes.
+
+**Extended:** existing V92 rows are backfilled and new V92 reservations publish
+the parent atomically with claim transfer. V93 installation references this parent
+through a foreign key and validates its exact successor tuple.
+
+**Unchanged:** V92's local-drain requirement, V94 activation, protobuf contracts,
+reader pin recovery and public hosting. The expired-unquiesced reservation source,
+common Java proposal and automatic recovery remain to be implemented.

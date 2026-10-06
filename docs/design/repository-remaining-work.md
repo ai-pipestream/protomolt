@@ -642,3 +642,10 @@ reservation reason/protocol, retained predecessor read pins and tombstones, a
 pre-owner transition, paused-host fencing tests and process-kill/restart evidence.
 See the crash boundary in `repository-publication-recovery.md`. Lease expiry is
 neither reader quiescence nor permission to prune retained sources.
+
+V96 provides the shared immutable reservation parent while preserving V92's
+graceful evidence. Implement the separate expired-unquiesced source next, with
+exact expired owner and coordinator identities and no synthetic drain records.
+Installation/activation must then consume a kind-bound common Java proposal.
+The shared parent currently accepts only graceful reservations; it does not enable
+lease-based failover by itself.
