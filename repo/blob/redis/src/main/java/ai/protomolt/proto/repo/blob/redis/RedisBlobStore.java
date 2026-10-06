@@ -20,8 +20,9 @@ import java.util.Objects;
 
 /**
  * Standalone Redis 7+ object storage with one atomic hash per encoded object.
- * Layout v2 does not read legacy split byte/metadata keys. Requested versions and
- * conditional writes are unsupported. TTL and server eviction/persistence policy
+ * Layout v2 does not read legacy split byte/metadata keys. Version selection
+ * is unsupported. Conditional writes compare content ETags,
+ * not mutation epochs. TTL and server eviction/persistence policy
  * are separate: disabling expiry alone does not qualify archival durability.
  */
 public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
@@ -71,6 +72,28 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
     }
 
     private PutResult write(WriteTarget target, byte[] body) {
+        return write(target, body, null);
+    }
+
+    /** Atomic compare/write. A conflict after an uncertain acknowledgment requires reconciliation. */
+    @Override public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+        Objects.requireNonNull(body); Objects.requireNonNull(condition);
+        if (body.length > MAX_CONDITIONAL_BYTES)
+            throw new IllegalArgumentException("Conditional object exceeds 9 MiB");
+        requireSize(body.length);
+        return write(prepare(spec, ttlSeconds), body.clone(), condition);
+    }
+
+    @Override public GetResult getForUpdate(String namespace, String key) {
+        var result = getBounded(namespace, key, null, MAX_CONDITIONAL_BYTES);
+        try { ai.protomolt.proto.repo.blob.spi.BlobStore.requireStrongEtag(result.eTag()); }
+        catch (IllegalArgumentException malformed) {
+            throw new BlobStoreException(BlobStoreException.Code.DATA_LOSS, "Invalid Redis object ETag", malformed);
+        }
+        return result;
+    }
+
+    private PutResult write(WriteTarget target, byte[] body, WriteCondition condition) {
         String sha = sha256(body);
         if (target.declaredSha() != null && !target.declaredSha().isEmpty() && !sha.equalsIgnoreCase(target.declaredSha()))
             throw new IllegalArgumentException("verified write rejected: checksum differs from declared body");
@@ -79,7 +102,13 @@ public final class RedisBlobStore implements ExpiringBlobStore, AutoCloseable {
         args.add(body); args.add(target.metadata().contentType);
         args.add(bytes(etag)); args.add(bytes(Long.toString(System.currentTimeMillis()))); args.add(bytes(Integer.toString(target.ttl())));
         args.addAll(target.metadata().attributes);
-        try (var jedis = pool.getResource()) { jedis.eval(RedisObjectScripts.PUT, List.of(bytes(target.key())), args); }
+        if (condition != null) args.add(bytes(condition.ifAbsent() ? "" : condition.expectedEtag()));
+        try (var jedis = pool.getResource()) {
+            long status = ((Number) jedis.eval(condition == null ? RedisObjectScripts.PUT : RedisObjectScripts.CONDITIONAL_PUT,
+                    List.of(bytes(target.key())), args)).longValue();
+            if (status == 0) throw new BlobConflictException("Conditional Redis write conflicted");
+            if (status != 1) throw new BlobStoreException(BlobStoreException.Code.DATA_LOSS, "Invalid Redis object metadata", null);
+        }
         return new PutResult(etag, null);
     }
 

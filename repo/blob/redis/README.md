@@ -16,10 +16,22 @@ Redis commands. Scripts do not promise rollback after server errors. Listing
 uses SCAN and is not a snapshot. The caller's logical prefix is matched literally.
 Redis Cluster is not supported by this implementation.
 
-The provider exposes listing, expiry, bounded reads and physical reclamation.
+The provider exposes listing, expiry, bounded reads, atomic conditional writes and physical reclamation.
 It exposes non-expiring writes only when the configured TTL is zero. Explicit
-version requests and conditional writes are unsupported; they never fall back to
-the current object. The shared conditional payload bound is unchanged.
+version requests are unsupported; they never fall back to the current object.
+`getForUpdate` returns bytes and their ETag from one bounded Redis operation.
+`conditionalPut` atomically creates an absent object or replaces one with a matching
+ETag. Both operations retain the shared 9 MiB conditional payload bound; writes
+also obey `max-object-bytes`. A failed condition changes neither metadata nor TTL.
+Malformed existing objects fail explicitly rather than being treated as absent.
+
+ETags identify body content, not a mutation epoch: an A-to-B-to-A change produces
+the original tag, and metadata-only changes do not change it. Ordinary writes and
+copies can still overwrite keys. This capability therefore does not establish
+immutable archival identity. An acknowledgment lost after a write requires
+authoritative reconciliation; a retry conflict is not automatically success.
+The test injects a caller-acknowledgment failure after the real adapter returns;
+it does not simulate a dropped Redis network response.
 Reclamation observes exact-key absence; a late write requires another cleanup
 pass. Capability flags do not establish archival durability. Persistence, eviction,
 administrative mutation and repository key reuse policy require separate review.

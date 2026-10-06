@@ -24,6 +24,8 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.LIST,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.OBJECT_EXPIRY,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE,
+                ai.protomolt.proto.repo.blob.spi.BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION);
         if (config.ttlSeconds() == 0) capabilities.add(ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES);
         return new OpenedBlobStore(store, store, capabilities, store::headBucket, store::reclaim);

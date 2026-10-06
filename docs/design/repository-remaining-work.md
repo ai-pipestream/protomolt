@@ -87,6 +87,10 @@ features available. Recovery is one workstream, not the whole goal.
    `ArchiveCleanupLedger`, and `ArchiveObjectReader` for shared lifecycle qualification.
    Keep the managed-host activation guard until late writes, cleanup, read pins,
    recovery and deployment durability pass; a provider-only test cannot remove it.
+   The Redis byte adapter now implements the existing bounded conditional-write and
+   authoritative-read SPI with atomic Lua operations. This is a prerequisite only:
+   ordinary PUT/COPY retain replacement semantics, and content ETags are not epochs.
+   The explicit managed immutable-write policy and activation qualification remain open.
 
 ## Work gated by publication and retention guarantees
 

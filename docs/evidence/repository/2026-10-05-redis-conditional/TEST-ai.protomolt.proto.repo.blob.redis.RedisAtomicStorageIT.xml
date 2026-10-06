@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-06T00:59:51.920Z" hostname="krick" time="4.713">
+  <properties/>
+  <testcase name="legacyBytesAreNotSilentlyReadAndReclamationCatchesLaterWrites()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.176"/>
+  <testcase name="listingPrefixIsLiteralNotRedisGlobSyntax()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.013"/>
+  <testcase name="overwriteAndCopyApplyDestinationExpiryInBothDirections()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.012"/>
+  <testcase name="versionsAreRejectedRatherThanReturningCurrentBytes()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.004"/>
+  <testcase name="oversizedOrMalformedMetadataCannotReplaceExistingObject()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.015"/>
+  <testcase name="oversizedReadRejectsOnServerBeforeFetchingBody()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.007"/>
+  <testcase name="namespacesAndPrefixIdentitiesCannotAlias()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.005"/>
+  <testcase name="metadataSuffixIsAnOrdinaryObjectName()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.005"/>
+  <testcase name="incompleteMetadataFailsClosedAndCannotOverwriteCopyTarget()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.005"/>
+  <testcase name="concurrentReadsNeverMixBytesContentTypeOrDigest()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.097"/>
+  <testcase name="streamLimitsAreCheckedBeforeReadingAndSelfCopyPreservesBytes()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.007"/>
+  <testcase name="streamingWriteRequiresExactLengthBeforeAnyWrite()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.004"/>
+  <testcase name="boundedReadReturnsExactBytesOrExplicitFailure()" classname="ai.protomolt.proto.repo.blob.redis.RedisAtomicStorageIT" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: f3bcda98d31edb3ac05237c7ddbedbb2a3eadda11947146553af76039f04edf7
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.580404996S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: b3d262be1a4d5af6be22fd6f9c2c1fa38ed3201ed70dfc9021d21f588955652f
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.430117376S
+]]></system-err>
+</testsuite>

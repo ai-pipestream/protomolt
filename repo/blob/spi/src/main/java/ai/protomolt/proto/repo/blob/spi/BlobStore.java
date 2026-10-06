@@ -112,9 +112,7 @@ public interface BlobStore {
 
     /**
      * Reads current bytes and their backing ETag from the same authoritative operation.
-     * Cache decorators must bypass their cache. Unsupported stores fail closed;
-     * RedisBlobStore intentionally inherits this default until it has an atomic
-     * comparison-and-replacement implementation.
+     * Cache decorators must bypass their cache. Unsupported stores fail closed.
      */
     default GetResult getForUpdate(String bucket, String key) {
         throw new UnsupportedOperationException("authoritative conditional read is unsupported");

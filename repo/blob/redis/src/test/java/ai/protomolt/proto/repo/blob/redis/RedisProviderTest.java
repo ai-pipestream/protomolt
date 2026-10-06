@@ -34,6 +34,8 @@ class RedisProviderTest {
     @Test void handleOwnsThePoolAndRefusesAccessAfterClose() throws Exception {
         var handle = BlobStores.discover().open("redis", options("redis://127.0.0.1:1"));
         assertThat(handle.store()).isInstanceOf(RedisBlobStore.class);
+        assertThat(handle.capabilities()).contains(ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE)
+                .doesNotContain(ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE);
         handle.close();
         handle.close();
         assertThatThrownBy(handle::store).isInstanceOf(IllegalStateException.class);
@@ -48,7 +50,7 @@ class RedisProviderTest {
             }
         };
         assertThatThrownBy(() -> BlobStores.of(List.of(selected)).open("redis", Map.of(),
-                java.util.Set.of(ai.protomolt.proto.repo.blob.spi.BlobCapability.ATOMIC_CONDITIONAL_WRITE)))
+                java.util.Set.of(ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE)))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(actual::store).isInstanceOf(IllegalStateException.class);
     }

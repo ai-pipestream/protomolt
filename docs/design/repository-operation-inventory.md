@@ -6169,3 +6169,17 @@ the entry. Existing explicit started-stage restoration remains separate, as do
 fresh-process partial registration and abandonment/cleanup qualification.
 No protobuf or public RPC, receipt, schema identity, or public idempotency changes.
 See the [manager checks](../evidence/repository/2026-10-05-journaled-manager/README.md).
+
+### Redis conditional byte operations
+
+**Extended provider implementation:** the existing `getForUpdate` and
+`conditionalPut` SPI operations now work on standalone Redis with their unchanged
+9 MiB bound. Capability negotiation advertises authoritative conditional reads
+and atomic conditional writes. Lua compares and writes one physical key atomically;
+conflicts preserve metadata and expiry. Existing malformed objects fail explicitly.
+
+**Unchanged:** ordinary PUT/COPY replacement semantics, provider identity/layout,
+protobuf contracts, repository ownership, receipt bindings and operation idempotency.
+No managed immutable-key policy or archival activation is introduced. Content ETags
+are not mutation epochs; uncertain acknowledgments require reconciliation.
+See [validation scope](../evidence/repository/2026-10-05-redis-conditional/README.md).
