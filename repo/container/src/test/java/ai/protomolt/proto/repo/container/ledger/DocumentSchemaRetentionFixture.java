@@ -44,6 +44,11 @@ final class DocumentSchemaRetentionFixture {
 
     static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
             String graphAddress, String driveName) throws Exception {
+        return prepare(c, typed, explicitSchema, document, graphAddress, driveName, null);
+    }
+
+    static Fixture prepare(Context c, boolean typed, boolean explicitSchema, Document document,
+            String graphAddress, String driveName, WriteProvenance provenance) throws Exception {
         var ownership = document.getOwnership();
         var profile = new ManagedBackendLedger.Profile(new BackendIdentity("test-location", "test-location/v1",
                 Map.of("endpoint", "synthetic")), "schema-retention");
@@ -59,10 +64,11 @@ final class DocumentSchemaRetentionFixture {
         var fragments = new HashMap<Integer, ByteString>();
         for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
             fragments.put(member.getPartsCount(), ByteString.copyFrom(part.bytes()));
+            var upload = PublicationUpload.newBuilder().setSizeBytes(part.bytes().length)
+                    .setSha256(DocumentPartCodec.sha256Hex(part.bytes())).setContentType("application/protobuf");
+            if (provenance != null) upload.setWrittenBy(provenance);
             member.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
-                    .setPart(part.part()).setSubKey(part.subKey())).setUpload(PublicationUpload.newBuilder()
-                    .setSizeBytes(part.bytes().length).setSha256(DocumentPartCodec.sha256Hex(part.bytes()))
-                    .setContentType("application/protobuf")));
+                    .setPart(part.part()).setSubKey(part.subKey())).setUpload(upload));
         }
         if (explicitSchema) member.setStructuredSchema(PublicationSchemaCondition.newBuilder()
                 .setTypeName(StringValue.getDescriptor().getFullName())

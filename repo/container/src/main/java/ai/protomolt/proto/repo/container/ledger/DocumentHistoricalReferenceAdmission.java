@@ -62,6 +62,7 @@ final class DocumentHistoricalReferenceAdmission {
         }
         List<PublicationHistoricalReuse> selectors() { use.plan(); return selectors; }
         List<DocumentHistoricalReadPlan.Entry> entries() { use.plan(); return entries; }
+        DocumentHistoricalReadPlan plan() { return use.plan(); }
     }
 
     /** Borrows an existing Use, which the caller retains through the final transaction. */

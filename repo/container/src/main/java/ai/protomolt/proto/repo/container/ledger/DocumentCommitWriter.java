@@ -29,6 +29,22 @@ final class DocumentCommitWriter {
             DocumentCommitParts.Bound parts, Map<UUID,DocumentRecord> locked,
             Map<UUID,Map<DocumentPublicationSlot,PartManifestEntry>> sourceEntries,
             Instant now, Runnable control) {
+        if (member.intent().getPartsList().stream().anyMatch(part -> part.hasHistoricalReuse()))
+            throw new IllegalArgumentException("Historical writer requires retained provenance");
+        return prepare(member, content, parts, locked, sourceEntries, null, now, control);
+    }
+
+    static Candidate prepareHistorical(DocumentUploadPlan.Member member, DocumentCommandContent content,
+            DocumentCommitParts.Bound parts, Map<UUID,DocumentRecord> locked,
+            Map<UUID,Map<DocumentPublicationSlot,PartManifestEntry>> sourceEntries,
+            DocumentHistoricalManifestEntries historical, Instant now, Runnable control) {
+        return prepare(member, content, parts, locked, sourceEntries, java.util.Objects.requireNonNull(historical), now, control);
+    }
+
+    private static Candidate prepare(DocumentUploadPlan.Member member, DocumentCommandContent content,
+            DocumentCommitParts.Bound parts, Map<UUID,DocumentRecord> locked,
+            Map<UUID,Map<DocumentPublicationSlot,PartManifestEntry>> sourceEntries,
+            DocumentHistoricalManifestEntries historical, Instant now, Runnable control) {
         var intent=member.intent();
         var prior=locked.get(member.nodeId());
         long previous=0;
@@ -56,11 +72,15 @@ final class DocumentCommitWriter {
                     if (retained==null || retained.getState()!=PartState.PART_STATE_PRESENT)
                         throw new DocumentPartAttemptLedger.FenceException("Retained manifest slot is unavailable");
                     entry=retained.toBuilder(); // Preserve known last-write time and producer provenance.
-                } else {
+                } else if (declaration.hasHistoricalReuse()) {
+                    if (historical == null || !declaration.getSlot().equals(declaration.getHistoricalReuse().getSourceSlot()))
+                        throw new DocumentPartAttemptLedger.FenceException("Historical writer slot differs from retained source");
+                    entry = historical.select(declaration.getHistoricalReuse(), physical, control).toBuilder();
+                } else if (declaration.hasUpload()) {
                     entry.setUpdatedAt(timestamp);
                     if (declaration.getUpload().hasWrittenBy())
                         entry.setWrittenBy(declaration.getUpload().getWrittenBy());
-                }
+                } else throw new IllegalArgumentException("Publication part has no payload declaration");
                 entry.setState(PartState.PART_STATE_PRESENT).setObjectKey(physical.key())
                         .setSizeBytes(physical.size()).setSha256(physical.sha256());
                 size=Math.addExact(size,physical.size());
