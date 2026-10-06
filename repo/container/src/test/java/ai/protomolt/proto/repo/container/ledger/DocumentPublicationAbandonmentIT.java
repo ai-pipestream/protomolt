@@ -21,6 +21,35 @@ class DocumentPublicationAbandonmentIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void legacyPartialJournalConfirmsLostAbandonmentCommitAfterExpiry(boolean modesBound) {
+        try(var c=context(POSTGRES)) {
+            var original=input(c); var budget=new PayloadBudget(64_000_000);
+            var value=new DocumentPublicationPreparationRecord(original.key(),original.command(),original.seeds(),
+                    original.placements(),java.time.Duration.ofSeconds(2),0);
+            var claim=new DocumentPublicationPreparationJournal(c.tx(),budget).acquireInitial(CALLER,value,UUID.randomUUID(),NONE);
+            if(modesBound) new DocumentPublicationModesJournal(c.tx(),budget).bind(CALLER,claim,0,MODES,NONE);
+            var lost=new java.util.concurrent.atomic.AtomicBoolean();
+            var source=DocumentJdbcFaults.afterCommit(c.pool(),() -> {
+                if(count(c,"repository_publication_abandonments",value)==1 && lost.compareAndSet(false,true))
+                    throw new java.sql.SQLException("Legacy abandonment reply lost","08006");
+            });
+            try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                    java.util.Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
+                assertThatThrownBy(() -> DocumentPublicationAbandonment.abandonRetained(new Tx(emf),budget,CALLER,claim.token(),value,NONE))
+                        .hasStackTraceContaining("Legacy abandonment reply lost");
+            }
+            assertThat(lost).isTrue();
+            assertThat(count(c,"repository_publication_abandonments",value)).isEqualTo(1);
+            assertThat(count(c,"repository_operation_owners",value)).isZero();
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(2.1)").getSingleResult());
+            DocumentPublicationAbandonment.abandonRetained(c.tx(),budget,CALLER,claim.token(),value,NONE);
+            assertThat(DocumentPublicationAbandonment.confirm(c.tx(),budget,CALLER,claim.token(),value,NONE)).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
     void upgradesExistingRegistrationsWithoutChangingTheirIdentity(boolean admitted) {
         try (var c = context(POSTGRES, "84")) {

@@ -74,7 +74,7 @@ final class DocumentPublicationPreparationJournal {
         }
     }
 
-    private static void insert(EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
+    static void insert(EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
             DocumentPublicationPreparationRecord record, ByteString encoded, byte[] digest) {
         // Exact claim retries must re-establish the current-transaction fence for V81's guard.
         RepositoryExecutionClaimLedger.lockLive(em, claim);

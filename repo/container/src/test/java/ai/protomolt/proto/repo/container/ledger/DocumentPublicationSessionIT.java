@@ -163,7 +163,8 @@ class DocumentPublicationSessionIT {
                         .hasStackTraceContaining("Registration acknowledgment lost after commit");
                 assertThat(armed.get()).isFalse();
                 assertThat(budget.reservedBytes()).isZero();
-                assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command())).isPresent()).isEqualTo(stage == 3);
+                // Every observed row belongs to the same atomic admission commit.
+                assertThat(new RepositoryOperationLedger(c.tx()).find(key(input.command()))).isPresent();
                 int preparations = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
                         "SELECT count(*) FROM repository_publication_preparations WHERE operation_id=:id")
                         .setParameter("id", input.command().operationId()).getSingleResult()).intValue());

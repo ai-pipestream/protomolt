@@ -4,6 +4,14 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+Initial journaled session admission now composes claim, binding, preparation,
+modes, operation and first owner in one SQL transaction. Shared standalone helpers
+retain legacy partial-journal behavior; existing partial rows are not retroactively
+recovered. Six insertion rollback tests and the 202-case affected recovery run
+qualify the atomic SQL boundary. Initial-commit process death, additional admission
+races and measured transaction-count/latency results remain acceptance work. See
+[atomic admission evidence](../evidence/repository/2026-10-06-atomic-initial-admission/README.md).
+
 The internal managed journaled host now composes registration closure, sessions,
 scopes, uploads, readers and owned schema workers before V91 local-drain attestation.
 It retains the immutable post-barrier identity snapshot across retries and terminal

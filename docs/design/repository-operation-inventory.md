@@ -6578,3 +6578,23 @@ reservation or installation, then a third JVM recovers from the public retry.
 Both windows pass for admin/opaque data. Scoped typed process recovery, automatic
 hosting and reader-pin reclamation remain acceptance work. Public protobuf names,
 tags, imports and RPCs are unchanged.
+
+### Atomic initial journaled admission
+
+**Extended private operation:** initial journaled session admission now commits
+claim, coordinator binding, preparation, modes, operation and first owner in one
+transaction. It preserves the session's existing tokens and seeds for uncertain
+reply reconciliation. An early authorization preflight releases immediately denied
+calls; an in-transaction check protects current access. The registration scope
+spans owner creation so local drain cannot pass an active admission.
+
+**Reused:** standalone preparation and mode journals retain their contracts and
+SQL guards. Shared insertion helpers and pre-encoded operation admission avoid
+duplicating owner logic. They remain available for explicit legacy partial-journal
+qualification. There are no new protobuf fields, RPCs or SQL migrations.
+
+**Qualification limits:** real SQL faults cover all six insertions, exact retries,
+lost acknowledgments, legacy abandonment and terminal drain-snapshot retention.
+Process death at initial commit, full concurrency/authorization-race coverage and
+RustFS latency measurements remain to be completed. This change does not recover
+existing partial registrations or enable an automatic recovery host.

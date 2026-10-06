@@ -113,7 +113,44 @@ class DocumentJournaledSessionsIT {
         }
     }
 
-    @Test void drainSnapshotSurvivesAnAcceptedAbandonmentEvictingTheSession() throws Exception {
+    @Test void drainSnapshotSurvivesAcceptedTerminalReplayEvictingSession() throws Exception {
+        try(var c=context(POSTGRES); var workers=Executors.newVirtualThreadPerTaskExecutor()) {
+            var input=input(c);
+            try(var r=resources(c.tx(),1,input.bytes())) {
+                pending(r.sessions(),input);
+                var saved=identity(c,input);
+                var key=new RepositoryOperationLedger.Key("account","principal",input.command().operationId());
+                var claim=new RepositoryExecutionClaimLedger.Claim(key,input.command().sha256(),1,
+                        (UUID)saved[0],(java.time.Instant)saved[1]);
+                var owner=new RepositoryOperationLedger(c.tx()).admit(key,input.command(),(UUID)saved[2],LEASE,claim).owner().orElseThrow();
+                new DocumentPublicationRejections(c.tx()).cancel(CALLER,owner,input.command(),NONE);
+                var entered=new CountDownLatch(1);var release=new CountDownLatch(1);var first=new AtomicBoolean(true);
+                var control=new RepositoryReadControl() {
+                    public boolean isCancelled() {
+                        if(first.compareAndSet(true,false)) {
+                            entered.countDown();
+                            try { if(!release.await(10,TimeUnit.SECONDS)) throw new AssertionError("Replay gate timed out"); }
+                            catch(InterruptedException e) {Thread.currentThread().interrupt();throw new AssertionError(e);}
+                        }
+                        return false;
+                    }
+                    public long remainingNanos() {return Long.MAX_VALUE;}
+                };
+                var replay=workers.submit(() -> catchThrowable(() -> execute(r.sessions(),input,input.modes(),control)));
+                try {
+                    assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();
+                    var snapshot=r.sessions().drainRegistrations(Duration.ZERO,k -> CALLER,NONE);
+                    assertThat(snapshot).isEqualTo(new DocumentPublicationSessions.DrainProgress(true,1,0));
+                    release.countDown();
+                    assertThat(replay.get(5,TimeUnit.SECONDS)).isInstanceOf(DocumentPublicationReplay.Terminated.class);
+                    assertThat(r.sessions().retainedSessions()).isZero();
+                    assertThat(r.sessions().drainRegistrations(Duration.ZERO,k -> CALLER,NONE)).isEqualTo(snapshot);
+                } finally {release.countDown();}
+            }
+        }
+    }
+
+    @Test void rolledBackAdmissionCannotInventAnAbandonmentOrDrainMarker() throws Exception {
         try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var input = input(c);
             var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
@@ -146,14 +183,17 @@ class DocumentJournaledSessionsIT {
                     var r = resources(new Tx(emf), 1, input.bytes())) {
                 assertThatThrownBy(() -> execute(r.sessions(), input, input.modes(), NONE)).hasStackTraceContaining("owner commit refused");
                 assertThat(count(c, "repository_operation_owners", input)).isZero();
-                var abandoning = workers.submit(() -> r.sessions().abandonRetained(CALLER, input.command(), control));
+                assertThat(count(c, "repository_execution_claims", input)).isZero();
+                var abandoning = workers.submit(() -> catchThrowable(() -> r.sessions().abandonRetained(CALLER, input.command(), control)));
                 try {
                     assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
                     var snapshot = r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE);
-                    assertThat(snapshot).isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 1, 0));
+                    assertThat(snapshot).isEqualTo(new DocumentPublicationSessions.DrainProgress(true, 0, 1));
                     release.countDown();
-                    assertThat(abandoning.get(5, TimeUnit.SECONDS)).isTrue();
-                    assertThat(r.sessions().retainedSessions()).isZero();
+                    assertThat(abandoning.get(5, TimeUnit.SECONDS)).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                    assertThat(r.sessions().retainedSessions()).isEqualTo(1);
+                    assertThat(count(c, "repository_publication_abandonments", input)).isZero();
+                    assertThat(count(c, "repository_coordinator_drains", input)).isZero();
                     assertThat(r.sessions().drainRegistrations(Duration.ZERO, key -> CALLER, NONE)).isEqualTo(snapshot);
                 } finally { release.countDown(); }
             }
@@ -319,7 +359,7 @@ class DocumentJournaledSessionsIT {
 
     @ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void markerRacingRegistrationFailureEvictsOnlyAfterFreshConfirmation(boolean cancelConfirmation) throws Exception {
+    void committedAtomicRegistrationRefusesAbandonmentAndRetainsOwner(boolean cancelConfirmation) throws Exception {
         try (var c = context(POSTGRES)) {
             var input = input(c); var armed = new AtomicBoolean(true); var cancelled = new AtomicBoolean();
             var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
@@ -332,9 +372,10 @@ class DocumentJournaledSessionsIT {
                     var key = new RepositoryOperationLedger.Key("account", "principal", input.command().operationId());
                     var record = DocumentPublicationPreparationCodec.decode(com.google.protobuf.ByteString.copyFrom((byte[]) row[1]),
                             key, input.command().sha256());
-                    DocumentPublicationAbandonment.abandonRetained(c.tx(), new PayloadBudget(64_000_000), CALLER, (UUID) row[0], record, NONE);
+                    assertThatThrownBy(() -> DocumentPublicationAbandonment.abandonRetained(c.tx(), new PayloadBudget(64_000_000), CALLER, (UUID) row[0], record, NONE))
+                            .hasStackTraceContaining("Admitted publication cannot be abandoned");
                     cancelled.set(cancelConfirmation);
-                    throw new java.sql.SQLException("Registration response lost after abandonment", "08006");
+                    throw new java.sql.SQLException("Atomic registration response lost", "08006");
                 }
             });
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
@@ -345,17 +386,22 @@ class DocumentJournaledSessionsIT {
                     public long remainingNanos() { return Long.MAX_VALUE; }
                 };
                 var failure = catchThrowable(() -> execute(resources.sessions(), input, input.modes(), control));
-                assertThat(failure).hasStackTraceContaining("Registration response lost after abandonment");
-                assertThat(count(c, "repository_publication_abandonments", input)).isEqualTo(1);
-                assertThat(resources.sessions().retainedSessions()).isEqualTo(cancelConfirmation ? 1 : 0);
+                assertThat(failure).hasStackTraceContaining("Atomic registration response lost");
+                assertThat(count(c, "repository_publication_abandonments", input)).isZero();
+                assertThat(count(c, "repository_operation_owners", input)).isEqualTo(1);
+                assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
                 if (cancelConfirmation) {
                     assertThat(failure.getSuppressed()).anyMatch(e -> e instanceof RepositoryException r
                             && r.code() == RepositoryException.Code.CANCELLED);
                     cancelled.set(false);
-                    assertThat(resources.sessions().abandonRetained(CALLER, input.command(), NONE)).isTrue();
                 }
-                assertThat(resources.sessions().retainedSessions()).isZero();
-                assertThat(resources.sessions().retainedCommandBytes()).isZero();
+                assertThatThrownBy(() -> resources.sessions().abandonRetained(CALLER, input.command(), NONE))
+                        .hasStackTraceContaining("Admitted publication cannot be abandoned");
+                var original=identity(c,input);
+                pending(resources.sessions(),input);
+                assertIdentity(c,input,original);
+                assertThat(resources.sessions().retainedSessions()).isEqualTo(1);
+                assertThat(resources.sessions().retainedCommandBytes()).isEqualTo(input.bytes());
             }
         }
     }
@@ -399,16 +445,12 @@ class DocumentJournaledSessionsIT {
         }
     }
 
-    @ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"repository_publication_preparations", "repository_publication_modes"})
-    void lostAbandonmentAcknowledgmentRetainsCapacityUntilConfirmedAfterExpiry(String stopAt) throws Exception {
+    @Test void lostAtomicAdmissionAcknowledgmentRetainsOwnerAfterExpiry() throws Exception {
         try (var c = context(POSTGRES)) {
-            var input = input(c); var registration = new AtomicBoolean(true); var abandonment = new AtomicBoolean();
+            var input = input(c); var registration = new AtomicBoolean(true);
             var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
-                if (registration.get() && count(c, stopAt, input) == 1 && registration.compareAndSet(true, false))
+                if (registration.get() && count(c, "repository_operation_owners", input) == 1 && registration.compareAndSet(true, false))
                     throw new java.sql.SQLException("Registration response lost", "08006");
-                if (abandonment.get() && count(c, "repository_publication_abandonments", input) == 1
-                        && abandonment.compareAndSet(true, false)) throw new java.sql.SQLException("Abandonment response lost", "08006");
             });
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"));
@@ -416,21 +458,16 @@ class DocumentJournaledSessionsIT {
                 var manager = resources.sessions();
                 assertThatThrownBy(() -> execute(manager, input, input.modes(), NONE)).hasStackTraceContaining("Registration response lost");
                 assertThat(manager.retainedSessions()).isEqualTo(1);
-                abandonment.set(true);
-                assertThatThrownBy(() -> manager.abandonRetained(CALLER, input.command(), NONE)).hasStackTraceContaining("Abandonment response lost");
+                assertThatThrownBy(() -> manager.abandonRetained(CALLER, input.command(), NONE)).hasStackTraceContaining("Admitted publication cannot be abandoned");
                 assertThat(manager.retainedSessions()).isEqualTo(1);
                 assertThat(manager.retainedCommandBytes()).isEqualTo(input.bytes());
-                assertThat(count(c, "repository_operation_owners", input)).isZero();
+                assertThat(count(c, "repository_operation_owners", input)).isEqualTo(1);
                 c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(2.1)").getSingleResult());
-                assertThat(manager.abandonRetained(CALLER, input.command(), NONE)).isTrue();
-                assertThat(manager.retainedSessions()).isZero();
-                assertThat(manager.retainedCommandBytes()).isZero();
-                assertThatThrownBy(() -> execute(manager, input, input.modes(), NONE))
-                        .isInstanceOfSatisfying(RepositoryException.class,
-                                error -> assertThat(error.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION))
-                        .hasMessage("Publication registration was abandoned");
-                assertThat(manager.retainedSessions()).isZero();
-                assertThat(manager.abandonRetained(CALLER, input.command(), NONE)).isFalse();
+                assertThatThrownBy(() -> manager.abandonRetained(CALLER, input.command(), NONE))
+                        .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                assertThat(manager.retainedSessions()).isEqualTo(1);
+                assertThat(manager.retainedCommandBytes()).isEqualTo(input.bytes());
+                assertThat(count(c, "repository_publication_abandonments", input)).isZero();
             }
         }
     }

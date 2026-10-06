@@ -149,7 +149,25 @@ final class RepositoryOperationLedger {
         long millis = leaseMillis(lease);
         byte[] bytes = command.bytes.toByteArray();
         byte[] digest = digest(bytes);
-        return tx.inTransaction(em -> {
+        return tx.inTransaction(em -> { return admitInTransaction(em,key,command,ownerNonce,millis,claim,bytes,digest); });
+    }
+
+    /** Pre-encode typed admission before the composed initial journal acquires SQL locks. */
+    static java.util.function.BiFunction<EntityManager, RepositoryExecutionClaimLedger.Claim, Admission> prepareAdmission(
+            Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
+        Objects.requireNonNull(ownerNonce);
+        command.requireExecutionSupported();
+        if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Publication command differs from operation scope");
+        var encoded = new EncodedCommand(DocumentPublicationCommand.CODEC,
+                DocumentPublicationCommand.ENCODING_VERSION,command.canonical());
+        var bytes = encoded.bytes.toByteArray();
+        var digest = digest(bytes); long millis = leaseMillis(lease);
+        return (em,claim) -> admitInTransaction(em,key,encoded,ownerNonce,millis,claim,bytes,digest);
+    }
+
+    private static Admission admitInTransaction(EntityManager em, Key key, EncodedCommand command,
+            UUID ownerNonce, long millis, RepositoryExecutionClaimLedger.Claim claim, byte[] bytes, byte[] digest) {
             if (claim != null) {
                 if (!key.equals(claim.key()) || !java.util.HexFormat.of().formatHex(digest).equals(claim.commandSha256()))
                     throw new IllegalArgumentException("Execution claim differs from command");
@@ -175,7 +193,6 @@ final class RepositoryOperationLedger {
             var owner = row.token.equals(ownerNonce) && live
                     ? Optional.of(claim == null ? row.owner() : row.owner().withClaim(claim)) : Optional.<Owner>empty();
             return new Admission(row.snapshot, owner);
-        });
     }
 
     /** Internal scoped observation; caller authorization is a coordinator obligation. */

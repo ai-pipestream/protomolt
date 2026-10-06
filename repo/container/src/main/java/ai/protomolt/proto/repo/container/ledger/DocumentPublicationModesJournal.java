@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 
 /** Immutable private mode choices; does not activate recovered sessions or provider work. */
 final class DocumentPublicationModesJournal {
-    private static final int MAX_BYTES = 1024 * 1024;
+    static final int MAX_BYTES = 1024 * 1024;
     private final Tx tx;
     private final PayloadBudget budget;
     private final DocumentPublicationPreparationJournal preparations;
@@ -135,29 +135,40 @@ final class DocumentPublicationModesJournal {
                      new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication preparation is absent"))) {
             var preparation = loaded.record();
             if (access != null) access.requirePreparation(preparation);
-            var members = preparation.command().intent().getMembersList().stream()
-                    .map(member -> member.getMemberId()).collect(Collectors.toSet());
-            if (!members.equals(modes.keySet())) throw new IllegalArgumentException("Admission modes differ from command members");
-            var json = new JsonObject();
-            new TreeMap<>(modes).forEach((member, mode) -> json.addProperty(member, mode.name()));
-            String encoded = json.toString();
-            if (encoded.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES)
-                throw new IllegalArgumentException("Publication modes exceed byte limit");
+            String encoded = encode(preparation.command(), modes);
             control.check();
             tx.inTransaction(em -> {
-                RepositoryExecutionClaimLedger.lockLive(em, claim);
-                em.createNativeQuery("""
+                insert(em, claim, preparation, encoded);
+                control.check(); return null;
+            });
+            control.check();
+        }
+    }
+
+    static String encode(DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> requested) {
+        var modes = Map.copyOf(requested);
+        if (modes.isEmpty() || modes.size()>10000) throw new IllegalArgumentException("Invalid publication mode count");
+        var members = command.intent().getMembersList().stream().map(member -> member.getMemberId()).collect(Collectors.toSet());
+        if (!members.equals(modes.keySet())) throw new IllegalArgumentException("Admission modes differ from command members");
+        var json = new JsonObject();
+        new TreeMap<>(modes).forEach((member, mode) -> json.addProperty(member, mode.name()));
+        String encoded = json.toString();
+        if (encoded.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES)
+            throw new IllegalArgumentException("Publication modes exceed byte limit");
+        return encoded;
+    }
+
+    static void insert(jakarta.persistence.EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
+            DocumentPublicationPreparationRecord preparation, String encoded) {
+        RepositoryExecutionClaimLedger.lockLive(em, claim);
+        em.createNativeQuery("""
                         INSERT INTO repository_publication_modes(account_id,principal,operation_id,predecessor_generation,owner_nonce,modes)
                         VALUES (:a,:p,:o,:g,:owner,CAST(:modes AS jsonb))
                         ON CONFLICT(account_id,principal,operation_id,predecessor_generation) DO NOTHING
                         """)
                         .setParameter("a", claim.key().account()).setParameter("p", claim.key().principal())
-                        .setParameter("o", claim.key().operationId()).setParameter("g", predecessor)
+                        .setParameter("o", claim.key().operationId()).setParameter("g", preparation.predecessorGeneration())
                         .setParameter("owner", preparation.seeds().ownerNonce()).setParameter("modes", encoded).executeUpdate();
-                control.check(); return null;
-            });
-            control.check();
-        }
     }
 
     private static void requireProcess(RepositoryCaller caller, RepositoryExecutionClaimLedger.Claim claim,

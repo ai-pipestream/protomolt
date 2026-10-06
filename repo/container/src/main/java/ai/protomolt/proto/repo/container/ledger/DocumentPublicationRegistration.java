@@ -21,7 +21,6 @@ final class DocumentPublicationRegistration {
     private final JournalAccess access;
     private final DocumentUploadPlan.Prepared plan;
     private final DocumentAdmissionAuthorization.Prepared authorization;
-    private final DocumentPublicationPreparationJournal preparations;
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
     private volatile boolean mayHaveCommitted;
@@ -50,7 +49,6 @@ final class DocumentPublicationRegistration {
         if (successor == null && preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
         access = new JournalAccess(preparation, claimToken, claimEpoch);
         mayHaveCommitted = successor != null;
-        preparations = new DocumentPublicationPreparationJournal(tx, budget);
         modes = new DocumentPublicationModesJournal(tx, budget);
         starts = new DocumentAssessmentStartJournal(tx, budget);
     }
@@ -86,27 +84,42 @@ final class DocumentPublicationRegistration {
         preflight(caller, control);
     }
 
-    RepositoryExecutionClaimLedger.Claim register(RepositoryCaller caller,
+    /** Initial journal and executable owner share one commit and one registration scope. */
+    java.util.Optional<RepositoryOperationLedger.Owner> admitInitial(RepositoryCaller caller,
             Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
         if (successor != null) throw new IllegalStateException("Successor must attach installed owner");
-        try (var scope = registrations.enter()) {
-            return registerOpen(caller, fixedModes, control);
-        }
-    }
-
-    private RepositoryExecutionClaimLedger.Claim registerOpen(RepositoryCaller caller,
-            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
-        preflight(caller, control);
-        // Set before entering code that can commit; never infer absence from its exception.
-        mayHaveCommitted = true;
-        var claim = preparations.acquireInitial(caller, preparation, claimToken, coordinator, control);
-        modes.bindOwned(access, caller, claim, 0, fixedModes, control);
-        control.check();
-        return claim;
+        try (var scope = registrations.enter();
+             var reserved = budget.reserve((long) DocumentPublicationPreparationCodec.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES
+                     + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES)) {
+            // Reject an immediately denied caller before marking the session uncertain.
+            // Authorization is checked again under the claim lock before any domain writes.
+            preflight(caller,control);
+            var bytes = DocumentPublicationPreparationCodec.encode(preparation);
+            var digest = DocumentPublicationPreparationJournal.digest(bytes);
+            var encodedModes = DocumentPublicationModesJournal.encode(preparation.command(),fixedModes);
+            var admission = RepositoryOperationLedger.prepareAdmission(preparation.key(),preparation.command(),
+                    preparation.seeds().ownerNonce(),preparation.lease());
+            control.check();
+            mayHaveCommitted = true;
+            var result = tx.inTransaction(em -> {
+                var acquired = RepositoryExecutionClaimLedger.acquireInitialInTransaction(em,preparation.key(),
+                        preparation.command(),claimToken,preparation.lease());
+                var claim = acquired.claim();
+                RepositoryCoordinatorBinding.bindInitial(em,acquired,coordinator);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
+                control.check();
+                DocumentPublicationPreparationJournal.insert(em,claim,preparation,bytes,digest);
+                DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
+                control.check();
+                var admitted = admission.apply(em,claim);
+                control.check(); return admitted.owner();
+            });
+            control.check(); return result;
+        }
     }
 
     boolean mayHaveCommitted() { return mayHaveCommitted; }

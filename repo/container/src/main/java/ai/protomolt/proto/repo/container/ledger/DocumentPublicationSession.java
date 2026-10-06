@@ -118,8 +118,8 @@ final class DocumentPublicationSession {
             assessmentStageStarted |= attached.assessmentStarted();
             return Optional.of(attached.owner());
         }
-        var claim = registration == null ? null : registration.register(caller, modes, control);
-        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease, claim).owner()
+        if (registration != null) return registration.admitInitial(caller, modes, control);
+        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease, null).owner()
                 : Optional.of(operations.takeOver(key, command, predecessorGeneration, ownerNonce, lease));
         control.check();
         return owner;

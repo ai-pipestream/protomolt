@@ -974,14 +974,13 @@ schema retention and tombstones while checking current READ and admission policy
 
 ##### Reduce new pre-owner windows at initial admission
 
-The current journaled session path creates this gap through separate transactions:
-`DocumentPublicationRegistration.registerOpen` acquires the claim/binding and saves
-preparation, binds modes, then `DocumentPublicationSession.admit` creates the
-operation and first owner. Mode binding also reloads preparation in separate
-transactions. Recovery design must consider removing this split, rather than only
-adding recovery machinery around it.
+The previous journaled session path created this gap through separate transactions:
+registration acquired the claim/binding and saved preparation, bound modes, then
+`DocumentPublicationSession.admit` created the operation and first owner. Mode
+binding also reloaded preparation in separate transactions. Atomic admission
+removes that split for new journaled session calls.
 
-The next proposed implementation slice composes initial claim, coordinator binding,
+The journaled session implementation now composes initial claim, coordinator binding,
 preparation, modes, operation and owner in one short SQL transaction. Encode and
 bound preparation, command and modes before locking; perform no provider or schema
 I/O in the transaction. Recheck current caller authorization and placement under
@@ -994,6 +993,22 @@ identities; retry confirms exact committed state without lease renewal. Cancella
 after commit stays visible, and terminal results still require authorized replay.
 Registration scope must span the composed operation so local drain cannot attest
 while its owner admission remains in flight.
+
+`DocumentPublicationRegistration.admitInitial` holds that scope across an early
+authorization preflight, bounded encoding, and the atomic transaction. The preflight
+refuses immediately denied calls before marking a session uncertain; authorization
+is checked again after locking the claim. Preparation and mode insertion helpers
+are shared with their standalone journals. Operation admission pre-encodes its
+command before locks and delegates to the same owner-insertion logic as existing
+callers. Public contracts and SQL migrations are unchanged.
+
+Six rollback cases inject a real PostgreSQL trigger failure after each insertion
+and verify all six row families remain absent, followed by exact retained-session
+retry. Session tests verify complete admission after lost commit acknowledgments,
+current caller denial, and a drain snapshot surviving terminal replay eviction.
+Standalone legacy journals still qualify abandonment after a lost actual commit
+reply and expiry. Initial-admission process-kill and performance qualification
+remain acceptance work; the post-owner process recovery suite is a separate proof.
 
 Acceptance requires rollback faults after each SQL insertion before commit; lost commit
 acknowledgment; cancellation before and after commit; concurrent exact/conflicting
