@@ -7,7 +7,8 @@ package ai.protomolt.proto.repo.service;
  * unary decoding plus a request and four inline-payload copy allowances.
  * It need not cover maximum-sized calls at the full configured concurrency;
  * excess work fails with RESOURCE_EXHAUSTED rather than waiting for capacity.
- * Read response construction and in-flight transport responses share that budget.
+ * GetEntry construction and all read-only transport responses share that budget.
+ * Metadata/list construction and mutation acknowledgments are not response-bounded.
  * These allowances do not measure decoded heap or network buffers.
  */
 public record BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int maxRenditions,

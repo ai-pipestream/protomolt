@@ -70,7 +70,7 @@ final class UnaryRequestAdmission implements ServerInterceptor, AutoCloseable {
                     if (responseLimit != 0) {
                         Status failure = !(message instanceof com.google.protobuf.MessageLite proto)
                                 ? Status.INTERNAL.withDescription("Bounded response must be protobuf")
-                                : proto.getSerializedSize() > responseLimit
+                                : proto.getSerializedSize() < 0 || proto.getSerializedSize() > responseLimit
                                 ? Status.RESOURCE_EXHAUSTED.withDescription("Unary response exceeds configured limit") : null;
                         if (failure != null) { refused = true; super.close(failure, new Metadata()); return; }
                     }

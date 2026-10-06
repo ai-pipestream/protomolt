@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-06T08:01:31.424Z" hostname="krick" time="0.736">
+  <properties/>
+  <testcase name="[1] false" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.398"/>
+  <testcase name="[2] true" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.015"/>
+  <testcase name="oversizedResponseIsNeverDeliveredAndCapacityCanBeReused()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.016"/>
+  <testcase name="streamsFailBeforeParsingOrConstructingHandler()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.008"/>
+  <testcase name="cancellationBeforeHalfCloseDrainsParsedRequest()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.01"/>
+  <testcase name="[1] 0" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.045"/>
+  <testcase name="[2] 256" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.041"/>
+  <testcase name="successfulCallsDrainAndClosedAdmissionRejectsBeforeDecode()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.01"/>
+  <testcase name="duplicateUnaryMessagesAreRejectedAndBothDecodeAllowancesDrain()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.007"/>
+  <testcase name="malformedProtobufReleasesReservationWithoutInvokingHandler()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.008"/>
+  <testcase name="serverShutdownDoesNotReleaseBlockedHandlerReservation()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.038"/>
+  <testcase name="validCompressedRequestRunsAndReleasesAllowance()" classname="ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest" time="0.008"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 06, 2026 4:01:31 AM io.grpc.netty.shaded.io.grpc.netty.NettyServerStream$TransportState deframeFailed
+WARNING: Exception processing message
+io.grpc.StatusRuntimeException: RESOURCE_EXHAUSTED: gRPC message exceeds maximum size 1024: 2051
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.internal.MessageDeframer.processHeader(MessageDeframer.java:398)
+	at io.grpc.internal.MessageDeframer.deliver(MessageDeframer.java:272)
+	at io.grpc.internal.MessageDeframer.request(MessageDeframer.java:162)
+	at io.grpc.internal.AbstractStream$TransportState$1RequestRunnable.run(AbstractStream.java:269)
+	at io.grpc.netty.shaded.io.grpc.netty.NettyServerStream$TransportState$1.run(NettyServerStream.java:174)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:148)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:141)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:535)
+	at io.grpc.netty.shaded.io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:201)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204)
+	at io.grpc.netty.shaded.io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at io.grpc.netty.shaded.io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+
+Oct 06, 2026 4:01:31 AM io.grpc.internal.SerializingExecutor run
+SEVERE: Exception while executing runnable io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable@476c7281
+io.grpc.StatusRuntimeException: RESOURCE_EXHAUSTED: Decompressed gRPC message exceeds maximum size 1024
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.internal.MessageDeframer$SizeEnforcingInputStream.verifySize(MessageDeframer.java:530)
+	at io.grpc.internal.MessageDeframer$SizeEnforcingInputStream.read(MessageDeframer.java:485)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.read(CodedInputStream.java:1657)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.tryRefillBuffer(CodedInputStream.java:2417)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.isAtEnd(CodedInputStream.java:2339)
+	at com.google.protobuf.CodedInputStream$StreamDecoder.readTag(CodedInputStream.java:1684)
+	at com.google.protobuf.BytesValue$Builder.mergeFrom(BytesValue.java:353)
+	at com.google.protobuf.BytesValue$1.parsePartialFrom(BytesValue.java:450)
+	at com.google.protobuf.BytesValue$1.parsePartialFrom(BytesValue.java:442)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:63)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:25)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parseFrom(ProtoLiteUtils.java:244)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:236)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:133)
+	at ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest$Fixture$1.parse(UnaryRequestAdmissionTest.java:53)
+	at ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest$Fixture$1.parse(UnaryRequestAdmissionTest.java:51)
+	at io.grpc.MethodDescriptor.parseRequest(MethodDescriptor.java:307)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailableInternal(ServerCallImpl.java:334)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailable(ServerCallImpl.java:319)
+	at io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable.runInContext(ServerImpl.java:852)
+	at io.grpc.internal.ContextRunnable.run(ContextRunnable.java:37)
+	at io.grpc.internal.SerializingExecutor.run(SerializingExecutor.java:133)
+	at java.base/java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(ThreadPerTaskExecutor.java:291)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+
+Oct 06, 2026 4:01:32 AM io.grpc.internal.SerializingExecutor run
+SEVERE: Exception while executing runnable io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable@68c89cc1
+io.grpc.StatusRuntimeException: INTERNAL: Invalid protobuf byte sequence
+	at io.grpc.Status.asRuntimeException(Status.java:524)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:239)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:133)
+	at ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest$Fixture$1.parse(UnaryRequestAdmissionTest.java:53)
+	at ai.protomolt.proto.repo.service.UnaryRequestAdmissionTest$Fixture$1.parse(UnaryRequestAdmissionTest.java:51)
+	at io.grpc.MethodDescriptor.parseRequest(MethodDescriptor.java:307)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailableInternal(ServerCallImpl.java:334)
+	at io.grpc.internal.ServerCallImpl$ServerStreamListenerImpl.messagesAvailable(ServerCallImpl.java:319)
+	at io.grpc.internal.ServerImpl$JumpToApplicationThreadServerStreamListener$1MessagesAvailable.runInContext(ServerImpl.java:852)
+	at io.grpc.internal.ContextRunnable.run(ContextRunnable.java:37)
+	at io.grpc.internal.SerializingExecutor.run(SerializingExecutor.java:133)
+	at java.base/java.util.concurrent.ThreadPerTaskExecutor$TaskRunner.run(ThreadPerTaskExecutor.java:291)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: com.google.protobuf.InvalidProtocolBufferException: While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.
+	at com.google.protobuf.InvalidProtocolBufferException.truncatedMessage(InvalidProtocolBufferException.java:93)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.readRawBytes(CodedInputStream.java:1574)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.readBytesInternal(CodedInputStream.java:1128)
+	at com.google.protobuf.CodedInputStream$ArrayDecoder.readBytes(CodedInputStream.java:1133)
+	at com.google.protobuf.BytesValue$Builder.mergeFrom(BytesValue.java:359)
+	at com.google.protobuf.BytesValue$1.parsePartialFrom(BytesValue.java:450)
+	at com.google.protobuf.BytesValue$1.parsePartialFrom(BytesValue.java:442)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:63)
+	at com.google.protobuf.AbstractParser.parseFrom(AbstractParser.java:25)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parseFrom(ProtoLiteUtils.java:244)
+	at io.grpc.protobuf.lite.ProtoLiteUtils$MessageMarshaller.parse(ProtoLiteUtils.java:236)
+	... 11 more
+
+]]></system-err>
+</testsuite>

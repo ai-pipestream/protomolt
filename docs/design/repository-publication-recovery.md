@@ -189,6 +189,51 @@ fixed-time reclamation guarantee.
 
 ## Persisted preparation
 
+### Next host lifecycle increment
+
+The next implementation should establish durable local drain evidence for deliberate
+handoff, independently of fresh-successor execution. This is a design requirement,
+not a claim that the current host implements it. Reuse the execution claim's exact
+account/principal/operation, epoch and token, adding a host-generated coordinator
+incarnation binding immutable within that claim epoch. A future transfer installs a
+distinct successor incarnation under the same operation key. Keep this per operation: publication must not acquire
+a global host row lock. A claim lease or readable token alone cannot identify a safe
+replacement coordinator.
+
+Use distinct `DRAINING` and `LOCAL_DRAINED` states. Closing admission is not the same
+as having drained all work. The existing `DocumentPublicationRuntime.shutdownStep`,
+session drain, upload coordinator drain and read lifecycle provide local lifetime
+boundaries to compose. Before implementing the state transitions, classify every
+claimed mutation as new admission, settlement of admitted work, or reclamation.
+Do not indiscriminately reject in-flight renewals, observation flushes or terminal
+publication at the start of graceful drain. Conversely, copied claim authority must
+not admit new attempts after the admission fence. These decisions must be enforced
+at SQL mutation boundaries, not solely by a runtime boolean.
+
+Only the exact owning incarnation may record `LOCAL_DRAINED`, after successful local
+shutdown and with the original claim binding rechecked. It then fences further owner
+mutations and renewals. Lost acknowledgments require exact state confirmation; neither
+an expired lease nor a stale DRAINING marker permits inventing a drain attestation.
+Read-only inspection and reclamation use their separate authority. Reader incarnation
+registration is a useful lifecycle model, but does not attest publication ownership.
+
+`LOCAL_DRAINED` does **not** mean remote effects have settled. A local SDK timeout can
+end a worker while its PUT remains active at the provider. Preserve unknown outcomes,
+immutable attempt plans and cleanup tombstones after local drain. Successor execution
+must use new operation-generation/attempt identities and disjoint provider keys;
+cleanup continues against original backend identities. Do not release historical
+references, schema claims or pruning guards merely because a coordinator drained.
+
+Acceptance must include a real delayed provider call across a drain timeout, wrong
+incarnation/claim refusal, settlement of work admitted before DRAINING, refusal of new
+work after that boundary, exact retry after lost transition acknowledgment, and a
+late remote write after a local timeout. A fresh successor coordinator and abrupt-death
+recovery require separate qualification. Ordinary `ManagedDocumentServices` still
+constructs the unjournaled runtime; keep automatic activation off until these paths
+are composed and tested together.
+
+### Retained inputs
+
 Before the first uncertain admission or takeover, store a bounded, versioned
 private record in shared SQL. Bind it to account, authenticated principal,
 operation ID, canonical command bytes and digest. Preserve the owner nonce,

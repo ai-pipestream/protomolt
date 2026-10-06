@@ -143,6 +143,29 @@ class BoundedArchiveTransportIT {
         }
     }
 
+    @Test void oversizedMetadataAndListRepliesAreRefusedWithoutPoisoningSubsequentReads() throws Exception {
+        try (var f = new Fixture(false, false, 64)) {
+            f.archive.putEntry(f.request); f.awaitBudget(0);
+            var manifest = GetEntryManifestRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            var listing = ListEntriesRequest.newBuilder().setAccountId(f.request.getAddress().getAccountId())
+                    .setArchive("records").build();
+            // Local construction is deliberately outside the transport-only metadata cap.
+            assertThat(f.host.archiveRepository().getManifest(CALLER, manifest).getSerializedSize()).isGreaterThan(64);
+            assertThat(f.host.archiveRepository().listEntries(CALLER, listing).getSerializedSize()).isGreaterThan(64);
+            assertThatThrownBy(() -> f.archive.getEntryManifest(manifest)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            assertThatThrownBy(() -> f.archive.listEntries(listing)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            var empty = ListArchivesRequest.newBuilder().setAccountId("empty-" + UUID.randomUUID()).build();
+            assertThat(f.archive.listArchives(empty).getArchivesCount()).isZero();
+            f.awaitBudget(0);
+            assertThat(f.reads.get()).isZero();
+            assertThat(f.writes.get()).isEqualTo(1);
+        }
+    }
+
     @Test void cancelledRemoteReadRetainsConstructionAndTransportAllowancesUntilProviderReturns() throws Exception {
         try (var f = new Fixture(false, true, 2048)) {
             f.archive.putEntry(f.request); f.awaitBudget(0);

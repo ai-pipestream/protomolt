@@ -135,8 +135,9 @@ and HTTP startup remain unavailable for this profile.
 
 All bounded listeners on a host share an ingress gate. Local and remote archive
 writes and read construction use shared gates, all reserving from one byte budget.
-GetEntry reserves an additional response allowance at RPC admission, held through
-the terminal callback. Cancellation does not release reservations while synchronous
+All seven read-only RPCs reserve an additional response allowance at RPC admission,
+held through the terminal callback. Oversized protobuf replies return RESOURCE_EXHAUSTED
+without delivering the message. Cancellation does not release reservations while synchronous
 provider work is still running.
 Retrying after a cancelled successful publication reuses the committed version.
 
@@ -145,6 +146,11 @@ two times the request limit plus four times the response limit (one maximum read
 Concurrent work can still receive RESOURCE_EXHAUSTED when slots or bytes are exhausted.
 These are payload/copy and serialized-response allowances; they do not measure
 decoded object heap, network buffers or protobufs retained by local callers after
-return. Metadata/list response bounds remain separate. Bounded reads refuse legacy
+return. GetEntry also checks its aggregate response before provider reads. Metadata,
+manifest and list replies are checked after construction; their SQL loading, parsing
+and local return values still need separate construction limits. CreateArchive,
+PutEntry and ClassifyEntry acknowledgments are outside this response cap: applying
+only a send-time refusal to a mutation could hide an already committed result.
+Bounded reads refuse legacy
 renditions without published storage identities before provider access.
 Redis objects also remain subject to the provider's 9 MiB create-only ceiling.

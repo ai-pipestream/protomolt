@@ -7,6 +7,18 @@ import java.util.Set;
 final class BoundedArchiveMethods {
     private BoundedArchiveMethods() {}
 
+    /** Read replies may be refused without making a committed mutation ambiguous. */
+    static java.util.Map<String, Integer> readResponseLimits(int maxResponseBytes) {
+        return java.util.Map.of(
+                ArchiveServiceGrpc.getGetArchiveMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getListArchivesMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getGetEntryMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getGetEntryManifestMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getListEntriesMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getListVersionsMethod().getFullMethodName(), maxResponseBytes,
+                ArchiveServiceGrpc.getGetArchiveStatsMethod().getFullMethodName(), maxResponseBytes);
+    }
+
     static final Set<String> UNARY = Set.of(
             ArchiveServiceGrpc.getCreateArchiveMethod().getFullMethodName(),
             ArchiveServiceGrpc.getGetArchiveMethod().getFullMethodName(),

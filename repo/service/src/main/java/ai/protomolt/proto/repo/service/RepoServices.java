@@ -168,8 +168,7 @@ public final class RepoServices implements AutoCloseable {
                 bounded.readLimits(), bounded.budget(), bounded.maxActive());
         this.archiveIngress = bounded == null ? null : new UnaryRequestAdmission(bounded.budget(),
                 bounded.limits().maxRequestBytes(), bounded.maxActive(), BoundedArchiveMethods.UNARY,
-                java.util.Map.of(ai.protomolt.proto.repo.archive.v1.ArchiveServiceGrpc.getGetEntryMethod().getFullMethodName(),
-                        bounded.readLimits().maxResponseBytes()));
+                BoundedArchiveMethods.readResponseLimits(bounded.readLimits().maxResponseBytes()));
         try {
             this.config = config;
             if (schemaAccess != null && !config.managedStorage().retentionQualified())

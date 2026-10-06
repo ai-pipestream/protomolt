@@ -73,8 +73,12 @@ The reviewed plan separates engine construction lifetime from transport response
 lifetime and includes real-provider local/remote acceptance cases. GetEntry now
 has library construction and bounded managed Netty response admission. Real Redis/SQL
 tests cover aggregate refusal, historical subset reads and held provider completion.
-Managed-host options and transport reservations share the host budget. Metadata/list
-response limits, manifest parsing and local caller retention remain separate. Continue
+Managed-host options and transport reservations share the host budget. The seven
+read-only unary methods now enforce the same configured response cap before sending,
+including metadata and lists. Their SQL loading, manifest parsing, response construction
+and local caller retention remain separate. Mutation acknowledgments need a construction
+bound that cannot hide committed success; they are outside this send-time cap. See
+[read response evidence](../evidence/repository/2026-10-06-read-reply-cap/README.md). Continue
 claimed-session recovery and retention work alongside these remaining limits;
 performance qualification must not displace these requirements.
 
