@@ -32,6 +32,36 @@ class RepositoryRecoveryAttemptsIT {
         return new Source(input.command(),new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS).inspect(CALLER,input.key(),input.command().sha256(),NONE));
     }
 
+    @Test void recoveryPayloadCapacityFailurePrecedesDurableSuccession() throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c);
+            var budget=new PayloadBudget(64_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,budget)) {
+                var recovery=new RepositoryManagedRecovery(c.tx(),budget,resources.sessions(),LEASE,TIMEOUTS,2,
+                        (account,principal,operation) -> CALLER);
+                var bodies=new HashMap<DocumentUploadPayloads.Key,ai.protomolt.proto.repo.codec.PartObject>();
+                for (var member : source.command().intent().getMembersList()) {
+                    for (int ordinal=0;ordinal<member.getPartsCount();ordinal++) {
+                        var part=member.getParts(ordinal);
+                        if (part.hasUpload()) bodies.put(new DocumentUploadPayloads.Key(member.getMemberId(),ordinal),
+                                new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(),part.getSlot().getSubKey(),
+                                        new byte[Math.toIntExact(part.getUpload().getSizeBytes())],part.getUpload().getSha256()));
+                    }
+                }
+                try (var pressure=budget.reserve(budget.capacity()); var call=recovery.calls.enter(CALLER,source.command())) {
+                    assertThatThrownBy(() -> recovery.prepare(CALLER,source.command(),bodies,MODES,NONE))
+                            .isInstanceOf(PayloadBudget.CapacityExceededException.class);
+                    assertThat(budget.reservedBytes()).isEqualTo(pressure.bytes());
+                    assertThat(count(c,"repository_coordinator_reservations")).isZero();
+                    assertThat(count(c,"repository_successor_installs")).isZero();
+                    assertThat(count(c,"repository_successor_executions")).isZero();
+                }
+                assertThat(recovery.detach(Duration.ZERO,NONE)).isTrue();
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans={false,true})
     void freshAndTerminalRoutingDoNotRequireRecoveryAuthority(boolean terminal) throws Exception {
         try (var c=context(POSTGRES)) {

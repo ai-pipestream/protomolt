@@ -7,7 +7,6 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import java.time.Duration;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 
@@ -17,6 +16,7 @@ final class RepositoryManagedRecovery {
     private final RepositoryCoordinatorRecoveryDiscovery discovery;
     private final DocumentPublicationReplay replay;
     private final Tx tx;
+    private final PayloadBudget budget;
     private final DocumentPublicationSessions sessions;
     private final DocumentPublicationRuntime.RecoveryAuthority authority;
     final RepositoryPublicationCalls calls;
@@ -25,6 +25,7 @@ final class RepositoryManagedRecovery {
             SqlTimeouts timeouts, int capacity, DocumentPublicationRuntime.RecoveryAuthority authority) {
         this.sessions=Objects.requireNonNull(sessions);
         this.tx=tx.withTimeouts(timeouts);
+        this.budget=Objects.requireNonNull(budget);
         this.authority=Objects.requireNonNull(authority);
         attempts=new RepositoryRecoveryAttempts(tx,budget,sessions,lease,timeouts,capacity);
         discovery=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts);
@@ -33,7 +34,7 @@ final class RepositoryManagedRecovery {
     }
 
     /** Caller holds the runtime scope and same-key call guard through subsequent ordinary publication. */
-    void prepare(RepositoryCaller caller, DocumentPublicationCommand command,
+    DocumentRecoveryPayloads prepare(RepositoryCaller caller, DocumentPublicationCommand command,
             Map<DocumentUploadPayloads.Key,PartObject> bodies, Map<String,DocumentPublicationCandidate.Mode> modes,
             RepositoryReadControl control) {
         Objects.requireNonNull(control).check();
@@ -42,7 +43,7 @@ final class RepositoryManagedRecovery {
         var outcome=replay.observe(caller,command);
         control.check();
         switch (outcome.state()) {
-            case COMMITTED, TERMINATED, ABANDONED -> { return; }
+            case COMMITTED, TERMINATED, ABANDONED -> { return null; }
             default -> { }
         }
         // A retained proposal wins over discovery of its own uncertain committed reservation.
@@ -50,24 +51,29 @@ final class RepositoryManagedRecovery {
         if (retained.isPresent()) {
             try (var attempt=retained.orElseThrow()) {
                 if (attempt.retireTerminal(authority(key),caller,control)
-                        !=RepositoryRecoveryAttempts.TerminalDisposal.NOT_TERMINAL) return;
-                requireInputs(command,bodies,modes);
-                advance(attempt,key,caller,modes,control);
+                        !=RepositoryRecoveryAttempts.TerminalDisposal.NOT_TERMINAL) return null;
+                var snapshot=inputs(command,bodies,modes,control);
+                try {
+                    advance(attempt,key,caller,modes,control);
+                    return snapshot;
+                } catch (RuntimeException | Error failure) { snapshot.close(); throw failure; }
             }
-            return;
         }
         sessions.requireIdleForRouting(caller,command);
-        if (outcome.state()==DocumentPublicationReplay.State.NOT_OBSERVED && absent(key,control)) return;
+        if (outcome.state()==DocumentPublicationReplay.State.NOT_OBSERVED && absent(key,control)) return null;
         // Discovery has process rights; authorize the current read set before using
         // its result to route a caller's request. Ownerless partial state stays private.
         var observed=discovery.inspect(authority(key),key,command.sha256(),control);
         switch (observed.status()) {
-            case ABSENT, LIVE, TERMINAL, ABANDONED -> { return; }
+            case ABSENT, LIVE, TERMINAL, ABANDONED -> { return null; }
             case EXPIRED_BOUND, RESERVED_NOT_INSTALLED, INSTALLED_NOT_ACTIVATED -> {
                 if (observed.candidate().isEmpty() && observed.unactivated().isEmpty())
                     throw unsupported();
-                requireInputs(command,bodies,modes);
-                try (var attempt=attempts.begin(caller,command,observed)) { advance(attempt,key,caller,modes,control); }
+                var snapshot=inputs(command,bodies,modes,control);
+                try (var attempt=attempts.begin(caller,command,observed)) {
+                    advance(attempt,key,caller,modes,control);
+                    return snapshot;
+                } catch (RuntimeException | Error failure) { snapshot.close(); throw failure; }
             }
             default -> throw unsupported();
         }
@@ -103,25 +109,10 @@ final class RepositoryManagedRecovery {
     }
 
     /** Reuse modes and complete resubmitted payload declarations; never infer absent bodies from old uploads. */
-    private static void requireInputs(DocumentPublicationCommand command, Map<DocumentUploadPayloads.Key,PartObject> bodies,
-            Map<String,DocumentPublicationCandidate.Mode> modes) {
+    private DocumentRecoveryPayloads inputs(DocumentPublicationCommand command, Map<DocumentUploadPayloads.Key,PartObject> bodies,
+            Map<String,DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
         DocumentPublicationModesJournal.encode(command,modes);
-        var expected=new HashSet<DocumentUploadPayloads.Key>();
-        for (var member : command.intent().getMembersList()) {
-            for (int ordinal=0;ordinal<member.getPartsCount();ordinal++) {
-                var part=member.getParts(ordinal);
-                if (!part.hasUpload()) continue;
-                var key=new DocumentUploadPayloads.Key(member.getMemberId(),ordinal);
-                expected.add(key);
-                var supplied=bodies.get(key);
-                if (supplied==null || supplied.part()!=part.getSlot().getPart()
-                        || !Objects.equals(supplied.subKey(),part.getSlot().getSubKey()) || supplied.bytes()==null
-                        || supplied.bytes().length!=part.getUpload().getSizeBytes()
-                        || !Objects.equals(supplied.sha256(),part.getUpload().getSha256()))
-                    throw new IllegalArgumentException("Recovery requires complete command upload payloads");
-            }
-        }
-        if (!expected.equals(bodies.keySet())) throw new IllegalArgumentException("Recovery payload keys differ from command");
+        return DocumentRecoveryPayloads.prepare(command,bodies,budget,control);
     }
 
     private static RepositoryException unsupported() {

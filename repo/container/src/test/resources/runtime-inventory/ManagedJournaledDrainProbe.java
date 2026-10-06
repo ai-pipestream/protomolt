@@ -31,6 +31,9 @@ public final class ManagedJournaledDrainProbe {
         boolean recoveryEnabled=scenario!=0;
         var recoveryOperation=new java.util.concurrent.atomic.AtomicReference<DocumentPublicationCommand>();
         var recoveryCalls=new java.util.concurrent.atomic.AtomicInteger();
+        var mutateAtCall=new java.util.concurrent.atomic.AtomicInteger(Integer.MAX_VALUE);
+        var mutateInput=new java.util.concurrent.atomic.AtomicReference<Runnable>(() -> {});
+        var mutated=new java.util.concurrent.atomic.AtomicBoolean();
         String generation = "journaled-schema-" + UUID.randomUUID();
         var config = new RepoServiceConfig(0, new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")),
@@ -75,7 +78,10 @@ public final class ManagedJournaledDrainProbe {
                         var expected=recoveryOperation.get();
                         if (expected!=null && operation.equals(expected.operationId())
                                 && account.equals(expected.intent().getAccountId()) && principal.equals(ADMIN.principalName())) {
-                            recoveryCalls.incrementAndGet();
+                            if (recoveryCalls.incrementAndGet()==mutateAtCall.get()) {
+                                mutateInput.get().run();
+                                mutated.set(true);
+                            }
                             return ADMIN;
                         }
                         throw new AssertionError("Fresh publication or terminal replay requested recovery authority");
@@ -92,9 +98,11 @@ public final class ManagedJournaledDrainProbe {
                 var work = prepare(host, tx, generation, true);
                 if (scenario==2) {
                     recoveryOperation.set(work.command);
+                    mutateInput.set(() -> work.bodies.values().iterator().next().bytes()[0]^=1);
                     release.countDown();
-                    recoverExpired(host,tx,generation,bundle,work);
+                    recoverExpired(host,tx,generation,bundle,work,() -> mutateAtCall.set(recoveryCalls.get()+2));
                     require(recoveryCalls.get()>0,"managed recovery requested exact process authority");
+                    require(mutated.get(),"caller bytes changed after snapshot before recovery reservation");
                     host.close(Duration.ofSeconds(5));
                     require(resolver.cachedBytes()==0,"recovery host released schema cache");
                     System.out.println("MANAGED_EXPIRED_PUBLICATION_RECOVERY_OK");
@@ -215,7 +223,8 @@ public final class ManagedJournaledDrainProbe {
         }
         System.out.println("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
     }
-    private static void recoverExpired(RepoServices host, Tx tx, String generation, Path bundle, Work work) throws Exception {
+    private static void recoverExpired(RepoServices host, Tx tx, String generation, Path bundle, Work work,
+            Runnable armMutation) throws Exception {
         var profile=new ManagedBackendLedger(tx).find(generation).orElseThrow();
         var budget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(64_000_000);
         var timeouts=new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5));
@@ -262,6 +271,25 @@ public final class ManagedJournaledDrainProbe {
                     FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
                     WHERE c.operation_id=:id
                     """).setParameter("id",work.command.operationId()).getSingleResult());
+            var corrupt=new HashMap<>(work.bodies);
+            var first=corrupt.entrySet().iterator().next();
+            var body=first.getValue();
+            byte[] changed=body.bytes().clone();
+            changed[0]^=1;
+            corrupt.put(first.getKey(),new PartObject(body.part(),body.subKey(),changed,body.sha256()));
+            try {
+                execute(host,ADMIN,new Work(work.command,work.placements,corrupt,work.modes));
+                throw new AssertionError("Corrupt resubmission advanced recovery");
+            } catch (IllegalArgumentException expected) {
+                require(expected.getMessage().contains("Recovery payload checksum"),"private copy checksum rejected");
+            }
+            require(count(tx,"repository_coordinator_reservations",work.command.operationId())==0
+                    && count(tx,"repository_successor_installs",work.command.operationId())==0
+                    && count(tx,"repository_successor_executions",work.command.operationId())==0,
+                    "corrupt resubmission did not change durable ownership");
+            // The next authority lookup discovers state; the following one occurs
+            // after private preflight and immediately before reservation.
+            armMutation.run();
             var result=execute(host,ADMIN,work);
             require(result.getMembersCount()==1,"managed successor published");
             for (String table : List.of("repository_coordinator_reservations","repository_successor_installs",

@@ -1929,9 +1929,16 @@ guard through routing and execution. Caller-authorized replay observation preced
 local recovery lookup and private discovery; unsupported partial states produce a
 generic request error. Existing local proposals are resumed before interpreting
 new discovery results. Recovery requires complete resubmitted upload declarations
-and immutable validation modes. Actual payload hashing remains at the existing
-private upload-copy boundary, after succession; earlier immutable payload
-preflight remains an integration task.
+and immutable validation modes. Eligible recovery snapshots the complete upload
+set into private arrays and checks their actual checksums before succession.
+Reserve the aggregate declared bytes before allocating copies, and hold that
+reservation through synchronous publication. Publication continues to make its
+separate worker-owned copies; recovery peak capacity therefore includes the
+snapshot plus the existing upload reservation. Capacity exhaustion cannot justify
+skipping verification or using caller buffers after preflight. Fresh, live and
+terminal routing do not allocate this recovery snapshot. PostgreSQL tests verify
+capacity refusal before succession, and the managed provider fixture mutates
+caller bytes after preflight while publication succeeds using the private copy.
 
 An authorized terminal observation makes a retained recovery entry permanently
 ineligible for execution or supersession. It releases duplicate preparation and

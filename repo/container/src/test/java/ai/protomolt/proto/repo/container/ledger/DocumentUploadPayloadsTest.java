@@ -19,6 +19,26 @@ class DocumentUploadPayloadsTest {
     private static final String SHA = DocumentPartCodec.sha256Hex(BYTES);
     private static final DocumentUploadPayloads.Key KEY = new DocumentUploadPayloads.Key("first", 2);
 
+    @Test void recoverySnapshotRejectsCorruptionAndOwnsStableBytesWithinBudget() {
+        var original=plan().command();
+        var command=new DocumentPublicationCommand(original.intent().toBuilder().clearMembers()
+                .addMembers(original.intent().getMembers(0)).build());
+        var budget=new PayloadBudget(3);
+        var input=payload();
+        try (var snapshot=DocumentRecoveryPayloads.prepare(command,Map.of(KEY,input),budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(budget.reservedBytes()).isEqualTo(3);
+            input.bytes()[0]=99;
+            assertThat(snapshot.bodies().get(KEY).bytes()).containsExactly(BYTES);
+        }
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(() -> DocumentRecoveryPayloads.prepare(command,Map.of(KEY,input),budget,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).hasMessageContaining("checksum");
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(() -> DocumentRecoveryPayloads.prepare(command,Map.of(KEY,payload()),new PayloadBudget(2),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)).isInstanceOf(PayloadBudget.CapacityExceededException.class);
+    }
+
     @Test void sparseUploadKeepsRevisionOrdinalAttemptAndPrivateBytes() {
         var plan = plan();
         var input = payload();

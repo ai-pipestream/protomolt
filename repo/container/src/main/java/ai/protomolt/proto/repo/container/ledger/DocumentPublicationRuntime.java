@@ -275,9 +275,8 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             throw new IllegalArgumentException("Publication inputs exceed command bounds");
         var payloads = new HashMap<DocumentUploadPayloads.Key, PartObject>();
         bodies.forEach((key, body) -> payloads.put(new DocumentUploadPayloads.Key(key.member(), key.revisionOrdinal()), body));
-        try {
-            if (recovery!=null) recovery.prepare(caller,command,payloads,modes(modes),control);
-            return sessions.execute(caller, command, placements(placements), payloads, attributes, modes(modes), container,
+        try (var verified=recovery==null ? null : recovery.prepare(caller,command,payloads,modes(modes),control)) {
+            return sessions.execute(caller, command, placements(placements), verified==null ? payloads : verified.bodies(), attributes, modes(modes), container,
                     (member, occurrence) -> schemas.resolve(caller, member, occurrence), control);
         } catch (DocumentPublicationReplay.Terminated rejected) {
             throw new Rejected(rejected.receipt());
