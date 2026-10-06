@@ -557,3 +557,17 @@ The [V92 qualification](../evidence/repository/2026-10-06-graceful-handoff/READM
 records 35 focused cases and the passing production-JAR regression. Exact concurrent
 retries converge without a second claim transfer; lost acknowledgments confirm the
 original row, and cancellation before commit rolls back both transfer and record.
+
+## Atomic successor-generation registration
+
+V93 installs fresh preparation and modes and advances an existing expired owner in
+one transaction. Its proof applies only to those exact records in that transaction;
+assessment, attempt and publication paths stay closed. The deferred check requires
+both successor claim and new owner leases to remain live through commit. A held
+transaction reproduced an expired-owner commit before that additional check.
+
+Next qualify explicit execution authority for the installed generation with current
+WRITE/policy/schema/placement checks, fresh attempts, late predecessor writes and
+cleanup isolation. Registration checks current source READ but is not an execution
+approval. Pre-owner recovery and abrupt-death recovery remain separate required
+paths. The provider, historical, pruning, RustFS and JCR work remains in scope.

@@ -185,7 +185,7 @@ final class DocumentPublicationPreparationJournal {
     private static void generation(long value) {
         if (value<0 || value==Long.MAX_VALUE) throw new IllegalArgumentException("Invalid preparation predecessor");
     }
-    private static byte[] digest(ByteString bytes) {
+    static byte[] digest(ByteString bytes) {
         try { var digest=MessageDigest.getInstance("SHA-256"); digest.update(bytes.asReadOnlyByteBuffer()); return digest.digest(); }
         catch (NoSuchAlgorithmException missing) { throw new IllegalStateException("SHA-256 unavailable", missing); }
     }

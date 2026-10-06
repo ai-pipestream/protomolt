@@ -1002,3 +1002,18 @@ lost commit acknowledgment must confirm the immutable install without renewal or
 repeating writes. Tests must reject incomplete installs, digest/mode/owner mismatch,
 expired or transferred successor, unrelated operations and mutations of old owners.
 Only a later qualified execution path may use the installed generation.
+
+### V93 atomic registration implementation
+
+The install record now controls the exact preparation/modes/owner transaction.
+Claim locking and a live exact V92 identity replace the proposed claim stamp: no
+claim UPDATE is needed, so V91's claim-update rule remains unchanged. The deferred
+check requires matching records and live claim at commit. Proofs expire with the
+transaction and cannot authorize later work.
+
+The Java plan encodes outside locks under a shared byte reservation. It compares
+fresh owner, attempt and upload identities with the saved predecessor preparation,
+whose digest is checked in SQL. This is registration, with current source READ
+checks; it does not retain a prior schema verdict as current or authorize provider
+work. Current WRITE/policy/schema/placement rechecks remain an execution prerequisite.
+The old attempts, retained definitions and cleanup records are untouched.

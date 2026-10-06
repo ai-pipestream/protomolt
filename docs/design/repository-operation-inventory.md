@@ -6354,3 +6354,23 @@ immutable handoff. Exact confirmation does not renew leases or grant execution.
 operation-wide mutation closure. Public builders, protobuf contracts, receipts and
 RPCs remain unchanged. No owner generation, attempt, storage key or provider call
 is created by reservation. Successor execution remains a separate integration gate.
+
+### Atomic successor-generation registration
+
+**New:** V93 `repository_successor_installs` and private `RepositorySuccessorInstall`.
+The install binds an exact committed handoff, expired predecessor owner and saved
+preparation to fresh identities, preparation bytes and fixed modes. One transaction
+saves preparation and modes and advances the owner. Deferred validation requires
+all three records and a live successor claim through commit. Exact retry does not
+renew either lease.
+
+**Extended SQL guards:** only V81 preparation, V82 modes, V79 owner registration,
+V84 journaled owner and V90 registration recognize the exact install transaction.
+The proof matches command/preparation/modes digests and owner identities. No claim
+stamp or general execution exception is added.
+
+**Unchanged:** wire contracts, receipts, public builders, assessment and attempt
+admission, provider calls, normal publication and cleanup guards. Registration
+checks process authority and current source READ; current WRITE/policy/schema and
+placement checks remain required before a future execution grant. Pre-owner
+handoff still needs a separate protocol.
