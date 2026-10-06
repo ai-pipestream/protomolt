@@ -644,8 +644,13 @@ See the crash boundary in `repository-publication-recovery.md`. Lease expiry is
 neither reader quiescence nor permission to prune retained sources.
 
 V96 provides the shared immutable reservation parent while preserving V92's
-graceful evidence. Implement the separate expired-unquiesced source next, with
-exact expired owner and coordinator identities and no synthetic drain records.
-Installation/activation must then consume a kind-bound common Java proposal.
-The shared parent currently accepts only graceful reservations; it does not enable
-lease-based failover by itself.
+graceful evidence. V97 adds the private expired-unquiesced SQL source with exact
+expired owner and coordinator identities and no synthetic drain records.
+Installation/activation must next consume a kind-bound common Java proposal;
+attachment must confirm the kind and old owner too. The SQL reservation alone
+does not enable automatic lease-based failover or prove process death.
+Also handle replacement death between reservation and V94 activation. Reservation-only
+and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
+reserve a third coordinator. They need an explicit supersession protocol with
+fresh identities and state-specific preparation/owner checks, not fabricated drain
+or binding rows. This is required before automatic recovery can be claimed.

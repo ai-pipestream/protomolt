@@ -1227,7 +1227,7 @@ insert a reservation alone. V92 retains its original local-drain foreign key and
 validation. V93 retains a declarative foreign key, now targeting the common parent,
 and compares the exact reserved successor tuple before installation.
 
-Only GRACEFUL is currently accepted. The predecessor's remote state is UNKNOWN even
+V96 accepts only GRACEFUL. The predecessor's remote state is UNKNOWN even
 for a graceful reservation: local drain cannot prove that a buffered provider write
 will never arrive. Adding EXPIRED_UNQUIESCED requires a separate immutable source
 record and validation path, not a relaxed V92 check. That path must bind the exact
@@ -1259,3 +1259,42 @@ Attachment must also confirm the reservation kind and old-owner fields, alongsid
 its existing live claim/owner and current authorization checks. V93/V94 readback
 alone does not currently encode the proposal variant; manager fingerprint equality
 is necessary but does not replace this durable attachment check.
+
+#### Expired, unquiesced SQL reservation
+
+V97 adds the private `repository_coordinator_expirations` source. Its insert locks
+the exact current claim and then the operation owner, requires both leases expired,
+checks the original coordinator binding and exact owner generation/nonce, rejects
+terminal operations, and refuses a predecessor with current-epoch V91 evidence.
+A V90-only predecessor is eligible. It transfers the claim and publishes the common
+EXPIRED_UNQUIESCED reservation atomically, retaining UNKNOWN remote state. It never
+records local drain, stops a remote process or releases a reader pin.
+
+The parent now requires owner identity for this kind and forbids it for GRACEFUL.
+V93 compares that identity to its proposed predecessor owner in addition to its
+existing locked-owner and preparation checks. V95 still refuses general execution
+without V94 activation. The Java common proposal, uncertain-reservation entry point,
+session attachment and fresh-process provider qualification remain unfinished;
+this private SQL primitive is not an available automatic recovery feature.
+
+#### Replacement failure before activation
+
+V92/V97 transfer the claim before V94 creates its coordinator binding. If the
+replacement dies in that interval, V97 cannot transfer the next epoch: its required
+current-epoch binding does not exist. Do not invent a binding or recycle the dead
+replacement's incarnation to bypass that condition.
+
+An explicit supersession protocol remains required for unactivated reserved epochs:
+
+- Reservation-only: the old owner generation and preparation still exist; no V93
+  installation has committed.
+- Installed but not activated: V93 has advanced the owner and saved fresh
+  preparation/modes, but there is no V94 execution grant or coordinator binding.
+
+After exact claim expiry, determine the committed state under claim-before-owner
+locks and bind a new proposal to the corresponding owner/preparation. Preserve
+previous reservations and distinguish them from local-drain evidence. Use fresh
+coordinator and eventual attempt identities. Tests must kill the replacement in
+each window, include lost acknowledgments and competing third coordinators, and
+prove stale participants cannot mutate or publish. Automatic recovery is incomplete
+until these windows have a qualified path; V97 deliberately remains closed there.

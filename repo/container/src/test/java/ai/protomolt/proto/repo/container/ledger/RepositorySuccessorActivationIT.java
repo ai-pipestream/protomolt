@@ -21,13 +21,13 @@ import static org.assertj.core.api.Assertions.*;
 class RepositorySuccessorActivationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void exactRetryKeepsLeasesAndRejectsChangedPlan(boolean migrateExisting) {
-        try (var c = migrateExisting ? context(POSTGRES, "95") : context(POSTGRES)) {
+    @ParameterizedTest @ValueSource(ints = {0, 95, 96})
+    void exactRetryKeepsLeasesAndRejectsChangedPlan(int previousVersion) {
+        try (var c = previousVersion > 0 ? context(POSTGRES, Integer.toString(previousVersion)) : context(POSTGRES)) {
             var plan = installed(c); var budget = new PayloadBudget(64_000_000);
             var before = leases(c, plan);
             RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, plan, NONE);
-            if (migrateExisting) {
+            if (previousVersion > 0) {
                 var schema = c.pool().getSchema();
                 org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
                         .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();

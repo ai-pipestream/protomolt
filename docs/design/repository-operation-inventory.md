@@ -6481,4 +6481,19 @@ through a foreign key and validates its exact successor tuple.
 
 **Unchanged:** V92's local-drain requirement, V94 activation, protobuf contracts,
 reader pin recovery and public hosting. The expired-unquiesced reservation source,
-common Java proposal and automatic recovery remain to be implemented.
+common Java proposal and automatic recovery are separate work; V97 adds the private
+expired reservation source below.
+
+### Expired coordinator reservation
+
+**New:** V97 adds the private immutable expiration source. Under claim-then-owner
+locks it requires exact expired coordinator and owner identities, no terminal
+outcome and no current-epoch local-drain record. It atomically transfers the claim
+and publishes an EXPIRED_UNQUIESCED reservation with UNKNOWN remote state.
+
+**Extended:** the parent requires the old owner tuple for this kind. V93 install
+compares that tuple as well as its existing preparation and locked-owner checks.
+
+**Unchanged:** V92 graceful rules, V95 execution closure, reader pins, cleanup
+tombstones, protobuf contracts and public hosts. Java proposal/confirmation and
+attachment integration, process-death proof and automatic execution are unfinished.
