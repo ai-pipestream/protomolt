@@ -27,6 +27,87 @@ class DocumentHistoricalSelectionIT {
     private static final RepositoryCaller ADMIN = new RepositoryCaller("reader", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void physicalBinderCarriesHistoricalObjectsAndTransactionProofAlongsideCurrentReuseOrUploads(boolean upload) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var original = publish(c, f, Fault.NONE, em -> {});
+            advance(c, f, advance(c, f, original));
+            var row = new DocumentLedger(c.tx()).findByNodeId(f.sources().getFirst().row().nodeId).orElseThrow();
+            var member = f.command().intent().getMembers(0).toBuilder();
+            var condition = member.getDestination().toBuilder().setExpectedMutationRevision(row.mutationRevision).build();
+            member.setDestination(condition);
+            for (int i = 0; i < member.getPartsCount(); i++) member.setParts(i, member.getParts(i).toBuilder()
+                    .setReuse(member.getParts(i).getReuse().toBuilder().setSource(condition)));
+            if (upload) {
+                var object = member.getParts(1).getReuse().getObject();
+                member.setParts(1, member.getParts(1).toBuilder().setUpload(PublicationUpload.newBuilder()
+                        .setSizeBytes(object.getSizeBytes()).setSha256(object.getSha256()).setContentType(object.getContentType())));
+            }
+            // Admit an ordinary operation to exercise its real physical selection
+            // rows. Historical command admission and CREATE remain independently gated.
+            var ordinary = new DocumentPublicationCommand(f.command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).setMembers(0, member).build());
+            var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", ordinary.operationId()),
+                    ordinary, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+            var drive = new DriveLedger(c.tx()).findById(UUID.fromString(member.getDriveId())).orElseThrow();
+            var placements = Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "native-test", new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow()));
+            Map<String, UUID> attempts = upload ? Map.of("member-0", UUID.randomUUID()) : Map.of();
+            var caller = new RepositoryCaller("principal", true);
+            var admitted = new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(caller, owner,
+                    DocumentOperationUploadAdmission.prepare(ordinary, placements, attempts, Duration.ofMinutes(5)));
+            var selected = new java.util.HashMap<String, DocumentSelectedAttemptLedger.Selected>();
+            if (upload) {
+                var attempt = admitted.getFirst();
+                var selection = new DocumentSelectedAttemptLedger.Selected("member-0", 1, attempt.id(), attempt.token());
+                selected.put("member-0", selection);
+                var declared = DocumentUploadPlan.prepare(ordinary, placements, attempts).members().getFirst().attempt().orElseThrow().uploads().getFirst().object();
+                new DocumentSelectedAttemptLedger(c.tx()).verifyBatch(owner, selection, List.of(new DocumentSelectedAttemptLedger.Observation(
+                        declared.objectKey(), declared.size(), declared.sha256(), declared.contentType(), "new-version", "observed-fixture")));
+            }
+            var historical = selector(f, original, 0, 0);
+            var command = new DocumentPublicationCommand(ordinary.intent().toBuilder().setMembers(0, member
+                    .setParts(0, member.getParts(0).toBuilder().setHistoricalReuse(historical))).build());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(caller, historical.getSource(), UUID.fromString(historical.getRevisionId()));
+            try (var use = history.use()) {
+                var reference = DocumentHistoricalReferenceAdmission.prepare(history, use, List.of(historical), NONE);
+                var refs = List.of(reference);
+                var plan = DocumentUploadPlan.prepare(command, placements, attempts, refs, () -> {});
+                var reuse = DocumentReuseAdmission.prepare(plan);
+                var authorization = DocumentAdmissionAuthorization.prepare(plan, refs);
+                var slotPlan = DocumentAssessmentSlots.prepare(command, refs, () -> {});
+                var bound = c.tx().inTransaction(em -> {
+                    RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                    DocumentSchemaPolicies.lockUnboundWriter(em, "account");
+                    DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
+                    plan.members().getFirst().placement().drive().lock(em, new DriveLedger(c.tx()));
+                    var result = DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, () -> {});
+                    var slots = DocumentAssessmentSlots.bind(em, slotPlan, result.physical(), result.locks(), () -> {});
+                    assertThat(slots).hasSize(2);
+                    assertThat(slots.getFirst().sourceRevision().toString()).isEqualTo(historical.getRevisionId());
+                    assertThat(slots.get(1).declaration()).isEqualTo(upload ? "NEW_CONTENT" : "REUSE");
+                    assertThat(result.physical().parts().get(new DocumentCommitParts.Slot("member-0", 0)).id().toString())
+                            .isEqualTo(historical.getObject().getObjectId());
+                    return result;
+                });
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentAssessmentSlots.bind(em, slotPlan, bound.physical(), bound.locks(), () -> {});
+                })).isInstanceOf(IllegalStateException.class).hasMessageContaining("another transaction");
+                assertThatThrownBy(() -> DocumentUploadPlan.prepare(command, placements, attempts))
+                        .isInstanceOf(UnsupportedOperationException.class);
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentCommitParts.bindAssessment(em, owner, plan, selected, reuse, () -> {});
+                })).isInstanceOf(UnsupportedOperationException.class);
+                use.close();
+                assertThatThrownBy(() -> DocumentUploadPlan.prepare(command, placements, attempts, refs, () -> {}))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, () -> {});
+                })).isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
+            } finally { release(ledger, history); }
+        }
+    }
+
     @ParameterizedTest @ValueSource(strings = {"valid", "missing-source", "extra-source", "closed-use", "physical-key", "missing-target", "unlocked", "cancelled"})
     void bindsPinnedHistoricalSourceToEveryDestinationSlot(String fault) throws Exception {
         try (var c = context(POSTGRES)) {

@@ -320,3 +320,26 @@ binder must next resolve historical objects alongside uploads/current reuse and
 pass the same lock proof to slot binding. No source pin may drain before the staged
 references are durable; current authorization and active policy must be fenced in
 that transaction. This prerequisite does not yet establish an executable restore.
+
+## Shared physical binding checkpoint
+
+The explicit historical upload-plan preparation now carries borrowed source Uses,
+validates complete selector/account identity, and leaves historical revisions out
+of current-source CAS. Ordinary preparation remains gated. The shared physical
+binder recognizes historical objects separately from uploads and reads their actual
+ledger coordinates. Its internal historical assessment path acquires the complete
+origin/retention lock set and returns that exact transaction's proof with the bound
+objects for slot binding. Ordinary publication and assessment entry points still
+refuse historical commands.
+
+The SQL fixture composes this binder and slot binding for r1 after r3 is current,
+with both a zero-upload/current-reuse case and a new-upload case. It uses ordinary
+operation selection rows and synthetic provider observations, not an admitted
+historical command. Next, assessment creation must carry the exact historical
+command, current ACL/policy fence, retained evidence and source Uses together.
+The operation ledger's command equality check must not be bypassed to do so.
+
+Source-reference verification currently occurs in both physical and slot binding.
+Consolidate that only with an exact transaction-scoped checked-reference proof;
+neither a cached boolean nor an old source authorization is sufficient. This change
+adds no provider I/O under locks and establishes no new performance measurement.

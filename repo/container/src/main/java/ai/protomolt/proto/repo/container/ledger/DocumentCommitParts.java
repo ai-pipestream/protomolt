@@ -20,10 +20,15 @@ final class DocumentCommitParts {
     record Bound(Map<Slot,Physical> parts, Map<String,Long> selections) {
         Bound { parts=Map.copyOf(parts); selections=Map.copyOf(selections); }
     }
+    record AssessmentBound(Bound physical, DocumentPublicationLocks.IndependentOrigins locks) {
+        AssessmentBound { java.util.Objects.requireNonNull(physical); java.util.Objects.requireNonNull(locks); }
+    }
+    private record Binding(Bound physical, DocumentPublicationLocks.IndependentOrigins locks) {}
 
     static Bound bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
             Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse, Runnable control) {
-        return bind(em, owner, plan, selected, reuse, control, false);
+        plan.command().requireExecutionSupported();
+        return bind(em, owner, plan, selected, reuse, control, false, false).physical();
     }
 
     /**
@@ -33,12 +38,22 @@ final class DocumentCommitParts {
      */
     static Bound bindAssessment(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
             Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse, Runnable control) {
-        return bind(em, owner, plan, selected, reuse, control, true);
+        plan.command().requireExecutionSupported();
+        return bind(em, owner, plan, selected, reuse, control, true, false).physical();
     }
 
-    private static Bound bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
+    /** Internal historical assessment path. The returned proof belongs only to this transaction. */
+    static AssessmentBound bindHistoricalAssessment(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentUploadPlan.Prepared plan, Map<String,DocumentSelectedAttemptLedger.Selected> selected,
+            DocumentReuseAdmission.Prepared reuse, Runnable control) {
+        DocumentHistoricalReferenceAdmission.requireComplete(plan.command(), plan.historical(), control);
+        var bound = bind(em, owner, plan, selected, reuse, control, true, true);
+        return new AssessmentBound(bound.physical(), bound.locks());
+    }
+
+    private static Binding bind(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentUploadPlan.Prepared plan,
             Map<String,DocumentSelectedAttemptLedger.Selected> selected, DocumentReuseAdmission.Prepared reuse,
-            Runnable control, boolean assessment) {
+            Runnable control, boolean assessment, boolean historical) {
         control.run();
         selected = Map.copyOf(selected);
         var uploadingMembers = plan.members().stream().filter(member -> member.attempt().isPresent())
@@ -72,11 +87,12 @@ final class DocumentCommitParts {
                 if (part.hasEmpty()) continue;
                 UUID object;
                 if (part.hasReuse()) object=UUID.fromString(part.getReuse().getObject().getObjectId());
-                else {
+                else if (part.hasHistoricalReuse()) object=UUID.fromString(part.getHistoricalReuse().getObject().getObjectId());
+                else if (part.hasUpload()) {
                     uploads++;
                     object=fresh.getOrDefault(selected.get(id).attempt(),Map.of()).get(i);
                     if (object==null) throw conflict();
-                }
+                } else throw conflict();
                 claims.put(new Slot(id,i),object);
             }
             if (uploads>0 && fresh.getOrDefault(selected.get(id).attempt(),Map.of()).size()!=uploads) throw conflict();
@@ -84,7 +100,7 @@ final class DocumentCommitParts {
         var objects=Set.copyOf(claims.values());
         control.run();
         DocumentPublicationLocks.IndependentOrigins locks = null;
-        if (assessment) {
+        if (assessment && !historical) {
             // V65 locks every source before any retention row. Unlike publication,
             // assessment does not replace current pointers or release old bytes.
             em.createNativeQuery("SELECT lock_repository_retention_set(CAST(:objects AS uuid[]))")
@@ -97,6 +113,14 @@ final class DocumentCommitParts {
         for (var selection:selected.values())
             if (!DocumentSelectedAttemptLedger.lockSelected(em,owner,selection).state().equals("VERIFIED")) throw conflict();
         DocumentReuseAdmission.requireBoundSources(em,reuse);
+        if (historical) {
+            var readControl = new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                @Override public boolean isCancelled() { control.run(); return Thread.currentThread().isInterrupted(); }
+                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            for (var source : plan.historical())
+                DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, locks, readControl);
+        }
         control.run();
         var physical=read(em,owner.key().account(),objects);
         var expectedUploads=new HashMap<Slot,DocumentPartAttemptLedger.PlannedObject>();
@@ -119,11 +143,19 @@ final class DocumentCommitParts {
                         || !actual.generation().equals(member.placement().generation())
                         || !actual.realm().equals(member.placement().profile().storageRealm())
                         || !actual.namespace().equals(member.placement().drive().namespace())) throw conflict();
+            } else if (declaration.hasHistoricalReuse()) {
+                var expected = declaration.getHistoricalReuse().getObject();
+                if (!actual.id().toString().equals(expected.getObjectId()) || !actual.key().equals(expected.getObjectKey())
+                        || actual.size()!=expected.getSizeBytes() || !actual.sha256().equals(expected.getSha256())
+                        || !actual.contentType().equals(expected.getContentType()) || !actual.generation().equals(expected.getBackendGeneration())
+                        || !actual.realm().equals(expected.getStorageRealm()) || !actual.namespace().equals(expected.getNamespace())
+                        || !java.util.Objects.equals(actual.version(),expected.hasProviderVersion()?expected.getProviderVersion():null)) throw conflict();
             }
             parts.put(slot,actual);
         }
         if (locks != null) locks.requirePlan(destinations,objects,attempts);
-        return new Bound(parts,selectionRevisions);
+        control.run(); plan.historical().forEach(source -> source.selectors());
+        return new Binding(new Bound(parts,selectionRevisions),locks);
     }
 
     private static Map<String,Long> selections(EntityManager em, RepositoryOperationLedger.Owner owner,

@@ -25,6 +25,11 @@ integration is the physical binder and assessment creation, carrying the same
 source Uses and transaction-local origin/retention lock proof. See
 [binding evidence](../evidence/repository/2026-10-05-historical-slot-binding/README.md).
 
+The shared physical binder now has an internal historical assessment path that
+reads ledger objects and returns the transaction-local origin/retention proof to
+slot binding. Exact historical operation admission and assessment creation remain
+the next integration boundary; ordinary public execution is still gated.
+
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response

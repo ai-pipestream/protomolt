@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.v1.PublicationHistoricalReuse;
 import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;
@@ -18,6 +19,33 @@ import java.util.stream.Collectors;
 final class DocumentHistoricalReferenceAdmission {
     private DocumentHistoricalReferenceAdmission() {}
     private record Batch(String json, int count) {}
+
+    /** Complete distinct selector identity; Uses remain borrowed from their existing owners. */
+    static List<Prepared> requireComplete(DocumentPublicationCommand command, List<Prepared> sources, Runnable control) {
+        if (sources.size() > DocumentPublicationCommand.MAX_PARTS) throw mismatch();
+        sources = List.copyOf(sources);
+        var declared = new java.util.HashSet<PublicationHistoricalReuse>();
+        for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
+            control.run();
+            if (part.hasHistoricalReuse()) declared.add(part.getHistoricalReuse());
+        }
+        var supplied = new java.util.HashSet<PublicationHistoricalReuse>();
+        int count = 0; long bytes = 0;
+        for (var source : sources) for (var selector : source.selectors()) {
+            control.run();
+            if (++count > DocumentPublicationCommand.MAX_PARTS
+                    || (bytes += selector.getSerializedSize()) > DocumentPublicationCommand.MAX_COMMAND_BYTES
+                    || !selector.getSource().getAccountId().equals(command.intent().getAccountId())) throw mismatch();
+            supplied.add(selector);
+        }
+        if (!declared.equals(supplied)) throw mismatch();
+        control.run(); sources.forEach(source -> source.selectors());
+        return sources;
+    }
+
+    private static DocumentPartAttemptLedger.FenceException mismatch() {
+        return new DocumentPartAttemptLedger.FenceException("Historical preparations differ from complete command");
+    }
     static final class Prepared {
         private final DocumentReadLedger.PinnedRead<DocumentHistoricalReadPlan>.Use use;
         private final String account;

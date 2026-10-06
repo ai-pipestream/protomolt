@@ -59,8 +59,10 @@ final class DocumentUploadPlan {
     }
 
     /** Retains the same executable/canonical command; generated keys never change its identity. */
-    record Prepared(DocumentPublicationCommand command, List<Member> members) {
-        Prepared { Objects.requireNonNull(command); members = List.copyOf(members); }
+    record Prepared(DocumentPublicationCommand command, List<Member> members,
+            List<DocumentHistoricalReferenceAdmission.Prepared> historical) {
+        Prepared { Objects.requireNonNull(command); members = List.copyOf(members); historical = List.copyOf(historical); }
+        Prepared(DocumentPublicationCommand command, List<Member> members) { this(command, members, List.of()); }
     }
 
     /**
@@ -72,6 +74,13 @@ final class DocumentUploadPlan {
             Map<String, UUID> attempts) {
         Objects.requireNonNull(command);
         command.requireExecutionSupported();
+        return prepare(command, selected, attempts, List.of(), () -> {});
+    }
+
+    /** Internal historical plan; no admission or execution capability is granted. */
+    static Prepared prepare(DocumentPublicationCommand command, Map<UUID, Placement> selected,
+            Map<String, UUID> attempts, List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
+        historical = DocumentHistoricalReferenceAdmission.requireComplete(command, historical, control);
         Objects.requireNonNull(selected); Objects.requireNonNull(attempts);
         int memberCount = command.intent().getMembersCount();
         if (selected.size() > memberCount || attempts.size() > memberCount)
@@ -83,6 +92,7 @@ final class DocumentUploadPlan {
         var identities = new HashMap<UUID, NodeAddress>();
         var members = new ArrayList<Member>(memberCount);
         for (var member : command.intent().getMembersList()) {
+            control.run();
             UUID driveId = UUID.fromString(member.getDriveId());
             usedDrives.add(driveId);
             var placement = selected.get(driveId);
@@ -98,6 +108,7 @@ final class DocumentUploadPlan {
             for (var source : member.getSourcesList()) addSource(sources, source, identities);
             for (var part : member.getPartsList()) {
                 if (part.hasReuse()) addSource(sources, part.getReuse().getSource(), identities);
+                if (part.hasHistoricalReuse()) nodeId(part.getHistoricalReuse().getSource(), identities);
             }
             boolean hasUploads = member.getPartsList().stream().anyMatch(p -> p.hasUpload());
             Optional<Attempt> attempt = Optional.empty();
@@ -123,7 +134,8 @@ final class DocumentUploadPlan {
         }
         if (!usedDrives.equals(selected.keySet()) || !usedMembers.equals(attempts.keySet()))
             throw new IllegalArgumentException("Extraneous drive selection or attempt for a non-uploading member");
-        return new Prepared(command, members);
+        control.run(); historical.forEach(source -> source.selectors());
+        return new Prepared(command, members, historical);
     }
 
     private static void addSource(Map<UUID, Long> sources, DocumentRevisionCondition source, Map<UUID, NodeAddress> identities) {

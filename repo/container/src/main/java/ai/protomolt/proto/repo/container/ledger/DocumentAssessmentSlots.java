@@ -4,7 +4,6 @@ import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationSlot;
-import ai.protomolt.proto.repo.v1.PublicationHistoricalReuse;
 import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
@@ -52,23 +51,7 @@ final class DocumentAssessmentSlots {
     /** Explicit internal historical preparation. The caller owns every source Use through staging/commit. */
     static Prepared prepare(DocumentPublicationCommand command,
             List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
-        historical = List.copyOf(historical);
-        if (historical.size() > DocumentPublicationCommand.MAX_PARTS) throw conflict();
-        var declared = new java.util.HashSet<PublicationHistoricalReuse>();
-        for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
-            control.run();
-            if (part.hasHistoricalReuse()) declared.add(part.getHistoricalReuse());
-        }
-        var supplied = new java.util.HashSet<PublicationHistoricalReuse>();
-        int count = 0; long bytes = 0;
-        for (var source : historical) for (var selector : source.selectors()) {
-            control.run();
-            if (++count > DocumentPublicationCommand.MAX_PARTS
-                    || (bytes += selector.getSerializedSize()) > DocumentPublicationCommand.MAX_COMMAND_BYTES
-                    || !selector.getSource().getAccountId().equals(command.intent().getAccountId())) throw conflict();
-            supplied.add(selector);
-        }
-        if (!declared.equals(supplied)) throw conflict();
+        historical = DocumentHistoricalReferenceAdmission.requireComplete(command, historical, control);
         var expected = new LinkedHashMap<Source, UUID>();
         for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
             control.run();
