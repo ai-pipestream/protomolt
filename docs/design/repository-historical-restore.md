@@ -516,7 +516,14 @@ node/slot with distinct payloads, physical IDs and provenance, and mixed current
 and historical reuse. READ revocation while publication waits at its policy lock
 refuses the operation without advancing the published revision. See the
 `2026-10-06-historical-publication-races` evidence record for controls and limits.
-Mixed fresh-upload/current/historical commands remain a required follow-up.
+The production-JAR storage probe also exercises a command containing separate
+fresh-upload, current-reuse and historical-reuse members against versioned S3.
+Leaving the real upload unverified must leave all three destinations absent;
+verification permits atomic publication and exact replay. Sealed physical origins
+are checked against the selected upload attempt and retained selectors. In this
+probe current and historical reuse select the same bytes; the multi-revision SQL
+case above covers distinct versions. Mixed sources within one member still need
+qualification.
 Public restoration, claimed-session activation and automatic
 claim transfer remain disabled. These are required follow-ups, not an assertion
 that the full repository goal is complete.

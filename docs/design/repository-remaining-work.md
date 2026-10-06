@@ -27,8 +27,8 @@ READ during inspection and replay. Its callback-scoped inspection provides immut
 summaries plus the caller-supplied command and policy values; it exposes no borrowed
 payload or publication capability. Historical opaque-source classification now
 requires explicit sealed OPAQUE admissions and refuses typed downgrades or missing
-admissions. The two-source mixed-mode negative case and durable publication
-integration remain unfinished.
+admissions. The two-source mixed-mode negative case remains unfinished; durable
+publication qualification is recorded below.
 The SQL assessment suite now also covers one member assembled from two historical
 sources, including second-source access revocation and release of both pins. The
 ordinary registry resolver is unavailable in that fixture. This closes the host
@@ -40,8 +40,13 @@ locks in its transaction. A production-JAR host qualifies the successful path wi
 real versioned provider reads. The same harness now injects acknowledgment loss after
 a real historical CREATE commit, discovers the original stage and verifies retained
 evidence. It also refuses a borrowed plan after its owner closes. Historical-specific
-policy/access races and physical-binding rollback remain open alongside atomic
-reference publication; these cases are not inferred from the successful path.
+CREATE-specific policy/access races remain separate from publication qualification.
+Internal unclaimed atomic publication now has real-SQL authorization-lock races,
+policy rejection, terminal-write rollback, multi-revision selection, and exact replay
+coverage. The production-JAR harness adds retained provider reads, post-commit lost
+acknowledgment, and mixed fresh-upload/current/historical members with an unverified
+upload negative case. These checks do not enable public or claimed restore sessions.
+See [mixed provider qualification](../evidence/repository/2026-10-06-historical-mixed-upload/README.md).
 Preserve each member's container and occurrence definitions,
 source-to-target ordinals, shared byte accounting and source pins. A prior historical
 verdict cannot substitute for a new assessment. Claims, sessions and public
