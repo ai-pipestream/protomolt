@@ -6648,3 +6648,20 @@ Process death before and after initial commit now has fresh-JVM qualification wi
 real provider publication. Full concurrency/authorization-race coverage and
 RustFS latency measurements remain to be completed. This change does not recover
 existing partial registrations or enable an automatic recovery host.
+
+## Exact-operation creation grants (V100)
+
+**New internal operations:** prepare, install, check and revoke an exact-command
+creation grant. Installation requires process authority and binds the authenticated
+key generation, account/principal/operation, command digest, placement digest and
+absolute expiry. Exact retries confirm the existing live grant; they cannot extend
+it, attach it to an older scope or revive revocation.
+
+**Reused:** execution-scope unique-key arbitration, credential authority locks,
+canonical publication commands and the bounded placement snapshot encoding.
+V100 stamps new scopes with their creating transaction; existing scopes keep a
+null stamp and gain no grants. No protobuf names, fields, RPCs or Any URLs change.
+
+**Not yet integrated:** publication admission, recovery and replay do not consume
+these grants. This is an internal primitive, not a public creation endpoint.
+See [qualification](../evidence/repository/2026-10-06-creation-grants/README.md).

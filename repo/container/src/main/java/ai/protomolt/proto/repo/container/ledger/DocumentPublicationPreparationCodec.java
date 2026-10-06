@@ -51,6 +51,26 @@ final class DocumentPublicationPreparationCodec {
         return ByteString.copyFrom(bytes.toByteArray());
     }
 
+    /** Domain-separated exact placement commitment, without retaining another snapshot copy. */
+    static byte[] placementDigest(Map<UUID, DocumentUploadPlan.Placement> placements) {
+        if (placements.isEmpty() || placements.size() > 64) throw new IllegalArgumentException("Grant placements exceed bounds");
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (var out = new DataOutputStream(new BoundedOutput(
+                    new java.security.DigestOutputStream(OutputStream.nullOutputStream(), digest)))) {
+                out.writeInt(0x504d4350); out.writeInt(1); count(out, placements.size());
+                for (var entry : placements.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
+                    if (!entry.getKey().equals(entry.getValue().drive().id()))
+                        throw new IllegalArgumentException("Grant placement key differs from drive");
+                    uuid(out, entry.getKey()); placement(out, entry.getValue());
+                }
+            }
+            return digest.digest();
+        } catch (java.security.NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+        } catch (IOException failure) { throw new IllegalArgumentException("Cannot encode grant placements", failure); }
+    }
+
     private static byte[] intentBytes(DocumentPublicationCommand command) throws IOException {
         var bytes = new byte[command.intent().getSerializedSize()];
         var output = com.google.protobuf.CodedOutputStream.newInstance(bytes);
@@ -173,12 +193,13 @@ final class DocumentPublicationPreparationCodec {
     private static UUID uuid(DataInputStream in) throws IOException { return new UUID(in.readLong(), in.readLong()); }
 
     private static final class BoundedOutput extends OutputStream {
-        private final ByteArrayOutputStream bytes;
-        BoundedOutput(ByteArrayOutputStream bytes) { this.bytes = bytes; }
+        private final OutputStream bytes;
+        private int size;
+        BoundedOutput(OutputStream bytes) { this.bytes = bytes; }
         private void require(int length) {
-            if (length < 0 || length > MAX_BYTES - bytes.size()) throw new IllegalArgumentException("Preparation exceeds total bound");
+            if (length < 0 || length > MAX_BYTES - size) throw new IllegalArgumentException("Preparation exceeds total bound");
         }
-        @Override public void write(int value) { require(1); bytes.write(value); }
-        @Override public void write(byte[] value, int offset, int length) { require(length); bytes.write(value, offset, length); }
+        @Override public void write(int value) throws IOException { require(1); bytes.write(value); size++; }
+        @Override public void write(byte[] value, int offset, int length) throws IOException { require(length); bytes.write(value, offset, length); size += length; }
     }
 }

@@ -213,3 +213,24 @@ expiry and account retention before exposing provisioning to clients.
 This supplies authorization primitives for the repository foundation. It does not
 claim JCR sessions, workspaces, node types, references or version-restore semantics;
 those remain governed by the [JCR capability assessment](repository-jcr-compatibility.md).
+
+## Durable creation grant primitive (V100)
+
+The internal installer now stores exact command and placement hashes with key
+identity/generation and expiry. Only the winner of a new execution-scope insertion
+can install a grant, in the same transaction. A transaction stamp and SQL guard
+prevent adoption of previously admitted or bare scopes. Existing-scope retries only
+confirm an identical live grant and do not revalidate current placement; that is
+an installation fact, not permission to publish.
+
+Grant readers lock credential authority before the grant and evaluate expiry after
+any row-lock wait. Admission must first validate its selected drive snapshots, then
+pass a digest derived from those actual placements. A digest copied from the grant
+or supplied by a request cannot establish placement validity. Placement hashing
+streams through the existing aggregate and per-field bounds without persisting a
+second snapshot. Scope arbitration adds no lock on existing scopes.
+
+Publication integration remains unfinished. The primitive does not grant account
+membership, source READ, existing-target WRITE or policy changes. Revocation retains
+a tombstone; retention limits and recovery behavior remain governed by the design
+above. [Qualification](../evidence/repository/2026-10-06-creation-grants/README.md).

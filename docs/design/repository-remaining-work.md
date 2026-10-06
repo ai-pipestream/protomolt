@@ -772,3 +772,14 @@ with a new execution-scope insertion; never lock an existing scope in the shared
 function. The reviewed [serialization design](repository-scoped-creation.md#transaction-and-revocation-rules)
 explains the claim/scope deadlock rejected during review. Test both first-admission
 winners before integrating grant checks into the publication transaction.
+
+## Creation grant primitive checkpoint (V100)
+
+The exact-operation installer and revoker now exist internally, with SQL scope
+arbitration and credential/placement binding. This supersedes the earlier need to
+choose a durable grant representation; it does not complete scoped creation.
+Next integrate the check into the shared publication authorization path, deriving
+placement hashes from actual selected placements under the domain locks. Cover
+registration, assessment, final publication, successor activation and pending/rejected
+observations. Successful replay continues to use current target READ policy.
+Revocation races, scoped recovery, host provisioning and bounded retention remain.

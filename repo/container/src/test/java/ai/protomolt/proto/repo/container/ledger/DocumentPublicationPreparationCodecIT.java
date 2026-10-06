@@ -63,6 +63,10 @@ class DocumentPublicationPreparationCodecIT {
             assertThat(decoded.predecessorGeneration()).isEqualTo(7);
             var reordered = new DocumentUploadPlan.Placement(drive, "native-test", new ManagedBackendLedger.Profile(
                     new BackendIdentity(d.provider(), d.provider()+"/v1", new java.util.TreeMap<>(location)), "native-test"));
+            assertThat(DocumentPublicationPreparationCodec.placementDigest(Map.of(d.id(), reordered)))
+                    .isEqualTo(DocumentPublicationPreparationCodec.placementDigest(value.placements()));
+            assertThat(DocumentPublicationPreparationCodec.placementDigest(original.placements()))
+                    .isNotEqualTo(DocumentPublicationPreparationCodec.placementDigest(value.placements()));
             assertThat(DocumentPublicationPreparationCodec.encode(new DocumentPublicationPreparationRecord(value.key(), value.command(),
                     value.seeds(), Map.of(d.id(), reordered), LEASE, 7))).isEqualTo(DocumentPublicationPreparationCodec.encode(value));
             assertThat(new RepositoryOperationLedger(c.tx()).find(value.key())).isEmpty();
@@ -150,6 +154,8 @@ class DocumentPublicationPreparationCodecIT {
                 var record = new DocumentPublicationPreparationRecord(value.key(), value.command(), value.seeds(),
                         Map.of(drive.id(), new DocumentUploadPlan.Placement(invalid, template.generation(), template.profile())), LEASE, 0);
                 assertThatThrownBy(() -> DocumentPublicationPreparationCodec.encode(record)).isInstanceOf(IllegalArgumentException.class);
+                assertThatThrownBy(() -> DocumentPublicationPreparationCodec.placementDigest(record.placements()))
+                        .isInstanceOf(IllegalArgumentException.class);
             }
             // Each snapshot is legal on its own; their combined encoding exceeds the envelope limit.
             var intent = value.command().intent().toBuilder().clearMembers();
@@ -169,6 +175,7 @@ class DocumentPublicationPreparationCodecIT {
             var oversized = new DocumentPublicationPreparationRecord(value.key(), command,
                     DocumentPublicationSeeds.mint(value.key(), command), placements, LEASE, 0);
             assertThatThrownBy(() -> DocumentPublicationPreparationCodec.encode(oversized)).hasMessageContaining("total bound");
+            assertThatThrownBy(() -> DocumentPublicationPreparationCodec.placementDigest(placements)).hasMessageContaining("total bound");
         }
     }
 
