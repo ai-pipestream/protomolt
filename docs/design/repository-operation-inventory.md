@@ -6392,3 +6392,16 @@ binding prevents unbound adoption.
 checks, terminal outcomes and cleanup. The public session factories do not invoke
 activation. Host activation, uncertain-commit confirmation and automatic successor
 execution remain unfinished; see repository-publication-recovery.md.
+
+### Private successor activation
+
+**New:** `RepositorySuccessorExecution.activate`, an internal transaction and exact
+readback operation. It accepts a trusted process coordinator and a separate trusted
+execution caller. Current document permissions and revision conditions are checked
+for first activation. Readback confirms an immutable past commit, including after
+revocation; it is not new execution authority. No lease renewal or provider call is
+performed. V93 and activation share the modes encoder.
+
+**Unchanged:** public contracts and host startup/session factories. No public API
+or automatic recovery flow calls this helper yet. Claimed historical preparation,
+scoped creation, fresh successor sessions and late provider effects remain open.

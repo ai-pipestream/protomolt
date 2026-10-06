@@ -22,7 +22,11 @@ class RepositorySuccessorInstallIT {
     }
 
     static RepositorySuccessorInstall.Plan plan(Context c, Duration successorLease) {
-        var input = input(c); var incarnation = UUID.randomUUID();
+        return plan(c, input(c), successorLease);
+    }
+
+    static RepositorySuccessorInstall.Plan plan(Context c, DocumentPublicationPreparationRecord input, Duration successorLease) {
+        var incarnation = UUID.randomUUID();
         var previous = new DocumentPublicationPreparationRecord(input.key(), input.command(), input.seeds(),
                 input.placements(), Duration.ofSeconds(1), 0);
         var budget = new PayloadBudget(64_000_000);

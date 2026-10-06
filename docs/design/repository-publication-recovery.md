@@ -1041,3 +1041,40 @@ exact activation after uncertain commit acknowledgments without lease renewal,
 and integrate fresh session identities. It must recheck schema/policy/placement
 at the existing execution boundaries. Delayed predecessor provider effects and
 cleanup isolation require separate qualification before automatic recovery.
+
+### Private activation transaction
+
+`RepositorySuccessorExecution.activate` confirms the exact V92 handoff and V93
+install before inserting V94 and its coordinator binding in one transaction.
+Preparation hashes use the existing codec; modes use the shared install encoder.
+Encoding and authorization-plan construction happen outside SQL locks under a
+shared byte reservation. SQL locks the current claim and owner before document
+locks. A current revision or authorization failure rolls back both new records.
+
+The host supplies two trusted identities: the process coordinator authorizes this
+private operation, and the execution caller supplies current document permissions.
+Both must match the operation principal and account. Passing a process caller for
+execution is an explicit administrative bypass; a scoped caller never inherits the
+coordinator's bypass. Scoped creation still needs the separate creation-grant work.
+Normal preparation continues to reject claimed historical reuse before this path.
+
+Successful return confirms that the activation committed. It does not return a
+session or renew a lease. An exact retry can confirm the same fact after permission
+revocation, drain or expiry. Actual execution must reacquire live fences and check
+current policy, schema and placement. On a lost commit reply, only the exact saved
+activation and binding resolve the failure; cancellation that prevents readback
+preserves the original exception.
+
+The host is not wired to activate or resume successors yet. Fresh session identity,
+late provider effects and cleanup isolation remain required. The byte reservation
+currently uses the maximum encoded preparation bounds (33 MiB per call), not exact
+payload size; it is a conservative admission bound, not measured heap consumption.
+
+The next session integration must attach to the already installed owner and claim.
+It must not call the ordinary recovery session's owner-takeover method, which would
+request another generation. The session manager must retain the exact successor
+incarnation before activation, validate that binding on resume, and include it in
+its existing admission/drain barriers. Registration and journal access currently
+assume epoch one and predecessor zero; extend those identity checks together with
+the session admission path. Keep successful activation readback separate from live
+claim/owner acquisition so expired or revoked work cannot resume from a receipt.

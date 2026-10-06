@@ -575,9 +575,11 @@ paths. The provider, historical, pruning, RustFS and JCR work remains in scope.
 ## Successor execution boundary
 
 V94 adds an exact SQL execution identity and successor binding. This is an internal
-boundary, not completed automatic recovery. Finish the Java activation operation
-with current authorization, cancellation, exact retry and lost-acknowledgment
-confirmation; then integrate fresh successor sessions and the provider-effect
-checks above. Qualify mismatched activation fields, terminal states, competing
-activations and claim/owner expiry alongside those paths. No public API advertises
-successor execution at this checkpoint.
+boundary, not completed automatic recovery. The private Java activation operation
+now separates coordinator authority from the execution caller and supports exact
+readback without renewal. Next integrate fresh successor sessions and the provider
+effect checks above. Qualify terminal states, claim/owner expiry and end-to-end
+recovery alongside those paths. No public API advertises successor execution.
+Exact readback after revocation confirms a past commit only; execution must check
+current rights again. Conservative maximum-size byte reservations still need load
+and fairness measurements before capacity claims.

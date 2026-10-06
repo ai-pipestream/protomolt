@@ -50,10 +50,7 @@ final class RepositorySuccessorInstall {
             var bytes = DocumentPublicationPreparationCodec.encode(plan.next());
             var oldSha = DocumentPublicationPreparationJournal.digest(oldBytes);
             var sha = DocumentPublicationPreparationJournal.digest(bytes);
-            var json = new JsonObject(); new TreeMap<>(plan.modes()).forEach((key, mode) -> json.addProperty(key, mode.name()));
-            var modes = json.toString();
-            if (modes.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
-                throw new IllegalArgumentException("Successor modes exceed byte limit");
+            var modes = encodeModes(plan);
             if (confirm(tx, caller, plan, oldSha, sha, modes, control)) return;
             try {
                 tx.inTransaction(em -> {
@@ -109,7 +106,16 @@ final class RepositorySuccessorInstall {
         }
     }
 
-    private static boolean confirm(Tx tx, RepositoryCaller caller, Plan plan, byte[] oldSha, byte[] sha,
+    static String encodeModes(Plan plan) {
+        var json = new JsonObject();
+        new TreeMap<>(plan.modes()).forEach((key, mode) -> json.addProperty(key, mode.name()));
+        var encoded = json.toString();
+        if (encoded.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
+            throw new IllegalArgumentException("Successor modes exceed byte limit");
+        return encoded;
+    }
+
+    static boolean confirm(Tx tx, RepositoryCaller caller, Plan plan, byte[] oldSha, byte[] sha,
             String modes, RepositoryReadControl control) {
         require(caller, plan, control);
         boolean result = tx.inTransaction(em -> {
