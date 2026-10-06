@@ -200,6 +200,32 @@ class ManagedSchemaHostIT {
         }
     }
 
+    @Test void journaledObservationFailureLeavesSchemaLifecycleWithCallerAndDrainsReaders() throws Exception {
+        var config = config("journaled-startup-" + UUID.randomUUID());
+        try (var store = GitSchemaRegistryStore.builder().repositoryDir(directory).build();
+             var database = new LedgerDatabase(config.ledger())) {
+            var tx = new Tx(database.entityManagerFactory());
+            var access = new Access(store, definition(StringValue.getDescriptor()));
+            long before = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_reader_incarnations WHERE state='ACTIVE'").getSingleResult()).longValue());
+            var journaled = new ManagedDocumentServices.Journaled(new DocumentPublicationRuntime.Assessments(
+                    directory.resolve("absent-runtime-bundle"), Duration.ofMinutes(5), Duration.ofSeconds(5)),
+                    (account, principal, operation) -> ADMIN);
+            try {
+                assertThatThrownBy(() -> new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(),
+                        null, access, null, journaled)).isInstanceOf(java.io.UncheckedIOException.class)
+                        .hasMessageContaining("Cannot observe managed publication runtime");
+                assertThat(access.closes.get()).isZero();
+                long after = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM repository_reader_incarnations WHERE state='ACTIVE'").getSingleResult()).longValue());
+                assertThat(after).isEqualTo(before);
+                try (var scope = access.resolver.open(occurrence -> { throw new AssertionError("No lookup required"); }, () -> {})) {
+                    assertThat(scope).isNotNull();
+                }
+            } finally { access.close(); assertThat(access.awaitIdle(Duration.ofSeconds(5))).isTrue(); }
+        }
+    }
+
     private record Work(DocumentPublicationCommand command, Map<UUID, DocumentPublicationRuntime.Placement> placements,
             Map<DocumentPublicationRuntime.PayloadKey, PartObject> bodies, Map<String, DocumentPublicationRuntime.Mode> modes) {}
 

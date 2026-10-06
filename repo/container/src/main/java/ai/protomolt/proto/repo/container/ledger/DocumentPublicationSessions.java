@@ -520,6 +520,24 @@ final class DocumentPublicationSessions implements AutoCloseable {
                 claim.epoch(), claim.token(), coordinator));
     }
 
+    /** Host has drained provider/read/schema workers; partial SQL success remains exactly retryable. */
+    void attestLocalDrain(java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority,
+            RepositoryReadControl control) {
+        Objects.requireNonNull(authority); Objects.requireNonNull(control).check();
+        final java.util.List<RepositoryCoordinatorDrain.Identity> identities;
+        synchronized (this) {
+            if (journalBudget == null || !closed || activeCalls != 0 || drainIdentities == null)
+                throw new IllegalStateException("Journaled registration and session drain must complete before attestation");
+            identities = drainIdentities;
+        }
+        for (var identity : identities) {
+            control.check();
+            var caller = Objects.requireNonNull(authority.apply(identity.key()), "Private operation authority");
+            RepositoryCoordinatorLocalDrain.record(tx, caller, identity, control);
+        }
+        control.check();
+    }
+
     /**
      * Includes SQL admission, receipt replay and recovery, even before a session exists.
      * Idle calls do not prove provider-worker quiescence. The host must separately drain

@@ -10,6 +10,7 @@ public final class AssessmentStorageProbe {
             throw new AssertionError("Ambient test framework leaked into production host");
         } catch (ClassNotFoundException expected) { /* Deliberately absent. */ }
         var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(args[0]), () -> {});
+        ai.protomolt.proto.repo.service.ManagedJournaledDrainProbe.run(Path.of(args[0]));
         try (var provider = new AssessmentProviderProbe();
                 var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")))) {

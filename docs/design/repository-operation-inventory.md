@@ -6326,3 +6326,18 @@ An actual claim-fence commit holds the reservation barrier; a production-JAR obs
 executor loads a restoration whose assessment stage is absent, then refuses it.
 Closing releases its reserved bytes while preserving the identity for V90. No
 operation or protobuf contract changes in this qualification increment.
+
+### Managed journaled host lifecycle
+
+**New Java composition seam:** `DocumentPublicationRuntime.managedJournaled`,
+`DrainAuthority` and `ExternalWorkers`. The service selects this through internal
+options and supplies its owned schema lifecycle. No claim token crosses the seam.
+
+**Extended:** shutdown waits for abandoned schema loads, then attests each captured
+identity. SQL failure preserves shared resources for exact retry. Confirmation
+reads use transactions to honor host SQL timeouts. Failed construction leaves
+schema ownership with the caller and cleans up registered readers.
+
+**Unchanged:** public service builders, protobuf definitions, SQL migrations,
+receipts, RPC availability and successor authority. See
+[managed qualification](../evidence/repository/2026-10-06-managed-local-drain/README.md).

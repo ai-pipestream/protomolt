@@ -10,7 +10,8 @@ import java.util.Optional;
 
 /**
  * Private SQL attestation primitive. The trusted host must first prove all owned
- * work drained, including external schema workers. No current runtime calls this.
+ * work drained, including external schema workers. The managed journaled runtime
+ * calls this only after its owned worker lifecycles have drained.
  * This grants no successor execution or provider-effect quiescence.
  */
 final class RepositoryCoordinatorLocalDrain {
@@ -54,7 +55,7 @@ final class RepositoryCoordinatorLocalDrain {
     static Optional<Instant> confirm(Tx tx, RepositoryCaller caller, RepositoryCoordinatorDrain.Identity identity,
             RepositoryReadControl control) {
         require(caller, identity, control);
-        var result = tx.readOnly(em -> read(em, identity));
+        var result = tx.inTransaction(em -> { return read(em, identity); });
         control.check();
         return result;
     }

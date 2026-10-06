@@ -852,11 +852,20 @@ retention proof. Local drain does not delete retained definitions, read pins,
 historical references or provider tombstones. Pre-owner abandonment currently
 requires execution authority and is consequently refused after local drain.
 
-No runtime or managed service calls this attestation primitive yet. SQL can enforce
-identity and mutation closure, but cannot observe local workers. The trusted host
-must establish complete runtime and service-owned schema-worker drain before that
-integration is enabled. Tests of this ledger are SQL protocol qualification, not
-proof that a host or a remote storage provider is quiescent.
+The internal managed journaled host now calls this primitive after sessions,
+scopes, uploads, readers and service-owned schema workers have drained. Its trusted
+authority resolver receives account, principal and operation UUID; it exposes no
+claim token. Ordinary public builders remain unchanged. Exact confirmation uses a
+transaction so the host's SQL timeout policy applies. A partial attestation failure
+retains shared SQL resources and retries the immutable identity snapshot before
+marking shutdown complete. Constructor observation failure leaves schema ownership
+with the caller and cleans up newly registered readers.
+
+Production-JAR qualification holds a real Git descriptor load after publication
+cancellation, then injects a real PostgreSQL failure on the second of two local
+attestations. The first marker survives and retry confirms its original timestamp.
+This proves local managed-worker ordering, not remote provider quiescence or safe
+successor execution. See [managed host qualification](../evidence/repository/2026-10-06-managed-local-drain/README.md).
 See [SQL qualification](../evidence/repository/2026-10-06-local-drain/README.md).
 
 ### Retaining drain identities through session shutdown

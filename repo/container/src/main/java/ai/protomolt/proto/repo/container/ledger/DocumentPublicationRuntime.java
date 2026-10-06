@@ -86,9 +86,25 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     private final DocumentPublicationSessions sessions;
     private final DocumentReadLifecycle reads;
     private final java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority;
+    private final ExternalWorkers externalWorkers;
     private final DocumentPublicationScopeCalls scopeCalls = new DocumentPublicationScopeCalls();
     private boolean stopping;
     private boolean stopped;
+
+    /** Trusted host lookup. Request ownership fields cannot grant process authority. */
+    @FunctionalInterface public interface DrainAuthority {
+        RepositoryCaller forOperation(String account, String principal, UUID operationId);
+    }
+
+    /**
+     * Exclusively owned host workers outside the publication runtime, including abandoned
+     * schema loads. Close admission without blocking; awaitIdle must include every accepted
+     * worker. SQL and provider resources remain borrowed until shutdown succeeds.
+     */
+    public interface ExternalWorkers {
+        void closeAdmission();
+        boolean awaitIdle(Duration timeout) throws InterruptedException;
+    }
 
     /**
      * Reader and ledger belong exclusively to this runtime. The same budget bounds
@@ -153,14 +169,46 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments), drainAuthority);
     }
 
+    /**
+     * Trusted managed-host composition, not a transport endpoint or successor grant.
+     * Successful construction transfers lifecycle ownership of the supplied external workers.
+     * On construction failure the caller retains cleanup responsibility for all inputs.
+     * Whole-host drain is attested only after runtime and external workers both stop.
+     */
+    public static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime managedJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers) throws IOException {
+        Objects.requireNonNull(authority); Objects.requireNonNull(externalWorkers);
+        return new DocumentPublicationRuntime(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments),
+                key -> authority.forOperation(key.account(), key.principal(), key.operationId()), externalWorkers);
+    }
+
     private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
             Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
             Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
             int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
             int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
             java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority) {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism,
+                flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents, assessments, drainAuthority, null);
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
+            ExternalWorkers externalWorkers) {
         Objects.requireNonNull(backends);
         this.drainAuthority = drainAuthority;
+        this.externalWorkers = externalWorkers;
         reads = new DocumentReadLifecycle(ledger, reader, cleanupBatchSize);
         uploads = new DocumentUploadCoordinator(tx, drives, budget, (generation, profile) -> {
             var selected = Objects.requireNonNull(backends.resolve(generation, profile));
@@ -253,7 +301,16 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     }
 
     /** Refuse new calls and provider starts. Permitted transfers may settle; resources remain borrowed. */
-    @Override public void close() { uploads.stopProviderStarts(); scopeCalls.close(); sessions.close(); }
+    @Override public void close() {
+        uploads.stopProviderStarts(); scopeCalls.close();
+        try { sessions.close(); }
+        catch (RuntimeException | Error failure) {
+            try { if (externalWorkers != null) externalWorkers.closeAdmission(); }
+            catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+        if (externalWorkers != null) externalWorkers.closeAdmission();
+    }
 
     /** One bounded maintenance pass; the host schedules and retries failures. */
     public synchronized int tick() {
@@ -286,8 +343,16 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         uploads.close();
         if (!uploads.awaitIdle(remaining(budget, start))) return false;
         control.check();
-        stopped = reads.shutdownStep(remaining(budget, start));
-        return stopped;
+        if (!reads.shutdownStep(remaining(budget, start))) return false;
+        control.check();
+        if (externalWorkers != null) {
+            if (!externalWorkers.awaitIdle(remaining(budget, start))) return false;
+            control.check();
+            sessions.attestLocalDrain(drainAuthority, control);
+        }
+        control.check();
+        stopped = true;
+        return true;
     }
 
     private static Duration remaining(long budget, long start) {

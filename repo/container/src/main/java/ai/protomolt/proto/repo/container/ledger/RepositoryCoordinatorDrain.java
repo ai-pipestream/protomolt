@@ -41,7 +41,7 @@ final class RepositoryCoordinatorDrain {
     }
 
     private static boolean beginUnconfirmed(Tx tx, RepositoryCaller caller, Identity identity, RepositoryReadControl control) {
-        var current = tx.readOnly(em -> {
+        var current = tx.inTransaction(em -> {
             var rows = em.createNativeQuery("""
                     SELECT command_sha256,claim_epoch,claim_token,lease_until FROM repository_execution_claims
                     WHERE account_id=:a AND principal=:p AND operation_id=:o
@@ -95,7 +95,7 @@ final class RepositoryCoordinatorDrain {
 
     private static Optional<Instant> confirm(Tx tx, RepositoryCaller caller, Identity identity, RepositoryReadControl control) {
         require(caller, identity, control);
-        var result = tx.readOnly(em -> {
+        var result = tx.inTransaction(em -> {
             var rows = em.createNativeQuery("""
                     SELECT d.claim_token,d.incarnation,d.started_at,c.command_sha256
                     FROM repository_coordinator_drains d JOIN repository_execution_claims c

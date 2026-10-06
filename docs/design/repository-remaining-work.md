@@ -4,59 +4,34 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
-The opt-in journaled manager now closes provider starts and its shared registration
-barrier before marking retained nonterminal operation identities in SQL. Missing
-claims remain unresolved, and uncertain replies require exact marker confirmation.
-This does not enable ordinary journaled runtime execution, invoke the V91 local-drain
-primitive, or authorize successor execution. A private journaled runtime now stores the trusted
-drain-authority resolver and performs this marking before its existing session,
-scope, upload and reader shutdown. The managed service's schema-worker lifecycle
-still needs separate host composition before durable LOCAL_DRAINED. Public
-constructors remain unchanged. Continue historical client lifecycle qualification
-alongside that recovery integration; the independent work below remains required.
+The internal managed journaled host now composes registration closure, sessions,
+scopes, uploads, readers and owned schema workers before V91 local-drain attestation.
+It retains the immutable post-barrier identity snapshot across retries and terminal
+cache eviction. Failed restoration retains its exact owner identity; closing loaded
+restoration releases borrowed resources without dropping the shutdown obligation.
+Missing claims remain unresolved and uncertain replies require exact confirmation.
 
-V91 adds the private durable local-drain ledger and operation-wide mutation closure.
-Exact attestation can survive expiry of an unchanged claim without renewing it;
-transferred authority cannot create the predecessor's attestation. Read-only exact
-confirmation survives transfer. Runtime/service invocation remains disabled until
-all owned workers, including abandoned schema loads, are proven drained. Preserve
-the independent recovery-only cleanup fence and all retention guards.
+The narrow managed factory accepts a trusted account/principal/operation authority
+resolver and an explicit external-worker lifecycle. Public service builders remain
+ordinary. No claim token is exposed, and no successor or remote-effect quiescence
+is granted by this local attestation. A partial SQL failure keeps shared resources
+available until every captured marker is confirmed. Startup observation failure
+leaves schema access with its caller and cleans up newly registered readers.
 
-The journaled manager now retains an immutable, bounded snapshot of exact
-nonterminal identities after the registration barrier drains. It reuses the
-snapshot across retries, even when an accepted operation subsequently becomes
-terminal and leaves the session cache. Restoration authority checks and reservation
-share that barrier; failed journaled restoration retains its exact owner identity
-and bounded command capacity. Closing a loaded restoration releases its borrowed
-resources while retaining that identity. Qualification now covers a held actual
-restoration claim-fence transaction (drain cannot snapshot before reservation), and
-a production-JAR loaded restoration that releases its bytes on close while retaining
-its identity for V90. The observed executor refuses the deliberately absent stage;
-this is lifecycle evidence, not successful restored publication or provider-read proof.
-Do not reconstruct these identities from a later SQL query or current claim.
-The next private host integration must consume the retained snapshot.
-After publication sessions, scopes, uploads and readers drain, wait for the
-host-owned `ManagedSchemaAccess`, including abandoned provider loads, before
-recording V91 for every captured identity. A partial attestation batch must retain
-shared resources; retry must confirm every exact marker before releasing them.
-Qualify this with a held schema-provider load (V90 present, V91 absent until
-release), a failure on the second of two attestations, and a terminal-session
-control. Keep ordinary service construction unchanged. Future public publication
-transport also needs accepted-call drain before transport teardown; current
-private runtime qualification does not establish that ordering.
+[Managed-host qualification](../evidence/repository/2026-10-06-managed-local-drain/README.md)
+now covers a held actual Git descriptor load, two retained operations, a real SQL
+failure on the second attestation, retry preserving the first marker, and startup
+ownership. The second operation is owner-admitted; the test does not claim two
+independent Git loads. A successful terminal-session control through this new
+managed factory remains to add; private journaled terminal eviction already has
+coverage. Future public publication transport still needs accepted-call drain
+before transport teardown. Safe successor execution and late provider effects
+remain separate work.
 
-The service/container package boundary needs one narrow managed-host factory,
-rather than a public attestation flag or access to the private ledger. Its trusted
-authority resolver should receive account, principal and operation UUID, adapting
-internally to the package-private operation key without exposing claim tokens.
-It must own an explicit external-worker lifecycle (`closeAdmission`, `awaitIdle`),
-implemented by the service around its owned schema access. Only this managed
-composition may proceed from runtime drain through schema-worker drain to V91.
-Keep ordinary public service builders unchanged and select the factory through an
-internal opt-in. Set runtime completion only after every retained identity has an
-exact local-drain confirmation; retries after partial attestation retain all
-resources needed for SQL confirmation. The existing private journaled runtime
-without that external-worker lifecycle remains unable to attest whole-host drain.
+V91 closes execution across all claim epochs. Expiry of an unchanged claim can
+still permit exact attestation; transferred authority cannot create a predecessor
+marker. Exact confirmation survives transfer. Preserve recovery-only cleanup
+fences, retained definitions, reader pins and provider tombstones.
 
 Current restore checkpoint: canonical historical commands, current-READ replay,
 V86 historical provenance, snapshot v2 with v1 replay, and shared physical/slot

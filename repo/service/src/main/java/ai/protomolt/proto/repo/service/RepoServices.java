@@ -162,6 +162,15 @@ public final class RepoServices implements AutoCloseable {
     private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded) {
+        this(config, bridges, providers, historicalAccess, schemaAccess, bounded, null);
+    }
+
+    /** Internal managed-host qualification; no public builder selects journaled publication yet. */
+    RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
+            ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded, ManagedDocumentServices.Journaled journaled) {
+        if (journaled != null && (bounded != null || schemaAccess == null || !config.managedStorage().retentionQualified()))
+            throw new IllegalArgumentException("Journaled publication requires qualified document storage and owned schema access");
         ManagedArchiveServices startingArchive = null;
         this.archiveAdmission = bounded == null ? null : bounded.openAdmission(config);
         this.archiveReadAdmission = bounded == null ? null : new ai.protomolt.proto.repo.engine.ArchiveGetAdmission(
@@ -323,7 +332,7 @@ public final class RepoServices implements AutoCloseable {
             // after this component acquires its durable lifecycle identity.
             this.managedDocuments = generation == null || bounded != null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
-                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess);
+                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess, journaled);
         } catch (RuntimeException | Error failure) {
             if (archiveIngress != null) archiveIngress.close();
             if (archiveAdmission != null) archiveAdmission.close();

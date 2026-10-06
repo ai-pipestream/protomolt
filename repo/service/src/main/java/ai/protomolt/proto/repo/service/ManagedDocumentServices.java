@@ -22,6 +22,11 @@ final class ManagedDocumentServices {
     final DocumentHistoryGrpcService historyService;
     final DocumentHistoryMaterializationGrpcService materializationService;
     final ManagedSchemaAccess schemas;
+    private final boolean managedDrain;
+
+    record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority) {
+        Journaled { Objects.requireNonNull(assessments); Objects.requireNonNull(authority); }
+    }
 
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents) {
@@ -36,7 +41,15 @@ final class ManagedDocumentServices {
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
             ManagedSchemaAccess schemas) {
+        this(tx, drives, generation, profile, backing, deliverEvents, access, schemas, null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
+            ManagedSchemaAccess schemas, Journaled journaled) {
         Objects.requireNonNull(backing);
+        managedDrain = journaled != null;
+        if (managedDrain) Objects.requireNonNull(schemas, "Managed journaled publication requires owned schema access");
         this.schemas = schemas;
         var timeouts = new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5));
         var bounded = tx.withTimeouts(timeouts);
@@ -57,11 +70,23 @@ final class ManagedDocumentServices {
             materializationService = access == null ? null : access.materializationLimits().map(limits ->
                     new DocumentHistoryMaterializationGrpcService(history, access.bindings(), limits,
                             responses, access.maxConcurrentCalls())).orElse(null);
-            publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, (original, selected) -> {
+            DocumentPublicationRuntime.Backends backends = (original, selected) -> {
                 requireOriginal(generation, profile, original, selected);
                 return new DocumentPublicationRuntime.Backend(profile.identity(), backing);
-            }, new DocumentRevisionAssembly.Limits(8L * 1024 * 1024, 10_000, 100, 100_000, 1_000_000),
-                    timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100, deliverEvents);
+            };
+            var limits = new DocumentRevisionAssembly.Limits(8L * 1024 * 1024, 10_000, 100, 100_000, 1_000_000);
+            if (journaled == null) publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, backends,
+                    limits, timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100, deliverEvents);
+            else {
+                try {
+                    publication = DocumentPublicationRuntime.managedJournaled(bounded, drives, ledger, reader, budget, backends,
+                            limits, timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100,
+                            deliverEvents, journaled.assessments(), journaled.authority(), new DocumentPublicationRuntime.ExternalWorkers() {
+                                public void closeAdmission() { schemas.close(); }
+                                public boolean awaitIdle(Duration timeout) throws InterruptedException { return schemas.awaitIdle(timeout); }
+                            });
+                } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException("Cannot observe managed publication runtime", failure); }
+            }
         } catch (RuntimeException | Error failure) {
             // Nothing has been exposed: no calls, batches or provider workers can exist.
             try {
@@ -90,7 +115,7 @@ final class ManagedDocumentServices {
                 if (System.nanoTime() - start >= budget)
                     throw new IllegalStateException("Native publication resources still active; shared resources retained");
             }
-            if (schemas != null && !schemas.awaitIdle(Duration.ofNanos(Math.max(0, budget - (System.nanoTime() - start)))))
+            if (!managedDrain && schemas != null && !schemas.awaitIdle(Duration.ofNanos(Math.max(0, budget - (System.nanoTime() - start)))))
                 throw new IllegalStateException("Schema provider loads still active; shared resources retained");
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
@@ -100,6 +125,6 @@ final class ManagedDocumentServices {
 
     void closeAdmission() {
         publication.close();
-        if (schemas != null) schemas.close();
+        if (!managedDrain && schemas != null) schemas.close();
     }
 }
