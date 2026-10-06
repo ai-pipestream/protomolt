@@ -423,7 +423,13 @@ SQL integration tests also combine CORE and PARSED from two distinct historical
 sources into one member without registry access. Both source Uses survive outer
 handle closure, and revoking the second source prevents further replay. These tests
 cover retained schema routing, not actual provider reads or publication authority.
-Observed-runtime CREATE and atomic reference publication remain gated.
+The internal unclaimed owner now prepares its physical plan from the same borrowed
+source references and can retain evidence through observed-runtime CREATE. The CREATE
+transaction uses current policy, source READ and destination authorization, exact
+historical physical binding, and the same transaction-local locks for slot provenance.
+The ordinary runtime, claimed sessions and public transport remain unchanged. Atomic
+reference publication and historical-specific failure/reconciliation qualification
+remain gated.
 
 Opaque restore needs explicit source classification and current-policy mode selection
 before raw assembly. A failed typed load or assessment must never trigger raw mode.
@@ -449,3 +455,9 @@ READ checks belong at delivery and commit; deterministic evidence replay remains
 of provider and SQL calls. Keep source Uses through observed-runtime CREATE and atomic
 reference publication. The public route remains disabled while those integrations
 and their tests are unfinished.
+
+The historical owner returns only the CREATE identity and keeps its sources through
+final authorization. A post-commit access revocation can withhold that result; this is
+an uncertain outcome, not proof of rollback. Retain the proposed assessment ID and
+reconcile before retrying. The physical plan's references are borrowed and expire with
+the historical owner. No independent evidence or source lifetime is transferred.

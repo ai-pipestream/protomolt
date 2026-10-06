@@ -75,6 +75,8 @@ final class DocumentAssessmentEvidence implements AutoCloseable {
                     size = part.getUpload().getSizeBytes(); sha = part.getUpload().getSha256();
                 } else if (part.hasReuse()) {
                     size = part.getReuse().getObject().getSizeBytes(); sha = part.getReuse().getObject().getSha256();
+                } else if (part.hasHistoricalReuse()) {
+                    size = part.getHistoricalReuse().getObject().getSizeBytes(); sha = part.getHistoricalReuse().getObject().getSha256();
                 } else throw new IllegalArgumentException("Assessment root requires a present candidate part");
                 var encoded = root.encoded();
                 bindings.add(new Root(member.getMemberId(), root.ordinal(), root.locatorSha256(), sha, size,

@@ -34,8 +34,12 @@ sources, including second-source access revocation and release of both pins. The
 ordinary registry resolver is unavailable in that fixture. This closes the host
 routing test gap, not the provider-read or publication gates.
 
-Next, carry the whole-command assessment through observed-runtime CREATE and atomic
-reference publication, with authoritative current-policy and destination fences.
+The internal unclaimed historical path now retains observed evidence through CREATE,
+using current-policy/destination authorization and shared historical physical/slot
+locks in its transaction. A production-JAR host qualifies the successful path with
+real versioned provider reads. Historical-specific failed/ambiguous CREATE cases and
+atomic reference publication remain next; do not infer complete recovery from this
+successful path.
 Preserve each member's container and occurrence definitions,
 source-to-target ordinals, shared byte accounting and source pins. A prior historical
 verdict cannot substitute for a new assessment. Claims, sessions and public

@@ -84,6 +84,11 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         }
     }
 
+    void requireCaller(ai.protomolt.proto.repo.spi.RepositoryCaller caller) {
+        requireOpen();
+        for (var source : sources.values()) source.history().requireCaller(caller);
+    }
+
     void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
         requireOpen();
         if (!command.intent().getMembersList().contains(member)) throw new IllegalArgumentException("Historical assessment member differs");

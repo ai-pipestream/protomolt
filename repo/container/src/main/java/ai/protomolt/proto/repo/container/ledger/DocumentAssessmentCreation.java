@@ -30,6 +30,24 @@ final class DocumentAssessmentCreation {
     Created create(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentSelectedAttemptLedger.Selected> selections,
             DocumentAssessmentEvidence evidence, UUID assessment, Instant retainUntil, PayloadBudget scratch, Runnable control) {
+        prepared.plan().command().requireExecutionSupported();
+        return createInternal(caller, owner, prepared, selections, evidence, assessment, retainUntil, scratch, control, null);
+    }
+
+    Created createHistorical(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentSelectedAttemptLedger.Selected> selections,
+            DocumentAssessmentEvidence evidence, UUID assessment, Instant retainUntil, PayloadBudget scratch, Runnable control,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> historical) {
+        historical = DocumentHistoricalReferenceAdmission.requireComplete(prepared.plan().command(), historical, control);
+        if (historical.isEmpty() || !prepared.plan().historical().equals(historical) || owner.executionClaim().isPresent())
+            throw new IllegalArgumentException("Historical CREATE requires the owner's exact unclaimed source preparations");
+        return createInternal(caller, owner, prepared, selections, evidence, assessment, retainUntil, scratch, control, historical);
+    }
+
+    private Created createInternal(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentSelectedAttemptLedger.Selected> selections,
+            DocumentAssessmentEvidence evidence, UUID assessment, Instant retainUntil, PayloadBudget scratch, Runnable control,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> historical) {
         Objects.requireNonNull(assessment); Objects.requireNonNull(retainUntil); Objects.requireNonNull(scratch);
         if (retainUntil.getNano() % 1000 != 0) throw new IllegalArgumentException("Assessment deadline requires exact microsecond precision");
         evidence.requireOwner(owner, control);
@@ -39,7 +57,8 @@ final class DocumentAssessmentCreation {
             throw new IllegalArgumentException("Assessment and physical plan differ from the same canonical command");
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         var selected = Map.copyOf(selections);
-        var authorization = DocumentAdmissionAuthorization.prepare(plan);
+        var authorization = historical == null ? DocumentAdmissionAuthorization.prepare(plan)
+                : DocumentAdmissionAuthorization.prepare(plan, historical);
         if (owner.executionClaim().isPresent()) {
             // Do not hold a SQL connection across private journal loading/decoding.
             Runnable authorize = () -> tx.inTransaction(em -> {
@@ -63,7 +82,8 @@ final class DocumentAssessmentCreation {
             }
         }
         var reuse = DocumentReuseAdmission.prepare(plan);
-        var slotPlan = DocumentAssessmentSlots.prepare(command, control);
+        var slotPlan = historical == null ? DocumentAssessmentSlots.prepare(command, control)
+                : DocumentAssessmentSlots.prepare(command, historical, control);
         var placements = plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
                 .sorted(Comparator.comparing(p -> p.drive().id())).toList();
         var policy = evidence.policy(control);
@@ -93,8 +113,14 @@ final class DocumentAssessmentCreation {
                         throw new IllegalArgumentException("Assessment backend profile changed");
                 }
                 insertOwner(em, owner, command, assessment, retainUntil, manifestBytes, manifestSha, count, artifacts.size(), roots.size());
-                var physical = DocumentCommitParts.bindAssessment(em, owner, plan, selected, reuse, control);
-                var slots = DocumentAssessmentSlots.bind(em, slotPlan, physical, control);
+                final java.util.List<DocumentAssessmentSlots.Slot> slots;
+                if (historical == null) {
+                    var physical = DocumentCommitParts.bindAssessment(em, owner, plan, selected, reuse, control);
+                    slots = DocumentAssessmentSlots.bind(em, slotPlan, physical, control);
+                } else {
+                    var physical = DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, control);
+                    slots = DocumentAssessmentSlots.bind(em, slotPlan, physical.physical(), physical.locks(), control);
+                }
                 em.unwrap(org.hibernate.Session.class).doWork(connection -> {
                     try (var statement = connection.prepareStatement("""
                             INSERT INTO document_assessment_slots(assessment_id,member_id,revision_ordinal,selection_revision,

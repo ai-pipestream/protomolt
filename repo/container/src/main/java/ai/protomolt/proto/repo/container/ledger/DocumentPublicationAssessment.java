@@ -152,6 +152,51 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 finally { inspecting = false; }
             }
         }
+        /** Internal plan borrows this owner's exact source preparations until close. */
+        synchronized DocumentOperationUploadAdmission.Prepared preparePhysical(
+                Map<java.util.UUID, DocumentUploadPlan.Placement> placements, Map<String, java.util.UUID> attempts,
+                java.time.Duration lease, Map<String, java.util.UUID> tokens,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            requireOpen();
+            if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
+            inspecting = true;
+            try {
+                sources.authorize(control);
+                return DocumentOperationUploadAdmission.prepareHistorical(assessment.command(), placements, attempts, lease, tokens,
+                        sources.references(assessment.command(), control::check), control::check);
+            } finally {
+                try { sources.authorize(control); }
+                finally { inspecting = false; }
+            }
+        }
+
+        /** Retains observed evidence only; does not decide, publish, or enable a runtime session. */
+        synchronized DocumentAssessmentCreation.Created create(
+                ai.protomolt.proto.repo.spi.RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+                DocumentOperationUploadAdmission.Prepared prepared, Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                DocumentAssessmentRuntimeObserver.Observation observation, RepositorySchemaArtifacts storage,
+                DocumentAssessmentCreation creation, java.util.UUID id, Instant retainUntil,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+            requireOpen();
+            if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
+            inspecting = true;
+            try {
+                sources.requireCaller(caller); sources.authorize(control);
+                var references = sources.references(assessment.command(), control::check);
+                if (!prepared.plan().historical().equals(references))
+                    throw new IllegalArgumentException("Historical physical plan belongs to another assessment owner");
+                DocumentAdmissionAuthorization.requireCaller(caller, owner, assessment.command().intent().getAccountId());
+                return assessment.withRetentionEvidence(owner, observation, control::check, evidence -> {
+                    storage.stage(owner, assessment.command(), List.copyOf(evidence.artifacts(control::check).values()), control::check);
+                    return creation.createHistorical(caller, owner, prepared, selections, evidence, id, retainUntil,
+                            assessment.budget, control::check, references);
+                });
+            } finally {
+                try { sources.authorize(control); }
+                finally { inspecting = false; }
+            }
+        }
+
         private void requireOpen() { if (assessment == null) throw new IllegalStateException("Historical assessment is closed"); }
         @Override public synchronized void close() {
             if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
