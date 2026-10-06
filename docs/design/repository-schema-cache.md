@@ -139,3 +139,18 @@ the existing registry store contract fixtures where applicable.
 Record RustFS throughput and latency separately from these correctness checks.
 Report warm and cold caches, hit/miss counts, registry calls, retained bytes and
 concurrency; do not infer horizontal scaling from a warm single-process cache.
+
+## Resolver statistics
+
+`RegistrySchemaResolver.stats()` reports attempt-local reuse, shared-cache hits,
+shared-cache misses, actual descriptor-store calls, joins of retained loads,
+retained/active loads, and cache-owned serialized bytes. Store calls include absence
+and failures; these outcomes are never cached as negative results. Cache misses
+can join one shared read, so they need not equal registry calls. Active loads
+include scheduled workers; retained loads also include completed loads with waiters.
+
+Counters follow authorized selection, not admission verdicts. The snapshot is
+observational across concurrent components, not atomic and not a drain or access
+grant. Bytes exclude provider allocation, linked descriptors and other JVM heap.
+Real Git fixtures distinguish cold/warm lookup and missing/outage/recovery; a held
+real Git read establishes shared-load counters and resource drain after cancellation.

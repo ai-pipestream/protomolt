@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.time.Duration;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Host-scoped registry adapter. The borrowed store and owned cache belong to one
@@ -44,6 +45,24 @@ public final class RegistrySchemaResolver implements AutoCloseable {
     private final Semaphore attempts;
     private final int maxArtifactsPerAttempt;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final LongAdder attemptHits = new LongAdder();
+    private final LongAdder cacheHits = new LongAdder();
+    private final LongAdder cacheMisses = new LongAdder();
+
+    /**
+     * Observational counters, not a transactional snapshot or permission to release resources.
+     * Hits count authorized lookups; misses include joined loads. Registry reads count calls
+     * even when they fail. Retained loads include completed loads still held by waiters;
+     * active loads include scheduled workers. Bytes count cache ownership, not total heap.
+     */
+    public record Stats(long attemptHits, long cacheHits, long cacheMisses, long registryReads,
+            long joinedLoads, int retainedLoads, int activeLoads, long cachedBytes) {}
+
+    public Stats stats() {
+        var loadStats = loads.stats();
+        return new Stats(attemptHits.sum(), cacheHits.sum(), cacheMisses.sum(), loadStats.registryReads(),
+                loadStats.joinedLoads(), loadStats.retainedLoads(), loadStats.activeReads(), cache.ownedBytes());
+    }
 
     public RegistrySchemaResolver(SchemaRegistryStore store, DocumentSchemaArtifactCache.Limits cacheLimits,
             int maxConcurrentAttempts, int maxArtifactsPerAttempt) {
@@ -110,13 +129,16 @@ public final class RegistrySchemaResolver implements AutoCloseable {
                 if (retained.size() >= maxArtifactsPerAttempt)
                     throw new IllegalStateException("Resolution artifact count exhausted");
                 lease = cache.acquire(digest, control).orElse(null);
-                if (lease == null) lease = loads.acquire(digest, control);
+                if (lease == null) {
+                    cacheMisses.increment();
+                    lease = loads.acquire(digest, control);
+                } else cacheHits.increment();
                 boolean transferred = false;
                 try {
                     control.run(); requireOpen();
                     retained.put(digest, lease); transferred = true;
                 } finally { if (!transferred) lease.close(); }
-            }
+            } else attemptHits.increment();
             control.run(); requireOpen();
             // Admission still validates metadata, source digest, descriptor closure and candidate.
             return new DocumentSchemaAdmission.Definition(metadata, lease.bytes(), selected.source());

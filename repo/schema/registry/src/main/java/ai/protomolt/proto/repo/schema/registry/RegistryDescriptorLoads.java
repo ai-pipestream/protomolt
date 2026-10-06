@@ -24,6 +24,15 @@ final class RegistryDescriptorLoads implements AutoCloseable {
     private final ExecutorService workers = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("repository-schema-load-", 0).factory());
     private boolean closed;
+    private long registryReads;
+    private long joinedLoads;
+
+    record Stats(long registryReads, long joinedLoads, int retainedLoads, int activeReads) {}
+
+    synchronized Stats stats() {
+        return new Stats(registryReads, joinedLoads, flights.size(),
+                (int) flights.values().stream().filter(flight -> !flight.done).count());
+    }
 
     RegistryDescriptorLoads(SchemaRegistryStore store, DocumentSchemaArtifactCache cache, int limit) {
         this.store = store;
@@ -44,7 +53,7 @@ final class RegistryDescriptorLoads implements AutoCloseable {
                 Flight submitted = flight;
                 try { workers.execute(() -> load(digest, submitted)); }
                 catch (RuntimeException | Error failure) { flights.remove(digest); notifyAll(); throw failure; }
-            }
+            } else joinedLoads++;
             flight.callers++;
         }
         try {
@@ -80,6 +89,7 @@ final class RegistryDescriptorLoads implements AutoCloseable {
             // A preceding flight may have completed between the caller's cache miss and join.
             pin = cache.acquire(digest, this::checkOpen).orElse(null);
             if (pin == null) {
+                synchronized (this) { registryReads++; }
                 var bytes = store.descriptorSet(digest).orElseThrow(RegistrySchemaResolver.MissingDescriptor::new);
                 checkOpen();
                 if (bytes.isEmpty() || bytes.size() > 16 * 1024 * 1024)

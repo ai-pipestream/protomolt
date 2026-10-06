@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.schema.registry.RegistryDescriptorLoadsTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-06T08:39:43.846Z" hostname="krick" time="0.817">
+  <properties/>
+  <testcase name="distinctArtifactsLoadConcurrentlyAndRetainIndependentPins()" classname="ai.protomolt.proto.repo.schema.registry.RegistryDescriptorLoadsTest" time="0.377"/>
+  <testcase name="concurrentCallersShareOneRealReadAndInterruptDoesNotCancelAnother()" classname="ai.protomolt.proto.repo.schema.registry.RegistryDescriptorLoadsTest" time="0.035"/>
+  <testcase name="abandonedReadRetainsCapacityUntilProviderCompletesAndCloseWakesWaiters()" classname="ai.protomolt.proto.repo.schema.registry.RegistryDescriptorLoadsTest" time="0.087"/>
+  <testcase name="realMissingArtifactFailureIsSharedButNotCached()" classname="ai.protomolt.proto.repo.schema.registry.RegistryDescriptorLoadsTest" time="0.247"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

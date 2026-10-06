@@ -67,12 +67,17 @@ class RegistryDescriptorLoadsTest {
                     }
                 });
                 assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(loads.stats().registryReads()).isEqualTo(1);
+                assertThat(loads.stats().joinedLoads()).isEqualTo(1);
+                assertThat(loads.stats().activeReads()).isEqualTo(1);
                 first.cancel(true);
                 assertThat(loads.awaitIdle(Duration.ZERO)).isFalse();
                 release.countDown();
                 assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(BYTES);
                 assertThat(calls.get()).isEqualTo(1);
                 assertThat(loads.awaitIdle(Duration.ofSeconds(5))).isTrue();
+                assertThat(loads.stats().retainedLoads()).isZero();
+                assertThat(loads.stats().activeReads()).isZero();
                 loads.close(); cache.close();
                 assertThat(cache.ownedBytes()).isZero();
             } finally { release.countDown(); }

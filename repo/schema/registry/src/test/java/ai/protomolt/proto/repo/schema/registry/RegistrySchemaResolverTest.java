@@ -45,9 +45,12 @@ class RegistrySchemaResolverTest {
                 return selected(d);
             }, ACTIVE)) {
                 var first = attempt.select(occurrence(d));
+                assertThat(host.stats().registryReads()).isEqualTo(1);
+                assertThat(host.stats().cacheMisses()).isEqualTo(1);
                 // Exact immutable bytes remain usable without another artifact read.
                 Files.delete(temp.resolve("registry/descriptors/sha256/" + d.metadata().getArtifactSha256() + ".pb"));
                 assertThat(attempt.select(occurrence(d)).descriptors()).isSameAs(first.descriptors());
+                assertThat(host.stats().attemptHits()).isEqualTo(1);
                 assertThatThrownBy(() -> attempt.select(occurrence(d))).isSameAs(denied);
                 host.close();
                 assertThat(host.cachedBytes()).isEqualTo(d.descriptors().size());
@@ -55,6 +58,8 @@ class RegistrySchemaResolverTest {
                 assertThatThrownBy(() -> attempt.select(occurrence(d))).isInstanceOf(IllegalStateException.class);
             }
             assertThat(host.cachedBytes()).isZero();
+            assertThat(host.awaitLoads(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(host.stats().retainedLoads()).isZero();
         }
     }
 
@@ -70,6 +75,14 @@ class RegistrySchemaResolverTest {
                 Files.move(moved, root);
                 store.putDescriptorSet(d.metadata().getArtifactSha256(), d.descriptors());
                 assertThat(attempt.select(occurrence(d)).descriptors()).isEqualTo(d.descriptors());
+                assertThat(host.stats().registryReads()).isEqualTo(3);
+                assertThat(host.stats().cacheMisses()).isEqualTo(3);
+                assertThat(host.stats().cacheHits()).isZero();
+            }
+            try (var warm = host.open(o -> selected(d), ACTIVE)) {
+                assertThat(warm.select(occurrence(d)).descriptors()).isEqualTo(d.descriptors());
+                assertThat(host.stats().cacheHits()).isEqualTo(1);
+                assertThat(host.stats().registryReads()).isEqualTo(3);
             }
         }
     }
