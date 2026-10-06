@@ -54,6 +54,7 @@ final class RepositoryManagedRecovery {
                         !=RepositoryRecoveryAttempts.TerminalDisposal.NOT_TERMINAL) return null;
                 var snapshot=inputs(command,bodies,modes,control);
                 try {
+                    attempt.reconcileUnactivated(authority(key),caller,modes,control);
                     advance(attempt,key,caller,modes,control);
                     return snapshot;
                 } catch (RuntimeException | Error failure) { snapshot.close(); throw failure; }

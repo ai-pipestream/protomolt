@@ -32,6 +32,105 @@ class RepositoryRecoveryAttemptsIT {
         return new Source(input.command(),new RepositoryCoordinatorRecoveryDiscovery(c.tx(),TIMEOUTS).inspect(CALLER,input.key(),input.command().sha256(),NONE));
     }
 
+    @ParameterizedTest @ValueSource(ints={0,1,2})
+    void retainedRetryReconcilesOnlyItsExpiredUnactivatedSuccessor(int phases) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var source=source(c); var budget=new PayloadBudget(128_000_000);
+            try (var resources=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,Duration.ofSeconds(2),budget);
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),budget,resources.sessions(),Duration.ofSeconds(2),TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,source.command(),source.observation())) {
+                    if (phases==0) {
+                        // Real commit while the local handle still has no acknowledgment.
+                        RepositoryCoordinatorExpiration.reserve(c.tx(),CALLER,
+                                (RepositoryCoordinatorReservation.ExpiredUnquiesced)attempt.proposal(),NONE);
+                    } else for (int i=0;i<phases;i++) attempt.advance(CALLER,CALLER,MODES,NONE);
+                    assertThat(attempt.reconcileUnactivated(CALLER,CALLER,MODES,NONE)).isFalse();
+                }
+                expire(c,source.command());
+                try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
+                    var previous=retry.proposal();
+                    var claimBefore=claimAndOwner(c,source.command());
+                    assertThatThrownBy(() -> retry.reconcileUnactivated(CALLER,CALLER,
+                            Map.of("member-0",DocumentPublicationCandidate.Mode.OPAQUE),NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    assertThat(claimAndOwner(c,source.command())).containsExactly(claimBefore);
+                    assertThat(retry.reconcileUnactivated(CALLER,CALLER,MODES,NONE)).isTrue();
+                    assertThat(retry.proposal().predecessor().epoch()).isEqualTo(previous.predecessor().epoch()+1);
+                    assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
+                    assertThat(retry.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.INSTALLED);
+                    assertThat(retry.advance(CALLER,CALLER,MODES,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.ACTIVATED);
+                    assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                    assertThat(budget.reservedBytes()).isZero();
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void freshManagedOwnerRecoversExpiredUnactivatedSuccessor(boolean installed) throws Exception {
+        try (var c=context(POSTGRES)) {
+            var input=input(c);
+            var intent=input.command().intent().toBuilder();
+            var bodies=new HashMap<DocumentUploadPayloads.Key,ai.protomolt.proto.repo.codec.PartObject>();
+            for (int m=0;m<intent.getMembersCount();m++) {
+                var member=intent.getMembersBuilder(m);
+                for (int ordinal=0;ordinal<member.getPartsCount();ordinal++) {
+                    var part=member.getPartsBuilder(ordinal);
+                    if (!part.hasUpload()) continue;
+                    byte[] bytes=new byte[Math.toIntExact(part.getUpload().getSizeBytes())];
+                    var sha=ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(bytes);
+                    part.getUploadBuilder().setSha256(sha);
+                    bodies.put(new DocumentUploadPayloads.Key(member.getMemberId(),ordinal),
+                            new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(),part.getSlot().getSubKey(),bytes,sha));
+                }
+            }
+            var command=new DocumentPublicationCommand(intent.build());
+            var source=source(c,new DocumentPublicationPreparationRecord(input.key(),command,
+                    DocumentPublicationSeeds.mint(input.key(),command),input.placements(),LEASE,0));
+            var firstBudget=new PayloadBudget(128_000_000);
+            var secondBudget=new PayloadBudget(128_000_000);
+            try (var first=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,Duration.ofSeconds(1),firstBudget);
+                 var second=DocumentJournaledSessionsIT.resources(c.tx(),2,1_000_000,LEASE,secondBudget);
+                 var attempts=new RepositoryRecoveryAttempts(c.tx(),firstBudget,first.sessions(),Duration.ofSeconds(1),TIMEOUTS,1)) {
+                try (var attempt=attempts.begin(CALLER,command,source.observation())) {
+                    attempt.advance(CALLER,CALLER,MODES,NONE);
+                    if (installed) attempt.advance(CALLER,CALLER,MODES,NONE);
+                }
+                var recovery=new RepositoryManagedRecovery(c.tx(),secondBudget,second.sessions(),LEASE,TIMEOUTS,2,
+                        (account,principal,operation) -> CALLER);
+                try (var call=recovery.calls.enter(CALLER,command)) {
+                    assertThatThrownBy(() -> recovery.prepare(CALLER,command,bodies,MODES,NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    expire(c,command);
+                    var beforeMismatch=claimAndOwner(c,command);
+                    assertThatThrownBy(() -> recovery.prepare(CALLER,command,bodies,
+                            Map.of("member-0",DocumentPublicationCandidate.Mode.OPAQUE),NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+                    assertThat(claimAndOwner(c,command)).containsExactly(beforeMismatch);
+                    try (var payloads=recovery.prepare(CALLER,command,bodies,MODES,NONE)) {
+                        assertThat(payloads).isNotNull();
+                        assertThat(payloads.bodies()).hasSize(bodies.size());
+                        assertThat(count(c,"repository_coordinator_supersessions")).isEqualTo(1);
+                        assertThat(count(c,"repository_successor_installs")).isEqualTo(installed ? 2 : 1);
+                        assertThat(count(c,"repository_successor_executions")).isEqualTo(1);
+                        assertThat(second.sessions().retainedSessions()).isEqualTo(1);
+                    }
+                }
+                attempts.close();
+                assertThat(attempts.detachClosed(Duration.ZERO,key -> CALLER,NONE)).isTrue();
+                assertThat(recovery.detach(Duration.ZERO,NONE)).isTrue();
+                assertThat(firstBudget.reservedBytes()).isZero();
+                assertThat(secondBudget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @Test void recoveryPayloadCapacityFailurePrecedesDurableSuccession() throws Exception {
         try (var c=context(POSTGRES)) {
             var source=source(c);
@@ -328,7 +427,14 @@ class RepositoryRecoveryAttemptsIT {
                     return;
                 }
                 try (var retry=attempts.resume(CALLER,source.command()).orElseThrow()) {
-                    assertThat(retry.supersedeExpired(CALLER,CALLER,NONE)).isEqualTo(RepositoryRecoveryAttempts.Phase.RESERVED);
+                    var beforeRetry=claimAndOwner(c,source.command());
+                    assertThatThrownBy(() -> retry.reconcileUnactivated(CALLER,CALLER,
+                            Map.of("member-0",DocumentPublicationCandidate.Mode.OPAQUE),NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code())
+                                    .isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                    assertThat(claimAndOwner(c,source.command())).containsExactly(beforeRetry);
+                    assertThat(retry.proposal()).isSameAs(original);
+                    assertThat(retry.reconcileUnactivated(CALLER,CALLER,MODES,NONE)).isTrue();
                     assertThat(retry.proposal().successorToken()).isEqualTo(committed);
                     assertThat(retry.proposal().successorIncarnation()).isNotEqualTo(original.successorIncarnation());
                     assertThat(retry.proposal().predecessor().epoch()).isEqualTo(original.predecessor().epoch()+1);
@@ -371,6 +477,7 @@ class RepositoryRecoveryAttemptsIT {
                             .inspect(CALLER,original.predecessor().key(),source.command().sha256(),NONE).status())
                             .isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
                     long held=attemptBudget.reservedBytes();
+                    assertThat(attempt.reconcileUnactivated(CALLER,CALLER,MODES,NONE)).isFalse();
                     assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,CALLER,NONE)).hasMessageContaining("not expired and unactivated");
                     assertThat(count(c,"repository_coordinator_supersessions")).isZero();
                     assertThat(attempt.proposal()).isSameAs(original);
@@ -423,6 +530,8 @@ class RepositoryRecoveryAttemptsIT {
                     RepositoryCoordinatorSupersession.reserve(c.tx(),CALLER,winner,NONE);
                     expire(c,source.command());
                     long held=budget.reservedBytes();
+                    assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER,CALLER,MODES,NONE))
+                            .hasMessageContaining(pending ? "differs from original binding" : "differs from retained attempt");
                     assertThatThrownBy(() -> attempt.supersedeExpired(CALLER,CALLER,NONE))
                             .hasMessageContaining(pending ? "differs from original binding" : "differs from retained attempt");
                     if (pending) assertThatThrownBy(() -> attempt.advance(CALLER,CALLER,MODES,NONE)).hasMessageContaining("Pending supersession");

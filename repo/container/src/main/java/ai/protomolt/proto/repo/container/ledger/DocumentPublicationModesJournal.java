@@ -87,6 +87,41 @@ final class DocumentPublicationModesJournal {
 
     private record Captured(Object[] preparation, Object[] modes) {}
 
+    /** Compare immutable predecessor choices before V98; its SQL still arbitrates the current claim. */
+    void requireSupersessionModes(RepositoryCaller authority, RepositoryCaller caller,
+            DocumentPublicationCommand command, RepositoryCoordinatorReservation.SupersededUnactivated proposal,
+            Map<String,DocumentPublicationCandidate.Mode> requested, RepositoryReadControl control) {
+        RepositoryCoordinatorReservation.require(authority,proposal,control);
+        var key=proposal.predecessor().key();
+        DocumentAdmissionAuthorization.requireCaller(caller,key,key.account());
+        if (!command.operationId().equals(key.operationId()) || !command.sha256().equals(proposal.predecessor().commandSha256()))
+            throw new IllegalArgumentException("Supersession modes require the exact command");
+        String encoded=encode(command,requested);
+        tx.inTransaction(em -> {
+            control.check();
+            DocumentAdmissionAuthorization.authorizeRejection(em,caller,command);
+            var rows=em.createNativeQuery("""
+                    SELECT p.owner_nonce=m.owner_nonce AND p.owner_nonce=:nonce
+                        AND encode(p.command_sha256,'hex')=:command
+                        AND encode(p.preparation_sha256,'hex')=:preparation,
+                      m.modes=CAST(:modes AS jsonb)
+                    FROM repository_publication_preparations p JOIN repository_publication_modes m
+                      USING(account_id,principal,operation_id,predecessor_generation)
+                    WHERE p.account_id=:account AND p.principal=:principal AND p.operation_id=:operation
+                      AND p.predecessor_generation=:generation
+                    """).setParameter("nonce",proposal.owner().nonce()).setParameter("command",command.sha256())
+                    .setParameter("preparation",proposal.preparationSha256()).setParameter("modes",encoded)
+                    .setParameter("account",key.account()).setParameter("principal",key.principal())
+                    .setParameter("operation",key.operationId()).setParameter("generation",proposal.owner().generation()-1)
+                    .getResultList();
+            if (rows.size()!=1 || !Boolean.TRUE.equals(((Object[])rows.getFirst())[0]))
+                throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Supersession mode binding is invalid");
+            if (!Boolean.TRUE.equals(((Object[])rows.getFirst())[1]))
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,"Recovery modes differ from fixed modes");
+            control.check(); return null;
+        });
+    }
+
     private Optional<Map<String, DocumentPublicationCandidate.Mode>> loadRetained(RepositoryCaller caller,
             RepositoryExecutionClaimLedger.Claim claim, long predecessor, RepositoryReadControl control,
             DocumentPublicationRegistration.JournalAccess access) {

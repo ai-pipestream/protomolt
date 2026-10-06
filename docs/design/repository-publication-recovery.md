@@ -1968,3 +1968,62 @@ A concurrent insert is still arbitrated by atomic admission; absence observation
 never authorizes an unfenced mutation. Ownerless partial state does not take this
 shortcut. PostgreSQL routing tests and the real managed-service fixture verify
 fresh publication and terminal replay with an unusable recovery authority callback.
+
+#### Retained unactivated retry follow-up
+
+New-host managed dispatcher tests cover both reserved and installed unactivated
+successors: live state is rejected, natural expiry permits one exact supersession,
+and activation occurs once. These PostgreSQL cases use synthetic payloads only
+for metadata routing and do not establish provider publication for this branch.
+
+Local retained attempts now reconcile at most one unactivated supersession before
+advancing. Payload preflight precedes succession. An existing pending V98 proposal
+is confirmed before fresh discovery; otherwise an expired unactivated observation
+must match the exact proposed successor identity. Local PROPOSED state is not proof
+that V97 did not commit: a lost acknowledgment may leave durable state ahead of the
+local phase. If discovery still identifies the original predecessor, the proposal
+has not displaced it and ordinary guarded advancement handles the request.
+
+Before V98, compare the retry's modes against the immutable predecessor journal,
+bound by account/principal/operation, owner generation/nonce, command hash and
+preparation hash. This comparison returns no journal contents, authorizes the
+current caller read set, and leaves the atomic V98 identity checks intact. Invalid
+modes cannot confirm a pending proposal or advance a fresh-host supersession.
+Targeted tests cover mismatch followed by corrected retry and pending lost replies.
+The final aggregate run passed 60 focused PostgreSQL tests and the packaged
+provider regression, with no failures or skips. See the
+[retained evidence](../evidence/repository/2026-10-06-unactivated-reconciliation/README.md).
+
+An arbitrary activation failure never authorizes supersession. A committed V94
+with a lost reply is bound-owner reconciliation, not unactivated V98 recovery;
+automating that distinct retained-owner path remains open.
+
+#### Next: retained activated-owner retry
+
+This path is designed but not implemented. While an uncertain V94 activation's
+claim and owner remain live, retry the same activation and session attachment;
+there is no reason to mint another proposal. Once that bound owner expires,
+attachment cannot proceed under the expired lease.
+
+Before a new V97 proposal, require exact-key EXPIRED_BOUND discovery matching the
+retained successor epoch, token, incarnation and command hash, plus the planned
+owner generation and nonce. Confirm the exact activation binding against the
+retained fingerprint and compare the immutable publication modes. A foreign
+winner is a conflict. A rolled-back activation belongs to the unactivated V98
+path instead.
+
+Retain the fresh target and V97 proposal before SQL. A lost acknowledgment retries
+that same proposal. Only confirmed reservation permits replacing Loaded/plan
+buffers and moving back to RESERVED. Keep the old submitted fingerprint until
+permanent claim fencing or replacement activation provides exact disposal proof.
+The existing V93 installation and session retirement checks precede attachment of
+the next V94 owner. Reservation does not establish remote-worker quiescence;
+provider tombstones, abandoned worker owners and schema/read pins retain their
+independent lifetime obligations.
+
+Acceptance must include live activation readback, natural expiry followed by
+V97/V93/V94, lost V97 acknowledgment, and wrong caller, changed modes or foreign
+winner with no mutation. Verify old worker ownership and provider tombstones
+through the transition. The same-key call guard must cover the full managed retry
+and publication; it is local exclusion, not distributed authority. Sol reviewed
+this next-step design against the existing session implementation.

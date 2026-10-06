@@ -148,7 +148,11 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                 case PROPOSED -> {
                     switch (entry.proposal) {
                         case RepositoryCoordinatorReservation.ExpiredUnquiesced p -> RepositoryCoordinatorExpiration.reserve(tx,authority,p,control);
-                        case RepositoryCoordinatorReservation.SupersededUnactivated p -> RepositoryCoordinatorSupersession.reserve(tx,authority,p,control);
+                        case RepositoryCoordinatorReservation.SupersededUnactivated p -> {
+                            new DocumentPublicationModesJournal(tx,budget)
+                                    .requireSupersessionModes(authority,caller,entry.command,p,requestedModes,control);
+                            RepositoryCoordinatorSupersession.reserve(tx,authority,p,control);
+                        }
                         default -> throw new IllegalStateException("Unsupported recovery reservation kind");
                     }
                     entry.phase=Phase.RESERVED;
@@ -188,6 +192,37 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
         /** One explicit supersession, not an automatic retry loop or a quiescence assertion. */
         synchronized Phase supersedeExpired(RepositoryCaller authority, RepositoryCaller caller,
                 RepositoryReadControl control) {
+            return supersedeExpired(authority,caller,control,null,null);
+        }
+
+        /** One bounded reconciliation of our own unactivated successor before retrying execution phases. */
+        synchronized boolean reconcileUnactivated(RepositoryCaller authority, RepositoryCaller caller,
+                Map<String,DocumentPublicationCandidate.Mode> modes, RepositoryReadControl control) {
+            if (ended) throw new IllegalStateException("Recovery attempt call is closed");
+            Objects.requireNonNull(modes);
+            Objects.requireNonNull(control).check();
+            RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
+            DocumentAdmissionAuthorization.requireCaller(caller,key,key.account()); requireCaller(entry,caller);
+            if (entry.terminalObserved || entry.phase==Phase.ACTIVATED || entry.phase==Phase.RETIRED)
+                throw conflict("Completed local recovery requires its session reconciliation path");
+            if (entry.pending!=null) {
+                supersedeExpired(authority,caller,control,null,modes);
+                return true;
+            }
+            var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
+                    .inspect(authority,key,entry.command.sha256(),control);
+            if (observed.unactivated().isEmpty()) return false;
+            if (entry.phase==Phase.PROPOSED
+                    && entry.proposal.predecessor().equals(observed.unactivated().orElseThrow().predecessor()))
+                return false; // Our proposal has not yet displaced its original predecessor.
+            // Includes PROPOSED after a committed V97 whose acknowledgment was lost.
+            supersedeExpired(authority,caller,control,observed,modes);
+            return true;
+        }
+
+        private Phase supersedeExpired(RepositoryCaller authority, RepositoryCaller caller,
+                RepositoryReadControl control, RepositoryCoordinatorRecoveryDiscovery.Observation observed,
+                Map<String,DocumentPublicationCandidate.Mode> modes) {
             if (ended) throw new IllegalStateException("Recovery attempt call is closed");
             Objects.requireNonNull(control).check();
             RepositoryCoordinatorReservation.require(authority,entry.proposal,control);
@@ -196,7 +231,7 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                 throw conflict("Completed local recovery requires its session reconciliation path");
             if (entry.terminalObserved) throw conflict("Terminal recovery requires outcome reconciliation");
             if (entry.pending==null) {
-                var observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
+                if (observed==null) observed=new RepositoryCoordinatorRecoveryDiscovery(tx,timeouts)
                         .inspect(authority,key,entry.command.sha256(),control);
                 var source=observed.unactivated().orElseThrow(() -> new RepositoryException(
                         RepositoryException.Code.FAILED_PRECONDITION,"Recovery successor is not expired and unactivated"));
@@ -206,7 +241,12 @@ final class RepositoryRecoveryAttempts implements AutoCloseable {
                 var target=sessions.successorTarget(key,entry.command.sha256(),expected.incarnation());
                 var proposal=new RepositoryCoordinatorReservation.SupersededUnactivated(expected,UUID.randomUUID(),
                         target.incarnation(),lease,source.owner(),source.preparationSha256(),source.installation());
+                if (modes!=null) new DocumentPublicationModesJournal(tx,budget)
+                        .requireSupersessionModes(authority,caller,entry.command,proposal,modes,control);
                 entry.pending=new Pending(proposal,target);
+            } else if (modes!=null) {
+                new DocumentPublicationModesJournal(tx,budget)
+                        .requireSupersessionModes(authority,caller,entry.command,entry.pending.proposal(),modes,control);
             }
             var pending=entry.pending;
             RepositoryCoordinatorSupersession.reserve(tx,authority,pending.proposal(),control);
