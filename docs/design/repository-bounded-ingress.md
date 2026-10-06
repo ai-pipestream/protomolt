@@ -49,7 +49,8 @@ Acceptance uses real SQL and Redis, with local and authenticated Netty calls:
   checksum/provider failures release only their own reservations.
 
 This is bounded in-flight payload construction and response accounting, not a total
-heap or network-buffer limit. Manifest parsing, metadata-only/list responses and
+heap or network-buffer limit. Follow-up checkpoints below add manifest JSON input
+and read-only transport response bounds. Other metadata construction and
 caller-retained results remain explicit follow-up work. No schema, wire tags,
 provider identity or JCR semantics change in this slice.
 
@@ -72,7 +73,7 @@ scoped-user authorization or retain transport responses past its return.
 ### Managed read-response checkpoint
 
 The bounded `RepoServices` profile now shares its payload budget with read
-construction and a fixed GetEntry response reservation at RPC headers. The transport
+construction and a fixed response reservation for all seven read-only RPCs at headers. The transport
 lease ends only at the serialized terminal listener callback, after synchronous
 provider work returns even when the client cancels. Oversized protobuf responses
 are refused before transmission. Close stops all gates; drain waits for RPC, write
@@ -82,9 +83,32 @@ and read-construction lifetimes before provider release.
 constructor defaults it to the request cap. The launcher exposes
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES` with the same default. Public options
 require a budget covering both seven request allowances and two request plus four
-response allowances. Metadata/list response limits, local caller retention and
+response allowances plus the manifest allowance described below. Metadata/list
+construction, local caller retention and
 network-buffer accounting remain outside this guarantee. Process-level transport
 authentication is unchanged; no scoped-user claim is added.
+
+### Manifest JSON input checkpoint
+
+`maxManifestBytes` bounds aggregate UTF-8 JSON input per manifest-bearing read; old
+option constructors and the launcher default it to the request cap. The optional
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_MANIFEST_BYTES` overrides it. Reserve that allowance
+before SQL and retain it through parsing, provider work and response assembly.
+The shared read gate includes these scopes in shutdown/drain.
+
+`ArchiveLedger.findManifest` reads size and JSON in one statement; oversized JSON
+is replaced by NULL in SQL and reported as RESOURCE_EXHAUSTED, not an absent row.
+`listManifests` applies that gate to the aggregate selected page before JDBC receives
+any JSON. Entry listings retain their per-entry exact-version queries and decrement
+one call-wide allowance, so earlier manifests can be parsed before a later one
+causes refusal. Neither path follows a size query with an unbounded entity fetch.
+
+GetEntry, GetEntryManifest, ListVersions and manifest-bearing ListEntries use these
+projections in bounded composition. Mutation paths retain their existing APIs.
+This limits JSON transferred to JDBC; PostgreSQL still materializes its selected
+JSON text. It does not measure decoded parser heap or bound unrelated entry/archive
+metadata loaded through other queries. See the
+[qualification](../evidence/repository/2026-10-06-manifest-json-bound/README.md).
 
 Status: library admission, explicit public Java embedding options and a dedicated
 authenticated archive-only Netty mount and standalone environment entry point are

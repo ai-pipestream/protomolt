@@ -39,6 +39,7 @@ The standalone limits default to a 1 MiB object, 2 MiB request and read response
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES`,
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES`,
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES`,
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_MANIFEST_BYTES`,
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS`,
 `DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES`, and
 `DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS`. Invalid configured values
@@ -47,6 +48,9 @@ its TTL must explicitly be zero.
 When omitted, the response limit follows the configured request limit. It includes
 the complete GetEntry metadata, manifest, selected bytes and protobuf framing;
 select fewer renditions when a whole entry exceeds that limit.
+The manifest limit also defaults to the request limit. It bounds the aggregate
+UTF-8 JSON loaded for one read, including a whole version-list page or the manifests
+included in an entry list. Reduce the page size when that total exceeds the limit.
 
 SIGTERM closes admission and waits for accepted work. A drain timeout keeps the
 shutdown hook alive and retries; other shutdown errors are reported as failures.
@@ -142,13 +146,19 @@ provider work is still running.
 Retrying after a cancelled successful publication reuses the committed version.
 
 The budget must cover both seven times the request limit (one maximum write) and
-two times the request limit plus four times the response limit (one maximum read).
+two times the request limit plus four times the response limit plus the manifest
+limit (one maximum read).
 Concurrent work can still receive RESOURCE_EXHAUSTED when slots or bytes are exhausted.
 These are payload/copy and serialized-response allowances; they do not measure
 decoded object heap, network buffers or protobufs retained by local callers after
-return. GetEntry also checks its aggregate response before provider reads. Metadata,
-manifest and list replies are checked after construction; their SQL loading, parsing
-and local return values still need separate construction limits. CreateArchive,
+return. GetEntry also checks its aggregate response before provider reads. Manifest
+JSON is size-gated within the SQL statement before delivery to JDBC, with one shared
+reservation retained through parsing and assembly. Version pages are checked as a
+whole before any JSON is returned; entry lists spend one aggregate allowance across
+their selected current versions. The limit bounds serialized JSON input, not parser
+heap. Other entry/archive metadata SQL loading and parsing remain outside this bound.
+Metadata and list protobuf replies are still checked after construction; their local
+return values have no separate response-size cap. CreateArchive,
 PutEntry and ClassifyEntry acknowledgments are outside this response cap: applying
 only a send-time refusal to a mutation could hide an already committed result.
 Bounded reads refuse legacy

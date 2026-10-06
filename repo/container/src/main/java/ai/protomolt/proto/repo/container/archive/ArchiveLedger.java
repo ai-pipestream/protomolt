@@ -140,6 +140,50 @@ public final class ArchiveLedger {
                         new ArchiveVersionRecord.Key(entryUuid, version))));
     }
 
+    /** Detached bounded projection; size and bytes come from the same SQL snapshot. */
+    public record ManifestJson(long version, String json, long utf8Bytes) {}
+
+    public Optional<ManifestJson> findManifest(UUID entryUuid, long version, int maxBytes) {
+        return boundedManifests(entryUuid, version, 1, 0, maxBytes).stream().findFirst();
+    }
+
+    /** Refuses the entire page before any JSON crosses JDBC when its sum exceeds maxBytes. */
+    public List<ManifestJson> listManifests(UUID entryUuid, int limit, long offset, int maxBytes) {
+        if (limit < 1 || limit > 1000 || offset < 0)
+            throw new IllegalArgumentException("Invalid bounded manifest page");
+        return boundedManifests(entryUuid, null, limit, offset, maxBytes);
+    }
+
+    private List<ManifestJson> boundedManifests(UUID entryUuid, Long version, int limit, long offset, int maxBytes) {
+        if (maxBytes < 0) throw new IllegalArgumentException("Negative manifest byte allowance");
+        return tx.readOnly(em -> {
+            var query = em.createNativeQuery("""
+                    WITH page AS MATERIALIZED (
+                        SELECT version, manifest::text AS body FROM archive_versions
+                        WHERE entry_uuid=:entry
+                    """ + (version == null ? "" : " AND version=:version ") + """
+                        ORDER BY version DESC LIMIT :limit OFFSET :offset
+                    ), sized AS (
+                        SELECT version, body, octet_length(convert_to(body,'UTF8')) AS bytes,
+                               sum(octet_length(convert_to(body,'UTF8'))::bigint) OVER () AS total FROM page
+                    )
+                    SELECT version, bytes, CASE WHEN total <= :maxBytes THEN body END
+                    FROM sized ORDER BY version DESC
+                    """).setParameter("entry", entryUuid).setParameter("limit", limit)
+                    .setParameter("offset", offset).setParameter("maxBytes", maxBytes);
+            if (version != null) query.setParameter("version", version);
+            var result = new java.util.ArrayList<ManifestJson>();
+            for (var raw : query.getResultList()) {
+                var row = (Object[]) raw;
+                if (row[2] == null) throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                        "Stored archive manifests exceed the JSON byte allowance");
+                result.add(new ManifestJson(((Number) row[0]).longValue(), (String) row[2], ((Number) row[1]).longValue()));
+            }
+            return List.copyOf(result);
+        });
+    }
+
     /**
      * Every retained version of one entry, oldest first — the ownership
      * walk deletes and prunes derive from.

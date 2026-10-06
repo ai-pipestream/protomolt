@@ -8,11 +8,18 @@ package ai.protomolt.proto.repo.service;
  * It need not cover maximum-sized calls at the full configured concurrency;
  * excess work fails with RESOURCE_EXHAUSTED rather than waiting for capacity.
  * GetEntry construction and all read-only transport responses share that budget.
- * Metadata/list construction and mutation acknowledgments are not response-bounded.
+ * Manifest-bearing reads also reserve one aggregate SQL JSON allowance. Other
+ * metadata/list construction and mutation acknowledgments are not response-bounded.
  * These allowances do not measure decoded heap or network buffers.
  */
 public record BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int maxRenditions,
-        long payloadBudgetBytes, int maxConcurrentRequests, int maxResponseBytes) {
+        long payloadBudgetBytes, int maxConcurrentRequests, int maxResponseBytes, int maxManifestBytes) {
+    /** Existing callers use the request limit for aggregate manifest JSON per read. */
+    public BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int maxRenditions,
+            long payloadBudgetBytes, int maxConcurrentRequests, int maxResponseBytes) {
+        this(maxObjectBytes, maxRequestBytes, maxRenditions, payloadBudgetBytes, maxConcurrentRequests,
+                maxResponseBytes, maxRequestBytes);
+    }
     /** Existing callers use the request limit as the complete read response limit. */
     public BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int maxRenditions,
             long payloadBudgetBytes, int maxConcurrentRequests) {
@@ -21,12 +28,12 @@ public record BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int
     public BoundedArchiveOptions {
         // Reuse the engine limits without exposing engine types in the public API.
         new ai.protomolt.proto.repo.engine.ArchivePutAdmission.Limits(maxObjectBytes, maxRequestBytes, maxRenditions);
-        new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(maxObjectBytes, maxResponseBytes, maxRenditions);
+        new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(maxObjectBytes, maxResponseBytes, maxRenditions, maxManifestBytes);
         if (maxConcurrentRequests < 1 || maxConcurrentRequests > 1024)
             throw new IllegalArgumentException("Archive concurrency must be between 1 and 1024");
         if (payloadBudgetBytes < 7L * maxRequestBytes)
             throw new IllegalArgumentException("Archive payload budget must cover seven maximum request allowances");
-        if (payloadBudgetBytes < 2L * maxRequestBytes + 4L * maxResponseBytes)
+        if (payloadBudgetBytes < 2L * maxRequestBytes + 4L * maxResponseBytes + maxManifestBytes)
             throw new IllegalArgumentException("Archive payload budget must cover request, read construction and transport response allowances");
     }
 
@@ -34,6 +41,6 @@ public record BoundedArchiveOptions(int maxObjectBytes, int maxRequestBytes, int
         return new BoundedArchiveProfile(new ai.protomolt.proto.repo.engine.ArchivePutAdmission.Limits(
                 maxObjectBytes, maxRequestBytes, maxRenditions),
                 new ai.protomolt.proto.repo.blob.spi.PayloadBudget(payloadBudgetBytes), maxConcurrentRequests,
-                new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(maxObjectBytes, maxResponseBytes, maxRenditions));
+                new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(maxObjectBytes, maxResponseBytes, maxRenditions, maxManifestBytes));
     }
 }

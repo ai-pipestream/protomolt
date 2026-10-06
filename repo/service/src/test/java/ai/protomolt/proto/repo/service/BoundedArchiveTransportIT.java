@@ -38,7 +38,7 @@ class BoundedArchiveTransportIT {
         final AtomicInteger reads = new AtomicInteger();
         final AtomicInteger writes = new AtomicInteger();
         final AtomicInteger closes = new AtomicInteger();
-        final PayloadBudget budget = new PayloadBudget(8192);
+        final PayloadBudget budget = new PayloadBudget(16384);
         final RepoServices host;
         final ManagedChannel channel;
         final String token = UUID.randomUUID().toString();
@@ -51,6 +51,9 @@ class BoundedArchiveTransportIT {
             this(hold, false, 2048);
         }
         Fixture(boolean hold, boolean holdRead, int responseLimit) {
+            this(hold, holdRead, responseLimit, 2048);
+        }
+        Fixture(boolean hold, boolean holdRead, int responseLimit, int manifestLimit) {
             var provider = new RedisBlobStoreProvider();
             var observed = new BlobStoreProvider() {
                 public String id() { return "redis"; }
@@ -82,7 +85,7 @@ class BoundedArchiveTransportIT {
                     "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024)
                     .withManagedStorage(new ManagedStoragePolicy("bounded-transport", "bounded-realm", true));
             var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), budget, 1,
-                    new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(16, responseLimit, 4));
+                    new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(16, responseLimit, 4, manifestLimit));
             host = new RepoServices(config, BridgeEngine.standard(), BlobStores.of(List.of(observed)), profile);
             String account = "remote-" + UUID.randomUUID();
             host.driveRepository().createDrive(CALLER, CreateDriveRequest.newBuilder().setAccountId(account).setName("storage").build());
@@ -139,6 +142,30 @@ class BoundedArchiveTransportIT {
             assertThatThrownBy(() -> f.archive.bridgeEntry(BridgeEntryRequest.getDefaultInstance()))
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
                             e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+            f.awaitBudget(0);
+        }
+    }
+
+    @Test void manifestJsonLimitRefusesLocalAndRemoteReadsBeforeProviderIo() throws Exception {
+        try (var f = new Fixture(false, false, 2048, 1)) {
+            f.archive.putEntry(f.request); f.awaitBudget(0);
+            var manifest = GetEntryManifestRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            var entry = GetEntryRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            assertThatThrownBy(() -> f.archive.getEntryManifest(manifest)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            assertThatThrownBy(() -> f.archive.getEntry(entry)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            assertThatThrownBy(() -> f.host.archiveRepository().getManifest(CALLER, manifest))
+                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(f.reads.get()).isZero();
+            assertThat(f.budget.reservedBytes()).isZero();
+            // A manifest-free list remains usable under the same tiny JSON allowance.
+            var list = ListEntriesRequest.newBuilder().setAccountId(f.request.getAddress().getAccountId())
+                    .setArchive("records").build();
+            assertThat(f.archive.listEntries(list).getEntriesCount()).isEqualTo(1);
             f.awaitBudget(0);
         }
     }

@@ -10,6 +10,23 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class ArchiveGetAdmissionTest {
+    @Test void manifestAllowanceSurvivesCloseAndIsSharedAcrossTheWholeCall() throws Exception {
+        var budget = new PayloadBudget(128);
+        var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(16, 64, 2, 128), budget, 1);
+        var scope = gate.manifests();
+        assertThat(budget.reservedBytes()).isEqualTo(128);
+        scope.consumed(100);
+        assertThat(scope.remainingBytes()).isEqualTo(28);
+        assertThatThrownBy(() -> scope.consumed(29)).isInstanceOf(RepositoryException.class);
+        assertThatThrownBy(gate::manifests).isInstanceOf(RepositoryException.class);
+        gate.close();
+        assertThat(gate.awaitIdle(Duration.ZERO)).isFalse();
+        scope.close(); scope.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThat(gate.awaitIdle(Duration.ZERO)).isTrue();
+        assertThatThrownBy(gate::manifests).isInstanceOf(RepositoryException.class);
+    }
+
     private static RenditionManifestEntry item(long size) {
         return RenditionManifestEntry.newBuilder().setState(RenditionState.RENDITION_STATE_PRESENT)
                 .setRendition(RenditionDescriptor.newBuilder().setName("data")) .setSizeBytes(size).build();

@@ -86,6 +86,77 @@ class RedisArchiveLifecycleIT {
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
+    void manifestJsonUsesAnAggregateSqlBoundLocallyAndOverGrpc(boolean transport) throws Exception {
+        String archive = "manifest-" + UUID.randomUUID();
+        var saved = request("one");
+        saved = saved.toBuilder().setAddress(saved.getAddress().toBuilder().setArchive(archive)).build();
+        PutEntryResponse first;
+        try (var fixture = new Fixture(opened.store())) {
+            fixture.operations.createArchive(CALLER, CreateArchiveRequest.newBuilder().setArchive(Archive.newBuilder()
+                    .setAccountId("account").setName(archive).setDriveName("redis-drive")
+                    .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED)).build());
+            first = fixture.operations.putEntry(CALLER, saved);
+            fixture.operations.putEntry(CALLER, saved.toBuilder().setRenditions(0, saved.getRenditions(0).toBuilder()
+                    .setData(ByteString.copyFromUtf8("two"))).build());
+            fixture.operations.putEntry(CALLER, saved.toBuilder().setAddress(saved.getAddress().toBuilder().setEntryId("second")).build());
+        }
+        var id = UUID.fromString(first.getEntryUuid());
+        int oneManifest = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT max(octet_length(manifest::text)) FROM archive_versions WHERE entry_uuid=:id")
+                .setParameter("id", id).getSingleResult()).intValue());
+        var exact = ledger.findManifest(id, 1, oneManifest).orElseThrow();
+        assertThat(exact.utf8Bytes()).isEqualTo(exact.json().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+        assertThatThrownBy(() -> ledger.findManifest(id, 1, (int) exact.utf8Bytes() - 1))
+                .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class);
+        assertThat(ledger.findManifest(id, 999, 0)).isEmpty();
+        var budget = new PayloadBudget(16384);
+        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, 4096, 4, oneManifest), budget, 1);
+                var fixture = new Fixture(opened.store(), null, opened.store(), gate)) {
+            String name = "manifest-json-" + UUID.randomUUID();
+            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();
+            var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+            try {
+                var stub = ArchiveServiceGrpc.newBlockingStub(channel).withDeadlineAfter(5, TimeUnit.SECONDS);
+                var versions = ListVersionsRequest.newBuilder().setAddress(saved.getAddress()).setLimit(2).build();
+                Throwable refusal = catchThrowable(() -> {
+                    if (transport) stub.listVersions(versions); else fixture.operations.listVersions(CALLER, versions);
+                });
+                assertManifestLimit(refusal, transport);
+                assertThat(budget.reservedBytes()).isZero();
+                var entries = ListEntriesRequest.newBuilder().setAccountId("account").setArchive(archive)
+                        .setIncludeManifests(true).setLimit(2).build();
+                assertManifestLimit(catchThrowable(() -> {
+                    if (transport) stub.listEntries(entries); else fixture.operations.listEntries(CALLER, entries);
+                }), transport);
+                assertThat(budget.reservedBytes()).isZero();
+                var one = versions.toBuilder().setLimit(1).build();
+                var page = transport ? stub.listVersions(one) : fixture.operations.listVersions(CALLER, one);
+                assertThat(page.getVersionsCount()).isEqualTo(1);
+                assertThat(page.getVersions(0).getVersion()).isEqualTo(2);
+                assertThat(page.getNextContinuationToken()).isEqualTo("1");
+                var next = one.toBuilder().setContinuationToken(page.getNextContinuationToken()).build();
+                var older = transport ? stub.listVersions(next) : fixture.operations.listVersions(CALLER, next);
+                assertThat(older.getVersionsCount()).isEqualTo(1);
+                assertThat(older.getVersions(0).getVersion()).isEqualTo(1);
+                var historical = GetEntryRequest.newBuilder().setAddress(saved.getAddress()).setVersion(1).build();
+                var read = transport ? stub.getEntry(historical) : fixture.operations.getEntry(CALLER, historical);
+                assertThat(read.getRenditions(0).getData()).isEqualTo(ByteString.copyFromUtf8("one"));
+                assertThat(budget.reservedBytes()).isZero();
+            } finally {
+                channel.shutdownNow(); server.shutdownNow();
+                assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    private static void assertManifestLimit(Throwable refusal, boolean transport) {
+        if (transport) assertThat(io.grpc.Status.fromThrowable(refusal).getCode()).isEqualTo(io.grpc.Status.Code.RESOURCE_EXHAUSTED);
+        else assertThat(refusal).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
     void aggregateReadRefusesBeforeProviderIoButSelectedHistoricalSubsetFits(boolean transport) throws Exception {
         var saved = request("a".repeat(64)).toBuilder().addRenditions(RenditionContent.newBuilder()
                 .setRendition(RenditionDescriptor.newBuilder().setName("later"))
@@ -103,7 +174,7 @@ class RedisArchiveLifecycleIT {
             return actual(method, args);
         });
         var budget = new PayloadBudget(8192);
-        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, responseLimit, 4), budget, 2);
+        try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, responseLimit, 4, 2048), budget, 2);
                 var fixture = new Fixture(opened.store(), null, observed, gate)) {
             String name = "bounded-get-" + UUID.randomUUID();
             var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();

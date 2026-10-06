@@ -653,15 +653,18 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     @Override
     public GetEntryResponse getEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> getEntryImpl(request));
+        try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
+            return RepositoryErrors.call(() -> getEntryImpl(request, manifests));
+        }
     }
 
-    private GetEntryResponse getEntryImpl(GetEntryRequest request) {
+    private GetEntryResponse getEntryImpl(GetEntryRequest request, ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
-        ArchiveVersionRecord version = versionOrThrow(entry, request.getVersion());
-        VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
+        long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
+        VersionManifest manifest = readManifest(entry.entryUuid, version, manifests)
+                .orElseThrow(() -> notFound("entry has no retained version " + version));
 
         Set<String> wanted = new HashSet<>(request.getRenditionsList());
         GetEntryResponse.Builder response = GetEntryResponse.newBuilder()
@@ -676,7 +679,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             for (RenditionManifestEntry item : selected) {
                 BlobStore.GetResult got;
                 try {
-                    got = readObject(archive, entry, version.version, item);
+                    got = readObject(archive, entry, version, item);
                 } catch (BlobStore.BlobNotFoundException e) {
                     // The manifest says PRESENT and the store disagrees: fail
                     // honestly with the account of what is missing, never an
@@ -705,27 +708,32 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     @Override
     public GetEntryManifestResponse getManifest(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryManifestRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> getManifestImpl(request));
+        try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
+            return RepositoryErrors.call(() -> getManifestImpl(request, manifests));
+        }
     }
 
-    private GetEntryManifestResponse getManifestImpl(GetEntryManifestRequest request) {
+    private GetEntryManifestResponse getManifestImpl(GetEntryManifestRequest request, ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
-        ArchiveVersionRecord version = versionOrThrow(entry, request.getVersion());
+        long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
         return GetEntryManifestResponse.newBuilder()
                 .setInfo(toProto(entry))
-                .setManifest(ArchiveManifests.fromJson(version.manifest))
+                .setManifest(readManifest(entry.entryUuid, version, manifests)
+                        .orElseThrow(() -> notFound("entry has no retained version " + version)))
                 .build();
     }
 
     @Override
     public ListEntriesResponse listEntries(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListEntriesRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> listEntriesImpl(request));
+        try (var manifests = getAdmission == null || !request.getIncludeManifests() ? null : getAdmission.manifests()) {
+            return RepositoryErrors.call(() -> listEntriesImpl(request, manifests));
+        }
     }
 
-    private ListEntriesResponse listEntriesImpl(ListEntriesRequest request) {
+    private ListEntriesResponse listEntriesImpl(ListEntriesRequest request, ArchiveGetAdmission.ManifestScope manifests) {
         ArchiveRequests.accountId(request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         archiveOrThrow(request.getAccountId(), request.getArchive());
@@ -746,8 +754,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 // Same order as the entries, and one manifest per entry even
                 // when a row's current version has gone missing: a listing
                 // whose two lists drift apart cannot be zipped.
-                response.addManifests(ledger.findVersion(entry.entryUuid, entry.currentVersion)
-                        .map(version -> ArchiveManifests.fromJson(version.manifest))
+                response.addManifests(readManifest(entry.entryUuid, entry.currentVersion, manifests)
                         .orElseGet(VersionManifest::getDefaultInstance));
             }
         }
@@ -760,22 +767,43 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     @Override
     public ListVersionsResponse listVersions(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListVersionsRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> listVersionsImpl(request));
+        try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
+            return RepositoryErrors.call(() -> listVersionsImpl(request, manifests));
+        }
     }
 
-    private ListVersionsResponse listVersionsImpl(ListVersionsRequest request) {
+    private ListVersionsResponse listVersionsImpl(ListVersionsRequest request, ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
         int limit = ArchiveRequests.page(request.getLimit());
         long offset = ArchiveRequests.offset(request.getContinuationToken());
-        List<ArchiveVersionRecord> page = ledger.listVersions(entry.entryUuid, limit, offset);
         ListVersionsResponse.Builder response = ListVersionsResponse.newBuilder();
-        page.forEach(row -> response.addVersions(ArchiveManifests.fromJson(row.manifest)));
-        if (page.size() == limit) {
+        int count;
+        if (manifests == null) {
+            var page = ledger.listVersions(entry.entryUuid, limit, offset);
+            page.forEach(row -> response.addVersions(ArchiveManifests.fromJson(row.manifest)));
+            count = page.size();
+        } else {
+            var page = ledger.listManifests(entry.entryUuid, limit, offset, manifests.remainingBytes());
+            for (var row : page) {
+                manifests.consumed(row.utf8Bytes());
+                response.addVersions(ArchiveManifests.fromJson(row.json()));
+            }
+            count = page.size();
+        }
+        if (count == limit) {
             response.setNextContinuationToken(Long.toString(offset + limit));
         }
         return response.build();
+    }
+
+    private Optional<VersionManifest> readManifest(UUID entry, long version, ArchiveGetAdmission.ManifestScope scope) {
+        if (scope == null) return ledger.findVersion(entry, version).map(row -> ArchiveManifests.fromJson(row.manifest));
+        return ledger.findManifest(entry, version, scope.remainingBytes()).map(row -> {
+            scope.consumed(row.utf8Bytes());
+            return ArchiveManifests.fromJson(row.json());
+        });
     }
 
     @Override

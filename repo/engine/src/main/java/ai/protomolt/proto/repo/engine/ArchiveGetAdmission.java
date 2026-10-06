@@ -12,10 +12,14 @@ import java.util.Objects;
 
 /** Bounds response construction; callers own returned protobufs after the call ends. */
 public final class ArchiveGetAdmission implements AutoCloseable {
-    public record Limits(int maxObjectBytes, int maxResponseBytes, int maxRenditions) {
+    public record Limits(int maxObjectBytes, int maxResponseBytes, int maxRenditions, int maxManifestBytes) {
+        public Limits(int maxObjectBytes, int maxResponseBytes, int maxRenditions) {
+            this(maxObjectBytes, maxResponseBytes, maxRenditions, maxResponseBytes);
+        }
         public Limits {
             if (maxObjectBytes < 1 || maxResponseBytes < maxObjectBytes
-                    || maxResponseBytes > 256 * 1024 * 1024 || maxRenditions < 1 || maxRenditions > 256)
+                    || maxResponseBytes > 256 * 1024 * 1024 || maxRenditions < 1 || maxRenditions > 256
+                    || maxManifestBytes < 1 || maxManifestBytes > 256 * 1024 * 1024)
                 throw new IllegalArgumentException("Invalid archive read limits");
         }
     }
@@ -24,6 +28,7 @@ public final class ArchiveGetAdmission implements AutoCloseable {
     private final PayloadBudget budget;
     private final int maxActive;
     private int active;
+    private int activeManifests;
     private boolean closed;
 
     public ArchiveGetAdmission(Limits limits, PayloadBudget budget, int maxActive) {
@@ -31,6 +36,39 @@ public final class ArchiveGetAdmission implements AutoCloseable {
         this.budget = Objects.requireNonNull(budget);
         if (maxActive < 1 || maxActive > 1024) throw new IllegalArgumentException("Invalid archive read concurrency");
         this.maxActive = maxActive;
+    }
+
+    /** One call-wide serialized JSON allowance, held from before SQL until assembly returns. */
+    synchronized ManifestScope manifests() {
+        if (Thread.currentThread().isInterrupted())
+            throw failure(RepositoryException.Code.CANCELLED, "Archive manifest read interrupted");
+        if (closed) throw failure(RepositoryException.Code.UNAVAILABLE, "Archive read admission is closed");
+        if (activeManifests >= maxActive) throw exhausted();
+        final PayloadBudget.Lease lease;
+        try { lease = budget.reserve(limits.maxManifestBytes()); }
+        catch (PayloadBudget.CapacityExceededException capacity) { throw exhausted(); }
+        activeManifests++;
+        return new ManifestScope(lease);
+    }
+
+    final class ManifestScope implements AutoCloseable {
+        private final PayloadBudget.Lease lease;
+        private int remaining = limits.maxManifestBytes();
+        private boolean released;
+        private ManifestScope(PayloadBudget.Lease lease) { this.lease = lease; }
+        int remainingBytes() { return remaining; }
+        void consumed(long bytes) {
+            if (bytes < 0 || bytes > remaining)
+                throw failure(RepositoryException.Code.DATA_LOSS, "Manifest projection exceeded its allowance");
+            remaining -= (int) bytes;
+        }
+        @Override public void close() {
+            synchronized (ArchiveGetAdmission.this) {
+                if (released) return;
+                released = true; lease.close(); activeManifests--;
+                ArchiveGetAdmission.this.notifyAll();
+            }
+        }
     }
 
     Scope admit(GetEntryResponse envelope, List<RenditionManifestEntry> selected) {
@@ -97,7 +135,7 @@ public final class ArchiveGetAdmission implements AutoCloseable {
         if (!closed) throw new IllegalStateException("Close archive read admission before awaiting idle");
         if (timeout.isNegative()) throw new IllegalArgumentException("Negative archive read drain timeout");
         long remaining = timeout.toNanos(), started = System.nanoTime();
-        while (active != 0) {
+        while (active != 0 || activeManifests != 0) {
             if (remaining <= 0) return false;
             java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining);
             remaining = timeout.toNanos() - (System.nanoTime() - started);

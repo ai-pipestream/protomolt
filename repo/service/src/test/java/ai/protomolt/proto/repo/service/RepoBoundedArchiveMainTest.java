@@ -36,7 +36,8 @@ class RepoBoundedArchiveMainTest {
         }
         for (String name : new String[]{"DOCUMENT_PLATFORM_ARCHIVE_MAX_OBJECT_BYTES", "DOCUMENT_PLATFORM_ARCHIVE_MAX_REQUEST_BYTES",
                 "DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS", "DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES",
-                "DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", "DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES"}) {
+                "DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", "DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES",
+                "DOCUMENT_PLATFORM_ARCHIVE_MAX_MANIFEST_BYTES"}) {
             var env = environment(); env.put(name, "bad-limit");
             assertThatThrownBy(() -> RepoBoundedArchiveMain.Settings.parse(env)).hasMessageContaining(name);
         }

@@ -85,7 +85,8 @@ public final class RepoBoundedArchiveMain {
                     (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_RENDITIONS", 16, 1, Integer.MAX_VALUE),
                     env.number("DOCUMENT_PLATFORM_ARCHIVE_PAYLOAD_BUDGET_BYTES", 14_680_064, 1, Long.MAX_VALUE),
                     (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_CONCURRENT_REQUESTS", 4, 1, 1024),
-                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES", requestLimit, 1, Integer.MAX_VALUE));
+                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES", requestLimit, 1, Integer.MAX_VALUE),
+                    (int) env.number("DOCUMENT_PLATFORM_ARCHIVE_MAX_MANIFEST_BYTES", requestLimit, 1, Integer.MAX_VALUE));
             var config = RepoServiceConfig.fromEnvironment(snapshot);
             // Pure qualification before SQL, provider discovery or client construction.
             limits.profile().openAdmission(config).close();

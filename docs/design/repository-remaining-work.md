@@ -75,8 +75,12 @@ has library construction and bounded managed Netty response admission. Real Redi
 tests cover aggregate refusal, historical subset reads and held provider completion.
 Managed-host options and transport reservations share the host budget. The seven
 read-only unary methods now enforce the same configured response cap before sending,
-including metadata and lists. Their SQL loading, manifest parsing, response construction
-and local caller retention remain separate. Mutation acknowledgments need a construction
+including metadata and lists. Manifest-bearing reads now also reserve an aggregate
+JSON allowance before SQL and retain it through parsing/assembly. A same-statement
+SQL size gate excludes oversized JSON from JDBC; version pages are gated in aggregate,
+and entry lists share one allowance. Other entry/archive metadata SQL loading,
+decoded heap, protobuf construction and local caller retention remain separate.
+Mutation acknowledgments need a construction
 bound that cannot hide committed success; they are outside this send-time cap. See
 [read response evidence](../evidence/repository/2026-10-06-read-reply-cap/README.md). Continue
 claimed-session recovery and retention work alongside these remaining limits;
