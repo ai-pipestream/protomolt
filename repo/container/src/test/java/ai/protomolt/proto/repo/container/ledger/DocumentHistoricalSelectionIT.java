@@ -1,0 +1,253 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.container.blob.DocumentIds;
+import ai.protomolt.proto.repo.spi.*;
+import ai.protomolt.proto.repo.v1.*;
+import com.google.protobuf.UnknownFieldSet;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.*;
+import static org.assertj.core.api.Assertions.*;
+
+/** Real PostgreSQL retention/authorization; synthetic provider observations, no restore publication proof. */
+@Testcontainers
+class DocumentHistoricalSelectionIT {
+    @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
+    private static final RepositoryCaller ADMIN = new RepositoryCaller("reader", true);
+    private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
+
+    @Test void selectsOriginalRevisionAfterTwoMorePublicationsAndPreservesTransferredPin() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1);
+            var original = publish(c, f, Fault.NONE, em -> {});
+            var second = advance(c, f, original);
+            var third = advance(c, f, second);
+            var selector = selector(f, original, 0, 0);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, selector.getSource(), UUID.fromString(selector.getRevisionId()));
+            var initial = history.use(); var use = initial.transfer(); initial.close();
+            try (use) {
+                var selected = history.selectRetained(use, List.of(selector, selector(f, original, 1, 1)), NONE);
+                assertThat(selected).hasSize(2);
+                assertThat(selected.getFirst().objectId().toString()).isEqualTo(selector.getObject().getObjectId());
+                assertThat(use.plan().revision().toString()).isEqualTo(original.getMembers(0).getRevisionId());
+                assertThat(use.plan().publicationRevision()).isLessThan(third.getMembers(0).getMutationRevision());
+                assertThat(c.tx().readOnly(em -> (UUID) em.createNativeQuery(
+                        "SELECT revision_id FROM document_revision_current WHERE node_id=:node")
+                        .setParameter("node", f.sources().getFirst().row().nodeId).getSingleResult()).toString())
+                        .isEqualTo(third.getMembers(0).getRevisionId());
+                history.close();
+                assertThat(history.isDrained()).isFalse();
+                assertThatThrownBy(history::release).isInstanceOf(IllegalStateException.class);
+                assertThat(count(c, "document_read_pins")).isEqualTo(2);
+            }
+            release(ledger, history);
+            assertThat(count(c, "document_read_pins")).isZero();
+        }
+    }
+
+    @Test void comparesEveryPhysicalCoordinateAndNeverFallsBackToCurrentOrAnotherSlot() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var published = publish(c, f, Fault.NONE, em -> {});
+            var valid = selector(f, published, 0, 0);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, valid.getSource(), UUID.fromString(valid.getRevisionId()));
+            try (var use = history.use()) {
+                for (var wrong : List.of(
+                        valid.toBuilder().setRevisionId(UUID.randomUUID().toString()).build(),
+                        valid.toBuilder().setSource(valid.getSource().toBuilder().setDocId("different")).build(),
+                        valid.toBuilder().setRevisionOrdinal(1).build(),
+                        valid.toBuilder().setRevisionOrdinal(9999).build(),
+                        valid.toBuilder().setSourceSlot(f.sources().getFirst().slots().get(1)).build()))
+                    assertCode(() -> history.selectRetained(use, List.of(wrong), NONE), RepositoryException.Code.FAILED_PRECONDITION);
+                var object = valid.getObject();
+                for (var wrong : List.of(
+                        object.toBuilder().setObjectId(UUID.randomUUID().toString()).build(),
+                        object.toBuilder().setBackendGeneration("other").build(),
+                        object.toBuilder().setStorageRealm("other").build(),
+                        object.toBuilder().setNamespace("other").build(),
+                        object.toBuilder().setObjectKey("other").build(),
+                        object.toBuilder().setProviderVersion("other").build(),
+                        object.toBuilder().clearProviderVersion().build(),
+                        object.toBuilder().setSizeBytes(object.getSizeBytes() + 1).build(),
+                        object.toBuilder().setSha256("b".repeat(64)).build(),
+                        object.toBuilder().setContentType("text/plain").build()))
+                    assertCode(() -> history.selectRetained(use, List.of(valid.toBuilder().setObject(wrong).build()), NONE),
+                            RepositoryException.Code.FAILED_PRECONDITION);
+                // A failed batch returns no partial successful selection and does not release the caller's pin.
+                assertCode(() -> history.selectRetained(use, List.of(valid,
+                        valid.toBuilder().setRevisionOrdinal(9999).build()), NONE), RepositoryException.Code.FAILED_PRECONDITION);
+                assertThat(history.selectRetained(use, List.of(valid), NONE)).hasSize(1);
+                assertThat(count(c, "document_read_pins")).isEqualTo(2);
+            } finally { release(ledger, history); }
+        }
+    }
+
+    @Test void fullManifestOrdinalsPreserveGapsAndVersionlessIdentity() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1, false, Duration.ofMinutes(5), true, null);
+            var published = publish(c, f, Fault.NONE, em -> {});
+            var core = selector(f, published, 0, 1); var chunk = selector(f, published, 1, 3);
+            assertThat(core.getObject().hasProviderVersion()).isFalse();
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, core.getSource(), UUID.fromString(core.getRevisionId()));
+            try (var use = history.use()) {
+                assertThat(use.plan().entries()).extracting(DocumentHistoricalReadPlan.Entry::revisionOrdinal).containsExactly(1, 3);
+                assertThat(history.selectRetained(use, List.of(chunk, core), NONE))
+                        .extracting(DocumentHistoricalReadPlan.Entry::revisionOrdinal).containsExactly(3, 1);
+                for (int gap : List.of(0, 2))
+                    assertCode(() -> history.selectRetained(use, List.of(core.toBuilder().setRevisionOrdinal(gap).build()), NONE),
+                            RepositoryException.Code.FAILED_PRECONDITION);
+                assertCode(() -> history.selectRetained(use, List.of(core.toBuilder().setObject(
+                        core.getObject().toBuilder().setProviderVersion("invented")).build()), NONE),
+                        RepositoryException.Code.FAILED_PRECONDITION);
+            } finally { release(ledger, history); }
+        }
+    }
+
+    @Test void currentReadRevocationPrecedesBindingDetailsAndWrongAccountCannotCapture() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var published = publish(c, f, Fault.NONE, em -> {});
+            var valid = selector(f, published, 0, 0); grant(c, valid.getSource(), true);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var wrong = new RepositoryCaller("reader", false, Set.of("other"), Set.of());
+            assertCode(() -> ledger.captureHistorical(wrong, valid.getSource(), UUID.fromString(valid.getRevisionId())),
+                    RepositoryException.Code.NOT_FOUND);
+            var caller = new RepositoryCaller("reader", false, Set.of("account"), Set.of());
+            var history = ledger.captureHistorical(caller, valid.getSource(), UUID.fromString(valid.getRevisionId()));
+            try (var use = history.use()) {
+                assertThat(history.selectRetained(use, List.of(valid), NONE)).hasSize(1);
+                grant(c, valid.getSource(), false);
+                assertCode(() -> history.selectRetained(use, List.of(valid), NONE), RepositoryException.Code.NOT_FOUND);
+                assertCode(() -> history.selectRetained(use, List.of(valid.toBuilder().setRevisionOrdinal(9999).build()), NONE),
+                        RepositoryException.Code.NOT_FOUND);
+                assertThat(count(c, "document_read_pins")).isEqualTo(2);
+                assertCode(() -> ledger.captureHistorical(caller, valid.getSource(), UUID.fromString(valid.getRevisionId())),
+                        RepositoryException.Code.NOT_FOUND);
+            } finally { release(ledger, history); }
+        }
+    }
+
+    @Test void closedOrForeignUsesAndMalformedSelectorsAreRefused() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var published = publish(c, f, Fault.NONE, em -> {});
+            var valid = selector(f, published, 0, 0);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, valid.getSource(), UUID.fromString(valid.getRevisionId()));
+            var other = ledger.captureHistorical(ADMIN, valid.getSource(), UUID.fromString(valid.getRevisionId()));
+            try (var use = history.use(); var foreign = other.use()) {
+                assertThatThrownBy(() -> history.selectRetained(foreign, List.of(valid), NONE))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("another historical capture");
+                assertThatThrownBy(() -> history.selectRetained(use, List.of(valid.toBuilder().setRevisionId("latest").build()), NONE))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessage("Invalid historical selector");
+                var unknown = valid.toBuilder().setObject(valid.getObject().toBuilder().setUnknownFields(
+                        UnknownFieldSet.newBuilder().addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build())).build();
+                assertThatThrownBy(() -> history.selectRetained(use, List.of(unknown), NONE))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Unknown historical selector");
+                assertThatThrownBy(() -> history.selectRetained(use, List.of(), NONE)).isInstanceOf(IllegalArgumentException.class);
+                assertThatThrownBy(() -> history.selectRetained(use, java.util.Collections.nCopies(10001, valid), NONE))
+                        .isInstanceOf(IllegalArgumentException.class);
+                var huge = valid.toBuilder().setSource(valid.getSource().toBuilder().setDocId("x".repeat(1_048_577))).build();
+                assertThatThrownBy(() -> history.selectRetained(use, List.of(huge), NONE))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("byte bound");
+                use.close();
+                assertThatThrownBy(() -> history.selectRetained(use, List.of(valid), NONE))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
+            } finally {
+                other.close(); assertThat(other.awaitDrained(Duration.ofSeconds(1))).isTrue(); other.release();
+                release(ledger, history);
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"cancel", "deadline", "close"})
+    void stoppedUseCannotExposeSelectionAfterRealAuthorizationLockWait(String action) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 1); var published = publish(c, f, Fault.NONE, em -> {});
+            var valid = selector(f, published, 0, 0);
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, valid.getSource(), UUID.fromString(valid.getRevisionId()));
+            var stopped = new AtomicBoolean();
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return action.equals("cancel") && stopped.get(); }
+                public long remainingNanos() { return action.equals("deadline") && stopped.get() ? 0 : Long.MAX_VALUE; }
+            };
+            try (var use = history.use(); var blocker = c.emf().createEntityManager();
+                    var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                blocker.getTransaction().begin();
+                try {
+                    blocker.createNativeQuery("SELECT node_id FROM documents WHERE node_id=:node FOR UPDATE")
+                            .setParameter("node", DocumentIds.nodeId(valid.getSource())).getSingleResult();
+                    int pid = ((Number) blocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
+                    var selection = executor.submit(() -> history.selectRetained(use, List.of(valid), control));
+                    long end = System.nanoTime() + Duration.ofSeconds(5).toNanos(); boolean waiting = false;
+                    while (System.nanoTime() < end && !selection.isDone()) {
+                        waiting = c.tx().readOnly(em -> !em.createNativeQuery(
+                                "SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))")
+                                .setParameter("blocker", pid).getResultList().isEmpty());
+                        if (waiting) break;
+                        Thread.sleep(10);
+                    }
+                    assertThat(waiting).as("selection reached actual document lock").isTrue();
+                    stopped.set(true); if (action.equals("close")) use.close();
+                    blocker.getTransaction().rollback();
+                    assertThatThrownBy(() -> selection.get(5, TimeUnit.SECONDS)).hasStackTraceContaining(
+                            action.equals("close") ? "use has ended" : action.equals("deadline")
+                                    ? "Document read deadline exceeded" : "Document read cancelled");
+                } finally { if (blocker.getTransaction().isActive()) blocker.getTransaction().rollback(); }
+            } finally { release(ledger, history); }
+        }
+    }
+
+    private static PublicationHistoricalReuse selector(Prepared f, DocumentPublicationResult result, int part, int ordinal) {
+        return PublicationHistoricalReuse.newBuilder().setSource(result.getMembers(0).getAddress())
+                .setRevisionId(result.getMembers(0).getRevisionId()).setRevisionOrdinal(ordinal)
+                .setSourceSlot(f.sources().getFirst().slots().get(part)).setObject(f.sources().getFirst().identities().get(part)).build();
+    }
+    private static DocumentPublicationResult advance(Context c, Prepared original, DocumentPublicationResult prior) {
+        var row = new DocumentLedger(c.tx()).findByNodeId(original.sources().getFirst().row().nodeId).orElseThrow();
+        var m = original.command().intent().getMembers(0).toBuilder();
+        var condition = m.getDestination().toBuilder().setExpectedMutationRevision(row.mutationRevision).build();
+        m.setDestination(condition);
+        for (int i = 0; i < m.getPartsCount(); i++) m.setParts(i, m.getParts(i).toBuilder()
+                .setReuse(m.getParts(i).getReuse().toBuilder().setSource(condition)));
+        var command = new DocumentPublicationCommand(original.command().intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).setMembers(0, m).build());
+        var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", command.operationId()),
+                command, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+        var drive = new DriveLedger(c.tx()).findById(UUID.fromString(m.getDriveId())).orElseThrow();
+        var profile = new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow();
+        var plan = DocumentOperationUploadAdmission.prepare(command,
+                Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "native-test", profile)),
+                Map.of(), Duration.ofMinutes(5));
+        new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx()))
+                .admit(new RepositoryCaller("principal", true), owner, plan);
+        var source = original.sources().getFirst();
+        return publish(c, new Prepared(command, owner, List.of(new ManagedDocumentFixture(row,
+                UUID.fromString(prior.getMembers(0).getRevisionId()), source.slots(), source.identities())), Map.of()), Fault.NONE, em -> {});
+    }
+    private static void grant(Context c, NodeAddress address, boolean allowed) {
+        c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                .setParameter("node", DocumentIds.nodeId(address)).setParameter("policy", allowed
+                        ? "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}" : "{}")
+                .executeUpdate(); });
+    }
+    private static void release(DocumentReadLedger ledger, DocumentReadLedger.PinnedHistory history) throws Exception {
+        history.close(); assertThat(history.awaitDrained(Duration.ofSeconds(1))).isTrue(); history.release();
+        ledger.fence(); ledger.attestLocalQuiescence();
+    }
+    private static void assertCode(org.assertj.core.api.ThrowableAssert.ThrowingCallable action, RepositoryException.Code code) {
+        assertThatThrownBy(action).isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(code));
+    }
+}

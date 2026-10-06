@@ -143,3 +143,20 @@ it. Existing v1 golden bytes/hash fixtures pass unchanged; older consumers will
 reject the new field. Before activation, review command version and consumer
 capability negotiation rather than assuming additive wire compatibility establishes
 executable compatibility. [Evidence](../evidence/repository/2026-10-05-historical-contract/README.md).
+
+## Exact source-selection checkpoint
+
+`PinnedHistory.selectRetained` now checks a bounded batch of historical selectors
+against its existing captured plan and caller-owned Use. It authorizes current READ
+once for the batch before exposing binding mismatch details, compares full manifest
+ordinals and every immutable physical coordinate, then rechecks control and Use
+liveness before returning ledger-issued entries. It creates no replacement pin or
+reader registry. Empty/deleted manifest positions cannot masquerade as compact
+present-entry indexes. Matching uses binary search over the SQL-ordered entries.
+
+The owner must retain the Use through provider completion and the eventual new
+reference transaction; a returned entry cannot extend its own lifetime. Existing
+historical references and reader pins remain the retention mechanism. Current-policy
+schema admission, pending schema liveness and final historical reference checks are
+still required before enabling restore execution. The command guard remains.
+[SQL evidence and limits](../evidence/repository/2026-10-05-historical-selection/README.md).

@@ -1,0 +1,4 @@
+dbed1010a95b6714852424f13936c7a880b292f29f26f4a67049534504f9a9b7  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentReadLedger.java
+5a5e7dfb92f68f18e233394f146079911c0e69e80fe151389bd0d69a11792b9f  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalSelection.java
+09f86b49af00675cc26f26299d391d7b83f6908ade71d6f26d93d43ae319a0ad  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalSelectionIT.java
+17f3749d907d7dc3281dad287d76a3b464dc4d712b521817461019c94ffa14a7  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentNativePublicationFixture.java

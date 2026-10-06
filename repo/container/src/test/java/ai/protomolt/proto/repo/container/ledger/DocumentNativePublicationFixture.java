@@ -41,6 +41,10 @@ final class DocumentNativePublicationFixture {
     }
 
     static Prepared prepare(Context c, int size, boolean mixed, Duration ownerLease, boolean sparseSource) {
+        return prepare(c, size, mixed, ownerLease, sparseSource, "fixture-version");
+    }
+
+    static Prepared prepare(Context c, int size, boolean mixed, Duration ownerLease, boolean sparseSource, String providerVersion) {
         var profile = new ManagedBackendLedger.Profile(new ai.protomolt.proto.repo.blob.spi.BackendIdentity(
                 "test-location", "test-location/v1", Map.of("endpoint", "synthetic")), "native-test");
         new ManagedBackendLedger(c.tx).bind("native-test", profile);
@@ -55,9 +59,9 @@ final class DocumentNativePublicationFixture {
             var address=NodeAddress.newBuilder().setAccountId("account").setDocId("doc-"+i)
                     .setGraphId("graph").setGraphAddressId("node").build();
             var source = c.beforePolicyFence()
-                    ? ManagedDocumentFixture.publishBeforePolicyFence(c.tx, drive, "native-test", profile, address, 2, 5, "fixture-version", sparseSource)
+                    ? ManagedDocumentFixture.publishBeforePolicyFence(c.tx, drive, "native-test", profile, address, 2, 5, providerVersion, sparseSource)
                     : ManagedDocumentFixture.publish(c.tx, drive, "native-test", profile, address,
-                            DocumentSecurity.getDefaultInstance(), 2, 5, "fixture-version", sparseSource);
+                            DocumentSecurity.getDefaultInstance(), 2, 5, providerVersion, sparseSource);
             sources.add(source);
             var condition=DocumentRevisionCondition.newBuilder().setAddress(address)
                     .setExpectedMutationRevision(source.row().mutationRevision).build();

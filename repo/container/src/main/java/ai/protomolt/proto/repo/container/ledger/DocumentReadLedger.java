@@ -334,13 +334,48 @@ public final class DocumentReadLedger {
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {
         private final RepositoryCaller caller;
+        private final DocumentHistoricalReadPlan plan;
         private final ai.protomolt.proto.repo.v1.NodeAddress address;
         private final UUID revision;
         private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
             super(captured);
+            this.plan = captured.plan();
             this.caller = Objects.requireNonNull(caller);
             this.address = captured.plan().address();
             this.revision = captured.plan().revision();
+        }
+
+        /**
+         * Selects an exact retained binding under current READ authorization. The
+         * caller keeps its existing Use through provider work and reference commit.
+         * This issues neither a current admission verdict nor publication authority.
+         */
+        public java.util.List<DocumentHistoricalReadPlan.Entry> selectRetained(PinnedRead<?>.Use use,
+                java.util.List<ai.protomolt.proto.repo.v1.PublicationHistoricalReuse> selections,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            Objects.requireNonNull(control).check();
+            if (Objects.requireNonNull(use).plan() != plan)
+                throw new IllegalArgumentException("Selection use belongs to another historical capture");
+            Objects.requireNonNull(selections);
+            if (selections.isEmpty() || selections.size() > ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_PARTS)
+                throw new IllegalArgumentException("Historical selector count exceeds bounds");
+            selections = java.util.List.copyOf(selections);
+            long bytes = 0;
+            for (var selection : selections) {
+                control.check();
+                bytes += selection.getSerializedSize();
+                if (bytes > ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES)
+                    throw new IllegalArgumentException("Historical selectors exceed command byte bound");
+            }
+            authorizeDelivery(control);
+            var selected = new java.util.ArrayList<DocumentHistoricalReadPlan.Entry>(selections.size());
+            for (var selection : selections) {
+                control.check();
+                selected.add(DocumentHistoricalSelection.select(plan, selection));
+            }
+            control.check();
+            use.plan(); // Refuse exposure if ownership ended while authorization waited.
+            return java.util.List.copyOf(selected);
         }
 
         /**

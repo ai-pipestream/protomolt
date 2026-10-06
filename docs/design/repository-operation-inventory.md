@@ -6250,3 +6250,13 @@ assessment, retention and commit wiring. It must not silently fall back to curre
 reuse or a fresh upload. The [restore design](repository-historical-restore.md)
 defines remaining handler obligations. [Contract evidence](../evidence/repository/2026-10-05-historical-contract/README.md)
 records runtime validation, JSON Schema coverage, compilation, lint and compatibility.
+
+### Exact historical batch selection
+
+**Extended internal Java history behavior:** `PinnedHistory.selectRetained` accepts
+a bounded selector batch and the caller's existing Use, rechecks the captured caller's
+current READ access, and returns exact ledger entries after complete retained identity
+comparison. No provider work, schema verdict, write grant or new pin lifetime is
+created. **Unchanged:** public RPCs, publication execution guard, receipts, command
+encoding, retention SQL and schema contracts. Source-selection tests use real
+PostgreSQL and synthetic provider observations; full restore remains unavailable.
