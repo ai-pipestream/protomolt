@@ -106,6 +106,7 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.engine.RawObjectRecovery rawRecovery;
     private final ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService documentRecovery;
     private boolean lifecycleStarted;
+    private final ai.protomolt.proto.repo.engine.ArchivePutAdmission archiveAdmission;
     private final ArchiveOperations archiveOperations;
     private final ManagedArchiveServices managedArchive;
     private final ManagedDocumentServices managedDocuments;
@@ -136,7 +137,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     RepoServices(RepoServiceConfig config, BridgeEngine bridges, ai.protomolt.proto.repo.blob.spi.BlobStores providers) {
-        this(config, bridges, providers, null);
+        this(config, bridges, providers, (HistoricalReadAccess) null);
     }
 
     private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
@@ -147,14 +148,27 @@ public final class RepoServices implements AutoCloseable {
     private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
             ManagedSchemaAccess schemaAccess) {
+        this(config, bridges, providers, historicalAccess, schemaAccess, null);
+    }
+
+    /** Internal local qualification path; transport allocation is not yet bounded. */
+    RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, BoundedArchiveProfile bounded) {
+        this(config, bridges, providers, null, null, java.util.Objects.requireNonNull(bounded));
+    }
+
+    private RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
+            ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded) {
         ManagedArchiveServices startingArchive = null;
+        this.archiveAdmission = bounded == null ? null : bounded.openAdmission(config);
         try {
             this.config = config;
             if (schemaAccess != null && !config.managedStorage().retentionQualified())
                 throw new IllegalArgumentException("Schema resolution requires qualified managed storage");
             if (historicalAccess != null && !config.managedStorage().retentionQualified())
                 throw new IllegalArgumentException("Historical transport requires qualified managed storage");
-            if (config.managedStorage().retentionQualified()
+            if (bounded == null && config.managedStorage().retentionQualified()
                     && (!config.lifecycleEnabled() || !("s3".equals(config.blobStore()) || "s3-redis-cache".equals(config.blobStore()))))
                 throw new IllegalArgumentException("Managed storage requires an S3 backing store and enabled lifecycle recovery");
             if ((RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
@@ -197,7 +211,7 @@ public final class RepoServices implements AutoCloseable {
                     this.remoteChannel = null;
                 }
                 case RepoServiceConfig.BLOB_STORE_REDIS -> {
-                    selectedBacking = SelectedBlobBacking.open(providers, "redis", redisOptions(config),
+                    selectedBacking = SelectedBlobBacking.open(providers, "redis", redisOptions(config, bounded != null),
                             config.managedStorage().retentionQualified(), owned);
                     var selected = selectedBacking.handle();
                     this.blobStore = selected.store();
@@ -240,7 +254,7 @@ public final class RepoServices implements AutoCloseable {
                             config.schemaRegistryUrl())) : null;
             String generation = config.managedStorage().retentionQualified() ? config.managedStorage().backendGeneration() : null;
             var documents = new ai.protomolt.proto.repo.engine.DocumentOperations(documentLedger, driveLedger, tx,
-                    blobStore, partStorage, purgeQueue, eventOutbox, generation);
+                    blobStore, partStorage, purgeQueue, eventOutbox, bounded == null ? generation : null);
             this.documentService = new DocumentGrpcService(documents,
                     new ai.protomolt.proto.repo.engine.BlobOperations(blobStore, driveLedger));
             var archiveLedger = new ai.protomolt.proto.repo.container.archive.ArchiveLedger(tx);
@@ -248,24 +262,26 @@ public final class RepoServices implements AutoCloseable {
                 var backing = java.util.Objects.requireNonNull(selectedBacking, "Managed storage requires a selected backing");
                 var managedCapabilities = backing.handle().capabilities();
                 if (!managedCapabilities.containsAll(java.util.Set.of(
-                        ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE,
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES,
                         ai.protomolt.proto.repo.blob.spi.BlobCapability.PHYSICAL_RECLAMATION)))
                     throw new IllegalArgumentException("Selected backing provider cannot support managed ingestion and reclamation");
+                if (bounded == null && !managedCapabilities.contains(
+                        ai.protomolt.proto.repo.blob.spi.BlobCapability.STREAMING_WRITE))
+                    throw new IllegalArgumentException("Selected backing provider cannot support managed streaming ingestion");
                 var profiles = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx);
                 var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile(
                         backing.requireManagedIdentity(), config.managedStorage().storageRealm());
                 profiles.bind(generation, profile);
                 var reclaimer = backing.reclaimer();
-                this.documentRecovery = new ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService(
+                this.documentRecovery = bounded != null ? null : new ai.protomolt.proto.repo.container.ledger.DocumentAttemptRecoveryService(
                         tx, generation, profile, backing.handle(), reclaimer);
-                this.rawRecovery = new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,
+                this.rawRecovery = bounded != null ? null : new ai.protomolt.proto.repo.engine.RawObjectRecovery(documentLedger.rawObjects(), profiles,
                         (originalGeneration, originalProfile) -> {
                             if (!generation.equals(originalGeneration) || !profile.equals(originalProfile))
                                 throw new IllegalStateException("Original managed backend is not configured on this host");
                             return reclaimer;
                         });
-                this.rawIngestion = new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
+                this.rawIngestion = bounded != null ? null : new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
                         driveLedger, blobStore, generation, managedCapabilities);
                 this.managedArchive = startingArchive = new ManagedArchiveServices(tx, archiveLedger, blobStore,
                         managedCapabilities, generation, profile, reclaimer);
@@ -281,7 +297,7 @@ public final class RepoServices implements AutoCloseable {
             this.archiveOperations = new ArchiveOperations(
                     archiveLedger, driveLedger, blobStore, bridges,
                     managedArchive == null ? null : managedArchive.reader,
-                    managedArchive == null ? null : managedArchive.writer);
+                    managedArchive == null ? null : managedArchive.writer, archiveAdmission);
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
                     documentService,
@@ -298,10 +314,11 @@ public final class RepoServices implements AutoCloseable {
             this.coherenceProbe = new CoherenceProbe(documentLedger, driveLedger);
             // Register the native reader last: no later constructor step may fail
             // after this component acquires its durable lifecycle identity.
-            this.managedDocuments = generation == null ? null : new ManagedDocumentServices(tx, driveLedger,
+            this.managedDocuments = generation == null || bounded != null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
                     java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess);
         } catch (RuntimeException | Error failure) {
+            if (archiveAdmission != null) archiveAdmission.close();
             if (startingArchive != null) {
                 // Construction has not exposed services or started workers. Preserve
                 // its registered reader identity before releasing the borrowed ledger.
@@ -408,6 +425,7 @@ public final class RepoServices implements AutoCloseable {
     /** Shared document operations; this composition retains ownership of storage resources. */
     public ai.protomolt.proto.repo.spi.DocumentRepository repository() {
         requireOpen();
+        requireFullProfile();
         if (documentRecovery != null) startLifecycle();
         return documentService.repository();
     }
@@ -423,6 +441,7 @@ public final class RepoServices implements AutoCloseable {
      */
     public List<BindableService> services() {
         requireOpen();
+        requireFullProfile();
         if (managedArchive != null) startLifecycle();
         if (managedDocuments == null || managedDocuments.historyService == null) return services;
         var mounted = new java.util.ArrayList<BindableService>(services);
@@ -569,6 +588,7 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized UploadHttpServer startHttp(int port, String apiToken) {
         requireOpen();
+        requireFullProfile();
         if (rawIngestion != null) startLifecycle();
         UploadHttpServer http = new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
         httpServers.add(http);
@@ -675,17 +695,19 @@ public final class RepoServices implements AutoCloseable {
                     sleep(config.sweepIntervalMs());
                 });
             }
-            startLifecycleThread("repo-purger", () -> {
-                int purged = s3Purger.drainOnce(blobStore, PURGE_BATCH_SIZE);
-                // Idle backoff: work left → drain again immediately; empty → wait.
-                if (purged == 0) {
-                    sleep(config.purgeIntervalMs());
-                }
-            });
-            startLifecycleThread("repo-purge-sweeper", () -> {
-                purgeSweeper.sweepOnce();
-                sleep(config.sweepIntervalMs());
-            });
+            if (archiveAdmission == null) {
+                startLifecycleThread("repo-purger", () -> {
+                    int purged = s3Purger.drainOnce(blobStore, PURGE_BATCH_SIZE);
+                    // Idle backoff: work left → drain again immediately; empty → wait.
+                    if (purged == 0) {
+                        sleep(config.purgeIntervalMs());
+                    }
+                });
+                startLifecycleThread("repo-purge-sweeper", () -> {
+                    purgeSweeper.sweepOnce();
+                    sleep(config.sweepIntervalMs());
+                });
+            }
             if (eventRelay != null) {
                 startLifecycleThread("repo-event-relay", () -> {
                     int published = eventRelay.relayOnce(eventProducer, config.kafkaTopic(),
@@ -696,7 +718,7 @@ public final class RepoServices implements AutoCloseable {
                     }
                 });
             }
-            if (config.reconcileEnabled()) {
+            if (archiveAdmission == null && config.reconcileEnabled()) {
                 startLifecycleThread("repo-storage-reconciler", () -> {
                     reconcileAllDrives();
                     sleep(config.sweepIntervalMs());
@@ -773,6 +795,7 @@ public final class RepoServices implements AutoCloseable {
         java.util.Objects.requireNonNull(timeout);
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Shutdown timeout must be positive");
         lifecycleClosed = true;
+        if (archiveAdmission != null) archiveAdmission.close();
         if (managedDocuments != null) managedDocuments.closeAdmission();
         if (managedArchive != null) managedArchive.reader.close();
         LifecycleShutdown.stopBeforeRelease(lifecycleThreads, timeout, () -> releaseAfterWorkersStop(timeout));
@@ -783,6 +806,15 @@ public final class RepoServices implements AutoCloseable {
         transports.addAll(httpServers);
         transports.addAll(servers);
         ShutdownBarrier.releaseAfter(transports, () -> {
+            if (archiveAdmission != null) {
+                try {
+                    if (!archiveAdmission.awaitIdle(timeout))
+                        throw new IllegalStateException("Archive puts still active; shared resources retained");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Archive put drain interrupted; shared resources retained", interrupted);
+                }
+            }
             if (managedDocuments != null) managedDocuments.drain(timeout);
             if (managedArchive != null) {
                 try {
@@ -802,8 +834,19 @@ public final class RepoServices implements AutoCloseable {
         LOG.info("repo-service stopped");
     }
 
+    private void requireFullProfile() {
+        if (archiveAdmission != null) throw new UnsupportedOperationException(
+                "Bounded archive profile supports local archive operations only; transport admission is not implemented");
+    }
+
     private void requireOpen() {
         if (lifecycleClosed) throw new IllegalStateException("repository services are closed");
+    }
+
+    private static java.util.Map<String, String> redisOptions(RepoServiceConfig config, boolean bounded) {
+        var options = new java.util.HashMap<>(redisOptions(config));
+        if (bounded) options.put("write-policy", "create-only");
+        return java.util.Map.copyOf(options);
     }
 
     private static java.util.Map<String, String> redisOptions(RepoServiceConfig config) {

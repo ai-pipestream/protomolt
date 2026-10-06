@@ -1,6 +1,7 @@
 # Bounded archive ingestion
 
-Status: library prerequisite implemented; managed-host profile not activated.
+Status: library admission and an internal local managed-host profile are implemented.
+Public configuration and transport activation remain unfinished.
 
 The repository must support a provider that accepts bounded byte arrays without
 claiming streaming support. Keep the existing streaming profile and raw-ingestion
@@ -87,5 +88,17 @@ That local composition does not authorize remote activation. Follow it with
 aggregate admission before unary decoding, explicit rejection of unsupported
 streaming at the transport boundary, and the same repository cases over gRPC.
 The current message-size cap and post-decode library gate cannot establish the
-aggregate transport allocation bound. Sol reviewed this separation; implementation
-and its acceptance tests remain open.
+aggregate transport allocation bound. Sol reviewed this separation.
+
+The internal `BoundedArchiveProfile` composition now passes PostgreSQL/Redis host
+tests for saved bytes, retained versions, restart reads, retry identity, size and
+concurrency limits, and shutdown with a real write held after Redis receives it.
+Shutdown timeout preserves the provider and byte reservation; new puts fail and a
+later close succeeds after the accepted write returns. S3 provider selection is
+guarded by an assertion in the fixture. Default managed Redis still fails startup;
+the new profile requires explicit internal selection. Document operations, HTTP,
+gRPC and external service registration are disabled for this profile.
+
+See [local host evidence](../evidence/repository/2026-10-06-bounded-archive-host/README.md).
+This does not establish aggregate transport bounds, Redis deployment durability or
+full repository parity. Keep those acceptance requirements open.

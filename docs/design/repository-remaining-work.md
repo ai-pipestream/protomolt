@@ -318,16 +318,18 @@ Follow the [bounded ingress design](repository-bounded-ingress.md). The reusable
 `ArchivePutAdmission` gate now bounds already-decoded unary save admission before
 engine copies and storage work. Real Redis library/in-process tests cover capacity,
 oversize refusal, delayed-write drain, reuse and historical reads. The optional
-composition refuses streaming and bridge generation. Managed-host activation,
-pre-decode transport allocation and provider shutdown integration remain unfinished.
+composition refuses streaming and bridge generation. An internal bounded archive-only
+host now passes Redis save/history/restart and delayed-write shutdown tests. Public
+managed-host activation and pre-decode transport allocation remain unfinished;
+the internal profile rejects transport startup.
 
-`RepoServices` currently couples managed construction to streaming, non-expiring
-writes and reclamation. `ArchiveObjectWriter` already distinguishes byte-array
+The default `RepoServices` managed profile still requires streaming, non-expiring
+writes and reclamation. `ArchiveObjectWriter` distinguishes byte-array
 staging from streaming staging; `RawIngestionOperations` requires streaming.
-An explicit bounded profile should preserve those operation distinctions, shared
-provider identity and cleanup, rather than remove capability checks globally.
+The internal bounded profile preserves those operation distinctions, shared
+provider identity and cleanup without changing default capability requirements.
 Before activation, specify aggregate reservations before ingress allocation,
 per-request size limits, capacity retention through delayed provider completion,
-and which streaming operations report unsupported. Real Redis lifecycle evidence
-does not yet establish that managed profile. This remains independent of restore
+and which streaming operations report unsupported. Local host evidence does not
+establish transport admission or deployment durability. This remains independent of restore
 and of the RustFS saturation measurements.
