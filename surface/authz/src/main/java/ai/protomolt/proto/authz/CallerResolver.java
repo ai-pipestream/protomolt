@@ -23,6 +23,14 @@ public interface CallerResolver {
     Optional<Caller> resolve(String credential);
 
     /**
+     * Resolve once with optional provisioned key identity. Principal-only resolvers
+     * remain explicitly unbound; callers must not infer a key from that principal.
+     */
+    default Optional<AuthenticatedCaller> resolveAuthenticated(String credential) {
+        return resolve(credential).map(AuthenticatedCaller::unbound);
+    }
+
+    /**
      * A resolver asking each of {@code resolvers} in order and answering the first match,
      * so a deployment mounts its stores side by side — the access policy first, then the
      * external ones. Empty only when every resolver answers empty; a store failure
@@ -33,9 +41,9 @@ public interface CallerResolver {
             throw new IllegalArgumentException("chain requires at least one resolver");
         }
         List<CallerResolver> ordered = List.copyOf(resolvers);
-        return credential -> {
+        return (AuthenticatedCallerResolver) credential -> {
             for (CallerResolver resolver : ordered) {
-                Optional<Caller> caller = resolver.resolve(credential);
+                Optional<AuthenticatedCaller> caller = resolver.resolveAuthenticated(credential);
                 if (caller.isPresent()) {
                     return caller;
                 }

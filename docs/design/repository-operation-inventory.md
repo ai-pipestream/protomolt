@@ -1,5 +1,18 @@
 # Repository operation inventory
 
+## Authenticated credential identity (2026-10-06)
+
+- **New Java values:** authz `CredentialBinding`/`AuthenticatedCaller` and independent
+  SPI `RepositoryCredentialBinding`; the repository caller has an optional binding.
+- **Extended:** resolvers may return complete authentication; chains and the gRPC
+  interceptor preserve it. Principal-only resolvers remain explicitly unbound.
+- **New Java adapter entry:** `DocumentGrpcService.withAuthenticatedBindings` gives
+  the trusted host the complete identity and refuses substituted or dropped bindings.
+- **Unchanged:** protobuf fields, Any URLs, receipts, operation keys and persistence.
+- **Not implemented:** durable grant issuance/revocation and publication/recovery
+  enforcement. This identity alone grants no new creation authority.
+
+
 ## Pending publication observation (2026-10-06)
 
 - **Extended:** PENDING replay requires current access to the complete destination

@@ -1,6 +1,6 @@
 # Scoped repository creation authority
 
-Status: design for implementation, not an available API. Baseline:
+Status: grant design for implementation, not an available creation API. Baseline:
 `6bc32d582a65e1c17ea79340e662d8ab96c734f1`. This extends the ownership work in
 [repository composition](repository-composition.md). It does not replace the
 remaining recovery, archival, provider or progressive-hydration work.
@@ -13,14 +13,35 @@ and ACL identities. It deliberately grants no right to create an absent target.
 Existing-target updates still require WRITE and preserve policy, datasource and
 placement. Proposed ownership in a request cannot establish caller authority.
 
-Credential resolution currently loses key identity. `CallerResolver` returns a
-`Caller`; `AccessPolicyCallers` maps all rotation credentials of one principal to
-that same caller. `ApiTokenServerInterceptor` passes the caller into gRPC context.
+The original credential resolution lost key identity. The optional authenticated
+resolver/context path now preserves a provisioned issuer, key UUID and generation.
+`AccessPolicyCallers` still maps rotation credentials to a principal without
+provisioned key IDs and remains explicitly unbound.
 A principal-bound grant would consequently be usable by every key for that
 principal. Calling such a grant key-specific would be incorrect.
 
 Network listeners now require a credential. That authenticates the operator or a
 policy principal; it does not supply the following creation grant.
+
+## Implemented identity boundary
+
+`AuthenticatedCallerResolver` resolves a caller and optional `CredentialBinding`
+in one lookup. `CallerResolver.chain` preserves the first complete match and never
+continues after a store failure or upgrades an unbound match. gRPC carries that
+result alongside the existing scope caller; mismatched contexts fail closed.
+
+`DocumentGrpcService.withAuthenticatedBindings` supplies the result to the host
+account/ACL mapper and requires its repository caller to preserve the exact key
+identity, principal and authority. The default adapter preserves key identity but
+grants no account membership. The older principal-only mapper refuses identified
+credentials if it drops their binding. `RepositoryCredentialBinding` is a value in
+the repository SPI, with no dependency on authentication or storage modules.
+
+This is identity propagation only. No credential ID is synthesized by the shipped
+policy/OIDC resolver, no grant is provisioned, and no live revocation check is
+implemented by these values. Historical/archive adapters and future publication
+transport still need an explicit binding-aware path before key-bound grants can be
+used there. [Qualification evidence](../evidence/repository/2026-10-06-authenticated-key-binding/README.md).
 
 ## Authenticated binding
 

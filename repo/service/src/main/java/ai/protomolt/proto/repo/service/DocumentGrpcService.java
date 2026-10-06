@@ -14,18 +14,34 @@ import io.grpc.stub.StreamObserver;
 public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServiceImplBase {
     private final DocumentRepository documents;
     private final BlobRepository blobs;
-    private final java.util.function.Function<ai.protomolt.proto.actions.Caller, RepositoryCaller> callerBindings;
+    private final java.util.function.Function<ai.protomolt.proto.authz.AuthenticatedCaller, RepositoryCaller> callerBindings;
 
     public DocumentGrpcService(DocumentRepository documents, BlobRepository blobs) {
-        this(documents, blobs, caller -> new RepositoryCaller(caller.name(), caller.unrestricted()));
+        this(documents, blobs, new AuthenticatedBindings(authentication -> new RepositoryCaller(
+                authentication.caller().name(), authentication.caller().unrestricted(), java.util.Set.of(),
+                java.util.Set.of(), credential(authentication))));
     }
 
-    /** The trusted host resolves account and ACL identities after transport authentication. */
+    /** Principal-only host binding; identified credentials require withAuthenticatedBindings. */
     public DocumentGrpcService(DocumentRepository documents, BlobRepository blobs,
             java.util.function.Function<ai.protomolt.proto.actions.Caller, RepositoryCaller> callerBindings) {
+        this(documents, blobs, new AuthenticatedBindings(authentication -> callerBindings.apply(authentication.caller())));
+        java.util.Objects.requireNonNull(callerBindings);
+    }
+
+    /** The host can bind accounts using the complete trusted authentication result. */
+    public static DocumentGrpcService withAuthenticatedBindings(DocumentRepository documents, BlobRepository blobs,
+            java.util.function.Function<ai.protomolt.proto.authz.AuthenticatedCaller, RepositoryCaller> bindings) {
+        return new DocumentGrpcService(documents, blobs, new AuthenticatedBindings(java.util.Objects.requireNonNull(bindings)));
+    }
+
+    private record AuthenticatedBindings(
+            java.util.function.Function<ai.protomolt.proto.authz.AuthenticatedCaller, RepositoryCaller> resolve) {}
+
+    private DocumentGrpcService(DocumentRepository documents, BlobRepository blobs, AuthenticatedBindings bindings) {
         this.documents = java.util.Objects.requireNonNull(documents);
         this.blobs = java.util.Objects.requireNonNull(blobs);
-        this.callerBindings = java.util.Objects.requireNonNull(callerBindings);
+        this.callerBindings = bindings.resolve();
     }
 
     public DocumentGrpcService(DocumentLedger documents, DriveLedger drives, Tx tx,
@@ -43,13 +59,22 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     private RepositoryCaller caller() {
         var caller = ai.protomolt.proto.authz.grpc.CallerContexts.current();
-        var resolved = callerBindings.apply(caller);
+        var authentication = ai.protomolt.proto.authz.grpc.CallerContexts.authentication()
+                .orElseGet(() -> ai.protomolt.proto.authz.AuthenticatedCaller.unbound(caller));
+        var resolved = callerBindings.apply(authentication);
         if (resolved == null || !resolved.principalName().equals(caller.name())
-                || resolved.processAuthority() != caller.unrestricted()) {
+                || resolved.processAuthority() != caller.unrestricted()
+                || !resolved.credentialBinding().equals(credential(authentication))) {
             throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
-                    "Repository binding must preserve the authenticated principal and authority");
+                    "Repository binding must preserve the authenticated principal, authority and credential identity");
         }
         return resolved;
+    }
+
+    private static java.util.Optional<RepositoryCredentialBinding> credential(
+            ai.protomolt.proto.authz.AuthenticatedCaller authentication) {
+        return authentication.binding().map(binding -> new RepositoryCredentialBinding(
+                binding.issuer(), binding.credentialId(), binding.generation()));
     }
 
     @Override public void saveDocument(SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {

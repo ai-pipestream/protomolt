@@ -3,13 +3,22 @@ package ai.protomolt.proto.repo.spi;
 /** Identity resolved by a trusted embedding host or transport, never from a request payload. */
 public record RepositoryCaller(String principalName, boolean processAuthority,
         java.util.Set<String> accountIds,
-        java.util.Set<ai.protomolt.proto.repo.v1.Principal> identities) {
+        java.util.Set<ai.protomolt.proto.repo.v1.Principal> identities,
+        java.util.Optional<RepositoryCredentialBinding> credentialBinding) {
+    /** Principal-only hosts supply no key identity and gain no key-specific grant. */
+    public RepositoryCaller(String principalName, boolean processAuthority, java.util.Set<String> accountIds,
+            java.util.Set<ai.protomolt.proto.repo.v1.Principal> identities) {
+        this(principalName, processAuthority, accountIds, identities, java.util.Optional.empty());
+    }
     /** Existing callers receive no implicit account membership or ACL identities. */
     public RepositoryCaller(String principalName, boolean processAuthority) {
         this(principalName, processAuthority, java.util.Set.of(), java.util.Set.of());
     }
 
     public RepositoryCaller {
+        java.util.Objects.requireNonNull(credentialBinding, "credentialBinding");
+        if (processAuthority && credentialBinding.isPresent())
+            throw new IllegalArgumentException("Process authority does not carry a scoped credential binding");
         if (principalName == null || principalName.isBlank())
             throw new IllegalArgumentException("Repository principal name is required");
         accountIds = java.util.Set.copyOf(accountIds);

@@ -750,3 +750,14 @@ credential-identity, durable authorization, revocation, replay and performance
 requirements. It is not an available API. Pending observation now applies current
 destination/source access checks, without reapplying revision conditions. This
 closes an observation gap before new creation authority is introduced.
+
+## Authenticated identity prerequisite (2026-10-06)
+
+Optional key identity now survives a single resolver lookup, resolver chaining,
+gRPC context and the explicit DocumentGrpcService host mapper. The SPI retains
+that identity without importing authentication or storage implementations.
+Legacy resolvers have no key binding and cannot authorize key-specific creation.
+Next implement the durable authority records and install/revoke protocol from
+[scoped creation](repository-scoped-creation.md), including lock-order proof and
+current-key checks at publication and recovery. Identity propagation alone does
+not satisfy those requirements.

@@ -814,6 +814,65 @@ class RepoServiceIT {
         return result;
     }
 
+    @Test
+    void authenticatedKeyIdentityReachesRepositoryBindingAndCannotBeChanged() throws Exception {
+        String account = "acct-key-identity";
+        createDrive("key-identity", account);
+        var doc = fixture("key-identity-doc", account, "source").toBuilder();
+        doc.getOwnershipBuilder().setSecurity(DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ)));
+        var saved = documents.saveDocument(intakeSave(doc.build(), "key-identity", account).build());
+        var request = GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build();
+        var principal = ai.protomolt.proto.actions.Caller.scoped("same-principal", Set.of());
+        var keys = java.util.Map.of(
+                "synthetic-key-a", new ai.protomolt.proto.authz.CredentialBinding("test-issuer", UUID.randomUUID(), 1),
+                "synthetic-key-b", new ai.protomolt.proto.authz.CredentialBinding("test-issuer", UUID.randomUUID(), 2));
+        var observed = new java.util.concurrent.ConcurrentHashMap<UUID, ai.protomolt.proto.repo.spi.RepositoryCaller>();
+        var corrupt = new java.util.concurrent.atomic.AtomicInteger();
+        var implementation = DocumentGrpcService.withAuthenticatedBindings(services.repository(),
+                new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger()), authentication -> {
+                    var actual = authentication.binding().orElseThrow();
+                    var selected = corrupt.get() == 1 ? keys.get("synthetic-key-a") : actual;
+                    var bound = new ai.protomolt.proto.repo.spi.RepositoryCaller(authentication.caller().name(), false,
+                            Set.of(account), Set.of(), corrupt.get() == 2 ? java.util.Optional.empty()
+                                    : java.util.Optional.of(new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding(
+                                            selected.issuer(), selected.credentialId(), selected.generation())));
+                    observed.put(actual.credentialId(), bound);
+                    return bound;
+                });
+        ai.protomolt.proto.authz.AuthenticatedCallerResolver resolver = token -> java.util.Optional.ofNullable(keys.get(token))
+                .map(key -> new ai.protomolt.proto.authz.AuthenticatedCaller(principal, java.util.Optional.of(key)));
+        var server = io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder.forPort(0)
+                .addService(implementation)
+                .intercept(new ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor("synthetic-operator", resolver))
+                .build().start();
+        var connection = io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder.forAddress("localhost", server.getPort())
+                .usePlaintext().build();
+        try {
+            for (String token : java.util.List.of("synthetic-key-a", "synthetic-key-b")) {
+                var headers = new io.grpc.Metadata();
+                headers.put(io.grpc.Metadata.Key.of("api_token", io.grpc.Metadata.ASCII_STRING_MARSHALLER), token);
+                var stub = DocumentServiceGrpc.newBlockingStub(connection).withDeadlineAfter(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+                assertThat(stub.getDocument(request).getDocument()).isEqualTo(doc.build());
+                var expected = keys.get(token);
+                assertThat(observed.get(expected.credentialId()).credentialBinding()).contains(
+                        new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding(expected.issuer(), expected.credentialId(), expected.generation()));
+                if (token.equals("synthetic-key-b")) {
+                    for (int corruption : new int[] {1, 2}) {
+                        corrupt.set(corruption);
+                        assertThatThrownBy(() -> stub.getDocument(request)).satisfies(error ->
+                                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+                    }
+                }
+            }
+        } finally {
+            connection.shutdownNow(); server.shutdownNow();
+            assertThat(connection.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
     private static io.grpc.Server policyServer(String endpoint,
             java.util.function.Function<ai.protomolt.proto.actions.Caller, ai.protomolt.proto.repo.spi.RepositoryCaller> bindings) throws Exception {
         return policyServer(endpoint, bindings, services.repository());
