@@ -75,6 +75,18 @@ features available. Recovery is one workstream, not the whole goal.
    establishes process-crash behavior only. Managed archival activation remains
    gated on immutable identity/key policy, shared lifecycle/recovery qualification,
    and explicit deployment durability requirements; it is not enabled by this test.
+   Sol's activation review identified a concrete next slice: Redis's ordinary PUT
+   overwrites its hash and COPY uses replacement, so versionless published keys need
+   an explicit immutable-write policy. Assess an opt-in atomic create-if-absent path
+   using the existing conditional-write capability, with real Redis tests for racing
+   writers and exact retry after lost acknowledgment. A content hash alone is not
+   permission to overwrite. Keep policy identity distinct and preserve ordinary byte
+   store semantics for existing consumers. Redis's buffered InputStream path does not
+   advertise streaming writes; qualify bounded allocation before claiming that capability.
+   Reuse `SelectedBlobBacking`, `ManagedArchiveServices`, `ArchiveObjectRecovery`,
+   `ArchiveCleanupLedger`, and `ArchiveObjectReader` for shared lifecycle qualification.
+   Keep the managed-host activation guard until late writes, cleanup, read pins,
+   recovery and deployment durability pass; a provider-only test cannot remove it.
 
 ## Work gated by publication and retention guarantees
 
@@ -132,6 +144,41 @@ features available. Recovery is one workstream, not the whole goal.
    copying stored bytes alone is not a restored document. Demonstrate that
    pruning cannot remove referenced schema assets or provider versions, including
    while restore or recovery is in flight.
+   The next bounded slice is a restore contract assessment against the existing
+   publication command, historical materializer, and current authorization. Distinguish
+   revision restore from `DocumentPublicationRestoration`, which resumes an interrupted
+   execution. Restore must name an exact source revision, retain its complete schema
+   closure, and publish a new destination revision against an expected current revision.
+   Historical ownership metadata is provenance, not a grant. Recheck current source
+   READ, destination WRITE, and current admission policy; preserve historical bytes
+   and definitions without silently substituting the latest registry definition.
+   Record policy incompatibility as an explicit refusal rather than rewriting history.
+   Review whether the existing reuse contract expresses this before adding fields.
+   One concrete mismatch is already identified: `PublicationReuse.source` is a
+   pre-change current-revision dependency, and `DocumentPublicationCommand` rejects
+   a source revision different from the destination's expected revision at the same
+   address. An older same-address restore therefore cannot be represented by simply
+   filling in today's reuse fields. Preserve that concurrency check; assess an explicit
+   historical source selector with retained-read protection instead of weakening it.
+
+   Current deletion protection is stronger than a completed pruning implementation:
+   V48 rejects schema artifact mutation pending a cleanup protocol; V55 makes revision
+   schema references immutable. `DocumentSchemaRetention` binds exact checked evidence
+   to publication, and `DocumentHistoricalSchemas` replays retained definitions without
+   a registry. Existing physical retention tests cover reference/cleanup transaction
+   ordering, but these protections do not establish a supported history-pruning path.
+   Do not relax either guard merely to make a cleanup test pass. Before enabling deletion,
+   account for committed revisions, staged operation claims, assessments, active reads,
+   restore operations and future JCR references under one reviewed liveness decision.
+   Required restore acceptance cases include registry absence, policy change, revoked
+   access, stale destination revision, shared-byte reuse, failed finalization, and a
+   pruning race with a held restore read. Backup qualification must restore the matching
+   SQL metadata, schema artifacts and exact provider identities into an isolated host;
+   a SQL dump alone is insufficient evidence.
+   This slice concerns ProtoMolt document revisions. It does not implement JCR version
+   restoration: frozen graphs, child identity collisions, strong references and
+   checked-in restrictions remain in the optional content-repository assessment.
+   Keep the underlying publication transaction composable across multiple objects.
 6. **Bounded hydration.** Reuse parts and rendition mechanics, with an immutable
    base and an explicit pending revision. Require a sealed component manifest,
    idempotent patch identities and explicit finalization. Test duplicate/missing
