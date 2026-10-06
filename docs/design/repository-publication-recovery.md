@@ -1298,3 +1298,31 @@ coordinator and eventual attempt identities. Tests must kill the replacement in
 each window, include lost acknowledgments and competing third coordinators, and
 prove stale participants cannot mutate or publish. Automatic recovery is incomplete
 until these windows have a qualified path; V97 deliberately remains closed there.
+
+#### Common Java reservation and attachment
+
+`RepositoryCoordinatorReservation.Proposal` has sealed Graceful and
+ExpiredUnquiesced variants. The expired variant requires owner generation/nonce;
+plan construction compares both with the retained previous preparation. The full
+variant participates in the manager's retry fingerprint. Installation and
+activation confirm the corresponding immutable reservation, and the activation
+read used during attachment checks it again under the live claim transaction.
+Current caller authorization and live owner checks remain separate.
+
+Graceful confirmation reads the canonical V92 child, which cannot represent an
+expired reservation. This also permits migration fixtures to construct the older
+graceful state before upgrading. Expired confirmation reads its immutable parent
+kind, UNKNOWN remote state and required owner tuple, and requires its source row.
+There is no exception-based fallback between kinds.
+
+`RepositoryCoordinatorExpiration.reserve` requires private process authority. It
+uses a plain insert and exact confirmation after uncertain acknowledgment. A later
+exact confirmation may report a committed reservation after expiry but cannot renew
+its lease or authorize execution. Cancellation after commit remains visible; a
+separate retry can confirm the saved fact.
+
+Java/SQL integration covers reservation, loading the old preparation under the
+live successor claim, installation, activation and exact attachment. It does not
+yet prove provider publication by an automatically recovered host, death of the
+predecessor or recovery from an unactivated replacement's death. Those remain
+required qualifications alongside reader/pin lifecycle handling.

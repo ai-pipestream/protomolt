@@ -35,8 +35,8 @@ final class DocumentPublicationRegistration {
             DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations,
             RepositorySuccessorInstall.Plan successor) {
         this.successor = successor;
-        claimToken = successor == null ? UUID.randomUUID() : successor.handoff().successorToken();
-        claimEpoch = successor == null ? 1 : successor.handoff().predecessor().epoch()+1;
+        claimToken = successor == null ? UUID.randomUUID() : successor.reservation().successorToken();
+        claimEpoch = successor == null ? 1 : successor.reservation().predecessor().epoch()+1;
         this.tx = Objects.requireNonNull(tx);
         this.budget = Objects.requireNonNull(budget);
         this.preparation = Objects.requireNonNull(preparation);
@@ -57,7 +57,7 @@ final class DocumentPublicationRegistration {
 
     static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
             UUID coordinator, DocumentPublicationScopeCalls registrations) {
-        if (!successor.handoff().successorIncarnation().equals(coordinator))
+        if (!successor.reservation().successorIncarnation().equals(coordinator))
             throw new IllegalArgumentException("Successor coordinator differs from installed incarnation");
         return new DocumentPublicationRegistration(tx, budget, successor.next(), successor.next().prepare().plan(), coordinator, registrations, successor);
     }

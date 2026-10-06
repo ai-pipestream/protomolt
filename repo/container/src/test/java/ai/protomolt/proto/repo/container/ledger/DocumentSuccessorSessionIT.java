@@ -54,8 +54,8 @@ class DocumentSuccessorSessionIT {
             assertThat(session.discardableBeforeRegistration()).isFalse();
             var identity = session.drainIdentity().orElseThrow();
             assertThat(identity.epoch()).isEqualTo(2);
-            assertThat(identity.token()).isEqualTo(plan.handoff().successorToken());
-            assertThat(identity.incarnation()).isEqualTo(plan.handoff().successorIncarnation());
+            assertThat(identity.token()).isEqualTo(plan.reservation().successorToken());
+            assertThat(identity.incarnation()).isEqualTo(plan.reservation().successorIncarnation());
             RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, plan, NONE);
             assertThat(session.admit(CALLER, NONE).orElseThrow().generation()).isEqualTo(2);
             assertThat(budget.reservedBytes()).isZero();
@@ -140,6 +140,6 @@ class DocumentSuccessorSessionIT {
     }
     private static DocumentPublicationSession session(Context c, RepositorySuccessorInstall.Plan plan,
             PayloadBudget budget, DocumentPublicationScopeCalls calls) {
-        return DocumentPublicationSession.successor(c.tx(), CALLER, plan, budget, plan.handoff().successorIncarnation(), calls);
+        return DocumentPublicationSession.successor(c.tx(), CALLER, plan, budget, plan.reservation().successorIncarnation(), calls);
     }
 }

@@ -66,7 +66,7 @@ class RepositorySuccessorInstallIT {
                         .setParameter("a",plan.next().key().account()).setParameter("p",plan.next().key().principal())
                         .setParameter("o",plan.next().key().operationId()).getSingleResult();
             })).hasStackTraceContaining("locally drained");
-            var conflict=RepositorySuccessorInstall.prepare(plan.handoff(),plan.previous(),LEASE,MODES);
+            var conflict=RepositorySuccessorInstall.prepare(plan.reservation(),plan.previous(),LEASE,MODES);
             assertThatThrownBy(() -> RepositorySuccessorInstall.install(c.tx(),budget,CALLER,conflict,NONE)).hasMessageContaining("differs");
             assertThat(budget.reservedBytes()).isZero();
         }
@@ -147,7 +147,7 @@ class RepositorySuccessorInstallIT {
     @Test void ownerLeaseMustRemainLiveUntilCommit() {
         try(var c=context(POSTGRES)) {
             var original=plan(c);
-            var plan=RepositorySuccessorInstall.prepare(original.handoff(),original.previous(),Duration.ofSeconds(1),MODES);
+            var plan=RepositorySuccessorInstall.prepare(original.reservation(),original.previous(),Duration.ofSeconds(1),MODES);
             var checks=new java.util.concurrent.atomic.AtomicInteger();
             var control=new RepositoryReadControl() {
                 public boolean isCancelled(){return false;}
@@ -165,7 +165,7 @@ class RepositorySuccessorInstallIT {
 
     @Test void competingInstallsHaveOneCompleteWinner() throws Exception {
         try(var c=context(POSTGRES);var workers=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            var first=plan(c);var second=RepositorySuccessorInstall.prepare(first.handoff(),first.previous(),LEASE,MODES);
+            var first=plan(c);var second=RepositorySuccessorInstall.prepare(first.reservation(),first.previous(),LEASE,MODES);
             var gate=new java.util.concurrent.CountDownLatch(1);
             var tasks=List.of(first,second).stream().map(plan -> workers.submit(() -> {
                 gate.await();
@@ -211,7 +211,7 @@ class RepositorySuccessorInstallIT {
     }
 
     private static void manifest(jakarta.persistence.EntityManager em,RepositorySuccessorInstall.Plan plan) {
-        var p=plan.next();var h=plan.handoff();
+        var p=plan.next();var h=plan.reservation();
         var json=new com.google.gson.JsonObject();new TreeMap<>(plan.modes()).forEach((key,mode)->json.addProperty(key,mode.name()));
         em.createNativeQuery("""
                 INSERT INTO repository_successor_installs

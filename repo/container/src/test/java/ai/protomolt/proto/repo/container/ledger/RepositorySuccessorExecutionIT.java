@@ -26,17 +26,17 @@ class RepositorySuccessorExecutionIT {
             activate(c, plan, true);
             var claim = claim(plan);
             c.tx().inTransaction(em -> {
-                RepositoryCoordinatorBinding.requireResume(em, claim, plan.handoff().successorIncarnation());
+                RepositoryCoordinatorBinding.requireResume(em, claim, plan.reservation().successorIncarnation());
             });
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
-                RepositoryCoordinatorBinding.requireResume(em, claim, plan.handoff().predecessor().incarnation());
+                RepositoryCoordinatorBinding.requireResume(em, claim, plan.reservation().predecessor().incarnation());
             })).hasMessageContaining("differs");
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                 RepositoryExecutionClaimLedger.lockLive(em, plan.previous().key(), plan.previous().command().sha256(),
-                        plan.handoff().predecessor().epoch(), plan.handoff().predecessor().token());
+                        plan.reservation().predecessor().epoch(), plan.reservation().predecessor().token());
             })).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
             var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(), claim.epoch(),
-                    claim.token(), plan.handoff().successorIncarnation());
+                    claim.token(), plan.reservation().successorIncarnation());
             assertThat(RepositoryCoordinatorDrain.beginRetained(c.tx(), CALLER, identity, NONE)).isTrue();
             // Admission drain still allows already admitted work to settle.
             c.tx().inTransaction(em -> { RepositoryExecutionClaimLedger.lockLive(em, claim); });
@@ -84,7 +84,7 @@ class RepositorySuccessorExecutionIT {
                         .setParameter("o", plan.next().key().operationId()).getSingleResult()).longValue());
             assertThat(oldAttempts).isZero();
             if (draining) {
-                RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, plan.handoff().successorIncarnation(), NONE);
+                RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, plan.reservation().successorIncarnation(), NONE);
                 assertThatThrownBy(() -> starts.start(CALLER, owner, plan.next().command(), UUID.randomUUID(), LEASE, NONE))
                         .hasStackTraceContaining("new admission is closed");
                 assertThatThrownBy(() -> uploads.admit(CALLER, owner, plan.next().prepare()))
@@ -104,7 +104,7 @@ class RepositorySuccessorExecutionIT {
     @Test void ownerExpiryBeforeActivationCommitRollsBackBindingAndGrant() {
         try (var c = context(POSTGRES)) {
             var original = RepositorySuccessorInstallIT.plan(c);
-            var plan = RepositorySuccessorInstall.prepare(original.handoff(), original.previous(), Duration.ofSeconds(1), MODES);
+            var plan = RepositorySuccessorInstall.prepare(original.reservation(), original.previous(), Duration.ofSeconds(1), MODES);
             RepositorySuccessorInstall.install(c.tx(), new PayloadBudget(64_000_000), CALLER, plan, NONE);
             assertThatThrownBy(() -> activate(c, plan, true, true)).hasStackTraceContaining("exact coordinator binding");
             assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
@@ -153,7 +153,7 @@ class RepositorySuccessorExecutionIT {
 
     private static RepositoryExecutionClaimLedger.Claim claim(RepositorySuccessorInstall.Plan plan) {
         return new RepositoryExecutionClaimLedger.Claim(plan.next().key(), plan.next().command().sha256(),
-                plan.handoff().predecessor().epoch() + 1, plan.handoff().successorToken(), Instant.EPOCH);
+                plan.reservation().predecessor().epoch() + 1, plan.reservation().successorToken(), Instant.EPOCH);
     }
 
     private static void activate(Context c, RepositorySuccessorInstall.Plan plan, boolean bind) {

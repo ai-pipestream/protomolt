@@ -33,7 +33,7 @@ class DocumentSuccessorManagerIT {
                     .hasMessage("No active schema policy for account");
             assertThat(identity(c, plan)).containsExactly(before);
             assertThat(r.sessions().retainedSessions()).isEqualTo(1);
-            var changed = RepositorySuccessorInstall.prepare(plan.handoff(), plan.previous(), LEASE, MODES);
+            var changed = RepositorySuccessorInstall.prepare(plan.reservation(), plan.previous(), LEASE, MODES);
             assertThatThrownBy(() -> r.sessions().activateSuccessor(CALLER, CALLER, changed, NONE))
                     .hasMessageContaining("proposal changed");
             assertThat(count(c)).isEqualTo(1);

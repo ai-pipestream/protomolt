@@ -3,10 +3,10 @@ package ai.protomolt.proto.repo.container.ledger;
 import com.google.protobuf.ByteString;
 
 /** Fixed-size preparation digests plus the complete immutable handoff identity. */
-record DocumentSuccessorFingerprint(RepositoryCoordinatorHandoff.Proposal handoff,
+record DocumentSuccessorFingerprint(RepositoryCoordinatorReservation.Proposal reservation,
         ByteString previous, ByteString next, ByteString modes) {
     static DocumentSuccessorFingerprint of(RepositorySuccessorInstall.Plan plan) {
-        return new DocumentSuccessorFingerprint(plan.handoff(),
+        return new DocumentSuccessorFingerprint(plan.reservation(),
                 digest(DocumentPublicationPreparationCodec.encode(plan.previous())),
                 digest(DocumentPublicationPreparationCodec.encode(plan.next())),
                 digest(ByteString.copyFromUtf8(RepositorySuccessorInstall.encodeModes(plan))));

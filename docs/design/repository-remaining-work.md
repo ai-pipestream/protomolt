@@ -646,9 +646,11 @@ neither reader quiescence nor permission to prune retained sources.
 V96 provides the shared immutable reservation parent while preserving V92's
 graceful evidence. V97 adds the private expired-unquiesced SQL source with exact
 expired owner and coordinator identities and no synthetic drain records.
-Installation/activation must next consume a kind-bound common Java proposal;
-attachment must confirm the kind and old owner too. The SQL reservation alone
-does not enable automatic lease-based failover or prove process death.
+Installation/activation now consume a kind-bound common Java proposal; attachment
+also confirms its kind and old owner. The private expired Java reservation supports
+exact confirmation and retry, but it does not enable automatic lease-based failover
+or prove process death. Qualify fresh-host provider publication through this path
+and connect trusted host discovery/authorization and bounded resource ownership.
 Also handle replacement death between reservation and V94 activation. Reservation-only
 and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
 reserve a third coordinator. They need an explicit supersession protocol with

@@ -12,16 +12,20 @@ import java.util.*;
 final class RepositorySuccessorInstall {
     private RepositorySuccessorInstall() {}
 
-    record Plan(RepositoryCoordinatorHandoff.Proposal handoff, DocumentPublicationPreparationRecord previous,
+    record Plan(RepositoryCoordinatorReservation.Proposal reservation, DocumentPublicationPreparationRecord previous,
             DocumentPublicationPreparationRecord next, Map<String, DocumentPublicationCandidate.Mode> modes) {
         Plan {
-            Objects.requireNonNull(handoff); Objects.requireNonNull(previous); Objects.requireNonNull(next);
+            Objects.requireNonNull(reservation); Objects.requireNonNull(previous); Objects.requireNonNull(next);
             modes = Map.copyOf(modes);
-            if (!previous.key().equals(next.key()) || !next.key().equals(handoff.predecessor().key())
+            if (!previous.key().equals(next.key()) || !next.key().equals(reservation.predecessor().key())
                     || !previous.command().sha256().equals(next.command().sha256())
-                    || !next.command().sha256().equals(handoff.predecessor().commandSha256())
+                    || !next.command().sha256().equals(reservation.predecessor().commandSha256())
                     || next.predecessorGeneration() != previous.predecessorGeneration() + 1)
                 throw new IllegalArgumentException("Successor preparation differs from predecessor");
+            if (reservation instanceof RepositoryCoordinatorReservation.ExpiredUnquiesced expired
+                    && (expired.owner().generation() != Math.addExact(previous.predecessorGeneration(), 1)
+                    || !expired.owner().nonce().equals(previous.seeds().ownerNonce())))
+                throw new IllegalArgumentException("Reservation owner differs from predecessor preparation");
             var ids = new HashSet<UUID>(); ids.add(previous.seeds().ownerNonce());
             ids.addAll(previous.seeds().attempts().values()); ids.addAll(previous.seeds().uploadTokens().values());
             var proposed = new ArrayList<UUID>(); proposed.add(next.seeds().ownerNonce());
@@ -36,14 +40,19 @@ final class RepositorySuccessorInstall {
 
     static Plan prepare(RepositoryCoordinatorHandoff.Proposal handoff, DocumentPublicationPreparationRecord previous,
             Duration lease, Map<String, DocumentPublicationCandidate.Mode> modes) {
-        return new Plan(handoff, previous, new DocumentPublicationPreparationRecord(previous.key(), previous.command(),
+        return prepare(new RepositoryCoordinatorReservation.Graceful(handoff), previous, lease, modes);
+    }
+
+    static Plan prepare(RepositoryCoordinatorReservation.Proposal reservation, DocumentPublicationPreparationRecord previous,
+            Duration lease, Map<String, DocumentPublicationCandidate.Mode> modes) {
+        return new Plan(reservation, previous, new DocumentPublicationPreparationRecord(previous.key(), previous.command(),
                 DocumentPublicationSeeds.mint(previous.key(), previous.command()), previous.placements(), lease,
                 Math.addExact(previous.predecessorGeneration(), 1)), modes);
     }
 
     static void install(Tx tx, PayloadBudget budget, RepositoryCaller caller, Plan plan, RepositoryReadControl control) {
         require(caller, plan, control);
-        if (RepositoryCoordinatorHandoff.confirm(tx, caller, plan.handoff(), control).isEmpty())
+        if (RepositoryCoordinatorReservation.confirm(tx, caller, plan.reservation(), control).isEmpty())
             throw new IllegalArgumentException("Successor handoff is not committed");
         try (var reserved = budget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
             var oldBytes = DocumentPublicationPreparationCodec.encode(plan.previous());
@@ -55,7 +64,7 @@ final class RepositorySuccessorInstall {
             try {
                 tx.inTransaction(em -> {
                     control.check();
-                    var p = plan.next(); var h = plan.handoff();
+                    var p = plan.next(); var h = plan.reservation();
                     scope(em.createNativeQuery("""
                             INSERT INTO repository_successor_installs
                             (account_id,principal,operation_id,predecessor_epoch,successor_epoch,successor_token,
@@ -119,7 +128,7 @@ final class RepositorySuccessorInstall {
             String modes, RepositoryReadControl control) {
         require(caller, plan, control);
         boolean result = tx.inTransaction(em -> {
-            var p = plan.next(); var h = plan.handoff();
+            var p = plan.next(); var h = plan.reservation();
             var rows = scope(em.createNativeQuery("""
                     SELECT predecessor_epoch,successor_token,successor_incarnation,predecessor_generation,predecessor_nonce,
                      predecessor_preparation_sha256,owner_nonce,command_sha256,preparation_sha256,

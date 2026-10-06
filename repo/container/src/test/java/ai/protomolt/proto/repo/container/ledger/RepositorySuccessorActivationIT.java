@@ -45,7 +45,7 @@ class RepositorySuccessorActivationIT {
             RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, plan, NONE);
             assertThat(leases(c, plan)).containsExactly(before);
             assertThat(count(c)).isEqualTo(1);
-            var other = RepositorySuccessorInstall.prepare(plan.handoff(), plan.previous(), LEASE, MODES);
+            var other = RepositorySuccessorInstall.prepare(plan.reservation(), plan.previous(), LEASE, MODES);
             assertThatThrownBy(() -> RepositorySuccessorExecution.activate(c.tx(), budget, CALLER, CALLER, other, NONE))
                     .hasMessageContaining("differs from committed proposal");
             assertThat(budget.reservedBytes()).isZero();

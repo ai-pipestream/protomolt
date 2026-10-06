@@ -6497,3 +6497,19 @@ compares that tuple as well as its existing preparation and locked-owner checks.
 **Unchanged:** V92 graceful rules, V95 execution closure, reader pins, cleanup
 tombstones, protobuf contracts and public hosts. Java proposal/confirmation and
 attachment integration, process-death proof and automatic execution are unfinished.
+
+### Kind-bound Java reservation and attachment
+
+**New:** private `RepositoryCoordinatorReservation` uses sealed graceful/expired
+proposals; expired proposals require the old owner identity.
+`RepositoryCoordinatorExpiration.reserve` requires process authority and confirms
+the exact committed reservation after lost acknowledgment without renewing it.
+
+**Extended:** install plans and manager fingerprints retain the full variant;
+expired plans compare the old owner to retained preparation. Install, activation
+and attachment confirm the corresponding immutable reservation. The plan accessor
+is now `reservation()` rather than `handoff()`.
+
+**Unchanged:** protobuf definitions, SQL migrations, public host startup, provider
+calls and reader/pin cleanup. Private Java/SQL attachment is qualified separately
+from automatic host recovery or real process-death/provider qualification.

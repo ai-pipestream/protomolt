@@ -89,7 +89,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
         try (var call = beginCall(); var registration = registrations.enter()) {
             Objects.requireNonNull(plan); Objects.requireNonNull(control).check();
-            if (!coordinatorIdentity().equals(plan.handoff().successorIncarnation()))
+            if (!coordinatorIdentity().equals(plan.reservation().successorIncarnation()))
                 throw new IllegalArgumentException("Successor incarnation differs from session manager");
             var key = plan.next().key();
             DocumentAdmissionAuthorization.requireCaller(coordinatorCaller, key, key.account());

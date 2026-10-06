@@ -72,7 +72,7 @@ final class RepositoryCoordinatorHandoff {
         return result;
     }
 
-    private static Optional<Instant> read(jakarta.persistence.EntityManager em, Proposal proposal) {
+    static Optional<Instant> read(jakarta.persistence.EntityManager em, Proposal proposal) {
         var p = proposal.predecessor();
         var rows = em.createNativeQuery("""
                 SELECT predecessor_token,predecessor_incarnation,command_sha256,successor_token,

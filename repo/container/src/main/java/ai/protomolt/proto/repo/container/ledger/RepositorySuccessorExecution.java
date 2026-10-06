@@ -27,7 +27,7 @@ final class RepositorySuccessorExecution {
         if (!caller.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
                 "Successor activation requires private process authority");
         DocumentAdmissionAuthorization.requireCaller(executionCaller, next.key(), next.key().account());
-        if (RepositoryCoordinatorHandoff.confirm(tx, caller, plan.handoff(), control).isEmpty())
+        if (RepositoryCoordinatorReservation.confirm(tx, caller, plan.reservation(), control).isEmpty())
             throw new IllegalArgumentException("Successor handoff is not committed");
         // Encode outside SQL locks. This bounds encoded bytes, not the entire parsed object graph.
         try (var reserved = budget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
@@ -51,9 +51,9 @@ final class RepositorySuccessorExecution {
                              command_sha256,preparation_sha256,modes_sha256,activation_xid)
                             VALUES(:a,:p,:o,:epoch,:token,:incarnation,:generation,:owner,:command,:sha,
                              sha256(convert_to(CAST(:modes AS jsonb)::text,'UTF8')),pg_current_xact_id())
-                            """), plan).setParameter("epoch", plan.handoff().predecessor().epoch()+1)
-                            .setParameter("token", plan.handoff().successorToken())
-                            .setParameter("incarnation", plan.handoff().successorIncarnation())
+                            """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
+                            .setParameter("token", plan.reservation().successorToken())
+                            .setParameter("incarnation", plan.reservation().successorIncarnation())
                             .setParameter("generation", next.predecessorGeneration()+1)
                             .setParameter("owner", next.seeds().ownerNonce())
                             .setParameter("command", HexFormat.of().parseHex(next.command().sha256()))
@@ -63,9 +63,9 @@ final class RepositorySuccessorExecution {
                     scope(em.createNativeQuery("""
                             INSERT INTO repository_coordinator_bindings(account_id,principal,operation_id,claim_epoch,claim_token,incarnation)
                             VALUES(:a,:p,:o,:epoch,:token,:incarnation)
-                            """), plan).setParameter("epoch", plan.handoff().predecessor().epoch()+1)
-                            .setParameter("token", plan.handoff().successorToken())
-                            .setParameter("incarnation", plan.handoff().successorIncarnation()).executeUpdate();
+                            """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
+                            .setParameter("token", plan.reservation().successorToken())
+                            .setParameter("incarnation", plan.reservation().successorIncarnation()).executeUpdate();
                     control.check();
                 });
                 control.check();
@@ -92,7 +92,7 @@ final class RepositorySuccessorExecution {
             var authorization = DocumentAdmissionAuthorization.prepare(prepared, prepared.historical());
             var attached = tx.inTransaction(em -> {
                 var claim = RepositoryExecutionClaimLedger.lockLive(em, key, next.command().sha256(),
-                        plan.handoff().predecessor().epoch()+1, plan.handoff().successorToken());
+                        plan.reservation().predecessor().epoch()+1, plan.reservation().successorToken());
                 if (!read(em, plan, sha, modes)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                         "Successor activation is not committed");
                 var owner = RepositoryOperationLedger.lockLiveOwner(em, key, next.predecessorGeneration()+1,
@@ -119,17 +119,18 @@ final class RepositorySuccessorExecution {
     }
 
     private static boolean read(EntityManager em, RepositorySuccessorInstall.Plan plan, byte[] sha, String modes) {
+        if (RepositoryCoordinatorReservation.read(em, plan.reservation()).isEmpty()) return false;
         var rows = scope(em.createNativeQuery("""
                 SELECT e.claim_token,e.incarnation,e.owner_generation,e.owner_nonce,e.command_sha256,e.preparation_sha256,
                  e.modes_sha256=sha256(convert_to(CAST(:modes AS jsonb)::text,'UTF8')),b.claim_token,b.incarnation
                 FROM repository_successor_executions e LEFT JOIN repository_coordinator_bindings b
                  USING(account_id,principal,operation_id,claim_epoch)
                 WHERE e.account_id=:a AND e.principal=:p AND e.operation_id=:o AND e.claim_epoch=:epoch
-                """), plan).setParameter("epoch", plan.handoff().predecessor().epoch()+1)
+                """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
                 .setParameter("modes", modes).getResultList();
         if (rows.isEmpty()) return false;
         var row = (Object[]) rows.getFirst();
-        var next = plan.next(); var handoff = plan.handoff();
+        var next = plan.next(); var handoff = plan.reservation();
         if (!handoff.successorToken().equals(row[0]) || !handoff.successorIncarnation().equals(row[1])
                 || ((Number) row[2]).longValue()!=next.predecessorGeneration()+1 || !next.seeds().ownerNonce().equals(row[3])
                 || !HexFormat.of().formatHex((byte[]) row[4]).equals(next.command().sha256())
