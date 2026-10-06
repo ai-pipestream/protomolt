@@ -51,3 +51,19 @@ Sol reviewed the negative assertions and found no blocker. `revoked-green.tar.gz
 contains this six-case result. These cases cover revocation before the fresh
 process loads preparation; revocation after preparation delivery/activation and
 typed recovery remain separate qualification.
+
+## Revocation after successor activation
+
+Base: `943cdb1dcc738219a9c24fbdd17cbe1bb9104332`. The same targeted command
+now passes nine cases, with no skips. Three added cases pause the fresh JVM after
+the manager has committed successor activation and before publication execution.
+The parent observes the activation marker and one durable execution row, revokes
+either the credential or grant, then releases the child through a test-only file
+barrier. Execution reports the exact authorization failure. The durable activation
+remains, but there is no new attempt, success, revision commit or destination.
+The live-authority control crosses the same barrier and publishes normally.
+
+Sol found no blocker. `activated-green.tar.gz` records these nine results.
+The barrier has a bounded child wait and the parent reaps the process on failure.
+This qualifies revocation between activation and execution; it does not imply
+automatic cleanup, typed recovery, or revocation at every later provider phase.

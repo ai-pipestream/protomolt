@@ -27,7 +27,7 @@ public final class DocumentPublicationProcessWorker {
         assertThat(args).hasSize(3);
         boolean scoped = args[0].startsWith("scoped-");
         String mode = scoped ? args[0].substring(7) : args[0];
-        assertThat(mode).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial");
+        assertThat(mode).isIn("write", "recover", "reserve", "install", "initial-before", "initial-after", "publish", "recover-initial", "recover-activated");
         var command = new DocumentPublicationCommand(DocumentPublicationIntent.parseFrom(Files.readAllBytes(Path.of(args[1]))));
         assertThat(command.intent().getMembersList()).hasSize(1);
         var caller = scoped ? scopedCaller(command) : ADMIN;
@@ -62,7 +62,7 @@ public final class DocumentPublicationProcessWorker {
                     assertThat(host.sessions.execute(caller,command,Map.of(),Map.of(),Map.of(),Map.of(),Optional.empty(),
                             (member,occurrence) -> {throw new AssertionError("Replay cannot resolve schema");},NONE)).isEqualTo(result);
                     assertThat(((ObservedStore)opened.store()).calls().get()).isEqualTo(calls);
-                } else recover(tx, host, input, opened, mode, caller);
+                } else recover(tx, host, input, opened, mode, caller, Path.of(args[2]).resolveSibling("activation-release"));
             }
         }
         System.out.println("PROCESS_RECOVERY_OK");
@@ -80,7 +80,7 @@ public final class DocumentPublicationProcessWorker {
                 (member, occurrence) -> { throw new AssertionError("Opaque fixture cannot resolve schemas"); }, NONE);
     }
 
-    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode, RepositoryCaller caller) throws Exception {
+    private static void recover(Tx tx, Host host, Input input, OpenedBlobStore backend, String mode, RepositoryCaller caller, Path activationRelease) throws Exception {
         var command = input.command();
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         boolean initial=mode.equals("recover-initial");
@@ -133,6 +133,12 @@ public final class DocumentPublicationProcessWorker {
             RepositorySuccessorInstall.install(tx, host.budget, ADMIN, plan, NONE);
             if (mode.equals("install")) holdReplacement();
             host.sessions.activateSuccessor(ADMIN, caller, plan, NONE);
+            if (mode.equals("recover-activated")) {
+                System.out.println("SUCCESSOR_ACTIVATED"); System.out.flush();
+                long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+                while (!Files.exists(activationRelease) && System.nanoTime() < deadline) Thread.sleep(10);
+                assertThat(Files.exists(activationRelease)).as("parent released activation barrier").isTrue();
+            }
             var result = execute(host, input, caller);
             var nextAttempt = plan.next().seeds().attempts().get("a");
             assertThat(nextAttempt).isNotEqualTo(loaded.record().seeds().attempts().get("a"));

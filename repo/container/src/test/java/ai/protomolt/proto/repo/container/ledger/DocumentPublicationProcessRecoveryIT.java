@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.blob.s3.*;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
@@ -99,10 +100,11 @@ class DocumentPublicationProcessRecoveryIT {
                 """).setParameter("id",operation).getSingleResult());
     }
 
-    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped", "scoped-revoked-grant", "scoped-revoked-key"})
+    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped", "scoped-revoked-grant", "scoped-revoked-key", "scoped-activated-live", "scoped-activated-grant", "scoped-activated-key"})
     void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
         boolean scoped = replacementStage.startsWith("scoped");
-        boolean revoked = replacementStage.startsWith("scoped-revoked-");
+        boolean afterActivation = replacementStage.startsWith("scoped-activated-");
+        boolean revoked = scoped && (replacementStage.endsWith("-key") || replacementStage.endsWith("-grant"));
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
                 .region(Region.of(S3.getRegion())).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build()) {
@@ -164,32 +166,33 @@ class DocumentPublicationProcessRecoveryIT {
                         assertThat(replacement.exitValue()).isEqualTo(137);
                     } finally { reap(replacement); }
                 }
-                if (revoked) {
-                    var caller = DocumentPublicationProcessWorker.scopedCaller(input.command());
-                    if (replacementStage.equals("scoped-revoked-key")) {
-                        new RepositoryCredentialAuthorities(c.tx()).revoke(DocumentPublicationProcessWorker.ADMIN,
-                                caller.credentialBinding().orElseThrow(), caller.principalName());
-                    } else {
-                        new RepositoryCreationGrants(c.tx(), new DriveLedger(c.tx())).revoke(DocumentPublicationProcessWorker.ADMIN,
-                                new RepositoryOperationLedger.Key("account", "principal", input.command().operationId()));
-                    }
-                }
+                if (revoked && !afterActivation) revoke(c, input.command(), replacementStage.endsWith("-key"));
                 // No capability files or writer output are passed to this separate process.
                 var readerLog = temp.resolve("reader.log");
-                var reader = start(c, readerLog, scoped ? "scoped-recover" : "recover", command, payload);
+                var reader = start(c, readerLog, afterActivation ? "scoped-recover-activated" : scoped ? "scoped-recover" : "recover", command, payload);
                 try {
+                    if (afterActivation) {
+                        long activationDeadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+                        while (reader.isAlive() && !log(readerLog).contains("SUCCESSOR_ACTIVATED")
+                                && System.nanoTime() < activationDeadline) Thread.sleep(20);
+                        assertThat(log(readerLog)).contains("SUCCESSOR_ACTIVATED");
+                        assertThat(count(c, "repository_successor_executions", input.command().operationId())).isEqualTo(1);
+                        if (revoked) revoke(c, input.command(), replacementStage.endsWith("-key"));
+                        Files.createFile(temp.resolve("activation-release"));
+                    }
                     assertThat(reader.waitFor(60, TimeUnit.SECONDS)).as("fresh reader completes: %s", readerLog).isTrue();
                     if (revoked) {
                         assertThat(reader.exitValue()).as(log(readerLog)).isNotZero();
                         assertThat(log(readerLog)).contains("ai.protomolt.proto.repo.spi.RepositoryException",
-                                "RepositoryReservedPreparation.load",
-                                replacementStage.equals("scoped-revoked-key")
+                                afterActivation ? "DocumentPublicationProcessWorker.execute" : "RepositoryReservedPreparation.load",
+                                replacementStage.endsWith("-key")
                                         ? "Repository credential is unavailable" : "Creation grant is unavailable")
                                 .doesNotContain("PROCESS_RECOVERY_OK");
-                        for (String table : List.of("repository_operation_success", "repository_successor_executions",
+                        for (String table : List.of("repository_operation_success",
                                 "document_revision_commits")) {
                             assertThat(count(c, table, input.command().operationId())).as(table).isZero();
                         }
+                        assertThat(count(c, "repository_successor_executions", input.command().operationId())).isEqualTo(afterActivation ? 1 : 0);
                         assertThat(count(c, "document_part_attempts", input.command().operationId())).isEqualTo(1);
                         assertThat(new DocumentLedger(c.tx()).findByNodeId(
                                 ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
@@ -234,6 +237,18 @@ class DocumentPublicationProcessRecoveryIT {
             } finally { reap(writer); }
         }
     }
+    private static void revoke(DocumentNativePublicationFixture.Context c,
+            DocumentPublicationCommand command, boolean credential) {
+        var caller = DocumentPublicationProcessWorker.scopedCaller(command);
+        if (credential) {
+            new RepositoryCredentialAuthorities(c.tx()).revoke(DocumentPublicationProcessWorker.ADMIN,
+                    caller.credentialBinding().orElseThrow(), caller.principalName());
+        } else {
+            new RepositoryCreationGrants(c.tx(), new DriveLedger(c.tx())).revoke(DocumentPublicationProcessWorker.ADMIN,
+                    new RepositoryOperationLedger.Key("account", "principal", command.operationId()));
+        }
+    }
+
     private static Process start(DocumentNativePublicationFixture.Context c, Path log, String mode, Path command, Path payload) throws Exception {
         var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp",
                 Objects.requireNonNull(System.getProperty("protomolt.test.runtimeClasspath")),

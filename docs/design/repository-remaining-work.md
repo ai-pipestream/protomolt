@@ -824,6 +824,13 @@ bytes and reader evidence remain retained. A recovery reservation can precede th
 refusal. Revocation after preparation delivery/activation still needs composed
 coverage, as do typed recovery and the host policy refusal above.
 
+A subsequent nine-case process run now covers revocation after durable successor
+activation and before execution. Both revoked-key and revoked-grant cases retain
+the activation record but start no new upload attempt and publish nothing; a live
+control with the same barrier succeeds. Typed recovery, host policy refusal and
+revocation at later provider phases remain open, along with automatic scheduling
+and safe reclamation of predecessor resources.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing
