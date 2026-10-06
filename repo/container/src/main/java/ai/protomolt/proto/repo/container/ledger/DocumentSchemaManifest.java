@@ -37,11 +37,12 @@ final class DocumentSchemaManifest {
             if (part.hasEmpty()) continue;
             expectedSlots.add(ordinal);
             var actual = bound.parts().get(new DocumentCommitParts.Slot(memberId, ordinal));
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
-            String sha = part.hasUpload() ? part.getUpload().getSha256() : part.getReuse().getObject().getSha256();
+            var object = part.hasHistoricalReuse() ? part.getHistoricalReuse().getObject() : part.getReuse().getObject();
+            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : object.getSizeBytes();
+            String sha = part.hasUpload() ? part.getUpload().getSha256() : object.getSha256();
             if (actual == null || actual.id() == null || actual.part() != part.getSlot().getPartValue()
                     || !part.getSlot().getSubKey().equals(actual.subKey()) || actual.size() != size || !sha.equals(actual.sha256())
-                    || (part.hasReuse() && !UUID.fromString(part.getReuse().getObject().getObjectId()).equals(actual.id())))
+                    || ((part.hasReuse() || part.hasHistoricalReuse()) && !UUID.fromString(object.getObjectId()).equals(actual.id())))
                 throw new IllegalArgumentException("Schema manifest physical part differs from command");
             estimatedBytes = reserve(estimatedBytes, 256L + 6L * actual.subKey().getBytes(StandardCharsets.UTF_8).length);
             physical.addValues(object(Struct.newBuilder().putFields("ordinal", number(ordinal))

@@ -56,6 +56,31 @@ class DocumentHistoricalManifestEntriesIT {
                         part.size(), part.sha256(), part.contentType(), part.providerVersion(), part.etag(), binding.generation(),
                         binding.profile().storageRealm(), binding.namespace());
                 var bound = new DocumentCommitParts.Bound(Map.of(new DocumentCommitParts.Slot("member", 0), physical), Map.of("member", 1L));
+                var policy = f.batch().policy();
+                var payload = DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                var proof = policy.policy().prepareAndCheck(com.google.protobuf.ByteString.copyFrom(HexFormat.of().parseHex(command.sha256())),
+                        command.intent().getMembers(0), Map.of(0, document.toByteString()),
+                        DocumentSchemaRetentionFixture.definition(Document.getDescriptor()), ignored -> payload, () -> {});
+                var proofs = Map.of("member", proof);
+                var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L * 1024 * 1024);
+                ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations = bytes -> {
+                    var lease = budget.reserve(bytes); return lease::close;
+                };
+                assertThatThrownBy(() -> DocumentSchemaBatch.prepare(command, policy, proofs, reservations, () -> {}))
+                        .isInstanceOf(UnsupportedOperationException.class);
+                assertThatThrownBy(() -> DocumentSchemaBatch.prepareHistorical(command, policy, proofs, reservations, List.of(), () -> {}))
+                        .isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+                var schemas = DocumentSchemaBatch.prepareHistorical(command, policy, proofs, reservations, refs, () -> {});
+                assertThat(budget.reservedBytes()).isZero();
+                var manifest = DocumentSchemaManifest.prepare(schemas, "member", bound, () -> {});
+                assertThat(manifest.decision()).isEqualTo("TYPED");
+                var json = com.google.protobuf.Struct.newBuilder();
+                com.google.protobuf.util.JsonFormat.parser().merge(manifest.json(), json);
+                var manifestPart = json.getFieldsOrThrow("parts").getListValue().getValues(0).getStructValue();
+                assertThat(manifestPart.getFieldsOrThrow("size").getStringValue()).isEqualTo(Long.toString(physical.size()));
+                assertThat(manifestPart.getFieldsOrThrow("sha256").getStringValue()).isEqualTo(physical.sha256());
+                assertThat(manifestPart.getFieldsOrThrow("object_id").getStringValue()).isEqualTo(physical.id().toString());
+                assertThat(DocumentSchemaRetention.prepare(schemas, "member")).isNotNull();
                 var prior = new DocumentLedger(c.tx()).findByNodeId(plan.members().getFirst().nodeId()).orElseThrow();
                 var locked = Map.of(prior.nodeId, prior);
                 var later = Instant.now().plusSeconds(1000);
@@ -71,6 +96,9 @@ class DocumentHistoricalManifestEntriesIT {
                 var wrong = new DocumentCommitParts.Physical(UUID.randomUUID(), physical.part(), physical.subKey(), physical.key(), physical.size(),
                         physical.sha256(), physical.contentType(), physical.version(), physical.etag(), physical.generation(), physical.realm(), physical.namespace());
                 assertThatThrownBy(() -> retained.select(selector, wrong, () -> {})).isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+                var substituted = new DocumentCommitParts.Bound(Map.of(new DocumentCommitParts.Slot("member", 0), wrong), Map.of("member", 1L));
+                assertThatThrownBy(() -> DocumentSchemaManifest.prepare(schemas, "member", substituted, () -> {}))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("physical part differs");
                 var wrongVersion = new DocumentCommitParts.Physical(physical.id(), physical.part(), physical.subKey(), physical.key(), physical.size(),
                         physical.sha256(), physical.contentType(), "another-provider-version", physical.etag(), physical.generation(), physical.realm(), physical.namespace());
                 assertThatThrownBy(() -> retained.select(selector, wrongVersion, () -> {})).isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
@@ -81,6 +109,9 @@ class DocumentHistoricalManifestEntriesIT {
                     if (checks.incrementAndGet() == 2) use.close();
                 })).isInstanceOf(IllegalStateException.class);
                 assertThatThrownBy(() -> retained.select(selector, physical, () -> {})).isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> DocumentSchemaBatch.prepareHistorical(command, policy, proofs, reservations, refs, () -> {}))
+                        .isInstanceOf(IllegalStateException.class);
+                assertThat(budget.reservedBytes()).isZero();
             } finally {
                 history.close(); assertThat(history.awaitDrained(Duration.ofSeconds(1))).isTrue(); history.release();
                 reads.fence(); reads.attestLocalQuiescence();

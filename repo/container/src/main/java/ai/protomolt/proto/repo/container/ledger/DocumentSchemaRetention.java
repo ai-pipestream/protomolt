@@ -33,8 +33,9 @@ final class DocumentSchemaRetention {
         var member = proof.member();
         fragments = proof.fragments().keySet().stream().sorted().map(ordinal -> {
             var part = member.getParts(ordinal);
-            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : part.getReuse().getObject().getSizeBytes();
-            String sha = part.hasUpload() ? part.getUpload().getSha256() : part.getReuse().getObject().getSha256();
+            var object = part.hasHistoricalReuse() ? part.getHistoricalReuse().getObject() : part.getReuse().getObject();
+            long size = part.hasUpload() ? part.getUpload().getSizeBytes() : object.getSizeBytes();
+            String sha = part.hasUpload() ? part.getUpload().getSha256() : object.getSha256();
             return new Fragment(ordinal, part.getSlot().getPartValue(), part.getSlot().getSubKey(), size, sha);
         }).toList();
         artifacts = proof.artifacts().keySet().stream().sorted().toList();

@@ -27,6 +27,7 @@ final class DocumentSchemaBatch {
 
     static DocumentSchemaBatch prepare(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
             Map<String, DocumentSchemaAdmission.Proof> supplied, Runnable control) throws InvalidProtocolBufferException {
+        command.requireExecutionSupported();
         return prepareInternal(command, policy, supplied, null, control);
     }
 
@@ -34,7 +35,21 @@ final class DocumentSchemaBatch {
             Map<String, DocumentSchemaAdmission.Proof> supplied,
             ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations, Runnable control)
             throws InvalidProtocolBufferException {
+        command.requireExecutionSupported();
         return prepareInternal(command, policy, supplied, Objects.requireNonNull(reservations), control);
+    }
+
+    /** Historical proof checking borrows the complete live source set; it grants no publication authority. */
+    static DocumentSchemaBatch prepareHistorical(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentSchemaAdmission.Proof> supplied,
+            ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations,
+            List<DocumentHistoricalReferenceAdmission.Prepared> sources, Runnable control)
+            throws InvalidProtocolBufferException {
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(command, sources, control);
+        if (references.isEmpty()) throw new IllegalArgumentException("Historical schema batch requires historical sources");
+        var result = prepareInternal(command, policy, supplied, Objects.requireNonNull(reservations), control);
+        DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
+        return result;
     }
 
     private static DocumentSchemaBatch prepareInternal(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
@@ -42,7 +57,6 @@ final class DocumentSchemaBatch {
             ai.protomolt.proto.repo.admission.DocumentAdmissionReservations reservations, Runnable control)
             throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(supplied); active(control);
-        command.requireExecutionSupported();
         if (!policy.account().equals(command.intent().getAccountId())) throw new IllegalArgumentException("Policy account differs from command");
         if (supplied.size() > command.intent().getMembersCount()) throw new IllegalArgumentException("Too many member schema proofs");
         var remaining = new HashMap<>(supplied);
