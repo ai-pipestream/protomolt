@@ -660,3 +660,13 @@ and V93-installed states lack a current-epoch coordinator binding, so V97 cannot
 reserve a third coordinator. They need an explicit supersession protocol with
 fresh identities and state-specific preparation/owner checks, not fabricated drain
 or binding rows. This is required before automatic recovery can be claimed.
+
+The fresh-process qualification is now distinct from the same-JVM proof:
+`DocumentPublicationProcessRecoveryIT` kills and reaps a writer after a completed
+real LocalStack PUT, then starts a new JVM with only the retried public command
+and payload. Private SQL discovery, natural expiry and V97/V93/V94 lead to normal
+publication. Old bytes remain unverified and unselected, old reader incarnations
+remain ACTIVE, and receipt replay performs no BlobStore calls. This removes the
+specific missing process-death proof for the admin/opaque post-owner case. It does
+not remove the production discovery/hosting, scoped typed, pre-owner,
+replacement-before-activation, pin reclamation or performance requirements above.

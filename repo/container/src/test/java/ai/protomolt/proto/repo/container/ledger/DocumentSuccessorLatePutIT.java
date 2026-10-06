@@ -35,7 +35,7 @@ class DocumentSuccessorLatePutIT {
     @Container static final LocalStackContainer S3 = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
     private static final RepositoryCaller ADMIN = new RepositoryCaller("principal", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
-    private static final String GENERATION = "late-successor", BUCKET = "late-successor";
+    static final String GENERATION = "late-successor", BUCKET = "late-successor";
     private static final Duration LEASE = Duration.ofMinutes(5);
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
@@ -225,8 +225,8 @@ class DocumentSuccessorLatePutIT {
                 .setParameter("id", attempt).getSingleResult());
         assertThat(state).isEqualTo("ABSENT");
     }
-    private record Input(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements, PartObject body) {}
-    private static Input input(Tx tx, ManagedBackendLedger.Profile profile) {
+    record Input(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements, PartObject body) {}
+    static Input input(Tx tx, ManagedBackendLedger.Profile profile) {
         var drive = new DriveRecord(); drive.driveId = UUID.randomUUID(); drive.accountId = "account";
         drive.name = "late"; drive.bucket = BUCKET; drive.prefix = "root"; drive.provider = "s3"; drive.driveType = "CUSTOM"; drive.status = "ACTIVE";
         new DriveLedger(tx).insert(drive);
@@ -251,7 +251,7 @@ class DocumentSuccessorLatePutIT {
         new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         return new Input(command, Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, GENERATION, profile)), body);
     }
-    private static DocumentPublicationResult execute(Host host, Input input, RepositoryReadControl control) throws Exception {
+    static DocumentPublicationResult execute(Host host, Input input, RepositoryReadControl control) throws Exception {
         return host.sessions.execute(ADMIN, input.command(), input.placements(), Map.of(new DocumentUploadPayloads.Key("a", 0), input.body()),
                 Map.of(), Map.of("a", DocumentPublicationCandidate.Mode.OPAQUE), Optional.empty(),
                 (member, occurrence) -> { throw new AssertionError("Opaque fixture must not resolve schemas"); }, control);
@@ -272,7 +272,7 @@ class DocumentSuccessorLatePutIT {
                 Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.BOUNDED_READ, BlobCapability.PHYSICAL_RECLAMATION),
                 new S3NamespaceProvisioner(sdk), new S3ObjectReclaimer(sdk));
     }
-    private static final class Host implements AutoCloseable {
+    static final class Host implements AutoCloseable {
         final PayloadBudget budget = new PayloadBudget(128_000_000);
         final DocumentReadLedger reads;
         final DocumentPartReader reader;

@@ -6525,3 +6525,19 @@ version while preserving the replacement's exact bytes and receipt.
 **Unchanged:** production code and public protocols. This is same-JVM admin/opaque
 CORE coverage, not process death, an active SDK call at transfer, scoped typed
 uncertain recovery, automatic host recovery or performance evidence.
+
+### Fresh JVM after writer process death
+
+**Extended qualification, no public API change:**
+`DocumentPublicationProcessRecoveryIT` and `DocumentPublicationProcessWorker`
+exercise existing journaled sessions, expired reservation, retained preparation,
+installation and activation after writer SIGKILL. The public intent and payload
+are retried; private tokens, incarnation, owner identity and preparation come from
+SQL. The real LocalStack PUT completes before termination, and the fresh JVM
+publishes fresh attempts while preserving the predecessor's unverified object and
+ACTIVE reader state. Receipt replay makes no BlobStore calls.
+
+**Still new implementation work:** bounded process-authorized discovery and host
+recovery orchestration. Test-only SQL discovery is not an available recovery API.
+Replacement death before activation, scoped typed recovery, old pin lifecycle and
+RustFS scaling remain separate acceptance work.

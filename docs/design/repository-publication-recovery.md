@@ -1273,9 +1273,9 @@ records local drain, stops a remote process or releases a reader pin.
 The parent now requires owner identity for this kind and forbids it for GRACEFUL.
 V93 compares that identity to its proposed predecessor owner in addition to its
 existing locked-owner and preparation checks. V95 still refuses general execution
-without V94 activation. The Java common proposal, uncertain-reservation entry point,
-session attachment and fresh-process provider qualification remain unfinished;
-this private SQL primitive is not an available automatic recovery feature.
+without V94 activation. The common Java proposal and session attachment are
+described below. This private SQL primitive alone is not an available automatic
+recovery feature.
 
 #### Replacement failure before activation
 
@@ -1322,10 +1322,10 @@ its lease or authorize execution. Cancellation after commit remains visible; a
 separate retry can confirm the saved fact.
 
 Java/SQL integration covers reservation, loading the old preparation under the
-live successor claim, installation, activation and exact attachment. It does not
-yet prove provider publication by an automatically recovered host, death of the
-predecessor or recovery from an unactivated replacement's death. Those remain
-required qualifications alongside reader/pin lifecycle handling.
+live successor claim, installation, activation and exact attachment. Automatic
+host recovery and recovery from an unactivated replacement's death remain required
+alongside reader/pin lifecycle handling. A separate process-death qualification is
+described below.
 
 #### Unquiesced replacement with a real delayed provider effect
 
@@ -1351,3 +1351,28 @@ The graceful fixture still uses preparation retained before V91. A fresh pre-V94
 preparation load after graceful reservation is rejected by the local-drain fence.
 Fresh-process graceful bootstrap therefore needs its own reviewed read authority;
 do not weaken the general loader or claim guard to make that case pass.
+
+#### Writer process death and public-request retry
+
+`DocumentPublicationProcessRecoveryIT` starts a writer JVM against PostgreSQL and
+versioned LocalStack. Its test-only store delegates a real PUT, then holds the
+return before the repository records verification. The parent independently reads
+the exact bytes from the provider and observes the unverified SQL object before
+SIGKILL. It reaps the writer (exit 137) before starting the recovery JVM.
+
+Both JVMs receive only the public intent and raw part payload. The replacement
+validates the payload digest, discovers private predecessor identities from SQL,
+waits actual claim/owner expiry, reserves V97 and loads retained preparation under
+its live successor claim. V93/V94 then install and activate fresh identities before
+ordinary manager execution publishes. Assertions cover a distinct attempt/key,
+exact versioned successor bytes and revision binding, no old revision references,
+an unchanged unverified predecessor object, receipt replay without BlobStore calls,
+no old V90/V91 markers, and unchanged ACTIVE predecessor reader incarnations.
+
+This is client resubmission after a completed provider write, using admin authority
+and opaque CORE data. It is not automatic recovery, payload reconstruction from
+orphan objects, a late remote PUT, a scoped typed case, or proof that old pins can
+be released. The SQL discovery in the worker is test-only; production still needs
+a bounded, process-authorized discovery API and host lifecycle integration. The
+separate late-PUT test qualifies delayed effects and tombstone cleanup. Neither
+LocalStack test establishes RustFS throughput or horizontal scaling.
