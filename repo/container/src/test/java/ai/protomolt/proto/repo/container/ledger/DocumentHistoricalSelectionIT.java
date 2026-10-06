@@ -27,6 +27,70 @@ class DocumentHistoricalSelectionIT {
     private static final RepositoryCaller ADMIN = new RepositoryCaller("reader", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(strings = {"valid", "missing-source", "extra-source", "closed-use", "physical-key", "missing-target", "unlocked", "cancelled"})
+    void bindsPinnedHistoricalSourceToEveryDestinationSlot(String fault) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = prepare(c, 2); var published = publish(c, f, Fault.NONE, em -> {});
+            var selected = selector(f, published, 0, 0);
+            var intent = f.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString());
+            for (int i = 0; i < intent.getMembersCount(); i++) {
+                var member = intent.getMembers(i);
+                intent.setMembers(i, member.toBuilder().clearParts().addParts(DocumentPublicationPart.newBuilder()
+                        .setSlot(selected.getSourceSlot()).setHistoricalReuse(selected)));
+            }
+            var command = new DocumentPublicationCommand(intent.build());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = ledger.captureHistorical(ADMIN, selected.getSource(), UUID.fromString(selected.getRevisionId()));
+            try (var use = history.use()) {
+                var reference = DocumentHistoricalReferenceAdmission.prepare(history, use, List.of(selected), NONE);
+                var extra = DocumentHistoricalReferenceAdmission.prepare(history, use, List.of(selector(f, published, 1, 1)), NONE);
+                if (fault.equals("missing-source") || fault.equals("extra-source")) {
+                    assertThatThrownBy(() -> DocumentAssessmentSlots.prepare(command,
+                            fault.equals("missing-source") ? List.of() : List.of(reference, extra), () -> {}))
+                            .isInstanceOf(DocumentPartAttemptLedger.FenceException.class);
+                } else {
+                    var prepared = DocumentAssessmentSlots.prepare(command, List.of(reference), () -> {});
+                    var object = selected.getObject();
+                    var physical = new DocumentCommitParts.Physical(UUID.fromString(object.getObjectId()),
+                            selected.getSourceSlot().getPartValue(), selected.getSourceSlot().getSubKey(),
+                            fault.equals("physical-key") ? "different-key" : object.getObjectKey(), object.getSizeBytes(),
+                            object.getSha256(), object.getContentType(), object.hasProviderVersion() ? object.getProviderVersion() : null,
+                            null, object.getBackendGeneration(), object.getStorageRealm(), object.getNamespace());
+                    var parts = new java.util.HashMap<DocumentCommitParts.Slot, DocumentCommitParts.Physical>();
+                    for (var member : command.intent().getMembersList()) parts.put(new DocumentCommitParts.Slot(member.getMemberId(), 0), physical);
+                    if (fault.equals("missing-target")) parts.remove(new DocumentCommitParts.Slot("member-1", 0));
+                    var bound = new DocumentCommitParts.Bound(parts, Map.of("member-0", 1L, "member-1", 1L));
+                    if (fault.equals("closed-use")) use.close();
+                    org.assertj.core.api.ThrowableAssert.ThrowingCallable bind = () -> c.tx().inTransaction(em -> {
+                        DocumentAdmissionAuthorization.authorizeReplay(em, ADMIN, command);
+                        var nodes = f.sources().stream().map(source -> source.row().nodeId).collect(java.util.stream.Collectors.toSet());
+                        var locks = DocumentPublicationLocks.lockIndependentOrigins(em, nodes, Set.of(physical.id()), Set.of());
+                        if (!fault.equals("unlocked")) DocumentPublicationLocks.lockIndependentRetention(em, locks);
+                        var slots = DocumentAssessmentSlots.bind(em, prepared, bound, locks, () -> {
+                            if (fault.equals("cancelled")) throw new java.util.concurrent.CancellationException("cancelled historical binding");
+                        });
+                        assertThat(slots).hasSize(2);
+                        assertThat(slots).allSatisfy(slot -> {
+                            assertThat(slot.declaration()).isEqualTo("HISTORICAL_REUSE");
+                            assertThat(slot.sourceNode()).isEqualTo(DocumentIds.nodeId(selected.getSource()));
+                            assertThat(slot.sourceRevision()).isEqualTo(UUID.fromString(selected.getRevisionId()));
+                            assertThat(slot.sourceOrdinal()).isZero();
+                        });
+                    });
+                    if (fault.equals("valid")) assertThatCode(bind).doesNotThrowAnyException();
+                    else if (fault.equals("closed-use")) assertThatThrownBy(bind)
+                            .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
+                    else if (fault.equals("unlocked")) assertThatThrownBy(bind)
+                            .isInstanceOf(IllegalStateException.class).hasMessageContaining("locked proposed object set");
+                    else if (fault.equals("cancelled")) assertThatThrownBy(bind)
+                            .isInstanceOf(java.util.concurrent.CancellationException.class).hasMessageContaining("cancelled historical binding");
+                    else assertThatThrownBy(bind).isInstanceOf(DocumentPartAttemptLedger.FenceException.class)
+                            .hasMessageContaining("Assessment slots differ");
+                }
+            } finally { release(ledger, history); }
+        }
+    }
+
     @ParameterizedTest @ValueSource(strings = {"valid", "current-reuse", "non-native", "node", "revision", "ordinal", "object", "missing-node", "oversize-ordinal"})
     void stagingBindsExactHistoricalProvenanceWithoutRequiringCurrentRevision(String fault) throws Exception {
         try (var c = context(POSTGRES)) {

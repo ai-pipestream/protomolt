@@ -20,6 +20,11 @@ Execution is still gated;
 [staging evidence](../evidence/repository/2026-10-05-historical-staging/README.md)
 records the narrower SQL proof and remaining negative cases.
 
+The explicit pinned historical slot binder is now qualified separately. The next
+integration is the physical binder and assessment creation, carrying the same
+source Uses and transaction-local origin/retention lock proof. See
+[binding evidence](../evidence/repository/2026-10-05-historical-slot-binding/README.md).
+
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response

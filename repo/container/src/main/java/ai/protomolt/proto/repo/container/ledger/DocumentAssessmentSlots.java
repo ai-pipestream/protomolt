@@ -2,7 +2,9 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationSlot;
+import ai.protomolt.proto.repo.v1.PublicationHistoricalReuse;
 import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
@@ -32,8 +34,11 @@ final class DocumentAssessmentSlots {
         private final DocumentPublicationCommand command;
         private final Map<Source, UUID> expected;
         private final List<Batch> batches;
-        private Prepared(DocumentPublicationCommand command, Map<Source, UUID> expected, List<Batch> batches) {
+        private final List<DocumentHistoricalReferenceAdmission.Prepared> historical;
+        private Prepared(DocumentPublicationCommand command, Map<Source, UUID> expected, List<Batch> batches,
+                List<DocumentHistoricalReferenceAdmission.Prepared> historical) {
             this.command = command; this.expected = Map.copyOf(expected); this.batches = List.copyOf(batches);
+            this.historical = List.copyOf(historical);
         }
     }
     private DocumentAssessmentSlots() {}
@@ -41,6 +46,29 @@ final class DocumentAssessmentSlots {
     /** Encode only bounded identities before any database locks; no fragment bytes or manifests. */
     static Prepared prepare(DocumentPublicationCommand command, Runnable control) {
         command.requireExecutionSupported();
+        return prepare(command, List.of(), control);
+    }
+
+    /** Explicit internal historical preparation. The caller owns every source Use through staging/commit. */
+    static Prepared prepare(DocumentPublicationCommand command,
+            List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
+        historical = List.copyOf(historical);
+        if (historical.size() > DocumentPublicationCommand.MAX_PARTS) throw conflict();
+        var declared = new java.util.HashSet<PublicationHistoricalReuse>();
+        for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
+            control.run();
+            if (part.hasHistoricalReuse()) declared.add(part.getHistoricalReuse());
+        }
+        var supplied = new java.util.HashSet<PublicationHistoricalReuse>();
+        int count = 0; long bytes = 0;
+        for (var source : historical) for (var selector : source.selectors()) {
+            control.run();
+            if (++count > DocumentPublicationCommand.MAX_PARTS
+                    || (bytes += selector.getSerializedSize()) > DocumentPublicationCommand.MAX_COMMAND_BYTES
+                    || !selector.getSource().getAccountId().equals(command.intent().getAccountId())) throw conflict();
+            supplied.add(selector);
+        }
+        if (!declared.equals(supplied)) throw conflict();
         var expected = new LinkedHashMap<Source, UUID>();
         for (var member : command.intent().getMembersList()) for (var part : member.getPartsList()) {
             control.run();
@@ -64,7 +92,9 @@ final class DocumentAssessmentSlots {
             if (values.getValuesCount() == BATCH_SIZE) { batches.add(encode(values)); values.clear(); }
         }
         if (values.getValuesCount() > 0) batches.add(encode(values));
-        return new Prepared(command, expected, batches);
+        control.run();
+        historical.forEach(source -> source.selectors());
+        return new Prepared(command, expected, batches, historical);
     }
 
     /**
@@ -73,6 +103,22 @@ final class DocumentAssessmentSlots {
      * retained stage whose original sources may have retired or advanced.
      */
     static List<Slot> bind(EntityManager em, Prepared prepared, DocumentCommitParts.Bound physical, Runnable control) {
+        if (!prepared.historical.isEmpty()) throw conflict();
+        return bind(em, prepared, physical, null, control);
+    }
+
+    /** Historical binding additionally requires the complete transaction-local origin/retention lock proof. */
+    static List<Slot> bind(EntityManager em, Prepared prepared, DocumentCommitParts.Bound physical,
+            DocumentPublicationLocks.IndependentOrigins locks, Runnable control) {
+        if (!prepared.historical.isEmpty()) {
+            java.util.Objects.requireNonNull(locks, "Historical binding requires origin/retention locks");
+            var readControl = new RepositoryReadControl() {
+                @Override public boolean isCancelled() { control.run(); return Thread.currentThread().isInterrupted(); }
+                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            for (var source : prepared.historical)
+                DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, locks, readControl);
+        }
         var origins = new HashMap<Source, Origin>();
         for (var batch : prepared.batches) {
             control.run();
@@ -121,12 +167,24 @@ final class DocumentAssessmentSlots {
                     if (origin == null || !object.id().toString().equals(reuse.getObject().getObjectId())
                             || object.size() != reuse.getObject().getSizeBytes() || !object.sha256().equals(reuse.getObject().getSha256())) throw conflict();
                     result.add(new Slot(id, ordinal, selection, object.id(), "REUSE", origin.revision(), origin.ordinal()));
+                } else if (part.hasHistoricalReuse()) {
+                    var historical = part.getHistoricalReuse(); var expected = historical.getObject();
+                    if (!object.id().toString().equals(expected.getObjectId()) || object.size() != expected.getSizeBytes()
+                            || !object.sha256().equals(expected.getSha256()) || !object.contentType().equals(expected.getContentType())
+                            || !object.generation().equals(expected.getBackendGeneration()) || !object.realm().equals(expected.getStorageRealm())
+                            || !object.namespace().equals(expected.getNamespace()) || !object.key().equals(expected.getObjectKey())
+                            || !java.util.Objects.equals(object.version(), expected.hasProviderVersion() ? expected.getProviderVersion() : null))
+                        throw conflict();
+                    result.add(new Slot(id, ordinal, selection, object.id(), "HISTORICAL_REUSE",
+                            UUID.fromString(historical.getRevisionId()), historical.getRevisionOrdinal(),
+                            DocumentIds.nodeId(historical.getSource())));
                 } else throw conflict();
             }
         }
         if (result.isEmpty() || result.size() > 10000 || !expectedSlots.equals(physical.parts().keySet())
                 || !expectedMembers.equals(physical.selections().keySet())) throw conflict();
         control.run();
+        prepared.historical.forEach(source -> source.selectors());
         return List.copyOf(result);
     }
     private static Value text(String value) { return Value.newBuilder().setStringValue(value).build(); }

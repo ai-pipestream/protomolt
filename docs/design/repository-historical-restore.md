@@ -306,3 +306,17 @@ end-to-end historical stage. Next, bind a live pinned source selection to each
 destination member/full ordinal before allowing historical preparation. Add the
 SQL negative case for a historical slot paired with a v1 snapshot, including
 budget release on refusal, alongside command-to-stage correspondence tests.
+
+## Pinned slot-binding checkpoint
+
+The explicit internal slot preparation/binding overload now matches the complete
+distinct historical selector set to the command, requires live source Uses and
+transaction-local origin/retention locks, and binds every destination member/full
+ordinal to exact historical physical identity. One selected source may feed several
+destinations. See [binding evidence](../evidence/repository/2026-10-05-historical-slot-binding/README.md).
+
+Assessment creation still uses the ordinary gated preparation route. Its physical
+binder must next resolve historical objects alongside uploads/current reuse and
+pass the same lock proof to slot binding. No source pin may drain before the staged
+references are durable; current authorization and active policy must be fenced in
+that transaction. This prerequisite does not yet establish an executable restore.
