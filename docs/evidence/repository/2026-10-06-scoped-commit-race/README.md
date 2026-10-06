@@ -1,4 +1,4 @@
-# Publication-first grant revocation race
+# Publication and grant revocation races
 
 Base: `f6f4d740f4aef3ee694956d65d5c3bf6fb5dd259`.
 
@@ -21,5 +21,26 @@ the real database. No success-shaped backend or response mock is used.
 
 Sol reviewed the synchronization and found no blocker. This proves publication-first
 ordering, not revocation-first refusal or expiry during final commit. Those cases
-remain open. The archive contains XML and binary test results. This is local
+remained open at that checkpoint. The archive contains XML and binary test results. This is local
 correctness evidence, not a throughput or latency benchmark.
+
+## Revocation-first final authorization
+
+Base: `f2aabbc990122349662a75d3d2a6d4f75f24e2ce`.
+
+```sh
+./gradlew :protomolt-repo-container:test --tests '*DocumentPublicationCommitIT.finalPublicationRechecksGrantAfterConcurrentRevokerCommits' --console=plain
+```
+
+Both cases passed with no skips. After real LocalStack uploads and content checks,
+a separate PostgreSQL transaction holds the exact grant row. The final publisher
+waits in `lock_repository_creation_grant`, verified against the blocking backend
+PID. Committing revocation refuses publication: the destination remains absent,
+no success record exists, and provider-versioned attempt rows remain available
+for recovery. The control holds the same row without revoking and publication
+succeeds after release.
+
+Sol reviewed the test and synchronization with no blocker. This qualifies the
+opaque direct final-commit boundary, not runtime retry or cleanup. Final-check
+expiry remains open. `revocation-first-green.tar.gz` contains the two-case XML
+and binary results.

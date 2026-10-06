@@ -1350,10 +1350,15 @@ class DocumentPublicationCommitIT {
 
     private static Checked stage(Fixture fixture, Map<DocumentUploadPayloads.Key,ByteString> retainedBytes,
             DocumentRevisionAssembly.Limits limits, long budgetBytes) {
+        return stage(fixture, retainedBytes, limits, budgetBytes, ADMIN);
+    }
+
+    private static Checked stage(Fixture fixture, Map<DocumentUploadPayloads.Key,ByteString> retainedBytes,
+            DocumentRevisionAssembly.Limits limits, long budgetBytes, RepositoryCaller caller) {
         try (var coordinator=new DocumentUploadCoordinator(tx,new DriveLedger(tx),new PayloadBudget(budgetBytes),
                 (generation,retained)->new DocumentUploadCoordinator.Backend(profile.identity(),opened),4,Duration.ofMillis(25),
                 new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5)))) {
-            return coordinator.stageAndPrepare(ADMIN,fixture.owner,fixture.prepared,fixture.bodies,Map.of(),()->{},(staged,view,active)->{
+            return coordinator.stageAndPrepare(caller,fixture.owner,fixture.prepared,fixture.bodies,Map.of(),()->{},(staged,view,active)->{
                 var content=new HashMap<String,DocumentCommandContent>();
                 var selected=new HashMap<String,DocumentSelectedAttemptLedger.Selected>();
                 for (var member:fixture.command.intent().getMembersList()) {
@@ -1461,6 +1466,67 @@ class DocumentPublicationCommitIT {
             reads.closeForShutdown();
             assertThat(reads.awaitLocalDrain(Duration.ZERO)).isTrue();
             reads.attestLocalQuiescence();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void finalPublicationRechecksGrantAfterConcurrentRevokerCommits(boolean revoke) throws Exception {
+        var f = fixture(1, 1, publicReadGrant(), "revocation-first-" + UUID.randomUUID(), false);
+        var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
+        var placements = f.prepared.plan().members().stream().collect(java.util.stream.Collectors.toMap(
+                member -> member.placement().drive().id(), DocumentUploadPlan.Member::placement, (a, b) -> a));
+        var binding = new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding("revocation-test", UUID.randomUUID(), 1);
+        var caller = new RepositoryCaller("principal", false, java.util.Set.of(command.intent().getAccountId()),
+                java.util.Set.of(), java.util.Optional.of(binding));
+        new RepositoryCredentialAuthorities(tx).register(ADMIN, binding, caller.principalName());
+        var drives = new DriveLedger(tx);
+        var grant = RepositoryCreationGrants.prepare(caller, command, placements, (System.currentTimeMillis()+300_000)*1000);
+        new RepositoryCreationGrants(tx, drives).install(ADMIN, grant);
+        var budget = new PayloadBudget(64_000_000);
+        var session = DocumentPublicationSession.journaled(tx, drives, caller, command, placements, LEASE,
+                budget, UUID.randomUUID(), new DocumentPublicationScopeCalls());
+        try (var execution = session.begin(caller, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+                var revoker = database.dataSource().getConnection()) {
+            execution.bindModes(Map.of("member-0", DocumentPublicationCandidate.Mode.OPAQUE));
+            var owner = session.admit(caller, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE).orElseThrow();
+            var staged = stage(new Fixture(command, owner, session.prepared(), f.bodies), Map.of(), LIMITS, 4_000_000, caller);
+            assertThat(staged.selected).hasSize(1);
+            revoker.setAutoCommit(false);
+            int blocker;
+            try (var query = revoker.createStatement(); var rows = query.executeQuery("SELECT pg_backend_pid()")) {
+                rows.next(); blocker = rows.getInt(1);
+            }
+            try (var update = revoker.prepareStatement("UPDATE repository_creation_grants SET revoked=? WHERE operation_id=?")) {
+                update.setBoolean(1, revoke); update.setObject(2, command.operationId());
+                assertThat(update.executeUpdate()).isEqualTo(1);
+            }
+            try {
+                var publication = workers.submit(() -> new DocumentPublicationCommit(tx, drives, false, false)
+                        .commit(caller, owner, session.prepared(), staged.content, staged.selected, () -> {}));
+                DocumentPublicationCommitBarrier.awaitGrantReaderWaiter(tx, blocker);
+                assertThat(publication.isDone()).isFalse();
+                revoker.commit();
+                if (revoke) {
+                    assertThatThrownBy(() -> publication.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                            .hasCauseInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class)
+                            .hasStackTraceContaining("Creation grant is unavailable");
+                    assertThat(new DocumentLedger(tx).findByNodeId(ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
+                            command.intent().getMembers(0).getDestination().getAddress()))).isEmpty();
+                    long successes = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM repository_operation_success WHERE operation_id=:o")
+                            .setParameter("o", command.operationId()).getSingleResult()).longValue());
+                    assertThat(successes).isZero();
+                    long retained = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:a AND provider_version IS NOT NULL")
+                            .setParameter("a", staged.selected.get("member-0").attempt()).getSingleResult()).longValue());
+                    assertThat(retained).isEqualTo(command.intent().getMembers(0).getPartsCount());
+                } else {
+                    assertThat(publication.get(10, java.util.concurrent.TimeUnit.SECONDS).getMembersCount()).isEqualTo(1);
+                }
+            } finally { revoker.rollback(); }
         }
         assertThat(budget.reservedBytes()).isZero();
     }

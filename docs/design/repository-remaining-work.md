@@ -816,4 +816,9 @@ transaction before commit and observe grant revocation blocked on its PostgreSQL
 PID. Releasing commit lets publication finish, then revocation succeeds; committed
 receipt READ remains valid until credential revocation. See
 [evidence](../evidence/repository/2026-10-06-scoped-commit-race/README.md).
-Revocation-first refusal and expiry at final authorization still need direct tests.
+Revocation-first refusal is now covered at the opaque direct final-commit boundary:
+real provider uploads finish first, the publisher demonstrably waits on the grant
+row, and committed revocation leaves no destination or success record. A matching
+non-revoking control commits. Provider-versioned attempt rows remain for recovery;
+this does not yet qualify their cleanup. Expiry at final authorization still needs
+a direct test.

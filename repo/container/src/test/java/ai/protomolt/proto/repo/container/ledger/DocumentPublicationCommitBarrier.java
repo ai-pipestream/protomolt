@@ -43,16 +43,24 @@ final class DocumentPublicationCommitBarrier implements AutoCloseable {
     void release() { release.complete(null); }
 
     static void awaitGrantRevocationWaiter(Tx tx, int publisher) throws Exception {
+        awaitWaiter(tx, publisher, "%UPDATE repository_creation_grants SET revoked%");
+    }
+
+    static void awaitGrantReaderWaiter(Tx tx, int revoker) throws Exception {
+        awaitWaiter(tx, revoker, "%lock_repository_creation_grant(%");
+    }
+
+    private static void awaitWaiter(Tx tx, int blocker, String query) throws Exception {
         long deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime()<deadline) {
             var rows = tx.readOnly(em -> em.createNativeQuery("""
-                    SELECT pid FROM pg_stat_activity WHERE :publisher=ANY(pg_blocking_pids(pid))
-                      AND wait_event_type='Lock' AND query LIKE '%UPDATE repository_creation_grants SET revoked%'
-                    """).setParameter("publisher", publisher).getResultList());
+                    SELECT pid FROM pg_stat_activity WHERE :blocker=ANY(pg_blocking_pids(pid))
+                      AND wait_event_type='Lock' AND query LIKE :query
+                    """).setParameter("blocker", blocker).setParameter("query", query).getResultList());
             if (!rows.isEmpty()) return;
             Thread.sleep(10);
         }
-        throw new AssertionError("Grant revocation did not wait on the publication transaction");
+        throw new AssertionError("Expected grant operation did not wait on transaction " + blocker);
     }
 
     @Override public void close() { release(); factory.close(); }
