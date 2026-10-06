@@ -85,6 +85,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     private final DocumentUploadCoordinator uploads;
     private final DocumentPublicationSessions sessions;
     private final DocumentReadLifecycle reads;
+    private final java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority;
     private final DocumentPublicationScopeCalls scopeCalls = new DocumentPublicationScopeCalls();
     private boolean stopping;
     private boolean stopped;
@@ -134,7 +135,32 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
             int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
             int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments) {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism,
+                flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents, assessments, null);
+    }
+
+    /** Private host opt-in. Drain authority is supplied independently of request ownership. */
+    static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime journaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority) throws IOException {
+        Objects.requireNonNull(drainAuthority);
+        return new DocumentPublicationRuntime(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments), drainAuthority);
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority) {
         Objects.requireNonNull(backends);
+        this.drainAuthority = drainAuthority;
         reads = new DocumentReadLifecycle(ledger, reader, cleanupBatchSize);
         uploads = new DocumentUploadCoordinator(tx, drives, budget, (generation, profile) -> {
             var selected = Objects.requireNonNull(backends.resolve(generation, profile));
@@ -142,7 +168,9 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         }, parallelism, flushAge, sqlTimeouts);
         var execution = new DocumentPublicationExecution(tx, drives, ledger, uploads, reader, budget,
                 assemblyLimits, deliverEvents, assessments);
-        sessions = new DocumentPublicationSessions(tx, execution, lease, maxSessions, maxCommandBytes);
+        sessions = drainAuthority == null
+                ? new DocumentPublicationSessions(tx, execution, lease, maxSessions, maxCommandBytes)
+                : DocumentPublicationSessions.journaled(tx, execution, lease, maxSessions, maxCommandBytes, budget);
     }
 
     /** Borrowed payloads must remain stable until return, including after caller cancellation. */
@@ -235,16 +263,29 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
 
     /** Local wait budget excludes SQL time; configure database statement/network timeouts separately. */
     public synchronized boolean shutdownStep(Duration waitBudget) throws InterruptedException {
+        return shutdownStep(waitBudget, RepositoryReadControl.NONE);
+    }
+
+    /** Host cancellation does not discard registrations or bypass their durable admission fence. */
+    synchronized boolean shutdownStep(Duration waitBudget, RepositoryReadControl control) throws InterruptedException {
         Objects.requireNonNull(waitBudget);
+        Objects.requireNonNull(control).check();
         if (waitBudget.isNegative()) throw new IllegalArgumentException("Shutdown wait must not be negative");
         long budget = waitBudget.toNanos(), start = System.nanoTime();
         if (stopped) return true;
         stopping = true;
         close();
+        if (drainAuthority != null) {
+            var progress = sessions.drainRegistrations(remaining(budget, start), drainAuthority, control);
+            if (!progress.registrationsIdle() || progress.unresolved() != 0) return false;
+        }
         if (!sessions.awaitIdle(remaining(budget, start))) return false;
+        control.check();
         if (!scopeCalls.awaitIdle(remaining(budget, start))) return false;
+        control.check();
         uploads.close();
         if (!uploads.awaitIdle(remaining(budget, start))) return false;
+        control.check();
         stopped = reads.shutdownStep(remaining(budget, start));
         return stopped;
     }

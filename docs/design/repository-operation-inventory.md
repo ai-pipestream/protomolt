@@ -6150,6 +6150,20 @@ remain unfinished. No protobuf names/tags, receipt identity, schema references,
 public idempotency contract or mounted RPC changes. See the
 [scoped registration checks](../evidence/repository/2026-10-05-scoped-registration/README.md).
 
+### Private journaled runtime lifecycle
+
+**New internal Java composition:** `DocumentPublicationRuntime.journaled` uses the
+existing runtime workers with a journaled session manager and a constructor-bound
+process-authority resolver. Shutdown closes registration admission and marks retained
+identities before session/scope/upload/read teardown. Active or unresolved registrations
+retain resources for another pass. The package-private controlled shutdown overload
+preserves host cancellation and does not grant replacement ownership.
+
+**Unchanged:** public constructors, protobuf definitions/imports/type URLs, managed
+service activation and automatic takeover. No durable LOCAL_DRAINED result exists
+yet; service-owned schema workers and possible late remote effects have separate
+lifetime requirements. See [runtime composition](repository-publication-recovery.md#private-journaled-runtime-composition).
+
 ### Opt-in journaled session retention
 
 **New internal composition:** `DocumentPublicationSessions.journaled` creates

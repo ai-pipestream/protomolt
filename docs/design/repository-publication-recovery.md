@@ -798,3 +798,34 @@ already committed without changing their identity.
 This is registration and SQL admission closure only. Full runtime shutdown must
 precede LOCAL_DRAINED; no such state is recorded by this operation. Ordinary runtime
 sessions remain unjournaled, and automatic successor execution is still disabled.
+
+## Private journaled runtime composition
+
+`DocumentPublicationRuntime.journaled` is a package-private host opt-in that reuses
+the existing upload coordinator, execution engine and reader lifecycle. It selects
+the journaled session manager and stores a trusted per-operation drain-authority
+resolver. Public constructors and the managed service still use the ordinary
+runtime. Request ownership never supplies this private process authority.
+
+For a journaled instance, the existing shutdown entry point always closes provider
+starts and scope/session admission, then drains registration scopes and records V90
+markers for retained nonterminal identities. Active registrations or unresolved
+claim absence return false before provider/read teardown. Authority, SQL and
+cancellation failures remain visible and retryable with admission closed. After
+marking, shutdown waits for session calls and schema scopes, drains uploads, then
+runs reader cleanup. Terminal entries already evicted with durable proof require
+no marker. Local wait budgets do not replace database statement/network timeouts.
+
+An active call may finish work already admitted before drain, but cannot begin a
+new assessment afterward. The runtime probe checks the actual SQL admission refusal
+and absence of a new assessment start, stage or rejection receipt; it does not turn
+that refusal into a semantic rejection. Lost CREATE/decision replies and retained
+rollback cases use the same real provider/SQL paths as ordinary runtime execution.
+
+Successful runtime shutdown is still not durable LOCAL_DRAINED. Service-owned
+`ManagedSchemaAccess` may retain abandoned registry loads after publication scopes
+have exited, and its separate close/idle protocol must complete before a host can
+attest drain. A direct synchronous `Schemas` resolver must not leave untracked work.
+Remote effects surviving an SDK timeout, cleanup tombstones, durable attestation,
+successor identity and public activation remain separate required work.
+See [runtime qualification](../evidence/repository/2026-10-06-journaled-runtime/README.md).

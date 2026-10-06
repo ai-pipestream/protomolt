@@ -8,7 +8,11 @@ The opt-in journaled manager now closes provider starts and its shared registrat
 barrier before marking retained nonterminal operation identities in SQL. Missing
 claims remain unresolved, and uncertain replies require exact marker confirmation.
 This does not enable ordinary journaled runtime execution, record LOCAL_DRAINED,
-or authorize successor execution. Continue historical client lifecycle qualification
+or authorize successor execution. A private journaled runtime now stores the trusted
+drain-authority resolver and performs this marking before its existing session,
+scope, upload and reader shutdown. The managed service's schema-worker lifecycle
+still needs separate host composition before durable LOCAL_DRAINED. Public
+constructors remain unchanged. Continue historical client lifecycle qualification
 alongside that recovery integration; the independent work below remains required.
 
 Current restore checkpoint: canonical historical commands, current-READ replay,

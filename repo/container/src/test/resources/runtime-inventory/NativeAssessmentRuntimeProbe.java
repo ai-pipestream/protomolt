@@ -17,15 +17,19 @@ import javax.sql.DataSource;
 public final class NativeAssessmentRuntimeProbe {
     private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
     static void run(DataSource database, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source) throws Exception {
-        for (int scenario : new int[]{1, 2, 3, 4, 6, 0}) {
+        for (int scenario : new int[]{1, 2, 3, 4, 6, 11, 12, 13, 14, 16, 10, 0}) {
+            boolean journaled = scenario >= 10;
+            int mode = scenario % 10;
             var member = source.candidate();
-            if (scenario == 0) member = member.toBuilder().setDestination(member.getPartsList().stream()
+            if (mode == 0 && !journaled) member = member.toBuilder().setDestination(member.getPartsList().stream()
                     .filter(part -> part.hasReuse()).findFirst().orElseThrow().getReuse().getSource()).build();
+            if (mode == 0 && journaled) member = member.toBuilder().setDestination(member.getDestination().toBuilder().setIfAbsent(true)
+                    .setAddress(member.getDestination().getAddress().toBuilder().setGraphId("journaled-runtime-" + UUID.randomUUID()))).build();
             var command = AssessmentMixedReuseProbe.command(member);
-            var armed = new AtomicBoolean(scenario == 2 || scenario == 3 || scenario == 4);
+            var armed = new AtomicBoolean(mode == 2 || mode == 3 || mode == 4);
             var faulted = new AtomicBoolean();
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger", Map.of(
-                    "hibernate.connection.datasource", NativeAssessmentExecutionProbe.faultSource(database, command.operationId(), scenario, armed, faulted),
+                    "hibernate.connection.datasource", NativeAssessmentExecutionProbe.faultSource(database, command.operationId(), mode, armed, faulted),
                     "hibernate.hbm2ddl.auto", "validate"));
                     var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
                             "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
@@ -47,16 +51,16 @@ public final class NativeAssessmentRuntimeProbe {
                         return new DocumentPublicationRuntime.Backend(profile.identity(), opened);
                     };
                     Path bundle = Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE"));
-                    if (scenario == 1) {
+                    if (mode == 1) {
                         try {
-                            runtime(tx, drives, reads, reader, budget, backends, bundle.resolve("missing-" + UUID.randomUUID()));
+                            runtime(tx, drives, reads, reader, budget, backends, bundle.resolve("missing-" + UUID.randomUUID()), journaled);
                             throw new AssertionError("Missing observed runtime silently accepted");
                         } catch (java.io.IOException expected) {
                             require(backendCalls.get() == 0 && reads.outstandingReads() == 0,
                                     "failed startup borrows no provider or read session");
                         }
                     }
-                    var runtime = runtime(tx, drives, reads, reader, budget, backends, bundle);
+                    var runtime = runtime(tx, drives, reads, reader, budget, backends, bundle, journaled);
                     try {
                         var bodies = new HashMap<DocumentPublicationRuntime.PayloadKey, PartObject>();
                         for (int ordinal = 0; ordinal < source.candidate().getPartsCount(); ordinal++) {
@@ -69,28 +73,42 @@ public final class NativeAssessmentRuntimeProbe {
                                 drives.findById(source.placement().drive().id()).orElseThrow(), "assessment-s3", provider.profile()));
                         var modes = Map.of("a", DocumentPublicationRuntime.Mode.TYPED);
                         var container = Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor()));
-                        var definition = scenario == 0 ? ObservedAssessmentProbe.asset(StringValue.getDescriptor()) : ObservedAssessmentProbe.invalidSchema();
+                        var definition = mode == 0 ? ObservedAssessmentProbe.asset(StringValue.getDescriptor()) : ObservedAssessmentProbe.invalidSchema();
                         DocumentPublicationRuntime.Schemas schemas = (authenticated, selected, occurrence) -> {
                             require(authenticated == caller && !retry.get(), "authorized first schema resolution only");
                             registryCalls.incrementAndGet();
-                            if (scenario == 6) {
+                            if (mode == 6) {
                                 try { require(!runtime.shutdownStep(Duration.ZERO), "shutdown cannot drain an active publication"); }
                                 catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
                             }
                             return definition;
                         };
                         Object first = outcome(() -> runtime.execute(caller, command, placements, bodies, Map.of(), modes, container, schemas, RepositoryReadControl.NONE));
-                        require(registryCalls.get() == 1 && backendCalls.get() > 0, "runtime exercised actual admission and uploads");
-                        if (scenario == 0) {
+                        if (registryCalls.get() != 1 || backendCalls.get() == 0)
+                            throw new AssertionError("runtime scenario " + scenario + " did not reach actual admission and uploads",
+                                    first instanceof Throwable failure ? failure : null);
+                        if (mode == 0) {
                             if (!(first instanceof ai.protomolt.proto.repo.v1.DocumentPublicationResult)) throw new AssertionError("accepted runtime publication", (Throwable) first);
-                        } else if (scenario == 1 || scenario == 6) require(first instanceof DocumentPublicationRuntime.Rejected,
+                        } else if (journaled && mode == 6) {
+                            boolean refused = false;
+                            for (Throwable cause = first instanceof Throwable failure ? failure : null; cause != null; cause = cause.getCause())
+                                if (cause instanceof java.sql.SQLException sql && "P0001".equals(sql.getSQLState())
+                                        && sql.getMessage().contains("Coordinator is draining; new admission is closed")) refused = true;
+                            require(refused, "draining runtime refuses new assessment admission");
+                            for (String table : List.of("repository_publication_assessment_starts", "document_assessment_owners", "repository_operation_rejection")) {
+                                long rows = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                        "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                        .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                                require(rows == 0, "drain refusal has no new assessment start, stage, or fabricated rejection receipt");
+                            }
+                        } else if (mode == 1 || mode == 6) require(first instanceof DocumentPublicationRuntime.Rejected,
                                 "runtime preserves durable rejection receipt");
                         else require(faulted.get(), "real commit fault fired");
                         retry.set(true);
                         Object repeated = outcome(() -> runtime.execute(caller, command, Map.of(), Map.of(), Map.of(), modes, container, schemas, RepositoryReadControl.NONE));
-                        if (scenario == 6) requireCode(repeated, RepositoryException.Code.UNAVAILABLE);
-                        else if (scenario == 3) requireCode(repeated, RepositoryException.Code.FAILED_PRECONDITION);
-                        else if (scenario == 0) require(first.equals(repeated), "accepted replay after session retirement");
+                        if (mode == 6) requireCode(repeated, RepositoryException.Code.UNAVAILABLE);
+                        else if (mode == 3) requireCode(repeated, RepositoryException.Code.FAILED_PRECONDITION);
+                        else if (mode == 0) require(first.equals(repeated), "accepted replay after session retirement");
                         else {
                             require(repeated instanceof DocumentPublicationRuntime.Rejected, "public rejected result on exact retry");
                             var receipt = ((DocumentPublicationRuntime.Rejected) repeated).receipt();
@@ -100,11 +118,11 @@ public final class NativeAssessmentRuntimeProbe {
                             require(new DocumentPublicationReplay(tx).observe(caller, command).rejection().orElseThrow().equals(receipt), "receipt is durable");
                         }
                         require(registryCalls.get() == 1, "runtime retry never resolves another schema");
-                        if (scenario != 0 && scenario != 6) {
+                        if (mode != 0 && mode != 6) {
                             var next = new DocumentPublicationCommand(command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
                             retry.set(false);
                             Object nextResult = outcome(() -> runtime.execute(caller, next, placements, bodies, Map.of(), modes, container, schemas, RepositoryReadControl.NONE));
-                            if (scenario == 3) {
+                            if (mode == 3) {
                                 requireCode(nextResult, RepositoryException.Code.RESOURCE_EXHAUSTED);
                                 require(registryCalls.get() == 1, "uncertain entry is not evicted for a new operation");
                             } else {
@@ -116,9 +134,27 @@ public final class NativeAssessmentRuntimeProbe {
                         requireCode(outcome(() -> runtime.execute(caller, command, Map.of(), Map.of(), Map.of(), modes, container, schemas,
                                 RepositoryReadControl.NONE)), RepositoryException.Code.UNAVAILABLE);
                     } finally {
+                        if (journaled && mode == 3) {
+                            var cancelled = new RepositoryReadControl() {
+                                public boolean isCancelled() { return true; }
+                                public long remainingNanos() { return Long.MAX_VALUE; }
+                            };
+                            requireCode(outcome(() -> runtime.shutdownStep(Duration.ZERO, cancelled)), RepositoryException.Code.CANCELLED);
+                            require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM repository_coordinator_drains WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult()).longValue()) == 0,
+                                    "cancelled drain does not fabricate a marker");
+                        }
                         boolean stopped = false;
                         for (int pass = 0; pass < 4 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(5));
                         require(stopped && runtime.shutdownStep(Duration.ZERO), "bounded shutdown and repeat shutdown finish");
+                    }
+                    if (journaled) {
+                        long markers = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_coordinator_drains WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(markers == (mode == 3 || mode == 6 ? 1 : 0),
+                                "runtime drains retained or active registrations, excludes retired terminal entries");
                     }
                     require(reads.outstandingReads() == 0 && budget.reservedBytes() == 0, "runtime releases all read and memory reservations");
                     require(tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT 1").getSingleResult()).intValue()) == 1,
@@ -129,7 +165,14 @@ public final class NativeAssessmentRuntimeProbe {
         System.out.println("NATIVE_ASSESSMENT_RUNTIME_OK");
     }
     private static DocumentPublicationRuntime runtime(Tx tx, DriveLedger drives, DocumentReadLedger reads, DocumentPartReader reader,
-            PayloadBudget budget, DocumentPublicationRuntime.Backends backends, Path bundle) throws java.io.IOException {
+            PayloadBudget budget, DocumentPublicationRuntime.Backends backends, Path bundle, boolean journaled) throws java.io.IOException {
+        if (journaled) return DocumentPublicationRuntime.journaled(tx, drives, reads, reader, budget, backends, LIMITS,
+                new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25), Duration.ofMinutes(5),
+                1, 4_000_000, 1, false, new DocumentPublicationRuntime.Assessments(bundle, Duration.ofMinutes(2), Duration.ofSeconds(1)),
+                key -> {
+                    require(key.principal().equals("principal") && key.account().equals("account"), "configured drain authority scope");
+                    return new RepositoryCaller("principal", true);
+                });
         return new DocumentPublicationRuntime(tx, drives, reads, reader, budget, backends, LIMITS,
                 new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25), Duration.ofMinutes(5),
                 1, 4_000_000, 1, false, new DocumentPublicationRuntime.Assessments(bundle, Duration.ofMinutes(2), Duration.ofSeconds(1)));
