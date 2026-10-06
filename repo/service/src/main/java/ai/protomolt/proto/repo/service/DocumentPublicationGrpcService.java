@@ -18,7 +18,7 @@ import java.util.function.Function;
 public final class DocumentPublicationGrpcService extends DocumentPublicationServiceGrpc.DocumentPublicationServiceImplBase implements AutoCloseable {
     private static final ProtoValidator VALIDATOR=ProtoValidator.create();
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(DocumentPublicationGrpcService.class);
-    private static final int MAX_RESPONSE_BYTES=DocumentPublicationResultCodec.MAX_BYTES+16;
+    private static final int MAX_RESPONSE_BYTES=DocumentPublicationResponseValidator.MAX_BYTES;
     /** Application allowance for one maximum envelope, canonical command and terminal response. */
     public static final long MAX_CALL_RESERVATION_BYTES=(long)DocumentPublicationInput.MAX_ENVELOPE_BYTES
             +MAX_RESPONSE_BYTES+DocumentPublicationCommand.MAX_COMMAND_BYTES;
@@ -122,12 +122,7 @@ public final class DocumentPublicationGrpcService extends DocumentPublicationSer
     /** Correspondence is checked here; the repository remains the durable outcome authority. */
     private static void requireResponse(DocumentPublicationCommand command, RepositoryCaller caller, PublishDocumentResponse response) {
         try {
-            if (response==null || response.getSerializedSize()>MAX_RESPONSE_BYTES
-                    || !response.getUnknownFields().asMap().isEmpty() || !VALIDATOR.validate(response).valid())
-                throw new IllegalArgumentException("Invalid publication response");
-            if (response.hasCommitted()) command.requireResult(response.getCommitted(),caller.principalName(),response.getCommitted().getOwnerGeneration());
-            else if (response.hasRejected()) command.requireRejection(response.getRejected(),caller.principalName(),response.getRejected().getOwnerGeneration());
-            else throw new IllegalArgumentException("Publication outcome is absent");
+            DocumentPublicationResponseValidator.requireValid(command,caller.principalName(),response);
         } catch (IllegalArgumentException malformed) {
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,"Repository returned an invalid publication receipt",malformed);
         }

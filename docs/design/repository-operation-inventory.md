@@ -6776,3 +6776,14 @@ and focused configuration/lifecycle tests passed; see
 [host evidence](../evidence/repository/2026-10-06-publication-host/README.md).
 Default host configuration still does not mount publication. A published remote
 SPI client, additional provider qualification and throughput/scaling remain open.
+
+**New remote SPI implementation, subsequent checkpoint:**
+`protomolt-repo-publication-grpc` now provides RemoteDocumentPublicationRepository
+without server, SQL or provider implementation dependencies. It uses one explicit
+authenticated identity, local input checks, bounded calls/bytes, cancellation and
+the shortest deadline. Local and remote publication use a shared receipt-shape and
+correspondence validator. Real-store tests cover fresh/replayed outcomes, scoped
+revocation, cancellation, status mapping and corruption after server validation.
+See [client evidence](../evidence/repository/2026-10-06-publication-client/README.md)
+and the [composition guide](../repo/publication.md). Isolated published-consumer
+verification, non-S3 complete-document providers and scaling remain open.

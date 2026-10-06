@@ -27,6 +27,7 @@ configurations.assessmentTransportRuntime.extendsFrom(configurations.assessmentH
 dependencies {
     assessmentTransportRuntime project(':protomolt-repo-service')
     assessmentTransportRuntime project(':protomolt-repo-history-grpc')
+    assessmentTransportRuntime project(':protomolt-repo-publication-grpc')
     assessmentTransportRuntime project(':protomolt-repo-schema-registry')
     assessmentTransportRuntime project(':protomolt-schema-registry-git')
     assessmentHostRuntime project(':protomolt-repo-engine')

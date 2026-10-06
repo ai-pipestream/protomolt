@@ -417,6 +417,7 @@ public final class ManagedJournaledDrainProbe {
         var release=new CountDownLatch(1);
         var received=new java.util.concurrent.atomic.AtomicReference<RepositoryCaller>();
         var repositoryCalls=new java.util.concurrent.atomic.AtomicInteger();
+        var corruptWire=new java.util.concurrent.atomic.AtomicBoolean();
         // Faults surround the real repository, never synthesize a successful outcome.
         DocumentPublicationRepository controlled=(caller,input,control) -> {
             repositoryCalls.incrementAndGet();
@@ -440,6 +441,8 @@ public final class ManagedJournaledDrainProbe {
                 case "committed" -> result.toBuilder().setCommitted(result.getCommitted().toBuilder().setAccountId("wrong-account")).build();
                 case "rejected" -> PublishDocumentResponse.newBuilder().setRejected(DocumentPublicationRejection.getDefaultInstance()).build();
                 case "unexpected" -> throw new IllegalStateException("private-provider-location");
+                case "conflict" -> throw new RepositoryException(RepositoryException.Code.CONFLICT,"controlled conflict after replay");
+                case "unsupported" -> throw new RepositoryException(RepositoryException.Code.UNSUPPORTED,"controlled unsupported operation after replay");
                 default -> result;
             };
         };
@@ -449,6 +452,7 @@ public final class ManagedJournaledDrainProbe {
                         binding.issuer(),binding.credentialId(),binding.generation())) : Optional.empty()),budget,1);
         var identity=io.grpc.Metadata.Key.of("test-publication-identity",io.grpc.Metadata.ASCII_STRING_MARSHALLER);
         io.grpc.ServerInterceptor authentication=new io.grpc.ServerInterceptor() {
+            @SuppressWarnings("unchecked")
             @Override public <Q,S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q,S> call,
                     io.grpc.Metadata headers,io.grpc.ServerCallHandler<Q,S> next) {
                 var value=headers.get(identity);
@@ -460,7 +464,14 @@ public final class ManagedJournaledDrainProbe {
                     context=context.withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,caller)
                             .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.AUTHENTICATED_CALLER,auth);
                 }
-                return io.grpc.Contexts.interceptCall(context,call,headers,next);
+                var delivery=new io.grpc.ForwardingServerCall.SimpleForwardingServerCall<Q,S>(call) {
+                    @Override public void sendMessage(S message) {
+                        if (corruptWire.get() && message instanceof PublishDocumentResponse response && response.hasCommitted())
+                            message=(S)response.toBuilder().setCommitted(response.getCommitted().toBuilder().setAccountId("wire-corruption")).build();
+                        super.sendMessage(message);
+                    }
+                };
+                return io.grpc.Contexts.interceptCall(context,delivery,headers,next);
             }
         };
         String name=io.grpc.inprocess.InProcessServerBuilder.generateName();
@@ -477,20 +488,56 @@ public final class ManagedJournaledDrainProbe {
                 expectStatus(io.grpc.Status.Code.PERMISSION_DENIED,() -> bound.publishDocument(request(work)));
                 var headers=new io.grpc.Metadata(); headers.put(identity,"process");
                 var authenticated=plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+                var clientBudget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L*1024*1024);
+                var remote=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(ADMIN,
+                        DocumentPublicationServiceGrpc.newFutureStub(channel).withInterceptors(
+                                io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)),clientBudget,Duration.ofSeconds(30),1);
+                int beforeClientChecks=repositoryCalls.get();
+                expectRepositoryCode(RepositoryException.Code.PERMISSION_DENIED,() -> remote.publishDocument(
+                        new RepositoryCaller("different",true),request(work),RepositoryReadControl.NONE));
+                expectRepositoryCode(RepositoryException.Code.CANCELLED,() -> remote.publishDocument(ADMIN,request(work),new RepositoryReadControl() {
+                    public boolean isCancelled() { return true; }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                }));
+                var expired=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(ADMIN,
+                        DocumentPublicationServiceGrpc.newFutureStub(channel).withDeadlineAfter(-1,TimeUnit.SECONDS),
+                        clientBudget,Duration.ofSeconds(30),1);
+                expectRepositoryCode(RepositoryException.Code.DEADLINE_EXCEEDED,
+                        () -> expired.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
+                require(repositoryCalls.get()==beforeClientChecks,"client identity and cancellation checks precede network calls");
                 expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(PublishDocumentRequest.getDefaultInstance()));
-                var response=authenticated.publishDocument(request(work));
+                var response=remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE);
                 require(response.hasCommitted(),"transport published a committed receipt");
                 require(repository.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),
                         "library replay equals fresh transport receipt");
                 require(authenticated.publishDocument(request(work)).equals(response),"transport replay equals library receipt");
+                require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote SPI replay equals library receipt");
                 expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(request(work).toBuilder().clearPayloads().build()));
                 awaitBudgetRelease(budget);
+                corruptWire.set(true);
+                try { remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE); throw new AssertionError("remote client accepted corrupt wire receipt"); }
+                catch (RepositoryException invalid) {
+                    require(invalid.code()==RepositoryException.Code.DATA_LOSS && invalid.getMessage().equals("Invalid remote publication receipt"),
+                            "client independently checks receipt correspondence after server validation");
+                } finally { corruptWire.set(false); }
+                awaitBudgetRelease(budget);
+                for (var mapping : Map.of("conflict",RepositoryException.Code.CONFLICT,"unsupported",RepositoryException.Code.UNSUPPORTED).entrySet()) {
+                    fault.set(mapping.getKey());
+                    expectRepositoryCode(mapping.getValue(),() -> remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
+                    awaitBudgetRelease(budget);
+                }
+                fault.set("");
                 preserveCredential.set(true);
-                require(bound.publishDocument(request(work)).equals(response),"scoped authenticated replay preserves receipt");
+                var scopedCaller=new RepositoryCaller(ADMIN.principalName(),false,Set.of(work.command.intent().getAccountId()),Set.of(),Optional.of(credential));
+                var scopedRemote=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(scopedCaller,
+                        DocumentPublicationServiceGrpc.newFutureStub(channel).withInterceptors(
+                                io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(boundHeaders)),clientBudget,Duration.ofSeconds(30),1);
+                require(scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE).equals(response),"scoped authenticated replay preserves receipt");
                 require(received.get().credentialBinding().equals(Optional.of(credential)),"SPI received exact scoped credential");
                 awaitBudgetRelease(budget);
                 credentialAdministration(tx,credential,"revoke");
-                expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> bound.publishDocument(request(work)));
+                expectRepositoryCode(RepositoryException.Code.UNAUTHENTICATED,
+                        () -> scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE));
                 awaitBudgetRelease(budget);
                 for (String mode : List.of("committed","rejected")) {
                     fault.set(mode);
@@ -505,11 +552,19 @@ public final class ManagedJournaledDrainProbe {
                 }
                 awaitBudgetRelease(budget);
                 fault.set("wait");
-                var future=DocumentPublicationServiceGrpc.newFutureStub(channel)
-                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)).publishDocument(request(work));
+                var cancelClient=new java.util.concurrent.atomic.AtomicBoolean();
+                var future=executor.submit(() -> remote.publishDocument(ADMIN,request(work),new RepositoryReadControl() {
+                    public boolean isCancelled() { return cancelClient.get(); }
+                    public long remainingNanos() { return Long.MAX_VALUE; }
+                }));
                 try {
                     require(entered.await(10,TimeUnit.SECONDS),"producer entered before cancellation");
-                    require(future.cancel(true),"client cancelled active call");
+                    cancelClient.set(true);
+                    try { future.get(10,TimeUnit.SECONDS); throw new AssertionError("client cancellation returned a receipt"); }
+                    catch (ExecutionException failure) {
+                        require(failure.getCause() instanceof RepositoryException cancelledCall
+                                && cancelledCall.code()==RepositoryException.Code.CANCELLED,"client cancellation returns repository status");
+                    }
                     require(cancelled.await(10,TimeUnit.SECONDS),"producer observed cancellation");
                     require(budget.reservedBytes()>0,"active cancelled producer retains its byte reservation");
                     expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> authenticated.publishDocument(request(work)));
@@ -517,6 +572,8 @@ public final class ManagedJournaledDrainProbe {
                 awaitBudgetRelease(budget);
                 fault.set("");
                 require(authenticated.publishDocument(request(work)).equals(response),"cancelled call released slot for exact replay");
+                require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote client can replay after cancellation");
+                require(clientBudget.reservedBytes()==0,"client released input and response reservations");
                 awaitBudgetRelease(budget);
                 verifyNetworkParser(service,authentication,headers,request(work),response,repositoryCalls);
                 awaitBudgetRelease(budget);
@@ -578,6 +635,11 @@ public final class ManagedJournaledDrainProbe {
         catch (io.grpc.StatusRuntimeException failure) {
             require(failure.getStatus().getCode()==expected,"Expected "+expected+", got "+failure.getStatus());
         }
+    }
+
+    private static void expectRepositoryCode(RepositoryException.Code expected, Runnable action) {
+        try { action.run(); throw new AssertionError("Expected repository status "+expected); }
+        catch (RepositoryException failure) { require(failure.code()==expected,"Expected "+expected+", got "+failure.code()); }
     }
 
     private static DocumentPublicationResult executeFacade(RepoServices host, RepositoryCaller caller, Work work) {

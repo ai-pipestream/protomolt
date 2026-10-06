@@ -578,6 +578,8 @@ project(':protomolt-repo-engine').projectDir = file('repo/engine')
 include 'protomolt-repo-admission'
 include 'protomolt-repo-history-grpc'
 project(':protomolt-repo-history-grpc').projectDir = file('repo/history/grpc')
+include 'protomolt-repo-publication-grpc'
+project(':protomolt-repo-publication-grpc').projectDir = file('repo/publication/grpc')
 project(':protomolt-repo-admission').projectDir = file('repo/admission')
 include 'protomolt-repo-schema-registry'
 project(':protomolt-repo-schema-registry').projectDir = file('repo/schema/registry')
