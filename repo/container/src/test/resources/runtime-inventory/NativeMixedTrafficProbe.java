@@ -23,6 +23,9 @@ final class NativeMixedTrafficProbe {
         String journalMode = System.getenv("PROTOMOLT_NATIVE_JOURNALED");
         if (!List.of("true", "false").contains(journalMode)) throw new IllegalArgumentException("Explicit journaled mode required");
         boolean journaled = Boolean.parseBoolean(journalMode);
+        String traceMode = System.getenv("PROTOMOLT_NATIVE_TRACE");
+        if (!List.of("true", "false").contains(traceMode)) throw new IllegalArgumentException("Explicit trace mode required");
+        boolean tracing = Boolean.parseBoolean(traceMode);
         if (clients < 1 || clients > 16) throw new IllegalArgumentException("Invalid client count");
         int payloadBytes = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_PAYLOAD_BYTES"));
         int measuredIterations = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_ITERATIONS"));
@@ -40,8 +43,8 @@ final class NativeMixedTrafficProbe {
         Files.writeString(root.resolve(worker + "-config.txt"), "clients=" + clients + "\npool=" + pool.getMaximumPoolSize() + "\nread_slots=" + readSlots + "\nread_handles=" + readHandles + "\n",
                 StandardOpenOption.CREATE_NEW);
         Files.writeString(root.resolve(worker + "-config.txt"), "payload_string_bytes=" + payloadBytes
-                + "\niterations_per_client=" + measuredIterations + "\njournaled=" + journaled + "\n", StandardOpenOption.APPEND);
-        var telemetry = new NativeTrafficTelemetry(); telemetry.attach(dataSource);
+                + "\niterations_per_client=" + measuredIterations + "\njournaled=" + journaled + "\ntrace=" + tracing + "\n", StandardOpenOption.APPEND);
+        var telemetry = new NativeTrafficTelemetry(tracing); telemetry.attach(dataSource);
         var measuredStore = telemetry.wrap(provider.store());
         var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
         var budget = new PayloadBudget(128_000_000);
@@ -86,7 +89,7 @@ final class NativeMixedTrafficProbe {
                                     : seed.bodies().values().stream().mapToInt(part -> part.bytes().length).sum())
                             + "\n", StandardOpenOption.APPEND);
                 }
-                Map<String,long[]> measuredBaseline = null;
+                NativeTrafficTelemetry.Snapshot measuredBaseline = null;
                 try (var maintenance = new NativeTrafficMaintenance(runtime)) {
                 var history = new DocumentHistoricalOperations(reads, reader, budget);
                 for (String phase : List.of("warmup", "measure")) {
@@ -114,18 +117,20 @@ final class NativeMixedTrafficProbe {
                                     Work work = read ? null : command(drive.driveId, id, content);
                                     Object result;
                                     long start = System.nanoTime();
-                                    if (read) {
-                                        try (var archived = history.readValidated(CALLER, readReference.getAddress(),
-                                                UUID.fromString(readReference.getRevisionId()), RepositoryReadControl.NONE)) {
-                                            require(archived.document().equals(readExpected), "concurrent historical bytes");
-                                            require(archived.publicationRevision() == readReference.getMutationRevision(), "concurrent historical identity");
+                                    try (var scope = telemetry.operation(read ? "read" : reject ? "reject" : "publish")) {
+                                        if (read) {
+                                            try (var archived = history.readValidated(CALLER, readReference.getAddress(),
+                                                    UUID.fromString(readReference.getRevisionId()), RepositoryReadControl.NONE)) {
+                                                require(archived.document().equals(readExpected), "concurrent historical bytes");
+                                                require(archived.publicationRevision() == readReference.getMutationRevision(), "concurrent historical identity");
+                                            }
+                                            result = null;
+                                        } else {
+                                            try { result = runtime.execute(CALLER, work.command(), placement, work.bodies(), Map.of(),
+                                                    Map.of("document", DocumentPublicationRuntime.Mode.TYPED), container,
+                                                    (caller, member, occurrence) -> reject ? invalid : definition, RepositoryReadControl.NONE); }
+                                            catch (DocumentPublicationRuntime.Rejected failure) { result = failure.receipt(); }
                                         }
-                                        result = null;
-                                    } else {
-                                        try { result = runtime.execute(CALLER, work.command(), placement, work.bodies(), Map.of(),
-                                                Map.of("document", DocumentPublicationRuntime.Mode.TYPED), container,
-                                                (caller, member, occurrence) -> reject ? invalid : definition, RepositoryReadControl.NONE); }
-                                        catch (DocumentPublicationRuntime.Rejected failure) { result = failure.receipt(); }
                                     }
                                     long elapsed = System.nanoTime() - start;
                                     if (!read) {
@@ -137,10 +142,12 @@ final class NativeMixedTrafficProbe {
                                         } else require(result instanceof DocumentPublicationResult && ((DocumentPublicationResult) result).getMembersCount() == 1,
                                                 "typed traffic produces one publication");
                                         Object replay;
-                                        try { replay = runtime.execute(CALLER, work.command(), Map.of(), Map.of(), Map.of(),
-                                                Map.of("document", DocumentPublicationRuntime.Mode.TYPED), container,
-                                                (caller, member, occurrence) -> { throw new AssertionError("Replay schema lookup"); }, RepositoryReadControl.NONE); }
-                                        catch (DocumentPublicationRuntime.Rejected failure) { replay = failure.receipt(); }
+                                        try (var scope = telemetry.operation("replay")) {
+                                            try { replay = runtime.execute(CALLER, work.command(), Map.of(), Map.of(), Map.of(),
+                                                    Map.of("document", DocumentPublicationRuntime.Mode.TYPED), container,
+                                                    (caller, member, occurrence) -> { throw new AssertionError("Replay schema lookup"); }, RepositoryReadControl.NONE); }
+                                            catch (DocumentPublicationRuntime.Rejected failure) { replay = failure.receipt(); }
+                                        }
                                         require(result.equals(replay), "exact traffic replay");
                                     }
                                     output.add(phase + "," + number + "," + iteration + "," + (read ? "read" : reject ? "reject" : "publish") + "," + start + "," + elapsed);
@@ -150,13 +157,13 @@ final class NativeMixedTrafficProbe {
                         }
                         for (var job : jobs) job.get(90, TimeUnit.SECONDS);
                     }
-                    if (phase.equals("warmup")) telemetry.writeDelta(root.resolve(worker + "-warmup-metrics.csv"), before);
+                    if (phase.equals("warmup")) telemetry.writeDelta(root, worker + "-warmup", before);
                     else measuredBaseline = before;
                 }
                 Files.writeString(root.resolve(worker + "-operations.csv"), "phase,client,iteration,operation,start_nanos,elapsed_nanos\n"
                         + String.join("\n", output) + "\n", StandardOpenOption.CREATE_NEW);
                 }
-                telemetry.writeDelta(root.resolve(worker + "-measure-metrics.csv"), Objects.requireNonNull(measuredBaseline));
+                telemetry.writeDelta(root, worker + "-measure", Objects.requireNonNull(measuredBaseline));
                 Files.writeString(root.resolve(worker + ".done"), "done", StandardOpenOption.CREATE_NEW);
                 long releaseDeadline = System.nanoTime() + Duration.ofSeconds(120).toNanos();
                 while (!Files.exists(root.resolve(worker.substring(0, worker.lastIndexOf('-')) + ".release"))) {

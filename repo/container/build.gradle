@@ -204,6 +204,7 @@ tasks.register('nativeReplicaBenchmark', Test) {
     outputs.cacheIf { false }
     systemProperty 'protomolt.test.nativeBenchmark', 'true'
     systemProperty 'protomolt.test.nativeBenchmarkJournaled', providers.gradleProperty('nativeBenchmarkJournaled').getOrElse('false')
+    systemProperty 'protomolt.test.nativeBenchmarkTrace', providers.gradleProperty('nativeBenchmarkTrace').getOrElse('false')
     systemProperty 'protomolt.test.nativeBenchmarkClients', providers.gradleProperty('nativeBenchmarkClients').getOrElse('4')
     // Zero preserves the original eight reader slots per worker. Positive values
     // fix total reader capacity across the one/two/four-replica comparison.

@@ -10,7 +10,9 @@ retain legacy partial-journal behavior; existing partial rows are not retroactiv
 recovered. Six insertion rollback tests and the 202-case affected recovery run
 qualify the atomic SQL boundary. The five-case process suite now also qualifies
 SIGKILL before and after initial commit, followed by public retry in a fresh JVM.
-Additional admission races and measured transaction-count/latency results remain acceptance work. See
+The focused admission/retry test counts two real commits per call; the small RustFS
+mode diagnostic is retained separately. Additional admission races, controlled
+capacity measurements and publication-stage performance work remain acceptance work. See
 [atomic admission evidence](../evidence/repository/2026-10-06-atomic-initial-admission/README.md).
 
 The internal managed journaled host now composes registration closure, sessions,

@@ -119,6 +119,9 @@ class NativeReplicaRuntimeTest {
         String journaled = System.getProperty("protomolt.test.nativeBenchmarkJournaled", "false");
         if (!List.of("true", "false").contains(journaled)) throw new IllegalArgumentException("Journaled mode must be true or false");
         builder.environment().put("PROTOMOLT_NATIVE_JOURNALED", journaled);
+        String trace = System.getProperty("protomolt.test.nativeBenchmarkTrace", "false");
+        if (!List.of("true", "false").contains(trace)) throw new IllegalArgumentException("Trace mode must be true or false");
+        builder.environment().put("PROTOMOLT_NATIVE_TRACE", trace);
         int totalClients = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkClients", "4"));
         if (totalClients != 4 && totalClients != 8 && totalClients != 16)
             throw new IllegalArgumentException("Benchmark client count must be 4, 8 or 16");
@@ -146,6 +149,7 @@ class NativeReplicaRuntimeTest {
                 + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload_string_bytes=" + payloadBytes
                 + "\nzero_payload_means=original small workload\niterations_per_client=" + iterations
                 + "\njournaled=" + journaled
+                + "\ntrace=" + trace
                 + "\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
             var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
@@ -174,7 +178,7 @@ class NativeReplicaRuntimeTest {
                             Thread.sleep(10);
                         }
                         assertThat(Files.readString(directory.resolve(name + "-" + index + "-config.txt")))
-                                .contains("\njournaled=" + journaled + "\n");
+                                .contains("\njournaled=" + journaled + "\n", "\ntrace=" + trace + "\n");
                     }
                     sampler.begin(name);
                     long start = System.nanoTime();
@@ -204,6 +208,17 @@ class NativeReplicaRuntimeTest {
                         String worker = name + "-" + index;
                         for (String suffix : List.of("-operations.csv", "-warmup-metrics.csv", "-measure-metrics.csv", "-config.txt"))
                             Files.copy(directory.resolve(worker + suffix), output.resolve(worker + suffix));
+                        if (trace.equals("true")) {
+                            for (String phase : List.of("warmup", "measure"))
+                                Files.copy(directory.resolve(worker + "-" + phase + "-trace.csv"), output.resolve(worker + "-" + phase + "-trace.csv"));
+                            var traced = Files.readAllLines(output.resolve(worker + "-measure-trace.csv"));
+                            for (String operation : List.of("read", "publish", "reject", "replay"))
+                                assertThat(traced.stream().filter(line -> line.startsWith(operation + ",sql_acquire,"))
+                                        .mapToLong(line -> Long.parseLong(line.split(",")[3])).sum())
+                                        .as(operation + " traced acquisitions").isPositive();
+                            for (String line : traced.subList(1, traced.size()))
+                                assertThat(Long.parseLong(line.split(",")[5])).as("trace failures").isZero();
+                        }
                         var metrics = Files.readAllLines(output.resolve(worker + "-measure-metrics.csv"));
                         for (String metric : List.of("provider_put", "provider_getBounded", "sql_acquire", "sql_usage")) {
                             var fields = metrics.stream().filter(line -> line.startsWith(metric + ",")).findFirst().orElseThrow().split(",");
