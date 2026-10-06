@@ -99,9 +99,10 @@ class DocumentPublicationProcessRecoveryIT {
                 """).setParameter("id",operation).getSingleResult());
     }
 
-    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped"})
+    @ParameterizedTest @ValueSource(strings = {"none", "reserve", "install", "scoped", "scoped-revoked-grant", "scoped-revoked-key"})
     void killedWriterIsRecoveredByFreshJvm(String replacementStage, @TempDir Path temp) throws Exception {
-        boolean scoped = replacementStage.equals("scoped");
+        boolean scoped = replacementStage.startsWith("scoped");
+        boolean revoked = replacementStage.startsWith("scoped-revoked-");
         try (var c = context(POSTGRES); var sdk = S3Client.builder().endpointOverride(S3.getEndpoint())
                 .region(Region.of(S3.getRegion())).forcePathStyle(true)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build()) {
@@ -163,13 +164,40 @@ class DocumentPublicationProcessRecoveryIT {
                         assertThat(replacement.exitValue()).isEqualTo(137);
                     } finally { reap(replacement); }
                 }
+                if (revoked) {
+                    var caller = DocumentPublicationProcessWorker.scopedCaller(input.command());
+                    if (replacementStage.equals("scoped-revoked-key")) {
+                        new RepositoryCredentialAuthorities(c.tx()).revoke(DocumentPublicationProcessWorker.ADMIN,
+                                caller.credentialBinding().orElseThrow(), caller.principalName());
+                    } else {
+                        new RepositoryCreationGrants(c.tx(), new DriveLedger(c.tx())).revoke(DocumentPublicationProcessWorker.ADMIN,
+                                new RepositoryOperationLedger.Key("account", "principal", input.command().operationId()));
+                    }
+                }
                 // No capability files or writer output are passed to this separate process.
                 var readerLog = temp.resolve("reader.log");
                 var reader = start(c, readerLog, scoped ? "scoped-recover" : "recover", command, payload);
                 try {
                     assertThat(reader.waitFor(60, TimeUnit.SECONDS)).as("fresh reader completes: %s", readerLog).isTrue();
-                    assertThat(reader.exitValue()).as(log(readerLog)).isZero();
-                    assertThat(log(readerLog)).contains("PROCESS_RECOVERY_OK");
+                    if (revoked) {
+                        assertThat(reader.exitValue()).as(log(readerLog)).isNotZero();
+                        assertThat(log(readerLog)).contains("ai.protomolt.proto.repo.spi.RepositoryException",
+                                "RepositoryReservedPreparation.load",
+                                replacementStage.equals("scoped-revoked-key")
+                                        ? "Repository credential is unavailable" : "Creation grant is unavailable")
+                                .doesNotContain("PROCESS_RECOVERY_OK");
+                        for (String table : List.of("repository_operation_success", "repository_successor_executions",
+                                "document_revision_commits")) {
+                            assertThat(count(c, table, input.command().operationId())).as(table).isZero();
+                        }
+                        assertThat(count(c, "document_part_attempts", input.command().operationId())).isEqualTo(1);
+                        assertThat(new DocumentLedger(c.tx()).findByNodeId(
+                                ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(
+                                        input.command().intent().getMembers(0).getDestination().getAddress()))).isEmpty();
+                    } else {
+                        assertThat(reader.exitValue()).as(log(readerLog)).isZero();
+                        assertThat(log(readerLog)).contains("PROCESS_RECOVERY_OK");
+                    }
                     if (!scoped && !replacementStage.equals("none")) {
                         var supersession = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                                 SELECT s.predecessor_epoch,s.phase,c.claim_epoch,b.claim_epoch

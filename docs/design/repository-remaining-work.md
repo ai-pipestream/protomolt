@@ -817,6 +817,13 @@ This closes the positive scoped opaque manager path; typed recovery, revocation
 during recovery and host policy refusal in this composed path remain open. The
 deterministic fixture identity does not qualify network API-key authentication.
 
+The same process fixture now refuses preparation delivery after either original
+credential or creation-grant revocation between writer death and replacement
+startup. No successor execution, new attempt or publication appears; predecessor
+bytes and reader evidence remain retained. A recovery reservation can precede the
+refusal. Revocation after preparation delivery/activation still needs composed
+coverage, as do typed recovery and the host policy refusal above.
+
 ## Publication-first revocation race
 
 Typed and opaque real-provider tests now pause the actual final success-writing

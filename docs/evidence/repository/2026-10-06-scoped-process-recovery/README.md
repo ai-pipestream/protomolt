@@ -28,3 +28,26 @@ typed recovery, revoked credentials/grants during process recovery, recovery hos
 policy refusal, automatic scheduling and pin reclamation remain separate work.
 This is local correctness evidence, not a performance measurement. The archive
 contains XML and binary test results.
+
+## Revoked authority after writer death
+
+Base: `ae8a9dfad6d92da7d6c02d9c3d743420ac9d9de3`.
+
+```sh
+./gradlew :protomolt-repo-container:test --tests '*DocumentPublicationProcessRecoveryIT.killedWriterIsRecoveredByFreshJvm' --console=plain
+```
+
+Six cases passed without skips: the administrative recovery/supersession cases,
+live scoped recovery, and two new scoped refusals. After killing and reaping the
+writer, the parent revokes either its exact credential or its exact creation grant
+through the production authority operation. The fresh JVM refuses delivery in
+`RepositoryReservedPreparation.load`, with the specific credential/grant error.
+No success, successor execution, revision commit, extra attempt or destination is
+created. The predecessor's real bytes and ACTIVE reader evidence remain intact.
+The coordinator may reserve recovery before delivery is refused; this test does
+not assert zero recovery metadata changes or cleanup of retained bytes.
+
+Sol reviewed the negative assertions and found no blocker. `revoked-green.tar.gz`
+contains this six-case result. These cases cover revocation before the fresh
+process loads preparation; revocation after preparation delivery/activation and
+typed recovery remain separate qualification.
