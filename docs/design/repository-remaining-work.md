@@ -30,6 +30,12 @@ reads ledger objects and returns the transaction-local origin/retention proof to
 slot binding. Exact historical operation admission and assessment creation remain
 the next integration boundary; ordinary public execution is still gated.
 
+The internal unclaimed path now admits the exact historical command with trusted
+principal/account binding and stages its actual member selections under current
+authorization. Retained-schema whole-command assessment and CREATE are next;
+the earlier ordinary-owner substitution is no longer used by the physical binder
+integration test. Claims, sessions and public historical execution remain gated.
+
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response

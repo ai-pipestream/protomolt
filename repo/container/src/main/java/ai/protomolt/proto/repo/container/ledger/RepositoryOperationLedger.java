@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import com.google.protobuf.ByteString;
 import jakarta.persistence.EntityManager;
 import java.security.MessageDigest;
@@ -100,6 +101,24 @@ final class RepositoryOperationLedger {
     /** Typed document admission; scope binding is checked before opening a transaction. */
     Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
         return admit(key, command, ownerNonce, lease, null);
+    }
+
+    /**
+     * Internal unclaimed historical assessment only. The host supplies authenticated
+     * identity; selection and CREATE check current document authorization. This owner
+     * cannot be promoted into a claimed/public execution path by this method.
+     */
+    Admission admitHistoricalAssessment(RepositoryCaller caller, Key key, DocumentOperationUploadAdmission.Prepared prepared,
+            UUID ownerNonce, Duration lease) {
+        var plan = Objects.requireNonNull(prepared).plan();
+        var command = plan.command();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, command.intent().getAccountId());
+        DocumentHistoricalReferenceAdmission.requireComplete(command, plan.historical(), () -> {});
+        if (plan.historical().isEmpty()) throw new IllegalArgumentException("Historical assessment requires pinned sources");
+        if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
+            throw new IllegalArgumentException("Publication command differs from operation scope");
+        return admit(key, new EncodedCommand(DocumentPublicationCommand.CODEC,
+                DocumentPublicationCommand.ENCODING_VERSION, command.canonical()), ownerNonce, lease, null, true);
     }
 
     Admission admit(Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease,

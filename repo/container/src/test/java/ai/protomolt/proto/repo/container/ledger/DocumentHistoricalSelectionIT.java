@@ -43,27 +43,13 @@ class DocumentHistoricalSelectionIT {
                 member.setParts(1, member.getParts(1).toBuilder().setUpload(PublicationUpload.newBuilder()
                         .setSizeBytes(object.getSizeBytes()).setSha256(object.getSha256()).setContentType(object.getContentType())));
             }
-            // Admit an ordinary operation to exercise its real physical selection
-            // rows. Historical command admission and CREATE remain independently gated.
+            // Build the exact historical command before admitting its operation.
             var ordinary = new DocumentPublicationCommand(f.command().intent().toBuilder()
                     .setOperationId(UUID.randomUUID().toString()).setMembers(0, member).build());
-            var owner = new RepositoryOperationLedger(c.tx()).admit(new RepositoryOperationLedger.Key("account", "principal", ordinary.operationId()),
-                    ordinary, UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
             var drive = new DriveLedger(c.tx()).findById(UUID.fromString(member.getDriveId())).orElseThrow();
             var placements = Map.of(drive.driveId, DocumentUploadPlan.Placement.sample(drive, "native-test", new ManagedBackendLedger(c.tx()).find("native-test").orElseThrow()));
             Map<String, UUID> attempts = upload ? Map.of("member-0", UUID.randomUUID()) : Map.of();
             var caller = new RepositoryCaller("principal", true);
-            var admitted = new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(caller, owner,
-                    DocumentOperationUploadAdmission.prepare(ordinary, placements, attempts, Duration.ofMinutes(5)));
-            var selected = new java.util.HashMap<String, DocumentSelectedAttemptLedger.Selected>();
-            if (upload) {
-                var attempt = admitted.getFirst();
-                var selection = new DocumentSelectedAttemptLedger.Selected("member-0", 1, attempt.id(), attempt.token());
-                selected.put("member-0", selection);
-                var declared = DocumentUploadPlan.prepare(ordinary, placements, attempts).members().getFirst().attempt().orElseThrow().uploads().getFirst().object();
-                new DocumentSelectedAttemptLedger(c.tx()).verifyBatch(owner, selection, List.of(new DocumentSelectedAttemptLedger.Observation(
-                        declared.objectKey(), declared.size(), declared.sha256(), declared.contentType(), "new-version", "observed-fixture")));
-            }
             var historical = selector(f, original, 0, 0);
             var command = new DocumentPublicationCommand(ordinary.intent().toBuilder().setMembers(0, member
                     .setParts(0, member.getParts(0).toBuilder().setHistoricalReuse(historical))).build());
@@ -72,12 +58,49 @@ class DocumentHistoricalSelectionIT {
             try (var use = history.use()) {
                 var reference = DocumentHistoricalReferenceAdmission.prepare(history, use, List.of(historical), NONE);
                 var refs = List.of(reference);
-                var plan = DocumentUploadPlan.prepare(command, placements, attempts, refs, () -> {});
+                var prepared = DocumentOperationUploadAdmission.prepareHistorical(command, placements, attempts, Duration.ofMinutes(5),
+                        upload ? Map.of("member-0", UUID.randomUUID()) : Map.of(), refs, () -> {});
+                var operations = new RepositoryOperationLedger(c.tx());
+                var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+                var nonce = UUID.randomUUID();
+                var otherAccount = new RepositoryCaller("principal", false, Set.of("other-account"), Set.of());
+                assertCode(() -> operations.admitHistoricalAssessment(otherAccount, key, prepared, nonce, Duration.ofMinutes(5)),
+                        RepositoryException.Code.NOT_FOUND);
+                assertCode(() -> operations.admitHistoricalAssessment(new RepositoryCaller("another-principal", true), key,
+                        prepared, nonce, Duration.ofMinutes(5)), RepositoryException.Code.PERMISSION_DENIED);
+                assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM repository_operations WHERE operation_id=:id")
+                        .setParameter("id", command.operationId()).getSingleResult()).longValue())).isZero();
+                var owner = operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow();
+                assertThat(operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)).owner().orElseThrow()).isEqualTo(owner);
+                var changedCommand = new DocumentPublicationCommand(command.intent().toBuilder().setMembers(0,
+                        command.intent().getMembers(0).toBuilder().setClusterId("changed-metadata")).build());
+                var changed = DocumentOperationUploadAdmission.prepareHistorical(changedCommand, placements, attempts, Duration.ofMinutes(5),
+                        prepared.uploadTokens(), refs, () -> {});
+                assertThatThrownBy(() -> operations.admitHistoricalAssessment(caller, key, changed, nonce, Duration.ofMinutes(5)))
+                        .isInstanceOf(RepositoryOperationLedger.CommandConflictException.class);
+                assertCode(() -> new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(otherAccount, owner, prepared),
+                        RepositoryException.Code.NOT_FOUND);
+                assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM document_operation_selections WHERE operation_id=:id")
+                        .setParameter("id", command.operationId()).getSingleResult()).longValue())).isZero();
+                var admitted = new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(caller, owner, prepared);
+                var plan = prepared.plan();
+                var selected = new java.util.HashMap<String, DocumentSelectedAttemptLedger.Selected>();
+                if (upload) {
+                    var attempt = admitted.getFirst();
+                    var selection = new DocumentSelectedAttemptLedger.Selected("member-0", 1, attempt.id(), attempt.token());
+                    selected.put("member-0", selection);
+                    var declared = plan.members().getFirst().attempt().orElseThrow().uploads().getFirst().object();
+                    new DocumentSelectedAttemptLedger(c.tx()).verifyBatch(owner, selection, List.of(new DocumentSelectedAttemptLedger.Observation(
+                            declared.objectKey(), declared.size(), declared.sha256(), declared.contentType(), "new-version", "observed-fixture")));
+                }
                 var reuse = DocumentReuseAdmission.prepare(plan);
                 var authorization = DocumentAdmissionAuthorization.prepare(plan, refs);
                 var slotPlan = DocumentAssessmentSlots.prepare(command, refs, () -> {});
                 var bound = c.tx().inTransaction(em -> {
                     RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                    RepositoryOperationLedger.requireCommand(em, owner.key(), command);
                     DocumentSchemaPolicies.lockUnboundWriter(em, "account");
                     DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
                     plan.members().getFirst().placement().drive().lock(em, new DriveLedger(c.tx()));
@@ -99,6 +122,8 @@ class DocumentHistoricalSelectionIT {
                     DocumentCommitParts.bindAssessment(em, owner, plan, selected, reuse, () -> {});
                 })).isInstanceOf(UnsupportedOperationException.class);
                 use.close();
+                assertThatThrownBy(() -> operations.admitHistoricalAssessment(caller, key, prepared, nonce, Duration.ofMinutes(5)))
+                        .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
                 assertThatThrownBy(() -> DocumentUploadPlan.prepare(command, placements, attempts, refs, () -> {}))
                         .isInstanceOf(IllegalStateException.class).hasMessageContaining("use has ended");
                 assertThatThrownBy(() -> c.tx().inTransaction(em -> {

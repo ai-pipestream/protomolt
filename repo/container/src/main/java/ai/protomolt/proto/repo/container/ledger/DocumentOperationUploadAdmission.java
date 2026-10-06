@@ -42,7 +42,7 @@ final class DocumentOperationUploadAdmission {
 
         private Prepared(DocumentUploadPlan.Prepared plan, Duration lease, Map<String, UUID> tokens) {
             this.plan = plan;
-            this.authorization = DocumentAdmissionAuthorization.prepare(plan);
+            this.authorization = DocumentAdmissionAuthorization.prepare(plan, plan.historical());
             this.reuse = DocumentReuseAdmission.prepare(plan);
             this.selections = DocumentOperationSelection.encode(plan);
             this.lease = lease;
@@ -146,6 +146,16 @@ final class DocumentOperationUploadAdmission {
         return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts), lease, uploadTokens);
     }
 
+    /** Internal unclaimed historical assessment selections; normal runtime preparation remains gated. */
+    static Prepared prepareHistorical(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
+            Map<String, UUID> attempts, Duration lease, Map<String, UUID> uploadTokens,
+            List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
+        Objects.requireNonNull(lease); Objects.requireNonNull(uploadTokens);
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Upload admission lease requires one second to one day");
+        return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts, historical, control), lease, uploadTokens);
+    }
+
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */
     List<DocumentPartAttemptLedger.Attempt> admit(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, Prepared prepared) {
         return stage(caller, owner, prepared, Map.of(), false).attempts();
@@ -174,6 +184,9 @@ final class DocumentOperationUploadAdmission {
             Prepared prepared, Map<String, DocumentOperationSelection.Expected> replacements, boolean allowVerifiedReuse) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared);
         var command = prepared.plan.command();
+        DocumentHistoricalReferenceAdmission.requireComplete(command, prepared.plan.historical(), () -> {});
+        if (!prepared.plan.historical().isEmpty() && owner.executionClaim().isPresent())
+            throw new UnsupportedOperationException("Claimed historical assessment is not implemented");
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Upload command differs from operation scope");
@@ -183,6 +196,7 @@ final class DocumentOperationUploadAdmission {
                 .map(upload -> new EncodedMember(upload.member, upload.token, DocumentAttemptPlanEncoding.prepare(upload.member)))
                 .toList();
         return tx.inTransaction(em -> {
+            DocumentHistoricalReferenceAdmission.requireComplete(command, prepared.plan.historical(), () -> {});
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);

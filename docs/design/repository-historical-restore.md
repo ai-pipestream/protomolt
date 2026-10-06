@@ -343,3 +343,27 @@ Source-reference verification currently occurs in both physical and slot binding
 Consolidate that only with an exact transaction-scoped checked-reference proof;
 neither a cached boolean nor an old source authorization is sufficient. This change
 adds no provider I/O under locks and establishes no new performance measurement.
+
+## Exact historical operation admission
+
+The package-private unclaimed assessment route now admits the actual canonical
+historical command, after binding the trusted caller's principal/account to the
+operation key and checking complete live pinned preparations. It reuses the typed
+operation identity/idempotency machinery. Changed command bytes under the same key
+conflict; a caller/account mismatch is refused before an operation row is inserted.
+Admission alone does not grant current document READ or WRITE.
+
+Historical member/upload selection preparation carries the same references into
+the existing authorization lockset. Selection staging verifies the exact admitted
+command, caller, source READ, destination WRITE and revision conditions before
+writing its rows. Claimed historical owners are refused. The physical binder test
+now uses that actual admitted historical command rather than an ordinary operation
+as a fixture stand-in. Ordinary admission, claims, sessions and public runtime
+execution remain gated.
+
+Next, extract the existing retained-definition loading/root-binding logic into an
+owned attempt resolver for whole-command assessment. Current policy must assess
+all members at one evaluation time and the real runtime observer must produce its
+manifest. Do not substitute the earlier single-member assessment's verdict or
+fabricate runtime evidence. Then connect CREATE with exact command/ACL/policy
+checks, the source Uses, historical physical/slot binding, and retained schemas.
