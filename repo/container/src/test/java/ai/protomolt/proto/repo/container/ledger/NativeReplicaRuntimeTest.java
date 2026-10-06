@@ -117,14 +117,22 @@ class NativeReplicaRuntimeTest {
 
     private void benchmark(ProcessBuilder builder, String classpath, PostgreSQLContainer postgres) throws Exception {
         int totalClients = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkClients", "4"));
-        if (totalClients != 4 && totalClients != 8)
-            throw new IllegalArgumentException("Benchmark client count must be 4 or 8");
+        if (totalClients != 4 && totalClients != 8 && totalClients != 16)
+            throw new IllegalArgumentException("Benchmark client count must be 4, 8 or 16");
+        int totalReadSlots = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkReadSlots", "0"));
+        if (totalReadSlots < 0 || totalReadSlots > 64 || totalReadSlots % 4 != 0)
+            throw new IllegalArgumentException("Total reader slots must be zero or a multiple of four up to 64");
+        int totalReadHandles = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkReadHandles", "0"));
+        if (totalReadHandles < 0 || totalReadHandles > 256 || totalReadHandles % 4 != 0)
+            throw new IllegalArgumentException("Total read handles must be zero or a multiple of four up to 256");
         Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
         Files.createDirectories(output);
         Files.writeString(output.resolve("environment.txt"), "java=" + System.getProperty("java.version")
                 + "\nos=" + System.getProperty("os.name") + " " + System.getProperty("os.arch")
                 + "\nloadavg=" + Files.readString(Path.of("/proc/loadavg")).trim()
-                + "\nclients=" + totalClients + "\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
+                + "\nclients=" + totalClients + "\ntotal_read_slots=" + totalReadSlots
+                + "\ntotal_read_handles=" + totalReadHandles + "\nzero_read_handles_means=32 per worker"
+                + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload=small typed StringValue\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         try (var sampler = new NativeTrafficSampler(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), output)) {
             var windows = new StringBuilder("window,replicas,pool_per_replica,clients_per_replica,operations,inclusive_nanos\n");
             int window = 0;
@@ -134,6 +142,8 @@ class NativeReplicaRuntimeTest {
                 int pool = config.startsWith("f") ? 8 / replicas : 8;
                 builder.environment().put("PROTOMOLT_NATIVE_POOL", Integer.toString(pool));
                 builder.environment().put("PROTOMOLT_NATIVE_CLIENTS", Integer.toString(clients));
+                builder.environment().put("PROTOMOLT_NATIVE_READ_SLOTS", Integer.toString(totalReadSlots == 0 ? 8 : totalReadSlots / replicas));
+                builder.environment().put("PROTOMOLT_NATIVE_READ_HANDLES", Integer.toString(totalReadHandles == 0 ? 32 : totalReadHandles / replicas));
                 var children = new ArrayList<Process>();
                 Throwable primary = null;
                 try {

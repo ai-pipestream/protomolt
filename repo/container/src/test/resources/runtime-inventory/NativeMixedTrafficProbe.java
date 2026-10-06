@@ -20,18 +20,22 @@ final class NativeMixedTrafficProbe {
     static void run(Tx tx, DataSource dataSource, Path root, String worker, OpenedBlobStore provider,
             ManagedBackendLedger.Profile profile) throws Exception {
         int clients = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_CLIENTS"));
-        if (clients < 1 || clients > 8) throw new IllegalArgumentException("Invalid client count");
+        if (clients < 1 || clients > 16) throw new IllegalArgumentException("Invalid client count");
+        int readSlots = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_READ_SLOTS"));
+        if (readSlots < 1 || readSlots > 64) throw new IllegalArgumentException("Invalid reader slot count");
+        int readHandles = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_READ_HANDLES"));
+        if (readHandles < 1 || readHandles > 256) throw new IllegalArgumentException("Invalid read handle count");
         int requestedPool = Integer.parseInt(System.getenv("PROTOMOLT_NATIVE_POOL"));
         require(dataSource instanceof com.zaxxer.hikari.HikariDataSource, "actual Hikari source");
         var pool = (com.zaxxer.hikari.HikariDataSource) dataSource;
         require(pool.getMaximumPoolSize() == requestedPool, "configured SQL pool applied");
-        Files.writeString(root.resolve(worker + "-config.txt"), "clients=" + clients + "\npool=" + pool.getMaximumPoolSize() + "\n",
+        Files.writeString(root.resolve(worker + "-config.txt"), "clients=" + clients + "\npool=" + pool.getMaximumPoolSize() + "\nread_slots=" + readSlots + "\nread_handles=" + readHandles + "\n",
                 StandardOpenOption.CREATE_NEW);
         var telemetry = new NativeTrafficTelemetry(); telemetry.attach(dataSource);
         var measuredStore = telemetry.wrap(provider.store());
         var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
         var budget = new PayloadBudget(128_000_000);
-        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 32);
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID(), readHandles);
         var drives = new DriveLedger(tx);
         var drive = drives.findById(UUID.fromString(Files.readString(root.resolve("drive")))).orElseThrow();
         var placement = Map.of(drive.driveId, new DocumentPublicationRuntime.Placement(drive, "native-replica-s3", profile));
@@ -43,7 +47,7 @@ final class NativeMixedTrafficProbe {
         var output = new ConcurrentLinkedQueue<String>();
         try (var reader = new DocumentPartReader((generation, actual) -> {
             require(generation.equals("native-replica-s3") && actual.equals(profile), "exact read backend"); return measuredStore;
-        }, 8, 16_000_000, budget)) {
+        }, readSlots, 16_000_000, budget)) {
             var runtime = new DocumentPublicationRuntime(tx, drives, reads, reader, budget, (generation, actual) -> {
                 require(generation.equals("native-replica-s3") && actual.equals(profile), "exact upload backend");
                 return new DocumentPublicationRuntime.Backend(profile.identity(), measuredProvider);

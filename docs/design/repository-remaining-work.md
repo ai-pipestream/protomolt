@@ -60,6 +60,14 @@ evidence; adding processes alone does not demonstrate scaling. Hydration follows
 recovery and retention foundations. The optional JCR assessment continues to govern
 foundation boundaries without adding JCR dependencies or asserting compliance.
 
+The next independent implementation slice is aggregate archive GetEntry admission,
+specified in [the read-response plan](repository-bounded-ingress.md#next-slice-aggregate-archive-read-responses).
+Per-object limits currently do not bound a response assembled from many renditions.
+The reviewed plan separates engine construction lifetime from transport response
+lifetime and includes real-provider local/remote acceptance cases. It remains
+unimplemented. Continue it alongside claimed-session recovery and retention work;
+performance qualification must not displace these requirements.
+
 ## Independent work that can advance now
 
 1. **Selected historical reads.** The optional Java SPI, wire contract, response
@@ -274,6 +282,15 @@ foundation boundaries without adding JCR dependencies or asserting compliance.
    revision immutability remain unchanged. Next, resolve pending command references
    and design atomic pruning with the same lock order used by reference acquisition;
    do not derive a deletable flag from an earlier inventory snapshot.
+   Source inspection confirms that the current preparation journal cannot register
+   historical selectors: `DocumentPublicationPreparationRecord` reconstructs through
+   ordinary upload preparation, which calls `requireExecutionSupported`. Historical
+   preparation uses a separate internal unclaimed path; claimed historical admission
+   remains refused. An indexed journal-selector projection would therefore be empty
+   for currently supported registrations. Do not add it or relax that guard solely
+   to make the inventory appear complete. Design claimed historical ownership, source
+   pin lifetime, canonical decode and atomic reference acquisition together before
+   activation. Unknown/legacy journal coverage remains conservative until verified.
    Required restore acceptance cases include registry absence, policy change, revoked
    access, stale destination revision, shared-byte reuse, failed finalization, and a
    pruning race with a held restore read. Backup qualification must restore the matching

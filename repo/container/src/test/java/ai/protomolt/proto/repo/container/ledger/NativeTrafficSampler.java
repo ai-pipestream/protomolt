@@ -61,14 +61,25 @@ final class NativeTrafficSampler implements AutoCloseable {
             if (child.isAlive()) {
                 try {
                     var lines = Files.readAllLines(Path.of("/proc", Long.toString(child.pid()), "status"));
-                    bytes = lines.stream().filter(line -> line.startsWith("VmRSS:")).findFirst().orElseThrow()
-                            .split("\\s+")[1];
-                    state = "running";
+                    var memory = memoryStatus(lines);
+                    bytes = memory.kib(); state = memory.state();
                 } catch (NoSuchFileException gone) { if (child.isAlive()) throw gone; }
             }
             rss.append(elapsed).append(',').append(child.pid()).append(',').append(bytes).append(',').append(state).append('\n');
         }
         Files.writeString(output.resolve(name + "-rss.csv"), rss, StandardOpenOption.APPEND);
+    }
+    record MemoryStatus(String kib, String state) {}
+    static MemoryStatus memoryStatus(List<String> lines) {
+        String state = lines.stream().filter(line -> line.startsWith("State:")).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Process status has no State field")).split("\\s+")[1];
+        // Linux may expose the zombie before Process.isAlive observes its exit.
+        // Missing RSS is not a zero-byte measurement and must not hide the child log.
+        if (state.equals("Z") || state.equals("X")) return new MemoryStatus("", "exited");
+        String rss = lines.stream().filter(line -> line.startsWith("VmRSS:")).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Live process status has no VmRSS field")).split("\\s+")[1];
+        if (Long.parseLong(rss) < 0) throw new IllegalStateException("Process RSS is negative");
+        return new MemoryStatus(rss, "running");
     }
     void finish(String name, int clients) throws Exception {
         var csv = new StringBuilder("query_id,calls,total_exec_ms,rows\n");

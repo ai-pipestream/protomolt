@@ -1,5 +1,57 @@
 # Bounded archive ingestion
 
+## Next slice: aggregate archive read responses
+
+Design reviewed; not implemented or advertised as available. The current
+`ArchiveObjectReader` checks each object's published size before its bounded
+provider read. `ArchiveOperations.getEntryImpl` can nevertheless combine multiple
+allowed objects into one response, copying each payload into a protobuf ByteString.
+The bounded write profile does not yet bound that aggregate allocation.
+
+Add an engine-owned `ArchiveGetAdmission` shared by local and transport calls.
+After authorization and exact version selection, freeze the selected PRESENT
+renditions once. Preflight that selection before any provider GET: rendition count,
+each declared size, overflow-safe aggregate bytes, and the serialized response's
+manifest, entry info and rendition framing must fit explicit limits. A selection
+that exceeds capacity is RESOURCE_EXHAUSTED; it must not trigger partial reads.
+Use the same frozen selection to assemble the response. Negative or inconsistent
+stored sizes remain integrity failures, not unsigned sizes or zero-cost reads.
+
+Reserve the full selected payload plus the transient provider/copy allowance from
+the host's shared payload budget before reading. Hold the lease through checksum
+verification and response construction, including delayed provider completion after
+cancellation. Admission close stops new work; timeout does not release accepted
+work's budget or authorize closing its provider. The plain protobuf return value
+does not offer an ownership callback, so this library guarantee ends at method
+return. Retained caller objects require a future separately owned read API.
+
+For the dedicated Netty listener, extend header-time admission for GetEntry with
+a fixed maximum response allowance in addition to its request allowance. Hold it
+until the serialized listener's terminal callback, retaining it while a synchronous
+handler is still using provider resources after cancellation. Check actual serialized
+response size before emitting a message. This transport reservation and the engine
+construction lease cover different lifetimes; budget configuration must permit both
+for one maximum GET, as well as the existing maximum PUT. Keep existing embedding
+constructors usable with explicit documented defaults if new options are added.
+
+Acceptance uses real SQL and Redis, with local and authenticated Netty calls:
+
+- Two individually allowed renditions exceed the aggregate cap: refusal occurs
+  before provider reads and all capacity is reusable afterward.
+- A selected subset fits while the complete selection does not; current and exact
+  historical versions return the same bytes locally and remotely.
+- Payload bytes fit but manifest/info/framing exceed the serialized cap: no
+  oversized message is emitted.
+- Delayed provider completion, cancellation and shutdown retain the read pin and
+  appropriate leases until the owning work is done; retry succeeds after release.
+- Concurrent GET and PUT calls share capacity and report explicit exhaustion;
+  checksum/provider failures release only their own reservations.
+
+This is bounded in-flight payload construction and response accounting, not a total
+heap or network-buffer limit. Manifest parsing, metadata-only/list responses and
+caller-retained results remain explicit follow-up work. No schema, wire tags,
+provider identity or JCR semantics change in this slice.
+
 Status: library admission, explicit public Java embedding options and a dedicated
 authenticated archive-only Netty mount and standalone environment entry point are
 implemented. Delayed-provider process shutdown, HTTP admission and broader repository
