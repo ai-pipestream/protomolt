@@ -87,6 +87,40 @@ class RegistrySchemaResolverTest {
         }
     }
 
+    @Test void corruptArtifactIsNotCachedAndRepairAllowsAdmission() throws Exception {
+        var payload = definition(StringValue.getDescriptor());
+        var container = definition(Document.getDescriptor());
+        var document = Document.newBuilder().setDocId("doc")
+                .setOwnership(OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
+                        .setSecurity(DocumentSecurity.getDefaultInstance()))
+                .setStructuredData(Any.pack(StringValue.of("repaired"), "type.test")).build();
+        var reservations = new Reservations();
+        try (var store = store(); var host = new RegistrySchemaResolver(store, CACHE, 1, 64)) {
+            store.putDescriptorSet(payload.metadata().getArtifactSha256(), payload.descriptors());
+            var artifact = temp.resolve("registry/descriptors/sha256/" + payload.metadata().getArtifactSha256() + ".pb");
+            Files.write(artifact, new byte[] {(byte) 0x80});
+            try (var attempt = host.open(o -> selected(payload), ACTIVE)) {
+                assertThatThrownBy(() -> DocumentSchemaAdmission.prepareAndCheck(preparation(document, container),
+                        attempt, ADMISSION, reservations, ACTIVE)).isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("descriptor fingerprint does not match descriptor-set bytes");
+            }
+            assertThat(host.awaitLoads(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(host.cachedBytes()).isZero();
+            assertThat(host.stats().retainedLoads()).isZero();
+            assertThat(reservations.bytes).isZero();
+            assertThat(host.stats().registryReads()).isEqualTo(1);
+            Files.write(artifact, payload.descriptors().toByteArray());
+            try (var attempt = host.open(o -> selected(payload), ACTIVE);
+                 var proof = DocumentSchemaAdmission.prepareAndCheck(preparation(document, container),
+                         attempt, ADMISSION, reservations, ACTIVE)) {
+                assertThat(proof.proof().document()).isEqualTo(document);
+                assertThat(host.stats().registryReads()).isEqualTo(2);
+                assertThat(host.stats().cacheHits()).isZero();
+            }
+            assertThat(reservations.bytes).isZero();
+        }
+    }
+
     @Test void equalTypeUrlsKeepDifferentArtifactsAndSeparateHostsDoNotShareThem() throws Exception {
         var d = definition(StringValue.getDescriptor());
         var fds = DescriptorProtos.FileDescriptorSet.parseFrom(d.descriptors());

@@ -532,3 +532,12 @@ full shutdown or remote-effect quiescence. The journaled manager now composes th
 gate with retained nonterminal V89/V90 identities through a registration barrier.
 Next compose full runtime quiescence, preserving uncertain markers, late-effect
 tombstones and existing schema/revision retention protections.
+
+## Schema adapter corruption qualification
+
+The real Git registry adapter now has a corrupt-then-repair admission regression.
+A digest mismatch must leave no cached artifact, retained load or payload reservation;
+repair must trigger a new registry read and allow admission through the same resolver.
+See [qualification](../evidence/repository/2026-10-06-schema-corruption-retry/README.md).
+This adds adapter coverage without changing production behavior or broadening the
+cache into an authorization or validation-verdict cache.
