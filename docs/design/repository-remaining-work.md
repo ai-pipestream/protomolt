@@ -618,5 +618,12 @@ successor publication and observe the provider's actual response. Preserve signi
 and exact backend identity, and explicitly control SDK retries. Holding only a
 response tests lost acknowledgment, not a delayed write. Then verify that the old
 attempt remains unverified/unreferenced and that another cleanup pass removes only
-its exact object versions while the successor stays readable. This transport seam
-and the composed late-effect case are not implemented or qualified yet.
+its exact object versions while the successor stays readable. The test-only
+`DelayedS3PutGatewayIT` now qualifies the bounded transport seam and physical
+exact-key reclamation against LocalStack. The SDK times out and its inbound handler
+drains before an independently buffered request is delivered. The first cleanup
+pass observes absence; a second removes the late version while preserving a
+prefix-sharing neighbor. This does not exercise SQL tombstones or successor
+publication. The composed case is still required, and its original and replacement
+hosts must resolve the same registered backend identity; do not substitute a direct
+upstream client for a proxy identity merely because both reach the same test store.

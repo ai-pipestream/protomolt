@@ -1139,3 +1139,22 @@ process is not killed; its provider handle remains open but locally drained duri
 handoff. This does not establish abrupt-death recovery, a delayed remote PUT after
 local drain, multi-replica throughput, or automatic public-host recovery. The probe
 uses LocalStack for correctness; it supplies no RustFS performance result.
+
+### Delayed provider request transport seam
+
+The test-only `DelayedS3PutGateway` buffers one bounded, signed HTTP PUT without
+forwarding it. Its SDK invocation must time out and its inbound handler must drain
+before the original request is sent to LocalStack. It preserves raw target, Host,
+signed headers and payload, verifies the supplied payload checksum, rejects
+unsupported framing and any second request, and observes the backend's actual
+status and version. This is an intermediary holding a request, not a repository
+worker paused before calling storage.
+
+The test proves absence before forwarding, then reads the exact new provider
+version. `S3ObjectReclaimer` observes absence once before arrival and removes the
+late version on another pass without deleting a prefix-sharing neighboring key.
+This physical adapter evidence does not establish SQL tombstone retention,
+automatic retry policy, arbitrary SDK framing, or successor isolation. The fixture
+explicitly uses one SDK attempt, a bounded non-streaming signed body and HTTP.
+Production provider configuration is unchanged. Repository composition must retain
+one exact registered backend identity across the original and successor paths.
