@@ -1,0 +1,67 @@
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-asset-proto:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractProto UP-TO-DATE
+> Task :protomolt-repo-proto:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:processProtoResources UP-TO-DATE
+> Task :protomolt-asset-proto:processProtoResources UP-TO-DATE
+> Task :protomolt-formats:compileJava UP-TO-DATE
+> Task :protomolt-repo-proto:processProtoResources UP-TO-DATE
+> Task :protomolt-formats:classes UP-TO-DATE
+> Task :protomolt-protobuf-validation:processResources UP-TO-DATE
+> Task :protomolt-asset-proto:processResources UP-TO-DATE
+> Task :protomolt-repo-proto:processResources UP-TO-DATE
+> Task :protomolt-formats:jar UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractIncludeProto UP-TO-DATE
+> Task :protomolt-descriptors:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractProto UP-TO-DATE
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-descriptors:classes UP-TO-DATE
+> Task :protomolt-descriptors:jar UP-TO-DATE
+> Task :protomolt-protobuf-metadata:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:compileJava UP-TO-DATE
+> Task :protomolt-cel:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractIncludeProto UP-TO-DATE
+> Task :protomolt-cel:classes UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processProtoResources UP-TO-DATE
+> Task :protomolt-asset-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-cel:jar UP-TO-DATE
+> Task :protomolt-protobuf-validation:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processResources UP-TO-DATE
+> Task :protomolt-asset-proto:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:classes UP-TO-DATE
+> Task :protomolt-protobuf-metadata:jar UP-TO-DATE
+> Task :protomolt-repo-spi:checkRuntimeBoundaries
+> Task :protomolt-repo-spi:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:compileJava UP-TO-DATE
+> Task :protomolt-repo-spi:processTestResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:classes UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:jar UP-TO-DATE
+> Task :protomolt-repo-proto:generateProto UP-TO-DATE
+> Task :protomolt-asset-proto:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:classes UP-TO-DATE
+> Task :protomolt-asset-proto:jar UP-TO-DATE
+> Task :protomolt-repo-proto:compileJava UP-TO-DATE
+> Task :protomolt-repo-proto:classes UP-TO-DATE
+> Task :protomolt-repo-proto:jar UP-TO-DATE
+> Task :protomolt-repo-spi:compileJava UP-TO-DATE
+> Task :protomolt-repo-spi:classes UP-TO-DATE
+> Task :protomolt-repo-spi:compileTestJava
+> Task :protomolt-repo-spi:testClasses
+> Task :protomolt-repo-spi:test
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/delegation-boundaries/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 3s
+39 actionable tasks: 3 executed, 36 up-to-date

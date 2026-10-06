@@ -6728,3 +6728,11 @@ host placement/container selection; retained retry-mode checks; thin authenticat
 gRPC adapter; real local/transport conformance; cancellation and lifecycle gates.
 The [transport design](repository-publication-recovery.md#managed-publication-transport-boundary)
 details resource limits and distinguishes durable rejection from transient errors.
+
+**New Java validation value:** `DocumentPublicationInput` in repo SPI checks the
+staged request without storage dependencies. Canonical intent validation is followed
+by checks for upload coverage, modes, lengths, checksum, unknown fields and total
+size. Content remains immutable protobuf bytes; execution and concurrent admission
+are separate. All 39 SPI tests and the dependency gate passed. See the
+[input evidence](../evidence/repository/2026-10-06-publication-input/README.md).
+The service remains unmounted; this value is not an authorization or execution API.
