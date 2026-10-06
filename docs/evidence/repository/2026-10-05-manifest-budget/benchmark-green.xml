@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-06T00:00:55.375Z" hostname="krick" time="160.312">
+  <properties/>
+  <testcase name="nativeWorkersPublishAndReadAcrossProcesses()" classname="ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest" time="160.305"/>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=rustfs image=rustfs/rustfs:1.0.0-beta.11-preview.1 image_id=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+NATIVE_BENCHMARK_OUTPUT=/work/worktrees/protomolt/delegation-boundaries/repo/container/build/native-replica-benchmark/efccda53-c531-41f8-be40-ebedd4500cb8
+]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: bbb81fbea2b11a3bfbb2c2c348296fd289d5ae8beac0088d3f2d0b5ad4937982
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.387706825S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: a49d71b61d5e0f20b6e5a1518ee89019f4fe948b154f114e77054afeb177827a
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.24761783S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49317/test?loggerLevel=OFF)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 5f1fbd752a818f059605d5fa38347f7836e4031aea4e1d64741ae06edb4d0103
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /wonderful_feistel: Waiting for 60 seconds for URL: http://localhost:49319/health (where port 49319 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.272168725S
+]]></system-err>
+</testsuite>

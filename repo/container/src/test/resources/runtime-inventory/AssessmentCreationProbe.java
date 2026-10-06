@@ -306,11 +306,13 @@ public final class AssessmentCreationProbe {
                 require(assessmentReader.recoverQuiescedPins(1) == 1, "assessment recovery finds durable session");
                 require(assessmentReader.reconcileDrained(1) == 1, "exact released identity retires local handle");
                 require(assessmentReader.recoverQuiescedPins(1) == 0, "assessment reader is fully recovered");
+                var compactReadBudget = new PayloadBudget(256 * 1024);
                 require(recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
-                        retained.manifestSha256(), retained.retainUntil(), recoveryBudget, () -> {}).orElseThrow().equals(retained),
+                        retained.manifestSha256(), retained.retainUntil(), compactReadBudget, () -> {}).orElseThrow().equals(retained),
                         "closed-scope evidence acknowledged from durable identities");
+                require(compactReadBudget.reservedBytes() == 0, "exact retained manifest read releases compact budget");
                 try { recovery.observeRetained(caller, recoveredOwner, recoveredCommand, selections, retained.assessment(),
-                        "00".repeat(32), retained.retainUntil(), recoveryBudget, () -> {}); throw new AssertionError("different manifest adopted"); }
+                        "00".repeat(32), retained.retainUntil(), new PayloadBudget(1), () -> {}); throw new AssertionError("different manifest adopted"); }
                 catch (IllegalStateException expected) { require(expected.getMessage().contains("requested original stage"), "wrong digest refusal"); }
                 var wrongNonce = new RepositoryOperationLedger.Owner(recoveredOwner.key(), recoveredOwner.generation(), UUID.randomUUID(), recoveredOwner.leaseUntil());
                 try { new DocumentAssessmentDiscovery(tx).discover(caller, wrongNonce, recoveredCommand, () -> {});

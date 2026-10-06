@@ -63,8 +63,10 @@ features available. Recovery is one workstream, not the whole goal.
    showed no replica speedup; neither is a saturation or scale-out result. Eight
    clients exposed maximum-size slot-snapshot over-reservation, now fixed with
    exact-size reservation and a SQL length gate. The complete repeated workload
-   passed without increasing its 128 MB payload budget. Review the remaining
-   maximum-size manifest reservations before increasing concurrency further.
+   passed without increasing its 128 MB payload budget. Retained manifest
+   reconciliation now also reserves actual length after locked metadata checks,
+   with a second size-gated SQL read. Qualification must include that extra round
+   trip; no memory optimization alone establishes a latency improvement.
 
 ## Work gated by publication and retention guarantees
 

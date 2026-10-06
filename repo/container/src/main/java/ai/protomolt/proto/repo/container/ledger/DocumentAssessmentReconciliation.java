@@ -73,35 +73,46 @@ final class DocumentAssessmentReconciliation {
         var selections = Map.copyOf(selected);
         int slots = command.intent().getMembersList().stream().mapToInt(member ->
                 (int) member.getPartsList().stream().filter(part -> !part.hasEmpty()).count()).sum();
-        // JDBC payload, returned array and immutable copy. Decoding and snapshots reserve separately.
-        try (var reading = budget.reserve(3L * DocumentAssessmentManifestCodec.MAX_BYTES)) {
-            return tx.inTransaction(em -> {
+        return tx.inTransaction(em -> {
+            control.run();
+            if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
+                    .setParameter("reader", reader).getSingleResult();
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+            DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+            var rows = em.createNativeQuery("""
+                    SELECT assessment_id,command_codec,command_version,encode(command_sha256,'hex'),
+                        sealed,release_xid IS NULL,retain_until=:deadline,retain_until>clock_timestamp(),
+                        expected_slots,expected_artifacts,expected_roots,encode(manifest_sha256,'hex'),
+                        octet_length(manifest_bytes)
+                    FROM document_assessment_owners WHERE account_id=:account AND principal=:principal
+                        AND operation_id=:op AND owner_generation=:gen FOR UPDATE
+                    """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                    .setParameter("op", owner.key().operationId()).setParameter("gen", owner.generation())
+                    .setParameter("deadline", OffsetDateTime.ofInstant(deadline, ZoneOffset.UTC)).getResultList();
+            if (rows.isEmpty()) {
+                RepositoryOperationLedger.fenceLiveOwner(em, owner); control.run();
+                return Optional.empty();
+            }
+            if (rows.size() != 1) throw conflict();
+            var row = (Object[]) rows.getFirst();
+            if (!assessment.equals(row[0]) || !DocumentPublicationCommand.CODEC.equals(row[1])
+                    || ((Number) row[2]).intValue() != DocumentPublicationCommand.ENCODING_VERSION || !command.sha256().equals(row[3])
+                    || !Boolean.TRUE.equals(row[4]) || !Boolean.TRUE.equals(row[5]) || !Boolean.TRUE.equals(row[6]) || !Boolean.TRUE.equals(row[7])
+                    || ((Number) row[8]).intValue() != slots || !manifestSha.equals(row[11])
+                    || !(row[12] instanceof Number length)) throw conflict();
+            int size = length.intValue();
+            if (size < 1 || size > DocumentAssessmentManifestCodec.MAX_BYTES) throw conflict();
+            // The owner remains locked across both reads. Reserve JDBC payload,
+            // returned array and immutable copy before requesting any blob bytes.
+            try (var reading = budget.reserve(3L * size)) {
                 control.run();
-                if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
-                        .setParameter("reader", reader).getSingleResult();
-                RepositoryOperationLedger.fenceLiveOwner(em, owner);
-                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-                DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
-                var rows = em.createNativeQuery("""
-                        SELECT assessment_id,command_codec,command_version,encode(command_sha256,'hex'),
-                            sealed,release_xid IS NULL,retain_until=:deadline,retain_until>clock_timestamp(),
-                            expected_slots,expected_artifacts,expected_roots,encode(manifest_sha256,'hex'),
-                            CASE WHEN octet_length(manifest_bytes) BETWEEN 1 AND 4194304 THEN manifest_bytes END
-                        FROM document_assessment_owners WHERE account_id=:account AND principal=:principal
-                            AND operation_id=:op AND owner_generation=:gen FOR UPDATE
-                        """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
-                        .setParameter("op", owner.key().operationId()).setParameter("gen", owner.generation())
-                        .setParameter("deadline", OffsetDateTime.ofInstant(deadline, ZoneOffset.UTC)).getResultList();
-                if (rows.isEmpty()) {
-                    RepositoryOperationLedger.fenceLiveOwner(em, owner); control.run();
-                    return Optional.empty();
-                }
-                if (rows.size() != 1) throw conflict();
-                var row = (Object[]) rows.getFirst();
-                if (!assessment.equals(row[0]) || !DocumentPublicationCommand.CODEC.equals(row[1])
-                        || ((Number) row[2]).intValue() != DocumentPublicationCommand.ENCODING_VERSION || !command.sha256().equals(row[3])
-                        || !Boolean.TRUE.equals(row[4]) || !Boolean.TRUE.equals(row[5]) || !Boolean.TRUE.equals(row[6]) || !Boolean.TRUE.equals(row[7])
-                        || ((Number) row[8]).intValue() != slots || !manifestSha.equals(row[11]) || !(row[12] instanceof byte[] stored)) throw conflict();
+                var payloads = em.createNativeQuery("""
+                        SELECT CASE WHEN octet_length(manifest_bytes)=:size THEN manifest_bytes END
+                        FROM document_assessment_owners WHERE assessment_id=:id
+                        """).setParameter("size", size).setParameter("id", assessment).getResultList();
+                if (payloads.size() != 1 || !(payloads.getFirst() instanceof byte[] stored) || stored.length != size)
+                    throw conflict();
                 var entries = reader == null ? java.util.List.<DocumentAssessmentReadPlan.Entry>of()
                         : DocumentAssessmentReadRows.capture(em, assessment, control);
                 DocumentAssessmentRetainedSlots.verify(em, identity, command, selections, budget, control);
@@ -123,8 +134,8 @@ final class DocumentAssessmentReconciliation {
                     beforeCommit.run();
                 }
                 return Optional.of(new Verified(new DocumentAssessmentCreation.Created(assessment, manifestSha, deadline), entries));
-            });
-        }
+            }
+        });
     }
     private static IllegalStateException conflict() { return new IllegalStateException("Retained assessment differs from requested original stage or is unavailable"); }
 }

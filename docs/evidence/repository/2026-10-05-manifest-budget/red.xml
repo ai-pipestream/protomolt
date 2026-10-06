@@ -1,0 +1,817 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-05T23:55:29.967Z" hostname="krick" time="85.017">
+  <properties/>
+  <testcase name="observedAssessmentAndSqlRunTogetherOnProductionJars()" classname="ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest" time="85.009">
+    <failure message="org.opentest4j.AssertionFailedError: [[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.&#10;[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...&#10;[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@43826ec&#10;[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.&#10;[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)&#10;[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead&#10;[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table &quot;public&quot;.&quot;flyway_schema_history&quot; does not exist yet&#10;[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 84 migrations (execution time 00:00.029s)&#10;[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table &quot;public&quot;.&quot;flyway_schema_history&quot; ...&#10;[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema &quot;public&quot;: &lt;&lt; Empty Schema &gt;&gt;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;1 - initial schema&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;2 - drive provider config&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;3 - document purges&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;4 - document events outbox&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;5 - document purges relayed at&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;6 - archive&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;7 - archive classification&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;8 - document mutation revision&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;9 - purge admission generation&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;10 - managed raw objects&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;11 - managed backend profiles&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;12 - archive mutation revisions&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;13 - archive retained set revision&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;14 - archive object bindings&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;15 - archive upload admission&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;16 - archive version object references&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;17 - provider backend identity&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;18 - archive object recovery&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;19 - archive mutation admission&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;20 - archive mutation observations&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;21 - document part attempt admission&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;22 - document part publication&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;23 - document key reservations&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;24 - abandoned document attempt cleanup&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;25 - repository physical locations&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;26 - repository retention bridge&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;27 - repository retirement&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;28 - archive reader pins&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;29 - shared archive reader locks&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;30 - archive read calls&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;31 - reader incarnation fence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;32 - reader local quiescence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;33 - archive reader recovery order&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;34 - repository operation admission&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;35 - repository operation write fence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;36 - operation bound document attempts&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;37 - document revision lock batches&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;38 - document revision projection&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;39 - document revision retention&quot;&#10;[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+&#10;| assert_document_revision_retention |&#10;+------------------------------------+&#10;|                                    |&#10;+------------------------------------+&#10;&#10;[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+&#10;| assert_document_revision_retention |&#10;+------------------------------------+&#10;|                                    |&#10;+------------------------------------+&#10;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;40 - document operation selections&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;41 - document admission lock modes&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;42 - document operation selection history&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;43 - selected document attempt writes&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;44 - document reader pins&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;45 - document reader batch release&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;46 - document reader quiescent recovery&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;47 - document reader recovery discovery&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;48 - repository schema artifact staging&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;49 - repository operation recovery fence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;50 - repository schema replaced claim release&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;51 - document event recording&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;52 - independent document publication&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;53 - native document coordinates&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;54 - revision physical lookup&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;55 - document revision schema references&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;56 - document revision schema evidence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;57 - document revision schema assets&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;58 - document schema policy catalog&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;59 - document schema policy publication fence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;60 - document schema retention manifest&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;61 - document schema admission binding&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;62 - document schema container role&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;63 - document historical read pins&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;64 - repository operation rejection&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;65 - repository retention lock set&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;66 - document assessment staging&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;67 - document assessment artifacts&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;68 - document assessment roots&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;69 - document assessment slot snapshots&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;70 - shared repository retention set&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;71 - document assessment read sessions&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;72 - document assessment read release&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;73 - document assessment read identity&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;74 - reader registration identity&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;75 - nonnegative archive statistics&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;76 - admission rejection assessment binding&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;77 - rejected assessment read authority&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;78 - repository execution claims&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;79 - repository claim mutation fences&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;80 - single call execution claim fence&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;81 - private publication preparations&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;82 - private publication modes&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;83 - private assessment start&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;84 - journaled owner mode guards&quot;&#10;[main] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 84 migrations to schema &quot;public&quot;, now at version v84 (execution time 00:00.313s)&#10;Oct 05, 2026 7:55:40 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:55:40 PM org.hibernate.Version logVersion&#10;INFO: HHH000001: Hibernate ORM core version 7.4.10.Final&#10;Oct 05, 2026 7:55:40 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect&#10;WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)&#10;Oct 05, 2026 7:55:40 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:55:40 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;JOURNALED_DIRECT_COMMIT_MISMATCH_OK&#10;JOURNALED_DIRECT_COMMIT_MATCH_OK&#10;PROMOTED_ASSESSMENT_COMMIT_OK&#10;Oct 05, 2026 7:55:58 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:55:58 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:55:58 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:00 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:00 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:00 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;NATIVE_PRETERMINAL_RESTART_OK&#10;Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;NATIVE_ASSESSMENT_EXECUTION_OK&#10;Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:05 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:05 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:05 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:05 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:05 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:05 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:06 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:06 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:06 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:06 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:06 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:06 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;NATIVE_ASSESSMENT_RUNTIME_OK&#10;NATIVE_HISTORICAL_MATERIALIZATION_LIFECYCLE_OK&#10;NATIVE_HISTORICAL_MATERIALIZATION_TRANSPORT_OK&#10;NATIVE_HISTORICAL_MATERIALIZATION_OK&#10;NATIVE_SCHEMA_METADATA_REVISIONS_OK&#10;NATIVE_ASSESSMENT_PREPARATION_OK&#10;ASSESSMENT_SOURCE_ADVANCED_OK&#10;ASSESSMENT_REPLAY_INPUTS_OK&#10;ASSESSMENT_PROVIDER_READS_OK&#10;ASSESSMENT_MIXED_REPLAY_OK&#10;ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK&#10;REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK&#10;ASSESSMENT_MIXED_REUSE_OK&#10;ASSESSMENT_REJECTION_ACCEPTED_REFUSED&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0002&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: query returned no rows&#10;  Where: PL/pgSQL function guard_repository_admission_rejection() line 6 at SQL statement&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Admission rejection requires its exact sealed retained assessment&#10;  Where: PL/pgSQL function guard_repository_admission_rejection() line 14 at RAISE&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Admission rejection requires its exact sealed retained assessment&#10;  Where: PL/pgSQL function guard_repository_admission_rejection() line 14 at RAISE&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: 23514&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: new row for relation &quot;repository_operation_rejection&quot; violates check constraint &quot;repository_rejection_assessment_binding&quot;&#10;  Detail: Failing row contains (account, principal, 4fc898cc-a5cb-4a95-b9fc-3560ac0a24b5, 1, document-publication, 1, \xf5ecabce20906c6755244ded430499ba2158ad3f3a640641c54ceac2fdedd1..., document-publication-rejection, 1, \x00, \x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa0..., 1791244573818665, 2, 3, 2179, 51b74b31-2c94-4726-b58e-aa85194566fa, document-publication-assessment, 1, \xd9ff70b425f1964403f7c5d7ba5cbf1564b06f32f28ebc9b750186aca5204f..., 1791244873745092).&#10;Oct 05, 2026 7:56:13 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:13 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;ASSESSMENT_REJECTION_LOST_ACK_OK&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Repository operation is terminal&#10;  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0002&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: query returned no rows&#10;  Where: PL/pgSQL function guard_document_assessment_read_session() line 32 at SQL statement&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Repository operation is terminal&#10;  Where: PL/pgSQL function require_repository_operation_write_fence(text,text,uuid,bigint) line 8 at RAISE&#10;SQL statement &quot;SELECT require_repository_operation_write_fence(owner.account_id,owner.principal,owner.operation_id,owner.owner_generation)&quot;&#10;PL/pgSQL function guard_document_assessment_read_session() line 25 at PERFORM&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Assessment read session identity is immutable&#10;  Where: PL/pgSQL function guard_document_assessment_read_session() line 9 at RAISE&#10;REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK&#10;ASSESSMENT_REJECTION_TERMINAL_READ_OK&#10;Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK&#10;Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Repository operation is terminal&#10;  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE&#10;ASSESSMENT_REJECTION_TERMINAL_READ_OK&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Assessment release requires all reader sessions to drain&#10;  Where: PL/pgSQL function guard_document_assessment_owner() line 40 at RAISE&#10;SQL statement &quot;UPDATE document_assessment_owners SET release_xid=pg_current_xact_id() WHERE assessment_id=p_assessment&quot;&#10;PL/pgSQL function release_expired_document_assessment(text,text,uuid,uuid) line 10 at SQL statement&#10;REJECTED_ASSESSMENT_EXPIRY_WAITS_OK&#10;ASSESSMENT_REJECTION_STALE_POLICY_OK&#10;Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK&#10;Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Repository operation is terminal&#10;  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE&#10;ASSESSMENT_REJECTION_TERMINAL_READ_OK&#10;JOURNALED_ASSESSMENT_DECISION_OK&#10;JOURNALED_OBSERVED_MODE_MISMATCH_OK&#10;Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK&#10;JOURNALED_ASSESSMENT_HANDLE_RESUME_OK&#10;Oct 05, 2026 7:56:35 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:35 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:35 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK&#10;JOURNALED_RESTORATION_CLAIM_LOSS_OK&#10;ASSESSMENT_OPERATION_REPLAY_OK&#10;ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Assessment requires an exact current-generation artifact claim&#10;  Where: PL/pgSQL function guard_document_assessment_artifact() line 32 at RAISE&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: 57014&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: injected assessment root cancellation&#10;  Where: PL/pgSQL function test_cancel_assessment_root() line 2 at RAISE&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: 23505&#10;Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: duplicate key value violates unique constraint &quot;document_assessment_owners_account_id_principal_operation_i_key&quot;&#10;  Detail: Key (account_id, principal, operation_id, owner_generation)=(account, principal, b1c9c755-670c-498b-adb5-336961555bdd, 1) already exists.&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: P0001&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: Assessment requires an exact current-generation artifact claim&#10;  Where: PL/pgSQL function guard_document_assessment_artifact() line 32 at RAISE&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: 57014&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: injected assessment root cancellation&#10;  Where: PL/pgSQL function test_cancel_assessment_root() line 2 at RAISE&#10;Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: HHH000247: ErrorCode: 0, SQLState: 23505&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions&#10;WARN: ERROR: duplicate key value violates unique constraint &quot;document_assessment_owners_account_id_principal_operation_i_key&quot;&#10;  Detail: Key (account_id, principal, operation_id, owner_generation)=(account, principal, 1f65167b-3e55-494d-b268-1e8cb9657f19, 1) already exists.&#10;Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;ASSESSMENT_CAPTURE_FAULTS_OK&#10;ASSESSMENT_PROVIDER_READS_OK&#10;[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...&#10;[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.&#10;Exception in thread &quot;main&quot; ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted&#10;&#9;at ai.protomolt.proto.repo.blob.spi.PayloadBudget.reserve(PayloadBudget.java:23)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:77)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:41)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.AssessmentCreationProbe.run(AssessmentCreationProbe.java:310)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.AssessmentStorageProbe.main(AssessmentStorageProbe.java:30)&#10;] &#10;expected: 0&#10; but was: 1" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: [[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@43826ec
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table &quot;public&quot;.&quot;flyway_schema_history&quot; does not exist yet
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 84 migrations (execution time 00:00.029s)
+[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table &quot;public&quot;.&quot;flyway_schema_history&quot; ...
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema &quot;public&quot;: &lt;&lt; Empty Schema &gt;&gt;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;1 - initial schema&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;2 - drive provider config&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;3 - document purges&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;4 - document events outbox&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;5 - document purges relayed at&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;6 - archive&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;7 - archive classification&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;8 - document mutation revision&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;9 - purge admission generation&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;10 - managed raw objects&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;11 - managed backend profiles&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;12 - archive mutation revisions&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;13 - archive retained set revision&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;14 - archive object bindings&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;15 - archive upload admission&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;16 - archive version object references&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;17 - provider backend identity&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;18 - archive object recovery&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;19 - archive mutation admission&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;20 - archive mutation observations&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;21 - document part attempt admission&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;22 - document part publication&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;23 - document key reservations&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;24 - abandoned document attempt cleanup&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;25 - repository physical locations&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;26 - repository retention bridge&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;27 - repository retirement&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;28 - archive reader pins&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;29 - shared archive reader locks&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;30 - archive read calls&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;31 - reader incarnation fence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;32 - reader local quiescence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;33 - archive reader recovery order&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;34 - repository operation admission&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;35 - repository operation write fence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;36 - operation bound document attempts&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;37 - document revision lock batches&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;38 - document revision projection&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;39 - document revision retention&quot;
+[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;40 - document operation selections&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;41 - document admission lock modes&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;42 - document operation selection history&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;43 - selected document attempt writes&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;44 - document reader pins&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;45 - document reader batch release&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;46 - document reader quiescent recovery&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;47 - document reader recovery discovery&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;48 - repository schema artifact staging&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;49 - repository operation recovery fence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;50 - repository schema replaced claim release&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;51 - document event recording&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;52 - independent document publication&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;53 - native document coordinates&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;54 - revision physical lookup&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;55 - document revision schema references&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;56 - document revision schema evidence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;57 - document revision schema assets&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;58 - document schema policy catalog&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;59 - document schema policy publication fence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;60 - document schema retention manifest&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;61 - document schema admission binding&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;62 - document schema container role&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;63 - document historical read pins&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;64 - repository operation rejection&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;65 - repository retention lock set&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;66 - document assessment staging&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;67 - document assessment artifacts&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;68 - document assessment roots&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;69 - document assessment slot snapshots&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;70 - shared repository retention set&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;71 - document assessment read sessions&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;72 - document assessment read release&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;73 - document assessment read identity&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;74 - reader registration identity&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;75 - nonnegative archive statistics&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;76 - admission rejection assessment binding&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;77 - rejected assessment read authority&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;78 - repository execution claims&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;79 - repository claim mutation fences&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;80 - single call execution claim fence&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;81 - private publication preparations&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;82 - private publication modes&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;83 - private assessment start&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema &quot;public&quot; to version &quot;84 - journaled owner mode guards&quot;
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 84 migrations to schema &quot;public&quot;, now at version v84 (execution time 00:00.313s)
+Oct 05, 2026 7:55:40 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:55:40 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 05, 2026 7:55:40 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 05, 2026 7:55:40 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:55:40 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+JOURNALED_DIRECT_COMMIT_MISMATCH_OK
+JOURNALED_DIRECT_COMMIT_MATCH_OK
+PROMOTED_ASSESSMENT_COMMIT_OK
+Oct 05, 2026 7:55:58 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:55:58 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:55:58 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:55:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:55:59 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:00 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:00 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:00 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+NATIVE_PRETERMINAL_RESTART_OK
+Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:03 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:03 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+NATIVE_ASSESSMENT_EXECUTION_OK
+Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:04 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:04 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:05 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:05 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:05 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:05 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:05 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:05 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:06 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:06 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:06 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:06 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:06 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:06 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+NATIVE_ASSESSMENT_RUNTIME_OK
+NATIVE_HISTORICAL_MATERIALIZATION_LIFECYCLE_OK
+NATIVE_HISTORICAL_MATERIALIZATION_TRANSPORT_OK
+NATIVE_HISTORICAL_MATERIALIZATION_OK
+NATIVE_SCHEMA_METADATA_REVISIONS_OK
+NATIVE_ASSESSMENT_PREPARATION_OK
+ASSESSMENT_SOURCE_ADVANCED_OK
+ASSESSMENT_REPLAY_INPUTS_OK
+ASSESSMENT_PROVIDER_READS_OK
+ASSESSMENT_MIXED_REPLAY_OK
+ASSESSMENT_REPLAY_CANCELLED_DELIVERY_OK
+REJECTED_ASSESSMENT_SOURCE_AUTHORIZATION_OK
+ASSESSMENT_MIXED_REUSE_OK
+ASSESSMENT_REJECTION_ACCEPTED_REFUSED
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0002
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: query returned no rows
+  Where: PL/pgSQL function guard_repository_admission_rejection() line 6 at SQL statement
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Admission rejection requires its exact sealed retained assessment
+  Where: PL/pgSQL function guard_repository_admission_rejection() line 14 at RAISE
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Admission rejection requires its exact sealed retained assessment
+  Where: PL/pgSQL function guard_repository_admission_rejection() line 14 at RAISE
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23514
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: new row for relation &quot;repository_operation_rejection&quot; violates check constraint &quot;repository_rejection_assessment_binding&quot;
+  Detail: Failing row contains (account, principal, 4fc898cc-a5cb-4a95-b9fc-3560ac0a24b5, 1, document-publication, 1, \xf5ecabce20906c6755244ded430499ba2158ad3f3a640641c54ceac2fdedd1..., document-publication-rejection, 1, \x00, \x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa0..., 1791244573818665, 2, 3, 2179, 51b74b31-2c94-4726-b58e-aa85194566fa, document-publication-assessment, 1, \xd9ff70b425f1964403f7c5d7ba5cbf1564b06f32f28ebc9b750186aca5204f..., 1791244873745092).
+Oct 05, 2026 7:56:13 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:13 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+ASSESSMENT_REJECTION_LOST_ACK_OK
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Repository operation is terminal
+  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0002
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: query returned no rows
+  Where: PL/pgSQL function guard_document_assessment_read_session() line 32 at SQL statement
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Repository operation is terminal
+  Where: PL/pgSQL function require_repository_operation_write_fence(text,text,uuid,bigint) line 8 at RAISE
+SQL statement &quot;SELECT require_repository_operation_write_fence(owner.account_id,owner.principal,owner.operation_id,owner.owner_generation)&quot;
+PL/pgSQL function guard_document_assessment_read_session() line 25 at PERFORM
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:13 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Assessment read session identity is immutable
+  Where: PL/pgSQL function guard_document_assessment_read_session() line 9 at RAISE
+REJECTED_ASSESSMENT_AUTHORITY_GUARDS_OK
+ASSESSMENT_REJECTION_TERMINAL_READ_OK
+Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+REJECTED_ASSESSMENT_CAPTURE_FAULTS_OK
+Oct 05, 2026 7:56:14 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:14 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Repository operation is terminal
+  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE
+ASSESSMENT_REJECTION_TERMINAL_READ_OK
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Assessment release requires all reader sessions to drain
+  Where: PL/pgSQL function guard_document_assessment_owner() line 40 at RAISE
+SQL statement &quot;UPDATE document_assessment_owners SET release_xid=pg_current_xact_id() WHERE assessment_id=p_assessment&quot;
+PL/pgSQL function release_expired_document_assessment(text,text,uuid,uuid) line 10 at SQL statement
+REJECTED_ASSESSMENT_EXPIRY_WAITS_OK
+ASSESSMENT_REJECTION_STALE_POLICY_OK
+Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK
+Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+ASSESSMENT_REJECTION_CANCEL_AFTER_COMMIT_OK
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Repository operation is terminal
+  Where: PL/pgSQL function reject_terminal_repository_owner_write() line 9 at RAISE
+ASSESSMENT_REJECTION_TERMINAL_READ_OK
+JOURNALED_ASSESSMENT_DECISION_OK
+JOURNALED_OBSERVED_MODE_MISMATCH_OK
+Oct 05, 2026 7:56:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK
+JOURNALED_ASSESSMENT_HANDLE_RESUME_OK
+Oct 05, 2026 7:56:35 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:35 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:35 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+JOURNALED_ASSESSMENT_COMMIT_RECOVERY_OK
+JOURNALED_RESTORATION_CLAIM_LOSS_OK
+ASSESSMENT_OPERATION_REPLAY_OK
+ASSESSMENT_POLICY_ADVANCEMENT_REPLAY_OK
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Assessment requires an exact current-generation artifact claim
+  Where: PL/pgSQL function guard_document_assessment_artifact() line 32 at RAISE
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 57014
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: injected assessment root cancellation
+  Where: PL/pgSQL function test_cancel_assessment_root() line 2 at RAISE
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23505
+Oct 05, 2026 7:56:45 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: duplicate key value violates unique constraint &quot;document_assessment_owners_account_id_principal_operation_i_key&quot;
+  Detail: Key (account_id, principal, operation_id, owner_generation)=(account, principal, b1c9c755-670c-498b-adb5-336961555bdd, 1) already exists.
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Assessment requires an exact current-generation artifact claim
+  Where: PL/pgSQL function guard_document_assessment_artifact() line 32 at RAISE
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 57014
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: injected assessment root cancellation
+  Where: PL/pgSQL function test_cancel_assessment_root() line 2 at RAISE
+Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+ASSESSMENT_STAGE_LOST_ACK_DISCOVERY_OK
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23505
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: duplicate key value violates unique constraint &quot;document_assessment_owners_account_id_principal_operation_i_key&quot;
+  Detail: Key (account_id, principal, operation_id, owner_generation)=(account, principal, 1f65167b-3e55-494d-b268-1e8cb9657f19, 1) already exists.
+Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:56:53 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49311/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:56:53 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+ASSESSMENT_CAPTURE_FAULTS_OK
+ASSESSMENT_PROVIDER_READS_OK
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+Exception in thread &quot;main&quot; ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted
+	at ai.protomolt.proto.repo.blob.spi.PayloadBudget.reserve(PayloadBudget.java:23)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:77)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:41)
+	at ai.protomolt.proto.repo.container.ledger.AssessmentCreationProbe.run(AssessmentCreationProbe.java:310)
+	at ai.protomolt.proto.repo.container.ledger.AssessmentStorageProbe.main(AssessmentStorageProbe.java:30)
+] 
+expected: 0
+ but was: 1
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest.observedAssessmentAndSqlRunTogetherOnProductionJars(DocumentAssessmentStorageRuntimeTest.java:85)
+</failure>
+  </testcase>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+]]></system-out>
+  <system-err><![CDATA[Note: /tmp/junit-11126700035520743779/AssessmentCreationProbe.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: fcb5f7b83e739f50b955d0c31ac59b2b3127945877852bb3386ae836720cf88d
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.359634246S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 39ffbc3d11c11af63e5a4c20ff389571ba1a888e6d85757773197ab22db8d4e3
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.968369213S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49311/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 043005f6528706be98bc47c480d21b2211f662e0fc1de179b358e6f5af1fa899
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.439237902S
+]]></system-err>
+</testsuite>

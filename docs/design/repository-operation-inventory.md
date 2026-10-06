@@ -6092,3 +6092,13 @@ Its SQL projection refuses any other byte length before JDBC materialization;
 original identity, association, content and digest checks remain. No protobuf,
 publication semantics, payload capacity or authorization rules change. A real
 PostgreSQL small-budget regression and corruption cases accompany the fix.
+
+### Exact retained manifest read reservations
+
+**Unchanged operation, corrected resource accounting:** retained assessment
+reconciliation locks and validates owner metadata before reserving three copies
+of the actual manifest size. Its second SQL projection returns bytes only at that
+size, under the same owner lock. Existing authorization, identity, digest, evidence,
+expiry and reader-session checks remain. Missing or wrong-identity rows allocate
+no manifest payload reservation. This adds one SQL read; no protobuf or migration
+changes and no automatic recovery activation follow from it.
