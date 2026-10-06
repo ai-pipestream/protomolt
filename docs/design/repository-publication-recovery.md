@@ -2247,3 +2247,28 @@ bindings, mount independently of historical reads, enforce parser limits and
 require authentication on built-in transports. Recovery startup, listener failure
 and shutdown must use the same managed resource lifetime. No publication API is
 advertised as available through current host defaults.
+
+### Explicit public host composition
+
+The subsequent ManagedPublicationOptions checkpoint implements that opt-in.
+The public builder accepts the existing schema lifecycle component, local
+assessment bundle/windows and required drain authority. Recovery authority and
+transport access are independent optional choices. Public signatures depend on
+service/SPI types rather than SQL implementation classes.
+
+Transport access supplies trusted authenticated caller bindings, a delivery byte
+budget sufficient for one maximum call and a concurrent-call bound. Account and
+credential identities are host policy, not request grants. Built-in listeners
+require the operator token when publication is mounted. The service mounts without
+historical reads. External embedding hosts must install authentication and enforce
+the same 10 MiB parser limit.
+
+Close first rejects new adapter calls and runtime work. It then waits for accepted
+publication producers and transport deliveries before closing listeners. A timeout
+retains listeners, SQL and provider resources for a later close attempt. The real
+managed-host fixture verifies an accepted typed publication completing after a
+timeout, refusal of new calls and successful final resource release. See
+`docs/evidence/repository/2026-10-06-publication-host/`.
+
+These APIs are available through explicit composition. They are not enabled in
+default builders, deployed by this change or qualified for horizontal throughput.

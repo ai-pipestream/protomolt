@@ -19,6 +19,7 @@ import java.util.Objects;
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
     final ai.protomolt.proto.repo.spi.DocumentPublicationRepository publicationRepository;
+    final DocumentPublicationGrpcService publicationService;
     final ai.protomolt.proto.repo.engine.DocumentHistoricalOperations history;
     final DocumentHistoryGrpcService historyService;
     final DocumentHistoryMaterializationGrpcService materializationService;
@@ -26,8 +27,12 @@ final class ManagedDocumentServices {
     private final boolean managedDrain;
 
     record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
-            DocumentPublicationRuntime.RecoveryAuthority recovery) {
+            DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport) {
         Journaled { Objects.requireNonNull(assessments); Objects.requireNonNull(authority); }
+        Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
+                DocumentPublicationRuntime.RecoveryAuthority recovery) {
+            this(assessments,authority,recovery,null);
+        }
         Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority) {
             this(assessments,authority,null);
         }
@@ -63,6 +68,11 @@ final class ManagedDocumentServices {
             throw new IllegalStateException("Original document backend profile is not bound");
         var selection=journaled==null ? null : new ManagedPublicationSelection(
                 new DriveLedger(bounded,drives::validateBackend),profiles,generation,profile,schemas);
+        // Construct transport state before acquiring native worker/lifecycle resources.
+        // This composition is not exposed until publicationRepository is assigned.
+        var transport=journaled==null ? null : journaled.transport();
+        publicationService=transport==null ? null : new DocumentPublicationGrpcService(this::publish,
+                transport.bindings(),new PayloadBudget(transport.deliveryBudgetBytes()),transport.maxConcurrentCalls());
         var budget = new PayloadBudget(64L * 1024 * 1024);
         var reader = new DocumentPartReader((original, selected) -> {
             requireOriginal(generation, profile, original, selected);
@@ -116,6 +126,23 @@ final class ManagedDocumentServices {
             throw new IllegalStateException("Original document backend is not configured on this host");
     }
 
+    private ai.protomolt.proto.repo.v1.PublishDocumentResponse publish(
+            ai.protomolt.proto.repo.spi.RepositoryCaller caller, ai.protomolt.proto.repo.v1.PublishDocumentRequest request,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+        return publicationRepository.publishDocument(caller,request,control);
+    }
+
+    void awaitTransportIdle(Duration timeout) {
+        try {
+            if (publicationService!=null && !publicationService.awaitIdle(timeout))
+                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.PUBLICATION_RPC,
+                        "Publication RPCs still active; shared resources retained");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Publication RPC drain interrupted; shared resources retained",interrupted);
+        }
+    }
+
     void drain(Duration timeout) {
         long budget = timeout.toNanos(), start = System.nanoTime();
         try {
@@ -132,6 +159,7 @@ final class ManagedDocumentServices {
     }
 
     void closeAdmission() {
+        if (publicationService!=null) publicationService.close();
         publication.close();
         if (!managedDrain && schemas != null) schemas.close();
     }

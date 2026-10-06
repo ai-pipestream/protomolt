@@ -165,7 +165,7 @@ public final class RepoServices implements AutoCloseable {
         this(config, bridges, providers, historicalAccess, schemaAccess, bounded, null);
     }
 
-    /** Internal managed-host qualification; no public builder selects journaled publication yet. */
+    /** Internal constructor shared by public journaled composition and qualification fixtures. */
     RepoServices(RepoServiceConfig config, BridgeEngine bridges,
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded, ManagedDocumentServices.Journaled journaled) {
@@ -431,6 +431,22 @@ public final class RepoServices implements AutoCloseable {
         return managedDocuments.publicationRepository;
     }
 
+    /**
+     * Journaled library publication with optional authenticated transport. Schema
+     * lifecycle ownership transfers only on successful construction. Assessment
+     * bundle and authority callbacks are trusted host configuration. Historical
+     * reads remain independently optional. Built-in transports require an operator
+     * token when publication transport is selected; embedding hosts must install
+     * authentication and a 10 MiB inbound parser limit before serving services().
+     */
+    public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges,
+            HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess,
+            ManagedPublicationOptions publication) {
+        return new RepoServices(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
+                historicalAccess, java.util.Objects.requireNonNull(schemaAccess), null,
+                java.util.Objects.requireNonNull(publication).journaled());
+    }
+
     /** Exact native history sharing this composition's storage and cleanup lifetime. */
     public ai.protomolt.proto.repo.spi.HistoricalDocumentRepository historicalRepository() {
         requireOpen();
@@ -489,10 +505,12 @@ public final class RepoServices implements AutoCloseable {
         requireOpen();
         requireFullProfile();
         if (managedArchive != null) startLifecycle();
-        if (managedDocuments == null || managedDocuments.historyService == null) return services;
+        if (managedDocuments == null) return services;
+        if (managedDocuments.publicationService != null) startLifecycle();
         var mounted = new java.util.ArrayList<BindableService>(services);
-        mounted.add(managedDocuments.historyService);
+        if (managedDocuments.historyService != null) mounted.add(managedDocuments.historyService);
         if (managedDocuments.materializationService != null) mounted.add(managedDocuments.materializationService);
+        if (managedDocuments.publicationService != null) mounted.add(managedDocuments.publicationService);
         return List.copyOf(mounted);
     }
 
@@ -588,9 +606,9 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private void requireTransportAuthentication(String apiToken, CallerResolver resolver) {
-        if (managedDocuments != null && managedDocuments.historyService != null
+        if (managedDocuments != null && (managedDocuments.historyService != null || managedDocuments.publicationService != null)
                 && (apiToken == null || apiToken.isBlank()))
-            throw new IllegalArgumentException("Historical transport requires a nonblank operator API token");
+            throw new IllegalArgumentException("Managed document transport requires a nonblank operator API token");
         if (apiToken == null && resolver != null)
             throw new IllegalArgumentException("an access-policy resolver requires the operator api token");
     }
@@ -845,6 +863,7 @@ public final class RepoServices implements AutoCloseable {
         // accepted calls; transport shutdown can otherwise forcibly cancel them.
         // A timeout retains every resource so the owner can retry draining.
         if (archiveIngress != null) awaitArchiveIdle(timeout);
+        if (managedDocuments != null) managedDocuments.awaitTransportIdle(timeout);
         var transports = new java.util.ArrayList<AutoCloseable>();
         transports.addAll(httpServers);
         transports.addAll(servers);

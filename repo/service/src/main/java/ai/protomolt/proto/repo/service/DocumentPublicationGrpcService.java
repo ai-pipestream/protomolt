@@ -11,19 +11,23 @@ import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /** Authenticated adapter over the shared publisher; the host owns repository and transport resources. */
-public final class DocumentPublicationGrpcService extends DocumentPublicationServiceGrpc.DocumentPublicationServiceImplBase {
+public final class DocumentPublicationGrpcService extends DocumentPublicationServiceGrpc.DocumentPublicationServiceImplBase implements AutoCloseable {
     private static final ProtoValidator VALIDATOR=ProtoValidator.create();
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(DocumentPublicationGrpcService.class);
     private static final int MAX_RESPONSE_BYTES=DocumentPublicationResultCodec.MAX_BYTES+16;
+    /** Application allowance for one maximum envelope, canonical command and terminal response. */
+    public static final long MAX_CALL_RESERVATION_BYTES=(long)DocumentPublicationInput.MAX_ENVELOPE_BYTES
+            +MAX_RESPONSE_BYTES+DocumentPublicationCommand.MAX_COMMAND_BYTES;
     private final DocumentPublicationRepository repository;
     private final Function<AuthenticatedCaller,RepositoryCaller> bindings;
     private final PayloadBudget deliveryBudget;
-    private final Semaphore calls;
+    private final int maxConcurrentCalls;
+    private int activeCalls;
+    private boolean closed;
 
     /** Install authentication and a 10 MiB inbound parser limit separately; bindings are host authority. */
     public DocumentPublicationGrpcService(DocumentPublicationRepository repository,
@@ -31,7 +35,7 @@ public final class DocumentPublicationGrpcService extends DocumentPublicationSer
         this.repository=Objects.requireNonNull(repository); this.bindings=Objects.requireNonNull(bindings);
         this.deliveryBudget=Objects.requireNonNull(deliveryBudget);
         if (maxConcurrentCalls<1) throw new IllegalArgumentException("Publication transport call limit must be positive");
-        calls=new Semaphore(maxConcurrentCalls);
+        this.maxConcurrentCalls=maxConcurrentCalls;
     }
 
     @Override public void publishDocument(PublishDocumentRequest request, StreamObserver<PublishDocumentResponse> output) {
@@ -50,8 +54,7 @@ public final class DocumentPublicationGrpcService extends DocumentPublicationSer
         boolean installed=false;
         try {
             var caller=caller(); control.check();
-            if (!calls.tryAcquire()) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Publication transport is full");
-            call=new Call();
+            call=admit();
             observer.setOnCancelHandler(call::terminated); observer.setOnCloseHandler(call::terminated); installed=true;
             if (control.isCancelled()) call.terminated();
             control.check();
@@ -75,6 +78,31 @@ public final class DocumentPublicationGrpcService extends DocumentPublicationSer
             if (call!=null) call.producerFinished();
         }
     }
+
+    private synchronized Call admit() {
+        if (closed) throw new RepositoryException(RepositoryException.Code.UNAVAILABLE,"Publication transport is closing");
+        if (activeCalls==maxConcurrentCalls)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Publication transport is full");
+        var call=new Call();
+        activeCalls++;
+        return call;
+    }
+
+    /** Reject new calls; already admitted producers and deliveries retain their resources. */
+    @Override public synchronized void close() { closed=true; }
+
+    /** Wait before closing the listener or shared repository. A timeout does not release either. */
+    public synchronized boolean awaitIdle(java.time.Duration timeout) throws InterruptedException {
+        if (timeout.isNegative()) throw new IllegalArgumentException("Negative drain timeout");
+        long remaining=timeout.toNanos(), started=System.nanoTime();
+        while (activeCalls!=0 && remaining>0) {
+            TimeUnit.NANOSECONDS.timedWait(this,remaining);
+            remaining=timeout.toNanos()-(System.nanoTime()-started);
+        }
+        return activeCalls==0;
+    }
+
+    private synchronized void releaseCall() { activeCalls--; notifyAll(); }
 
     private RepositoryCaller caller() {
         var authenticated=CallerContexts.CALLER.get();
@@ -125,7 +153,7 @@ public final class DocumentPublicationGrpcService extends DocumentPublicationSer
             if (!released && producerFinished && terminated) {
                 released=true; response=null;
                 if (bytes!=null) { bytes.close(); bytes=null; }
-                calls.release();
+                releaseCall();
             }
         }
     }

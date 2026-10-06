@@ -6764,3 +6764,15 @@ lock-timeout checks passed. See
 [selection evidence](../evidence/repository/2026-10-06-publication-selection/README.md).
 Public journaled configuration and transport parity remain pending. The RPC is
 not mounted.
+
+**Extended public composition, subsequent checkpoint:** ManagedPublicationOptions
+now selects journaled library publication through a public RepoServices builder.
+Drain authority is required; recovery and transport are separate explicit options.
+Publication transport mounts independently of historical reads and uses the same
+repository SPI. Built-in listeners require authentication, and the adapter verifies
+credential identity. Shutdown rejects new calls and waits for accepted producers
+and deliveries before closing listeners or shared storage. Real-store host tests
+and focused configuration/lifecycle tests passed; see
+[host evidence](../evidence/repository/2026-10-06-publication-host/README.md).
+Default host configuration still does not mount publication. A published remote
+SPI client, additional provider qualification and throughput/scaling remain open.

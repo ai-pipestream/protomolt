@@ -69,12 +69,12 @@ public final class ManagedJournaledDrainProbe {
                 public void close() { resolver.close(); }
                 public boolean awaitIdle(Duration timeout) throws InterruptedException { return resolver.awaitLoads(timeout); }
             };
-            var journaled = new ManagedDocumentServices.Journaled(
-                    new DocumentPublicationRuntime.Assessments(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5)),
+            var options = new ManagedPublicationOptions(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5),
                     (account, principal, operation) -> {
                         require(principal.equals(ADMIN.principalName()), "exact drain principal");
                         return ADMIN;
-                    }, recoveryEnabled ? (account,principal,operation) -> {
+                    });
+            if (recoveryEnabled) options=options.withRecovery((account,principal,operation) -> {
                         var expected=recoveryOperation.get();
                         if (expected!=null && operation.equals(expected.operationId())
                                 && account.equals(expected.intent().getAccountId()) && principal.equals(ADMIN.principalName())) {
@@ -85,10 +85,17 @@ public final class ManagedJournaledDrainProbe {
                             return ADMIN;
                         }
                         throw new AssertionError("Fresh publication or terminal replay requested recovery authority");
-                    } : null);
-            var host = new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(), null, access, null, journaled);
+                    });
+            if (scenario==1) options=options.withTransport(new ManagedPublicationOptions.Transport(auth -> {
+                require(auth.caller().name().equals(ADMIN.principalName()) && auth.caller().unrestricted()
+                        && auth.binding().isEmpty(),"fixture binding preserves authenticated identity");
+                return ADMIN;
+            },32L*1024*1024,4));
+            var host = RepoServices.build(config, BridgeEngine.standard(), null, access, options);
             var tx = new Tx(database.entityManagerFactory());
-            try {
+            try (var hosted=scenario==1 ? hostedPublication(host) : null) {
+                if (scenario!=1) require(host.services().stream().noneMatch(service -> service instanceof DocumentPublicationGrpcService),
+                        "library composition does not implicitly mount publication transport");
                 var terminal = prepare(host, tx, generation, false);
                 var completed = executeTransport(host, tx, terminal);
                 require(completed.getMembersCount() == 1, "terminal control published");
@@ -143,13 +150,19 @@ public final class ManagedJournaledDrainProbe {
                     return;
                 }
                 if (recoveryEnabled) {
-                    var accepted=executor.submit(() -> executeFacade(host,ADMIN,work));
+                    var accepted=executor.submit(() -> hosted.client().publishDocument(request(work)).getCommitted());
                     require(entered.await(10,TimeUnit.SECONDS),"enabled host entered real schema lookup");
                     try { host.close(Duration.ofMillis(100)); throw new AssertionError("accepted publication was not retained"); }
                     catch (IllegalStateException expected) {
-                        require(expected.getMessage().equals("Native publication resources still active; shared resources retained"),
+                        require(expected instanceof RepositoryDrainTimeoutException timeout
+                                && timeout.phase()==RepositoryDrainTimeoutException.Phase.PUBLICATION_RPC,
                                 "shutdown waits for accepted call");
                     }
+                    require(!hosted.server().isShutdown(),"shutdown timeout retains publication listener");
+                    try (var connection=host.ledgerDataSource().getConnection()) {
+                        require(connection.isValid(1),"shutdown timeout retains repository SQL");
+                    }
+                    expectStatus(io.grpc.Status.Code.UNAVAILABLE,() -> hosted.client().publishDocument(request(terminal)));
                     require(!accepted.isDone() && !access.awaitIdle(Duration.ZERO),"schema worker remains accepted after close");
                     release.countDown();
                     var result=accepted.get(15,TimeUnit.SECONDS);
@@ -162,12 +175,14 @@ public final class ManagedJournaledDrainProbe {
                             """).setParameter("id",work.command.operationId()).getSingleResult()).longValue());
                     require(versions>0,"published revision selected verified provider versions");
                     host.close(Duration.ofSeconds(5));
+                    require(hosted.server().isTerminated(),"successful drain closes publication listener");
                     require(count(tx,"repository_coordinator_local_drains",work.command.operationId())==0,
                             "terminal operation requires no drain marker");
                     require(resolver.cachedBytes()==0,"enabled host released schema cache");
                     try { host.ledgerDataSource().getConnection(); throw new AssertionError("closed enabled host still lends SQL"); }
                     catch (java.sql.SQLException expected) { /* Final drain releases the service-owned pool. */ }
                     System.out.println("MANAGED_RECOVERY_ACCEPTED_PUBLICATION_DRAIN_OK");
+                    System.out.println("MANAGED_PUBLICATION_HOST_DRAIN_OK");
                     return;
                 }
                 var second = prepare(host, tx, generation, true);
@@ -256,6 +271,32 @@ public final class ManagedJournaledDrainProbe {
             } finally { release.countDown(); host.close(); }
         }
         System.out.println("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
+    }
+
+    private record HostedPublication(io.grpc.Server server, io.grpc.ManagedChannel channel,
+            DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub client) implements AutoCloseable {
+        @Override public void close() throws Exception {
+            channel.shutdownNow();
+            require(channel.awaitTermination(10,TimeUnit.SECONDS),"managed publication client stopped");
+        }
+    }
+
+    private static HostedPublication hostedPublication(RepoServices host) {
+        String name=io.grpc.inprocess.InProcessServerBuilder.generateName();
+        try { host.startInProcess(name); throw new AssertionError("publication listener accepted missing operator token"); }
+        catch (IllegalArgumentException expected) { /* Refusal happens before listener creation. */ }
+        require(host.services().stream().anyMatch(service -> service instanceof DocumentPublicationGrpcService),
+                "publication mounted independently of historical reads");
+        require(host.services().stream().noneMatch(service -> service instanceof DocumentHistoryGrpcService),
+                "history remains disabled");
+        String token="publication-fixture-"+UUID.randomUUID();
+        var server=host.startInProcess(name,"operator-fixture-"+UUID.randomUUID(), supplied -> supplied.equals(token)
+                ? Optional.of(new ai.protomolt.proto.actions.Caller(ADMIN.principalName(),Set.of(),true)) : Optional.empty());
+        var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+        var plain=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30,TimeUnit.SECONDS);
+        expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> plain.publishDocument(PublishDocumentRequest.getDefaultInstance()));
+        var headers=new io.grpc.Metadata(); headers.put(io.grpc.Metadata.Key.of("api_token",io.grpc.Metadata.ASCII_STRING_MARSHALLER),token);
+        return new HostedPublication(server,channel,plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)));
     }
     private static void recoverExpired(RepoServices host, Tx tx, String generation, Path bundle, Work work,
             Runnable armMutation) throws Exception {
