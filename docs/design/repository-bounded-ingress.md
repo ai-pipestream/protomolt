@@ -166,3 +166,41 @@ write/read and retry, restart with the same drive, incompatible existing-drive r
 missing-token and invalid-limit failures before resource acquisition, unmounted RPC
 checks, and shutdown during a delayed real write. The embedding and Netty tests above
 do not replace the process-level cases. No standalone launcher is implemented yet.
+
+### Bootstrap identity and process lifetime review
+
+Use a separate `RepoBoundedArchiveMain`; leave `RepoServiceMain` and its document
+seeding behavior unchanged. Parse one environment snapshot through
+`RepoServiceConfig.fromEnvironment(Map)` and the strict environment parser before
+building the host. Require the operator token, bootstrap account and drive name,
+and validate all five `BoundedArchiveOptions` limits before opening resources.
+Then call the local `driveRepository().createDrive` with the process bootstrap
+caller, followed by `startBoundedArchiveNetty`. Do not expose drive provisioning
+as a public RPC in this profile.
+
+The bootstrap account and name identify the drive; an existing drive's stored
+namespace and prefix remain authoritative. Host defaults apply only when creating
+a new drive. Restart must not relocate a drive because defaults changed. Require
+the existing drive to be active and bound to the selected backend identity. If the
+launcher later accepts explicit expected location settings, mismatches must fail;
+do not interpret them as relocation instructions. `DriveProvisioner.ensureDrive`
+already uses a deterministic ID and checks selected provider compatibility, but
+its existing-row return does not itself establish active status or equality with
+requested location settings. Cover existing rows and concurrent provisioning
+winners in the bootstrap acceptance tests.
+
+Emit readiness only after bootstrap and listener startup, including the actual
+bound port. Child-process tests should use port zero and this reported port rather
+than reserving a free port and racing the operating system. The existing replica
+process fixture supplies process/log handling, but qualification must launch the
+production entry point, not a test host.
+
+Sol's lifecycle review identified a separate process boundary: `RepoServices.close`
+retains resources after a drain timeout so an embedded host can retry. A JVM
+shutdown hook that merely logs the failure and returns cannot preserve that
+guarantee, because the JVM then exits. The standalone launcher must keep its
+shutdown hook alive and retry draining admitted work; an operator's forced kill
+remains a crash and needs recovery qualification. Test a real delayed Redis write
+that exceeds the first drain deadline, then completes, before claiming graceful
+shutdown. Keep startup failure cleanup separate, preserve suppressed failures,
+and do not force-close a provider still owned by an accepted operation.
