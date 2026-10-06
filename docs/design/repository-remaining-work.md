@@ -172,7 +172,7 @@ features available. Recovery is one workstream, not the whole goal.
    copying stored bytes alone is not a restored document. Demonstrate that
    pruning cannot remove referenced schema assets or provider versions, including
    while restore or recovery is in flight.
-   The next bounded slice is a restore contract assessment against the existing
+   The reviewed [restore contract assessment](repository-historical-restore.md) covers the existing
    publication command, historical materializer, and current authorization. Distinguish
    revision restore from `DocumentPublicationRestoration`, which resumes an interrupted
    execution. Restore must name an exact source revision, retain its complete schema
