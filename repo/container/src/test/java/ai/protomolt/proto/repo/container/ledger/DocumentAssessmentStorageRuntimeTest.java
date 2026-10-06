@@ -94,6 +94,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");
                 assertThat(result).contains("JOURNALED_RESTORATION_DRAIN_OK");
                 assertThat(result).contains("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
+                assertThat(result).contains("MANAGED_PUBLICATION_TRANSPORT_PARITY_OK");
                 assertThat(result).contains("MANAGED_RECOVERY_ACCEPTED_PUBLICATION_DRAIN_OK");
                 assertThat(result).contains("MANAGED_EXPIRED_PUBLICATION_RECOVERY_OK");
                 assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK", "HISTORICAL_ASSESSMENT_CREATE_OK", "HISTORICAL_ASSESSMENT_LOST_ACK_OK", "HISTORICAL_PUBLICATION_OK", "HISTORICAL_PUBLICATION_LOST_ACK_OK", "HISTORICAL_MIXED_UPLOAD_OK", "HISTORICAL_UNVERIFIED_UPLOAD_REFUSED_OK");

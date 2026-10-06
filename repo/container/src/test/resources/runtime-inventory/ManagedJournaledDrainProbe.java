@@ -90,7 +90,7 @@ public final class ManagedJournaledDrainProbe {
             var tx = new Tx(database.entityManagerFactory());
             try {
                 var terminal = prepare(host, tx, generation, false);
-                var completed = executeFacade(host, ADMIN, terminal);
+                var completed = executeTransport(host, tx, terminal);
                 require(completed.getMembersCount() == 1, "terminal control published");
                 var receiptOnly=host.documentPublication().repository((caller,command,control) -> {
                     throw new AssertionError("Terminal receipt selected host storage or schemas");
@@ -361,6 +361,182 @@ public final class ManagedJournaledDrainProbe {
         return host.publishDocument(caller, work.command, work.placements, work.bodies, Map.of(), work.modes,
                 work.modes.get("document") == DocumentPublicationRuntime.Mode.TYPED ? Optional.of(definition(Document.getDescriptor())) : Optional.empty(),
                 RepositoryReadControl.NONE);
+    }
+
+    /** Fixture authentication over a real transport; this does not qualify production API-key setup. */
+    private static DocumentPublicationResult executeTransport(RepoServices host, Tx tx, Work work) throws Exception {
+        var budget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L*1024*1024);
+        var repository=host.publicationRepository();
+        var credential=new RepositoryCredentialBinding("transport-fixture",UUID.randomUUID(),1);
+        credentialAdministration(tx,credential,"register");
+        var preserveCredential=new java.util.concurrent.atomic.AtomicBoolean();
+        var fault=new java.util.concurrent.atomic.AtomicReference<String>("");
+        var entered=new CountDownLatch(1);
+        var cancelled=new CountDownLatch(1);
+        var release=new CountDownLatch(1);
+        var received=new java.util.concurrent.atomic.AtomicReference<RepositoryCaller>();
+        var repositoryCalls=new java.util.concurrent.atomic.AtomicInteger();
+        // Faults surround the real repository, never synthesize a successful outcome.
+        DocumentPublicationRepository controlled=(caller,input,control) -> {
+            repositoryCalls.incrementAndGet();
+            received.set(caller);
+            String mode=fault.get();
+            if (mode.equals("wait")) {
+                entered.countDown();
+                try {
+                    long limit=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+                    while (!control.isCancelled() && System.nanoTime()<limit) Thread.sleep(5);
+                    require(control.isCancelled(),"transport propagated cancellation to active producer");
+                    cancelled.countDown();
+                    require(release.await(10,TimeUnit.SECONDS),"test released cancelled producer");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted);
+                }
+                control.check();
+            }
+            var result=repository.publishDocument(caller,input,control);
+            return switch (mode) {
+                case "committed" -> result.toBuilder().setCommitted(result.getCommitted().toBuilder().setAccountId("wrong-account")).build();
+                case "rejected" -> PublishDocumentResponse.newBuilder().setRejected(DocumentPublicationRejection.getDefaultInstance()).build();
+                case "unexpected" -> throw new IllegalStateException("private-provider-location");
+                default -> result;
+            };
+        };
+        var service=new DocumentPublicationGrpcService(controlled, auth -> new RepositoryCaller(
+                auth.caller().name(),auth.caller().unrestricted(),auth.caller().unrestricted() ? Set.of() : Set.of(work.command.intent().getAccountId()),
+                Set.of(),preserveCredential.get() ? auth.binding().map(binding -> new RepositoryCredentialBinding(
+                        binding.issuer(),binding.credentialId(),binding.generation())) : Optional.empty()),budget,1);
+        var identity=io.grpc.Metadata.Key.of("test-publication-identity",io.grpc.Metadata.ASCII_STRING_MARSHALLER);
+        io.grpc.ServerInterceptor authentication=new io.grpc.ServerInterceptor() {
+            @Override public <Q,S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q,S> call,
+                    io.grpc.Metadata headers,io.grpc.ServerCallHandler<Q,S> next) {
+                var value=headers.get(identity);
+                var context=io.grpc.Context.current();
+                if (value!=null) {
+                    var caller=new ai.protomolt.proto.actions.Caller(ADMIN.principalName(),Set.of(),!value.equals("bound"));
+                    var auth=new ai.protomolt.proto.authz.AuthenticatedCaller(caller,value.equals("bound")
+                            ? Optional.of(new ai.protomolt.proto.authz.CredentialBinding(credential.issuer(),credential.credentialId(),credential.generation())) : Optional.empty());
+                    context=context.withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,caller)
+                            .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.AUTHENTICATED_CALLER,auth);
+                }
+                return io.grpc.Contexts.interceptCall(context,call,headers,next);
+            }
+        };
+        String name=io.grpc.inprocess.InProcessServerBuilder.generateName();
+        try (var executor=Executors.newVirtualThreadPerTaskExecutor()) {
+            var server=io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
+                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
+                    .intercept(authentication).addService(service).build().start();
+            var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+            try {
+                var plain=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30,TimeUnit.SECONDS);
+                expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> plain.publishDocument(request(work)));
+                var boundHeaders=new io.grpc.Metadata(); boundHeaders.put(identity,"bound");
+                var bound=plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(boundHeaders));
+                expectStatus(io.grpc.Status.Code.PERMISSION_DENIED,() -> bound.publishDocument(request(work)));
+                var headers=new io.grpc.Metadata(); headers.put(identity,"process");
+                var authenticated=plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+                expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(PublishDocumentRequest.getDefaultInstance()));
+                var response=authenticated.publishDocument(request(work));
+                require(response.hasCommitted(),"transport published a committed receipt");
+                require(repository.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),
+                        "library replay equals fresh transport receipt");
+                require(authenticated.publishDocument(request(work)).equals(response),"transport replay equals library receipt");
+                expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(request(work).toBuilder().clearPayloads().build()));
+                awaitBudgetRelease(budget);
+                preserveCredential.set(true);
+                require(bound.publishDocument(request(work)).equals(response),"scoped authenticated replay preserves receipt");
+                require(received.get().credentialBinding().equals(Optional.of(credential)),"SPI received exact scoped credential");
+                awaitBudgetRelease(budget);
+                credentialAdministration(tx,credential,"revoke");
+                expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> bound.publishDocument(request(work)));
+                awaitBudgetRelease(budget);
+                for (String mode : List.of("committed","rejected")) {
+                    fault.set(mode);
+                    expectStatus(io.grpc.Status.Code.DATA_LOSS,() -> authenticated.publishDocument(request(work)));
+                    awaitBudgetRelease(budget);
+                }
+                fault.set("unexpected");
+                try { authenticated.publishDocument(request(work)); throw new AssertionError("Expected sanitized failure"); }
+                catch (io.grpc.StatusRuntimeException failure) {
+                    require(failure.getStatus().getCode()==io.grpc.Status.Code.INTERNAL
+                            && "Publication failed".equals(failure.getStatus().getDescription()),"unexpected failure is sanitized");
+                }
+                awaitBudgetRelease(budget);
+                fault.set("wait");
+                var future=DocumentPublicationServiceGrpc.newFutureStub(channel)
+                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)).publishDocument(request(work));
+                try {
+                    require(entered.await(10,TimeUnit.SECONDS),"producer entered before cancellation");
+                    require(future.cancel(true),"client cancelled active call");
+                    require(cancelled.await(10,TimeUnit.SECONDS),"producer observed cancellation");
+                    require(budget.reservedBytes()>0,"active cancelled producer retains its byte reservation");
+                    expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> authenticated.publishDocument(request(work)));
+                } finally { release.countDown(); }
+                awaitBudgetRelease(budget);
+                fault.set("");
+                require(authenticated.publishDocument(request(work)).equals(response),"cancelled call released slot for exact replay");
+                awaitBudgetRelease(budget);
+                verifyNetworkParser(service,authentication,headers,request(work),response,repositoryCalls);
+                awaitBudgetRelease(budget);
+                System.out.println("MANAGED_PUBLICATION_TRANSPORT_PARITY_OK");
+                return response.getCommitted();
+            } finally {
+                release.countDown();
+                channel.shutdownNow(); server.shutdownNow();
+                require(channel.awaitTermination(10,TimeUnit.SECONDS),"publication channel stopped");
+                require(server.awaitTermination(10,TimeUnit.SECONDS),"publication server stopped");
+            }
+        }
+    }
+
+    private static void verifyNetworkParser(DocumentPublicationGrpcService service, io.grpc.ServerInterceptor authentication,
+            io.grpc.Metadata headers, PublishDocumentRequest request, PublishDocumentResponse receipt,
+            java.util.concurrent.atomic.AtomicInteger repositoryCalls) throws Exception {
+        try (var executor=Executors.newVirtualThreadPerTaskExecutor()) {
+            var server=io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
+                    .forAddress(new java.net.InetSocketAddress("127.0.0.1",0)).executor(executor)
+                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
+                    .intercept(authentication).addService(service).build().start();
+            var channel=io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder.forAddress("127.0.0.1",server.getPort())
+                    .usePlaintext().build();
+            try {
+                var client=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(10,TimeUnit.SECONDS)
+                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+                require(client.publishDocument(request).equals(receipt),"Netty replay equals original receipt");
+                int before=repositoryCalls.get();
+                var oversized=request.toBuilder().setPayloads(0,request.getPayloads(0).toBuilder()
+                        .setContent(ByteString.copyFrom(new byte[DocumentPublicationInput.MAX_ENVELOPE_BYTES+1]))).build();
+                expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> client.publishDocument(oversized));
+                require(repositoryCalls.get()==before,"oversized wire request never reached repository");
+            } finally {
+                channel.shutdownNow(); server.shutdownNow();
+                require(channel.awaitTermination(10,TimeUnit.SECONDS),"Netty publication channel stopped");
+                require(server.awaitTermination(10,TimeUnit.SECONDS),"Netty publication server stopped");
+            }
+        }
+    }
+
+    private static void awaitBudgetRelease(ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) throws Exception {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+        while (budget.reservedBytes()!=0 && System.nanoTime()<deadline) Thread.sleep(10);
+        require(budget.reservedBytes()==0,"transport released delivery reservations after completion");
+    }
+
+    /** Invoke the internal authority for fixture setup without creating a public provisioning API. */
+    private static void credentialAdministration(Tx tx, RepositoryCredentialBinding credential, String action) throws Exception {
+        var type=Class.forName("ai.protomolt.proto.repo.container.ledger.RepositoryCredentialAuthorities");
+        var constructor=type.getDeclaredConstructor(Tx.class); constructor.setAccessible(true);
+        var method=type.getDeclaredMethod(action,RepositoryCaller.class,RepositoryCredentialBinding.class,String.class);
+        method.setAccessible(true);
+        method.invoke(constructor.newInstance(tx),ADMIN,credential,ADMIN.principalName());
+    }
+
+    private static void expectStatus(io.grpc.Status.Code expected, Runnable action) {
+        try { action.run(); throw new AssertionError("Expected gRPC status "+expected); }
+        catch (io.grpc.StatusRuntimeException failure) {
+            require(failure.getStatus().getCode()==expected,"Expected "+expected+", got "+failure.getStatus());
+        }
     }
 
     private static DocumentPublicationResult executeFacade(RepoServices host, RepositoryCaller caller, Work work) {

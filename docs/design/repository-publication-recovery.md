@@ -2224,3 +2224,26 @@ checking any returned backend; mixed owned/foreign and owned/missing sets must
 have the same result. The target query count is one configured-profile query plus
 one drive batch query, regardless of the number of distinct drives in a request.
 This reduces database round trips; throughput still requires measurement.
+
+### Publication transport checkpoint
+
+DocumentPublicationGrpcService delegates to the shared repository, requires an
+explicit authenticated context and preserves the host-bound principal, process
+authority and credential issuer/ID/generation. It validates request annotations
+and receipt correspondence without duplicating durable publication logic.
+Cancellation and close retain application byte allowances until the producer
+also exits. Unexpected runtime failures receive a generic INTERNAL status.
+
+Real PostgreSQL, versioned LocalStack and Git-backed integration checks now cover
+fresh in-process publication, exact library/transport replay, registered scoped
+credentials and revocation, malformed receipt faults and active-producer
+cancellation. Loopback Netty replay and oversized-request rejection establish the
+configured 10 MiB parser limit before SPI invocation. Evidence is retained in
+`docs/evidence/repository/2026-10-06-publication-transport/`.
+
+This adapter is not yet mounted by RepoServices. Public journaled composition
+must expose explicit lifecycle/assessment/recovery configuration and authenticated
+bindings, mount independently of historical reads, enforce parser limits and
+require authentication on built-in transports. Recovery startup, listener failure
+and shutdown must use the same managed resource lifetime. No publication API is
+advertised as available through current host defaults.
