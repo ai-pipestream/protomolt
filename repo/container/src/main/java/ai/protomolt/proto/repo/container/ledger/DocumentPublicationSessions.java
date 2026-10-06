@@ -101,12 +101,12 @@ final class DocumentPublicationSessions implements AutoCloseable {
             // Reserving encoded bytes does not account for the complete parsed heap.
             try (var encoded = journalBudget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
                 var fingerprint = DocumentSuccessorFingerprint.of(plan);
-                var session = DocumentPublicationSession.successor(tx, executionCaller, plan, journalBudget, coordinator, registrations);
+                var session = DocumentPublicationSession.successor(tx, execution.drives(), executionCaller, plan, journalBudget, coordinator, registrations);
                 control.check();
                 entry = reserveSuccessor(plan.next().command(), key, fingerprint, session);
             }
             try {
-                RepositorySuccessorExecution.activate(tx, journalBudget, coordinatorCaller, executionCaller, plan, control);
+                RepositorySuccessorExecution.activate(tx, journalBudget, coordinatorCaller, executionCaller, plan, control, execution.drives());
                 entry.session.admit(executionCaller, control).orElseThrow(() -> new IllegalStateException("Successor returned no owner"));
             } finally {
                 synchronized (this) {
@@ -273,7 +273,7 @@ final class DocumentPublicationSessions implements AutoCloseable {
         try {
             // Bounded preparation can still be substantial; keep it outside the shared lock.
             var session = journalBudget == null ? new DocumentPublicationSession(tx, caller, command, placements, lease)
-                    : DocumentPublicationSession.journaled(tx, caller, command, placements, lease, journalBudget, coordinator, registrations);
+                    : DocumentPublicationSession.journaled(tx, execution.drives(), caller, command, placements, lease, journalBudget, coordinator, registrations);
             synchronized (this) { reserved.session = session; }
             return reserved;
         } catch (RuntimeException | Error failure) {

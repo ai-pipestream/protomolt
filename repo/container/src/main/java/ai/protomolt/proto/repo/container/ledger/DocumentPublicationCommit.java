@@ -101,6 +101,7 @@ final class DocumentPublicationCommit {
         }
         var authorization=historical == null ? DocumentAdmissionAuthorization.prepare(plan)
                 : DocumentAdmissionAuthorization.prepare(plan, plan.historical());
+        var creation = DocumentCreationAuthorization.prepare(plan, drives, caller);
         var reuse=DocumentReuseAdmission.prepare(plan);
         var retainedEntries=DocumentRetainedManifestEntries.prepare(plan,control);
         var placements=plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
@@ -111,9 +112,10 @@ final class DocumentPublicationCommit {
             // Before document locks; the SQL projection trigger also protects legacy paths.
             if (schemas == null) DocumentSchemaPolicies.lockUnboundWriter(em, command.intent().getAccountId());
             else schemas.lockPolicy(em, owner, control);
-            var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
+            var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization,creation);
             DocumentPublicationModeBinding.require(em, owner, command, schemas == null ? Set.of() : schemas.proofs().keySet(), control);
-            for (var placement:placements) {
+            // Scoped creation already checked these placements before taking authority locks.
+            for (var placement : creation == null ? placements : java.util.List.<DocumentUploadPlan.Placement>of()) {
                 placement.drive().lock(em,drives);
                 if (!ManagedBackendLedger.find(em,placement.generation()).orElseThrow(
                         () -> new IllegalArgumentException("Selected backend is not registered")).equals(placement.profile()))

@@ -783,3 +783,19 @@ placement hashes from actual selected placements under the domain locks. Cover
 registration, assessment, final publication, successor activation and pending/rejected
 observations. Successful replay continues to use current target READ policy.
 Revocation races, scoped recovery, host provisioning and bounded retention remain.
+
+## Scoped execution and observation integration
+
+The shared grant check is now wired through journaled registration, upload,
+assessment, commit and successor activation/attachment with the host's backend gate.
+Command-only pending/rejection checks establish visibility, not placement proof;
+successful receipt replay checks original key identity and live credentials while
+ignoring creation-grant liveness. Local typed/opaque initial publication and
+historical byte/schema recovery have real-provider coverage.
+
+Remaining qualification includes scoped successor publication, exact revocation
+races at commit and recovery, mixed source/target policy cases under a valid grant,
+and expiry between execution phases. Internal provisioning still needs bounded
+retention/lifecycle rules before an external endpoint can be exposed. These checks
+do not close recovery discovery, pin reclamation, pruning, provider conformance,
+performance or progressive hydration requirements elsewhere in this inventory.

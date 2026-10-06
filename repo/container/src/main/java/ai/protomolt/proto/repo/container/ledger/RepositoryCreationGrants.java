@@ -117,6 +117,34 @@ final class RepositoryCreationGrants {
         return ((Number) row[5]).longValue();
     }
 
+    /** Read visibility only: never establishes selected-placement or publication authority. */
+    static void authorizeObservation(EntityManager em, RepositoryCaller caller, DocumentPublicationCommand command,
+            boolean requireGrant, boolean unfinished) {
+        if (caller.processAuthority()) return;
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        // Grant identity is immutable and cannot be attached after operation admission.
+        // A plain read avoids taking a grant lock before its credential lock.
+        var rows = scope(em.createNativeQuery("""
+                SELECT issuer,credential_id,credential_generation,command_sha256
+                FROM repository_creation_grants WHERE account_id=:a AND principal=:p AND operation_id=:o
+                """), key).getResultList();
+        if (rows.isEmpty()) {
+            if (requireGrant) throw unavailable();
+            return;
+        }
+        var binding = caller.credentialBinding().orElseThrow(RepositoryCreationGrants::unavailable);
+        var identity = (Object[]) rows.getFirst();
+        if (!binding.issuer().equals(identity[0]) || !binding.credentialId().equals(identity[1])
+                || binding.generation() != ((Number) identity[2]).longValue()
+                || !command.sha256().equals(HexFormat.of().formatHex((byte[]) identity[3]))) throw unavailable();
+        RepositoryCredentialAuthorities.requireLive(em, caller);
+        if (unfinished) {
+            var current = scope(em.createNativeQuery("SELECT * FROM lock_repository_creation_grant(:a,:p,:o)"), key).getResultList();
+            if (current.isEmpty() || !Boolean.TRUE.equals(((Object[]) current.getFirst())[6])) throw unavailable();
+        }
+    }
+
     void revoke(RepositoryCaller administrator, RepositoryOperationLedger.Key key) {
         administrator(administrator); Objects.requireNonNull(key);
         tx.inTransaction(em -> {

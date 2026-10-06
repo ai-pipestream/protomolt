@@ -16,6 +16,7 @@ import java.util.Optional;
 /** One already-admitted native publication, including authorized replay and owned cleanup. */
 final class DocumentPublicationExecution {
     private final Tx tx;
+    private final DriveLedger drives;
     private final PayloadBudget budget;
     private final DocumentPublicationReplay replay;
     private final DocumentPublicationRejections rejections;
@@ -41,6 +42,7 @@ final class DocumentPublicationExecution {
             DocumentRevisionAssembly.Limits opaqueLimits, boolean deliverEvents,
             DocumentPublicationAssessmentExecution assessments) {
         this.assessments = assessments;
+        this.drives = Objects.requireNonNull(drives);
         this.uploads = Objects.requireNonNull(uploads);
         this.tx = Objects.requireNonNull(tx); this.budget = Objects.requireNonNull(budget);
         fixedModes = new DocumentPublicationModesJournal(tx, budget);
@@ -52,6 +54,8 @@ final class DocumentPublicationExecution {
         artifacts = new RepositorySchemaArtifacts(tx);
         publication = new DocumentPublicationCommit(tx, drives, false, deliverEvents);
     }
+
+    DriveLedger drives() { return drives; }
 
     DocumentPublicationRestoration restoreStarted(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             RepositoryReadControl control) {

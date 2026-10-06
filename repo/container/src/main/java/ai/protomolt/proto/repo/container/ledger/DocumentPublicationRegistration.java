@@ -21,19 +21,27 @@ final class DocumentPublicationRegistration {
     private final JournalAccess access;
     private final DocumentUploadPlan.Prepared plan;
     private final DocumentAdmissionAuthorization.Prepared authorization;
+    private final DocumentCreationAuthorization creation;
+    private final DriveLedger drives;
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
     private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations) {
-        this(tx, budget, preparation, plan, coordinator, registrations, null);
+        this(tx, budget, preparation, plan, coordinator, registrations, null, null);
+    }
+
+    DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
+            DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations, DriveLedger drives) {
+        this(tx, budget, preparation, plan, coordinator, registrations, null, Objects.requireNonNull(drives));
     }
 
     private DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations,
-            RepositorySuccessorInstall.Plan successor) {
+            RepositorySuccessorInstall.Plan successor, DriveLedger drives) {
         this.successor = successor;
+        this.drives = drives;
         claimToken = successor == null ? UUID.randomUUID() : successor.reservation().successorToken();
         claimEpoch = successor == null ? 1 : successor.reservation().predecessor().epoch()+1;
         this.tx = Objects.requireNonNull(tx);
@@ -46,6 +54,7 @@ final class DocumentPublicationRegistration {
                 || !plan.command().operationId().equals(preparation.command().operationId()))
             throw new IllegalArgumentException("Registration plan differs from preparation");
         authorization = DocumentAdmissionAuthorization.prepare(plan);
+        creation = drives == null ? null : new DocumentCreationAuthorization(plan, drives);
         if (successor == null && preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
         access = new JournalAccess(preparation, claimToken, claimEpoch);
         mayHaveCommitted = successor != null;
@@ -55,9 +64,14 @@ final class DocumentPublicationRegistration {
 
     static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
             UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return successor(tx, budget, successor, coordinator, registrations, null);
+    }
+
+    static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
+            UUID coordinator, DocumentPublicationScopeCalls registrations, DriveLedger drives) {
         if (!successor.reservation().successorIncarnation().equals(coordinator))
             throw new IllegalArgumentException("Successor coordinator differs from installed incarnation");
-        return new DocumentPublicationRegistration(tx, budget, successor.next(), successor.next().prepare().plan(), coordinator, registrations, successor);
+        return new DocumentPublicationRegistration(tx, budget, successor.next(), successor.next().prepare().plan(), coordinator, registrations, successor, drives);
     }
 
     RepositorySuccessorExecution.Attached attach(RepositoryCaller caller,
@@ -65,7 +79,7 @@ final class DocumentPublicationRegistration {
         if (successor == null) throw new IllegalStateException("Initial registration cannot attach successor");
         try (var scope = registrations.enter()) {
             if (!successor.modes().equals(fixedModes)) throw new IllegalArgumentException("Successor admission modes changed");
-            var attached = RepositorySuccessorExecution.attach(tx, budget, caller, successor, control);
+            var attached = RepositorySuccessorExecution.attach(tx, budget, caller, successor, control, drives);
             var claim = attached.owner().executionClaim().orElseThrow();
             var stored = modes.loadOwned(access, caller, claim, preparation.predecessorGeneration(), control).orElseThrow(() ->
                     new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Successor modes are absent"));
@@ -110,7 +124,7 @@ final class DocumentPublicationRegistration {
                         preparation.command(),claimToken,preparation.lease());
                 var claim = acquired.claim();
                 RepositoryCoordinatorBinding.bindInitial(em,acquired,coordinator);
-                DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization,creation);
                 control.check();
                 DocumentPublicationPreparationJournal.insert(em,claim,preparation,bytes,digest);
                 DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
@@ -138,7 +152,7 @@ final class DocumentPublicationRegistration {
         control.check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         tx.inTransaction(em -> {
-            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization,creation);
             control.check(); return null;
         });
         control.check();

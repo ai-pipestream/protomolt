@@ -1372,6 +1372,88 @@ class DocumentPublicationCommitIT {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void scopedJournaledPublicationUsesRealProviderAndKeepsReceiptAfterGrantRevocation(boolean typed) throws Exception {
+        var f = fixture(1, 1, publicReadGrant(), "scoped-" + UUID.randomUUID(), typed);
+        var command = new DocumentPublicationCommand(f.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
+        var placements = f.prepared.plan().members().stream().collect(java.util.stream.Collectors.toMap(
+                member -> member.placement().drive().id(), DocumentUploadPlan.Member::placement, (a, b) -> a));
+        var binding = new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding("test-host", UUID.randomUUID(), 1);
+        var caller = new RepositoryCaller("principal", false, java.util.Set.of(command.intent().getAccountId()),
+                java.util.Set.of(), java.util.Optional.of(binding));
+        var credentials = new RepositoryCredentialAuthorities(tx);
+        credentials.register(ADMIN, binding, caller.principalName());
+        var gateChecks = new java.util.concurrent.atomic.AtomicInteger();
+        var drives = new DriveLedger(tx, drive -> {
+            gateChecks.incrementAndGet();
+            assertThat(drive.provider).isEqualTo("s3");
+        });
+        var grant = RepositoryCreationGrants.prepare(caller, command, placements,
+                Math.multiplyExact(System.currentTimeMillis()+300_000, 1000));
+        var grants = new RepositoryCreationGrants(tx, drives); grants.install(ADMIN, grant);
+        var policy = ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder()
+                .setEncodingVersion(1).setAccountId(command.intent().getAccountId())
+                .setMode(typed ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED
+                        : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED).setAnyResolvedSchema(true)
+                .setValidationProfile("protomolt-retained-schema-admission/v1")
+                .setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(32).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20)
+                        .setMaxRetainedBytes(16_000_000).setMaxDecodedBytes(1_000_000)).build(), () -> {});
+        new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
+        var budget = new PayloadBudget(64_000_000);
+        var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+        var modes = Map.of("member-0", typed ? DocumentPublicationCandidate.Mode.TYPED : DocumentPublicationCandidate.Mode.OPAQUE);
+        var control = ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE;
+        try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, selected) -> opened.store(),
+                    4, 1_000_000, budget);
+                var uploads = new DocumentUploadCoordinator(tx, drives, budget,
+                    (generation, selected) -> new DocumentUploadCoordinator.Backend(profile.identity(), opened),
+                    4, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(5)))) {
+            var execution = new DocumentPublicationExecution(tx, drives, reads, uploads, reader, budget, LIMITS, false);
+            try (var sessions = DocumentPublicationSessions.journaled(tx, execution, LEASE, 4, 4_000_000, budget)) {
+                gateChecks.set(0);
+                var resolutions = new java.util.concurrent.atomic.AtomicInteger();
+                var result = sessions.execute(caller, command, placements, f.bodies, Map.of(), modes,
+                        typed ? java.util.Optional.of(DocumentSchemaRetentionFixture.definition(Document.getDescriptor())) : java.util.Optional.empty(),
+                        (member, occurrence) -> {
+                            assertThat(typed).as("Opaque publication must not resolve schemas").isTrue();
+                            resolutions.incrementAndGet();
+                            return DocumentSchemaRetentionFixture.definition(com.google.protobuf.StringValue.getDescriptor());
+                        }, control);
+                assertThat(result.getMembersCount()).isEqualTo(1);
+                assertThat(resolutions.get()).isEqualTo(typed ? 1 : 0);
+                assertThat(gateChecks.get()).isPositive();
+                var published = result.getMembers(0);
+                var revision = UUID.fromString(published.getRevisionId());
+                var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(reads, reader, budget);
+                try (var raw = history.readRaw(caller, published.getAddress(), revision, control)) {
+                    assertThat(raw.publicationRevision()).isPositive();
+                    assertThat(raw.fragments()).hasSize(f.bodies.size());
+                    for (var fragment : raw.fragments()) {
+                        var bytes = fragment.bytes(); var actual = new byte[bytes.remaining()]; bytes.get(actual);
+                        assertThat(actual).isEqualTo(f.bodies.get(new DocumentUploadPayloads.Key("member-0", fragment.revisionOrdinal())).bytes());
+                    }
+                }
+                if (typed) try (var validated = history.readValidated(caller, published.getAddress(), revision, control)) {
+                    assertThat(validated.document().getStructuredData().unpack(com.google.protobuf.StringValue.class).getValue())
+                            .isEqualTo("typed provider payload");
+                    assertThat(validated.policySha256()).isNotBlank();
+                }
+                grants.revoke(ADMIN, grant.key());
+                assertThat(new DocumentPublicationReplay(tx).observe(caller, command).result()).contains(result);
+                credentials.revoke(ADMIN, binding, caller.principalName());
+                assertThatThrownBy(() -> new DocumentPublicationReplay(tx).observe(caller, command))
+                        .isInstanceOf(ai.protomolt.proto.repo.spi.RepositoryException.class);
+            }
+        } finally {
+            reads.closeForShutdown();
+            assertThat(reads.awaitLocalDrain(Duration.ZERO)).isTrue();
+            reads.attestLocalQuiescence();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
     private static Fixture fixture(int count) {
         return fixture(count,1);
     }

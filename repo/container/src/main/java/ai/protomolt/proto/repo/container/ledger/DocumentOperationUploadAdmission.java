@@ -108,12 +108,13 @@ final class DocumentOperationUploadAdmission {
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Read command differs from operation scope");
+        var creation = DocumentCreationAuthorization.prepare(prepared.plan, drives, caller);
         return tx.inTransaction(em -> {
             if (reader != null) em.createNativeQuery("SELECT require_active_repository_reader(:reader)")
                     .setParameter("reader", reader).getSingleResult();
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization, creation);
             var captured = DocumentReuseAdmission.capture(em, prepared.reuse, prepared.plan, owner);
             var protectedReads = pins == null ? new DocumentReadPins.Captured<>(captured, null, List.of())
                     : DocumentReadPins.acquire(em, pins, captured, reader, prepared.reuse);
@@ -190,6 +191,7 @@ final class DocumentOperationUploadAdmission {
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
         if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Upload command differs from operation scope");
+        var creation = DocumentCreationAuthorization.prepare(prepared.plan, drives, caller);
         // Encode only the selected subset, before acquiring any SQL locks.
         var uploads = prepared.uploads.stream().filter(upload -> replacements.isEmpty()
                         || replacements.containsKey(upload.member.intent().getMemberId()))
@@ -199,9 +201,10 @@ final class DocumentOperationUploadAdmission {
             DocumentHistoricalReferenceAdmission.requireComplete(command, prepared.plan.historical(), () -> {});
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan, prepared.authorization, creation);
             DocumentReuseAdmission.requireBoundSources(em, prepared.reuse);
-            for (var placement : prepared.placements) {
+            // Scoped creation already checked these placements before taking authority locks.
+            for (var placement : creation == null ? prepared.placements : List.<DocumentUploadPlan.Placement>of()) {
                 placement.drive().lock(em, drives);
                 var actual = ManagedBackendLedger.find(em, placement.generation())
                         .orElseThrow(() -> new IllegalArgumentException("Selected backend generation is not registered"));

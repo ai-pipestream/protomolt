@@ -59,13 +59,14 @@ final class DocumentAssessmentCreation {
         var selected = Map.copyOf(selections);
         var authorization = historical == null ? DocumentAdmissionAuthorization.prepare(plan)
                 : DocumentAdmissionAuthorization.prepare(plan, historical);
+        var creation = DocumentCreationAuthorization.prepare(plan, drives, caller);
         if (owner.executionClaim().isPresent()) {
             // Do not hold a SQL connection across private journal loading/decoding.
             Runnable authorize = () -> tx.inTransaction(em -> {
                 control.run();
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
                 return null;
             });
             authorize.run();
@@ -104,8 +105,9 @@ final class DocumentAssessmentCreation {
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 RepositoryOperationLedger.requireCommand(em, owner.key(), command);
                 DocumentSchemaPolicies.lockCurrent(em, policy, control);
-                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization);
-                for (var placement : placements) {
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
+                // Scoped creation already checked these placements before taking authority locks.
+                for (var placement : creation == null ? placements : java.util.List.<DocumentUploadPlan.Placement>of()) {
                     evidence.check(control);
                     placement.drive().lock(em, drives);
                     if (!ManagedBackendLedger.find(em, placement.generation()).orElseThrow(

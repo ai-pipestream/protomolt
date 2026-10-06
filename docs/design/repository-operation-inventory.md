@@ -6665,3 +6665,26 @@ null stamp and gain no grants. No protobuf names, fields, RPCs or Any URLs chang
 **Not yet integrated:** publication admission, recovery and replay do not consume
 these grants. This is an internal primitive, not a public creation endpoint.
 See [qualification](../evidence/repository/2026-10-06-creation-grants/README.md).
+
+## Scoped creation integration
+
+**Extended internal operations:** journaled initial admission, retained read capture,
+upload staging, assessment creation, final publication, successor activation and
+attachment now share exact selected-placement and live grant authorization. The
+host-configured drive ledger is propagated into sessions and recovery; old internal
+constructors lacking that gate remain closed to scoped absent creation. Account
+membership alone remains insufficient. Existing-target policy and source READ rules
+are unchanged.
+
+**Extended observation:** pending/rejected absent targets require live grants.
+Committed receipts require current target READ, the immutable original key binding
+and live credential generation, but ignore creation-grant expiry/revocation. This
+separates key revocation from grant revocation. No protobuf fields, RPCs, descriptor
+names or Any URLs changed.
+
+**Qualification:** local PostgreSQL/LocalStack scoped journaled typed and opaque
+publication, exact fragment readback, retained-schema historical validation, initial
+admission denial cases and existing runtime/successor suites. See
+[integration evidence](../evidence/repository/2026-10-06-scoped-creation-integration/README.md).
+Dedicated scoped successor execution and concurrent final-commit revocation remain
+to be qualified. Provisioning is internal and retention remains unfinished.

@@ -148,6 +148,7 @@ final class DocumentAdmissionAuthorization {
         }
         nodes.addAll(historical.keySet());
         var locked = DocumentRevisionLocks.lockForObservation(em, nodes);
+        boolean needsCreationGrant = false;
         for (var source : historical.entrySet()) {
             var row = locked.get(source.getKey());
             requireIdentity(row, source.getValue());
@@ -157,7 +158,10 @@ final class DocumentAdmissionAuthorization {
         for (var member : command.intent().getMembersList()) {
             var address = member.getDestination().getAddress();
             var row = locked.get(DocumentIds.nodeId(address));
-            if (row == null && allowUncreatedTarget && member.getDestination().getIfAbsent() && caller.processAuthority()) continue;
+            if (row == null && allowUncreatedTarget && member.getDestination().getIfAbsent()) {
+                needsCreationGrant |= !caller.processAuthority();
+                continue;
+            }
             requireIdentity(row, address);
             if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
             requireSourceAccess(caller, row);
@@ -168,6 +172,7 @@ final class DocumentAdmissionAuthorization {
             if (!DocumentStatus.AVAILABLE.equals(row.status()) || row.pendingPurgeId() != null) throw unavailable();
             requireSourceAccess(caller, row);
         }
+        RepositoryCreationGrants.authorizeObservation(em, caller, command, needsCreationGrant, allowUncreatedTarget);
         return locked;
     }
 
@@ -186,6 +191,11 @@ final class DocumentAdmissionAuthorization {
 
     static Map<UUID, DocumentRecord> lockAndAuthorize(EntityManager em, RepositoryCaller caller,
             DocumentUploadPlan.Prepared plan, Prepared prepared) {
+        return lockAndAuthorize(em, caller, plan, prepared, null);
+    }
+
+    static Map<UUID, DocumentRecord> lockAndAuthorize(EntityManager em, RepositoryCaller caller,
+            DocumentUploadPlan.Prepared plan, Prepared prepared, DocumentCreationAuthorization creation) {
         // Lock every address first, but authorize before exposing revision mismatches.
         // Otherwise a source revision conflict can disclose a document the caller cannot read.
         var readNodes = new HashSet<>(prepared.sources().keySet());
@@ -208,8 +218,9 @@ final class DocumentAdmissionAuthorization {
             var intent = member.intent();
             var row = locked.get(member.nodeId());
             if (row == null) {
-                // Scoped creation needs its own host-bound grant contract; do not infer it from ownership.
-                if (!caller.processAuthority()) throw unavailable();
+                if (!caller.processAuthority() && (creation == null || caller.credentialBinding().isEmpty()
+                        || !intent.getDestination().getIfAbsent()))
+                    throw unavailable();
             } else {
                 requireIdentity(row, intent.getDestination().getAddress());
                 requireAccess(caller, row, Access.ACCESS_WRITE);
@@ -219,7 +230,7 @@ final class DocumentAdmissionAuthorization {
             var proposed = intent.getOwnership().getSecurity();
             if (caller.processAuthority()) {
                 DocumentAccessPolicy.allows(caller, intent.getOwnership().getAccountId(), proposed, List.of(), Access.ACCESS_WRITE);
-            } else {
+            } else if (row != null) {
                 if (!Objects.equals(security(row), proposed))
                     throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
                             "Changing document access policy requires process authority");
@@ -231,6 +242,10 @@ final class DocumentAdmissionAuthorization {
                     throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
                             "Changing document storage, datasource or deletion policy requires process authority");
             }
+        }
+        if (!caller.processAuthority() && plan.members().stream().anyMatch(member -> member.intent().getDestination().getIfAbsent())) {
+            if (creation == null) throw unavailable();
+            creation.require(em, caller, plan);
         }
         // Complete authorization for the entire set before returning any revision
         // conflict, including a stale readable source paired with a denied destination.

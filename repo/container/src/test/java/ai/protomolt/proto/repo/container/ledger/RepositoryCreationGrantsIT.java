@@ -48,6 +48,87 @@ class RepositoryCreationGrantsIT {
         assertThatThrownBy(call).isInstanceOf(RepositoryException.class);
     }
 
+    @ParameterizedTest @ValueSource(strings = {"allowed", "revoked", "wrong-key", "backend-denied", "placement-changed"})
+    void exactLiveGrantAdmitsScopedCreationThroughTheJournaledSession(String scenario) {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var original = f.grant();
+            var member = original.command().intent().getMembers(0).toBuilder().clearSources().clearParts();
+            for (var part : original.command().intent().getMembers(0).getPartsList()) {
+                member.addParts(part.toBuilder().clearReuse().setUpload(
+                        ai.protomolt.proto.repo.v1.PublicationUpload.newBuilder().setSizeBytes(1)
+                                .setSha256("a".repeat(64)).setContentType("application/protobuf")));
+            }
+            var command = new DocumentPublicationCommand(original.command().intent().toBuilder().setMembers(0, member).build());
+            var grant = RepositoryCreationGrants.prepare(original.grantee(), command, original.placements(), original.expiresAtEpochMicros());
+            f.grants().install(ADMIN, grant); live(c, grant);
+            if (scenario.equals("revoked")) f.grants().revoke(ADMIN, grant.key());
+            if (scenario.equals("placement-changed")) c.tx().inTransaction(em -> {
+                em.createNativeQuery("UPDATE drives SET prefix='changed'").executeUpdate();
+            });
+            RepositoryCaller caller = grant.grantee();
+            if (scenario.equals("wrong-key")) {
+                var key = new RepositoryCredentialBinding("test-issuer", UUID.randomUUID(), 1);
+                new RepositoryCredentialAuthorities(c.tx()).register(ADMIN, key, caller.principalName());
+                caller = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), Set.of(), Optional.of(key));
+            }
+            var gateChecks = new java.util.concurrent.atomic.AtomicInteger();
+            var drives = new DriveLedger(c.tx(), drive -> {
+                gateChecks.incrementAndGet();
+                if (scenario.equals("backend-denied")) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Host backend gate refused placement");
+            });
+            var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(64_000_000);
+            var session = DocumentPublicationSession.journaled(c.tx(), drives, caller, command, grant.placements(),
+                    Duration.ofMinutes(1), budget, UUID.randomUUID(), new DocumentPublicationScopeCalls());
+            var authenticated = caller;
+            try (var execution = session.begin(authenticated, RepositoryReadControl.NONE)) {
+                execution.bindModes(Map.of("member-0", DocumentPublicationCandidate.Mode.TYPED));
+                if (scenario.equals("allowed")) {
+                    var owner = session.admit(authenticated, RepositoryReadControl.NONE).orElseThrow();
+                    assertThat(gateChecks.get()).as("preflight and atomic admission preserve the host gate").isEqualTo(2);
+                    var uploads = new DocumentOperationUploadAdmission(c.tx(), drives);
+                    assertThat(uploads.admit(authenticated, owner, session.prepared())).hasSize(1);
+                    assertThat(new DocumentPublicationReplay(c.tx()).observe(authenticated, command).state())
+                            .isEqualTo(DocumentPublicationReplay.State.PENDING);
+                    f.grants().revoke(ADMIN, grant.key());
+                    denied(() -> session.admit(authenticated, RepositoryReadControl.NONE));
+                    denied(() -> uploads.admit(authenticated, owner, session.prepared()));
+                    denied(() -> new DocumentPublicationReplay(c.tx()).observe(authenticated, command));
+                } else {
+                    var failure = assertThatThrownBy(() -> session.admit(authenticated, RepositoryReadControl.NONE));
+                    if (scenario.equals("placement-changed")) failure.hasMessageContaining("drive changed");
+                    else if (scenario.equals("backend-denied")) failure.hasMessageContaining("Host backend gate refused");
+                    else failure.isInstanceOf(RepositoryException.class).hasMessageContaining("Creation grant is unavailable");
+                    assertThat(new RepositoryOperationLedger(c.tx()).find(grant.key())).isEmpty();
+                }
+            }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void completedObservationBindingSurvivesGrantRevocationButNotCredentialRevocation() {
+        try (var c = context(POSTGRES)) {
+            var f = fixture(c); var g = f.grant(); f.grants().install(ADMIN, g);
+            f.grants().revoke(ADMIN, g.key());
+            // Only the identity gate is exercised here; this is not a fabricated committed receipt.
+            c.tx().inTransaction(em -> {
+                RepositoryCreationGrants.authorizeObservation(em, g.grantee(), g.command(), false, false);
+            });
+            denied(() -> c.tx().inTransaction(em -> {
+                RepositoryCreationGrants.authorizeObservation(em, g.grantee(), g.command(), true, true);
+            }));
+            var otherKey = new RepositoryCredentialBinding("test-issuer", UUID.randomUUID(), 1);
+            new RepositoryCredentialAuthorities(c.tx()).register(ADMIN, otherKey, g.grantee().principalName());
+            var other = new RepositoryCaller(g.grantee().principalName(), false, Set.of("account"), Set.of(), Optional.of(otherKey));
+            denied(() -> c.tx().inTransaction(em -> {
+                RepositoryCreationGrants.authorizeObservation(em, other, g.command(), false, false);
+            }));
+            new RepositoryCredentialAuthorities(c.tx()).revoke(ADMIN, g.grantee().credentialBinding().orElseThrow(), g.grantee().principalName());
+            denied(() -> c.tx().inTransaction(em -> {
+                RepositoryCreationGrants.authorizeObservation(em, g.grantee(), g.command(), false, false);
+            }));
+        }
+    }
+
     @Test void migrationPreservesExistingScopesWithoutInventingCreationAuthority() {
         try (var c = context(POSTGRES, "99")) {
             var existing = prepare(c, 1);

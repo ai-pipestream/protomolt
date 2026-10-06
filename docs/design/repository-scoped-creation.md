@@ -1,6 +1,7 @@
 # Scoped repository creation authority
 
-Status: grant design for implementation, not an available creation API. Baseline:
+Status: internal grant implementation and execution integration under qualification;
+not an available provisioning API. Original design baseline:
 `6bc32d582a65e1c17ea79340e662d8ab96c734f1`. This extends the ownership work in
 [repository composition](repository-composition.md). It does not replace the
 remaining recovery, archival, provider or progressive-hydration work.
@@ -9,7 +10,9 @@ remaining recovery, archival, provider or progressive-hydration work.
 
 `RepositoryCaller` carries a principal, process authority, account memberships
 and ACL identities. It deliberately grants no right to create an absent target.
-`DocumentAdmissionAuthorization.lockAndAuthorize` therefore refuses scoped creation.
+The original `DocumentAdmissionAuthorization.lockAndAuthorize` overload refuses
+scoped creation. Its explicit grant-aware path now accepts only an exact live grant
+after validating selected placement under locks; see integration evidence below.
 Existing-target updates still require WRITE and preserve policy, datasource and
 placement. Proposed ownership in a request cannot establish caller authority.
 
@@ -83,7 +86,7 @@ even when the key is absent, without an extra client round trip. Mutation trigge
 also enforce that isolation. Database constraints reject identity changes,
 generation rollback/skips, same-generation revival and tombstone deletion.
 
-This primitive is not yet called by publication admission or replay. It provides
+Publication admission and replay now call this primitive for granted operations. It provides
 no account membership and no creation grant. Its successful revocation applies to
 future uses of this live-check primitive, not to all authenticated requests on the
 platform. Key state is retained indefinitely at this stage; pruning requires the
@@ -177,8 +180,12 @@ without current document access. Do not describe this as complete existence hidi
 
 Successful replay checks current target READ and the original durable operation
 binding. Revoking creation authority alone does not erase a committed receipt or
-require a new create grant. The durable creation binding check refuses this grant's execution/replay after
-revocation; it does not by itself revoke authentication on unrelated services.
+require a new create grant. Grant expiry or revocation refuses unfinished creation,
+including pending/rejected observations that need authority for an absent target.
+It does not revoke access to a committed receipt. Successful replay still requires
+the original credential binding and a live credential generation: credential
+revocation or rotation therefore refuses that key even after success. This does
+not by itself revoke authentication on unrelated services.
 Broader key revocation also requires the resolver to stop authenticating the key,
 with separately qualified cache invalidation. A new credential needs an explicitly defined access/recovery path rather than an
 implicit transfer of execution authority.
@@ -230,7 +237,51 @@ or supplied by a request cannot establish placement validity. Placement hashing
 streams through the existing aggregate and per-field bounds without persisting a
 second snapshot. Scope arbitration adds no lock on existing scopes.
 
-Publication integration remains unfinished. The primitive does not grant account
+Publication integration is implemented and under qualification. The primitive does not grant account
 membership, source READ, existing-target WRITE or policy changes. Revocation retains
 a tombstone; retention limits and recovery behavior remain governed by the design
 above. [Qualification](../evidence/repository/2026-10-06-creation-grants/README.md).
+
+## Admission integration trace (2026-10-06)
+
+Source baseline: `6e2616f692993b9fcc218cc802f897b4f2e98af8`. The following
+execution paths must move together before scoped creation is enabled:
+
+| Existing path | Current locks/checks | Required change |
+| --- | --- | --- |
+| `DocumentPublicationRegistration` preflight and `admitInitial` | Initial path acquires claim/coordinator binding before document authorization; preflight has no owner | Complete selected-placement and grant authorization in both paths, preserving two transactions total |
+| `DocumentOperationUploadAdmission` capture and staging | Owner fence, document authorization; staging then checks drives/profiles | Shared completed authorization for capture and staging, before any retained read or attempt insertion |
+| `DocumentAssessmentCreation` journal-load authorization and CREATE | Owner fence, document authorization; CREATE then checks drives/profiles | Recheck grant in both transactions; retain mode, source and artifact fences |
+| `DocumentPublicationCommit` | Owner, schema policy, document authorization, modes, drives/profiles | Complete authorization before writes; grant locks remain held through SQL commit |
+| `RepositorySuccessorExecution` activation and attach | Claim/owner then document authorization | Use execution caller's original key, never recovery process authority to approve publication |
+| Pending/rejected observation, assessment delivery and reserved preparation | Command/read-set authorization, no selected placement argument | Check immutable operation binding and live grant for uncreated targets without treating a stored digest as current placement proof |
+| Successful replay | Owner observation and current READ policy | Check original operation key binding and live credential; do not require unexpired/unrevoked creation grant |
+
+Do not add a grant lookup to the current `lockAndAuthorize` and leave later drive
+locks intact. The installer takes drive locks before authority locks, while these
+execution paths currently take drives after document authorization. Grant checks
+there would introduce a drive/authority inversion. Keep the old entry point
+fail-closed until execution paths use a completed shared authorization step.
+
+Prepare the immutable placement set and bounded digest outside SQL locks. In the
+transaction, retain claim/owner/schema-policy ordering, lock and authorize the
+complete revision/read set, validate sorted drive snapshots and immutable backend
+profiles, then lock credential followed by grant. The digest is valid only after
+those actual selected snapshots match. Preserve each composition's backend gate;
+a generic SQL snapshot check must not silently bypass `DriveLedger.validateBackend`.
+No provider or registry I/O may occur under these locks.
+
+The shared step must distinguish absent `ifAbsent` destinations from missing
+expected-existing destinations, and preserve READ for every source and WRITE for
+every existing target. An exact grant covers proposed ownership only for new
+objects; it cannot waive policy/datasource changes on existing objects. Check the
+whole set before reporting stale revisions. Do not accidentally dereference a
+missing document when comparing existing policy fields.
+
+Acceptance starts with a real journaled-session scoped creation test. Then test
+wrong key/account/command/placement, mixed denied sources or existing targets,
+revocation winning before each phase, revocation waiting for final commit, expiry
+while blocked, grant-only revocation after successful commit, and credential
+rotation after commit. Preserve exact retry tokens, the current transaction budget,
+and recovery ownership of already-started provider effects. This trace is a plan;
+none of these integration behaviors is claimed by the V100 primitive evidence.

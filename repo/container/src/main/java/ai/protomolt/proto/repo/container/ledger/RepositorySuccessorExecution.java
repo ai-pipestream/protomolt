@@ -21,6 +21,11 @@ final class RepositorySuccessorExecution {
      */
     static void activate(Tx tx, PayloadBudget budget, RepositoryCaller caller, RepositoryCaller executionCaller,
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        activate(tx, budget, caller, executionCaller, plan, control, null);
+    }
+
+    static void activate(Tx tx, PayloadBudget budget, RepositoryCaller caller, RepositoryCaller executionCaller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control, DriveLedger drives) {
         Objects.requireNonNull(control).check(); Objects.requireNonNull(plan);
         var next = plan.next();
         DocumentAdmissionAuthorization.requireCaller(caller, next.key(), next.key().account());
@@ -39,6 +44,7 @@ final class RepositorySuccessorExecution {
             if (confirm(tx, plan, sha, modes, control)) return;
             var prepared = next.prepare().plan();
             var authorization = DocumentAdmissionAuthorization.prepare(prepared, prepared.historical());
+            var creation = drives == null ? null : DocumentCreationAuthorization.prepare(prepared, drives, executionCaller);
             control.check();
             try {
                 tx.inTransaction(em -> {
@@ -58,7 +64,7 @@ final class RepositorySuccessorExecution {
                             .setParameter("owner", next.seeds().ownerNonce())
                             .setParameter("command", HexFormat.of().parseHex(next.command().sha256()))
                             .setParameter("sha", sha).setParameter("modes", modes).executeUpdate();
-                    DocumentAdmissionAuthorization.lockAndAuthorize(em, executionCaller, prepared, authorization);
+                    DocumentAdmissionAuthorization.lockAndAuthorize(em, executionCaller, prepared, authorization, creation);
                     control.check();
                     scope(em.createNativeQuery("""
                             INSERT INTO repository_coordinator_bindings(account_id,principal,operation_id,claim_epoch,claim_token,incarnation)
@@ -82,6 +88,11 @@ final class RepositorySuccessorExecution {
     /** Current execution attachment, distinct from immutable activation readback. Never renews. */
     static Attached attach(Tx tx, PayloadBudget budget, RepositoryCaller caller,
             RepositorySuccessorInstall.Plan plan, RepositoryReadControl control) {
+        return attach(tx, budget, caller, plan, control, null);
+    }
+
+    static Attached attach(Tx tx, PayloadBudget budget, RepositoryCaller caller,
+            RepositorySuccessorInstall.Plan plan, RepositoryReadControl control, DriveLedger drives) {
         Objects.requireNonNull(control).check();
         var next = plan.next(); var key = next.key();
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
@@ -90,6 +101,7 @@ final class RepositorySuccessorExecution {
             var modes = RepositorySuccessorInstall.encodeModes(plan);
             var prepared = next.prepare().plan();
             var authorization = DocumentAdmissionAuthorization.prepare(prepared, prepared.historical());
+            var creation = drives == null ? null : DocumentCreationAuthorization.prepare(prepared, drives, caller);
             var attached = tx.inTransaction(em -> {
                 var claim = RepositoryExecutionClaimLedger.lockLive(em, key, next.command().sha256(),
                         plan.reservation().predecessor().epoch()+1, plan.reservation().successorToken());
@@ -98,7 +110,7 @@ final class RepositorySuccessorExecution {
                 var owner = RepositoryOperationLedger.lockLiveOwner(em, key, next.predecessorGeneration()+1,
                         next.seeds().ownerNonce(), java.util.Optional.of(claim));
                 RepositoryOperationLedger.requireCommand(em, key, next.command());
-                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared, authorization);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared, authorization, creation);
                 boolean started = (Boolean) scope(em.createNativeQuery("""
                         SELECT EXISTS(SELECT 1 FROM repository_publication_assessment_starts
                          WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g)
