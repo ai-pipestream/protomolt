@@ -14,9 +14,6 @@ public final class BoundedDocumentRestartProbe {
     public static void main(String[] args) throws Exception {
         Path saved=Path.of(args[1]);
         String generation=Files.readString(saved.resolve("generation"));
-        var request=PublishDocumentRequest.parseFrom(Files.readAllBytes(saved.resolve("request.pb")));
-        var receipt=PublishDocumentResponse.parseFrom(Files.readAllBytes(saved.resolve("receipt.pb")));
-        var document=Document.parseFrom(Files.readAllBytes(saved.resolve("document.pb")));
         var config=new RepoServiceConfig(0,new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"),System.getenv("PROTOMOLT_TEST_PASSWORD")),
                 "http://127.0.0.1:1","us-east-1","unused","unused","bounded-document",0,
@@ -36,9 +33,14 @@ public final class BoundedDocumentRestartProbe {
         try (var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.discover(),
                 new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),offline,null,options.journaled(),
                 new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
+            for (String suffix:java.util.List.of("","-next")) {
+            var request=PublishDocumentRequest.parseFrom(Files.readAllBytes(saved.resolve("request"+suffix+".pb")));
+            var receipt=PublishDocumentResponse.parseFrom(Files.readAllBytes(saved.resolve("receipt"+suffix+".pb")));
+            var document=Document.parseFrom(Files.readAllBytes(saved.resolve("document"+suffix+".pb")));
             if (!host.publicationRepository().publishDocument(caller,request,RepositoryReadControl.NONE).equals(receipt))
                 throw new AssertionError("Restart changed durable receipt");
             BoundedDocumentHostProbe.verifyHistoryTransport(host,caller,document,receipt.getCommitted().getMembers(0));
+            }
         }
         System.out.println("BOUNDED_DOCUMENT_RESTART_OK");
     }

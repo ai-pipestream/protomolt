@@ -72,6 +72,7 @@ class DocumentAssessmentStorageRuntimeTest {
             postgres.start();
             storage.start();
             redis.start();
+            assertThat(redis.getMappedPort(6379)).isEqualTo(redisPort);
             var boundedRestart=directory.resolve("bounded-restart");
             var log = directory.resolve("host.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),

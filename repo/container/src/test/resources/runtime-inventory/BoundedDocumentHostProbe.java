@@ -75,6 +75,8 @@ public final class BoundedDocumentHostProbe {
                     new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
             Fixture fixture;
             PublishDocumentResponse result;
+            Fixture updated;
+            PublishDocumentResponse updateResult;
             try (var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.of(List.of(selected,forbidden)),
                     new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 require(opens.get()==1,"one Redis provider");
@@ -95,6 +97,16 @@ public final class BoundedDocumentHostProbe {
                 var replay=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
                 require(result.equals(replay),"exact receipt replay");
                 verifyTransport(host,new Tx(database.entityManagerFactory()),caller,fixture.request(),result);
+                updated=replacement(fixture,result.getCommitted().getMembers(0));
+                updateResult=host.publicationRepository().publishDocument(caller,updated.request(),RepositoryReadControl.NONE);
+                require(updateResult.hasCommitted(),"replacement committed");
+                var next=updateResult.getCommitted().getMembers(0);
+                var previous=result.getCommitted().getMembers(0);
+                require(next.getAddress().equals(previous.getAddress()) && !next.getRevisionId().equals(previous.getRevisionId())
+                        && next.getMutationRevision()>previous.getMutationRevision(),"new immutable revision at same address");
+                require(!updated.document().equals(fixture.document()),"replacement changes document bytes");
+                require(host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE)
+                        .equals(result),"old receipt survives replacement");
                 // Historical validation must use retained artifacts after live resolution stops.
                 resolver.close();
                 require(resolver.awaitLoads(Duration.ofSeconds(5)),"schema resolver drained");
@@ -106,6 +118,7 @@ public final class BoundedDocumentHostProbe {
                     read.authorizeDelivery(RepositoryReadControl.NONE);
                 }
                 verifyHistoryTransport(host,caller,fixture.document(),revision);
+                verifyHistoryTransport(host,caller,updated.document(),updateResult.getCommitted().getMembers(0));
                 require(closes.get()==0,"Redis remains open during host lifetime");
             } finally { schemas.close(); }
             require(closes.get()==1,"Redis closes once after host drain");
@@ -114,6 +127,9 @@ public final class BoundedDocumentHostProbe {
             Files.write(restart.resolve("request.pb"),fixture.request().toByteArray());
             Files.write(restart.resolve("receipt.pb"),result.toByteArray());
             Files.write(restart.resolve("document.pb"),fixture.document().toByteArray());
+            Files.write(restart.resolve("request-next.pb"),updated.request().toByteArray());
+            Files.write(restart.resolve("receipt-next.pb"),updateResult.toByteArray());
+            Files.write(restart.resolve("document-next.pb"),updated.document().toByteArray());
         } finally {
             try (var paths=Files.walk(directory)) {
                 for (var path:paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
@@ -214,6 +230,24 @@ public final class BoundedDocumentHostProbe {
     private static void expectStatus(io.grpc.Status.Code code,Runnable call) {
         try { call.run(); throw new AssertionError("Expected "+code); }
         catch (io.grpc.StatusRuntimeException failure) { require(failure.getStatus().getCode()==code,"transport status "+failure); }
+    }
+    private static Fixture replacement(Fixture original,DocumentPublishedRevision previous) {
+        var document=original.document().toBuilder()
+                .setStructuredData(Any.pack(StringValue.of("updated registry payload"),"type.test")).build();
+        var member=original.request().getIntent().getMembers(0).toBuilder().clearParts();
+        member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(previous.getMutationRevision()));
+        var request=original.request().toBuilder().clearPayloads();
+        for (var part:DocumentPartCodec.split(document,PartLayouts.document())) {
+            int ordinal=member.getPartsCount();
+            member.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                    .setPart(part.part()).setSubKey(part.subKey())).setUpload(PublicationUpload.newBuilder()
+                    .setSizeBytes(part.bytes().length).setSha256(DocumentPartCodec.sha256Hex(part.bytes()))
+                    .setContentType("application/protobuf")));
+            request.addPayloads(DocumentPublicationPayload.newBuilder().setMemberId(member.getMemberId())
+                    .setRevisionOrdinal(ordinal).setContent(ByteString.copyFrom(part.bytes())));
+        }
+        request.setIntent(original.request().getIntent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0,member));
+        return new Fixture(request.build(),document);
     }
     private record Fixture(PublishDocumentRequest request, Document document) {}
     private static Fixture prepare(RepoServices host, Tx tx) throws Exception {
