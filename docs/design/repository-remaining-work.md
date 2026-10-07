@@ -984,3 +984,72 @@ an accepted call require the runtime monitor held by `shutdownStep`. Use a disti
 explicit recovery authority, not request-supplied process rights or the drain
 authority. Resume local state before exact-key discovery; unsupported recovery
 states must have explicit errors rather than fresh-registration fallback.
+
+### Current managed recovery boundary (2026-10-07)
+
+The earlier managed-retry wiring items above are superseded by the current source:
+`DocumentPublicationRuntime.executeAccepted` calls `RepositoryManagedRecovery.prepare`
+under an accepted call and an operation-key guard. `RecoveryAuthority` is a separate
+host opt-in. Runtime shutdown closes outer admission, waits accepted calls, detaches
+the recovery owner, then closes nested admission and drains session, upload, read
+and external worker resources. `ManagedPublicationOptions` supplies the opt-in;
+`RepoServices` preserves its transport-idle barrier before releasing owned resources.
+
+Historical recovery is still private. The public publication facade deliberately
+calls `DocumentPublicationCommand.requireExecutionSupported`, which refuses historical
+reuse. Do not remove that gate until managed historical lifecycle qualification passes.
+`RepositoryManagedRecovery` owns ordinary session recovery, not historical source Work,
+V109 captures or `DocumentHistoricalExecution` handles.
+
+The next implementation must reuse the existing accepted call and operation-key guard.
+Pass a fork of the accepted call into historical attachment: its current independent
+`scopes.enter()` would refuse an already accepted operation after admission closes.
+Keep coordinator authority separate for reserve/install/activate/capture drain;
+retain the scoped caller for source access, admission, validation, publication and replay.
+Validate complete resubmitted fresh payloads before successor mutations. Retain exact
+proposal/plan identities and live source Work across uncertain acknowledgments; cold
+activation rows do not recreate source access or permit consumed assessments to restage.
+
+A bounded historical owner must close synchronous handles on return and dispose
+unresolved captures after accepted calls finish, before nested resource drains.
+Tests must cover managed scoped mixed successors, missing/corrupt fresh payload refusal
+before reservation, activation/CREATE/publication lost acknowledgments, revocation,
+and shutdown timeout with held schema/provider work followed by successful drain and
+zero retained payload budget. Preserve ordinary recovery's existing shutdown order.
+
+### Historical owner disposal after uncertain activation
+
+A tentative Java capture is assigned inside V109 activation before commit. Its
+presence alone does not prove that V104/V105 capture rows committed. Existing
+`DocumentPreparationCaptureDrain.Capture.complete` waits local Work/Uses, releases
+native pins and records V107 LOCAL against the exact durable capture owner. It is
+appropriate for a committed capture, including one later fenced by claim takeover;
+it cannot be used as unconditional disposal for a rolled-back activation.
+
+Before a managed owner disposes uncertain state, close new owner admission and
+settle its accepted transaction/worker calls. Classify the exact activation and
+capture identities as committed, consistently absent or inconsistent. Positive
+confirmation must bind the plan, retained preparation, execution and capture digest.
+The existing activation evidence helper returning empty alone is not sufficient:
+it can also return empty when prerequisite reservation/execution evidence is missing.
+Check the exact V109/V104/V105 rows as a consistent set. SQL failure, partial rows or
+mismatched identities retain unresolved ownership and propagate the failure.
+
+Committed capture cleanup uses the existing complete/drain protocol after actual
+Work exits. Consistently absent activation requires local-only source/read cleanup
+with no V107 marker. Do not infer rollback from a failed drain insertion or claim
+remote quiescence from local disposal. Test rollback, lost acknowledgment, committed
+then fenced takeover, unavailable confirmation, held workers and exact pin release.
+This is a design requirement for managed historical ownership, not implemented
+public recovery behavior.
+
+The private disposal primitive described above is now implemented on the activation
+owner. It closes further local activation, classifies exact durable state under a
+short claim lock, then releases the activation monitor and SQL lock before local
+work drainage. Persisted pin tuples are rehashed; partial or mismatched evidence
+refuses disposal. NO_CAPTURE explicitly leaves preactivation sources with the caller.
+Rollback/lost acknowledgment, held work, failed confirmation, later takeover,
+corruption and real claim-lock race tests pass, along with packaged regression.
+See [capture disposal evidence](../evidence/repository/2026-10-07-historical-capture-disposal/README.md).
+Managed historical ownership and its accepted-call drain ordering remain to be wired;
+this primitive does not itself wait for the managed runtime's outer call barrier.

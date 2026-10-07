@@ -1,0 +1,5 @@
+27406c8c1a8cdab37174acda3939eee40ef80873e6de4863e9b5b7fd8a63b834  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentReadLedger.java
+7f6892fef44d67c54608c7bbdc28dafe7d56d7c196cb6e1f6668f56ff14e5446  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationCaptureDrain.java
+6417e23fa4b24904dd632d1f1cb93065a3cfeca0ddf5a827861d3533631b00c0  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/RepositoryHistoricalSuccessorActivation.java
+0afc4792ed2c2a191656f9f430cf018ef9bfba822717435829969a4bab7c6790  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/RepositoryHistoricalCaptureState.java
+94f1301e2c17629d2cc36a32bb992cbd6c9d27310abfad2ff08cb4ec93390746  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryHistoricalCaptureDisposalIT.java

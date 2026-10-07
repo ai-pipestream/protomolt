@@ -17,6 +17,8 @@ final class RepositoryHistoricalSuccessorActivation {
     private final DriveLedger drives;
     private DocumentPreparationCaptureDrain.Capture tentativeCapture;
     private byte[] capturedDigest;
+    private boolean closing;
+    enum Disposal { NO_CAPTURE, LOCAL_ONLY, REGISTERED }
 
     RepositoryHistoricalSuccessorActivation(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan plan,
             DocumentPublicationPreparationRecord retention, DocumentHistoricalAssessmentSources sources, DriveLedger drives) {
@@ -29,9 +31,32 @@ final class RepositoryHistoricalSuccessorActivation {
             throw new IllegalArgumentException("Historical activation retention scope differs");
     }
 
-    /** Retain this attempt across an uncertain reply. The capability can also drain rolled-back local work. */
+    /** Retain this attempt across an uncertain reply; disposal must classify its durable state. */
     synchronized Optional<DocumentPreparationCaptureDrain.Capture> tentativeCapture() {
         return Optional.ofNullable(tentativeCapture);
+    }
+
+    /** Stops this local activation permanently. NO_CAPTURE leaves preactivation resources with their caller. */
+    Optional<Disposal> disposeCapture(RepositoryCaller coordinator, java.time.Duration timeout,
+            RepositoryReadControl control) throws InterruptedException {
+        Objects.requireNonNull(control).check();
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative()) throw new IllegalArgumentException("Negative capture disposal wait");
+        DocumentAdmissionAuthorization.requireCaller(coordinator, plan.next().key(), plan.next().key().account());
+        if (!coordinator.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+                "Historical capture disposal requires private process authority");
+        final DocumentPreparationCaptureDrain.Capture capture;
+        final RepositoryHistoricalCaptureState.State state;
+        synchronized (this) {
+            closing = true;
+            capture = tentativeCapture;
+            if (capture == null) return Optional.of(Disposal.NO_CAPTURE);
+            state = RepositoryHistoricalCaptureState.classify(tx, budget, plan, retention, capture.identity(), control);
+        }
+        // Neither the activation monitor nor the SQL claim lock spans local worker/read drainage.
+        if (state == RepositoryHistoricalCaptureState.State.REGISTERED)
+            return capture.complete(coordinator, timeout, control).map(ignored -> Disposal.REGISTERED);
+        return capture.releaseLocal(timeout, control) ? Optional.of(Disposal.LOCAL_ONLY) : Optional.empty();
     }
 
     synchronized DocumentPreparationCaptureDrain.Capture activate(RepositoryCaller coordinator,
@@ -55,7 +80,20 @@ final class RepositoryHistoricalSuccessorActivation {
     synchronized DocumentHistoricalExecution openExecution(RepositoryCaller coordinator, RepositoryCaller caller,
             DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls scopes,
             RepositoryReadControl control) {
-        var scope = scopes.enter();
+        return openWithScope(coordinator, caller, accepted, control, scopes.enter());
+    }
+
+    /** Continue a live host call after new admission closes, on the same shutdown barrier. */
+    synchronized DocumentHistoricalExecution openAcceptedExecution(RepositoryCaller coordinator, RepositoryCaller caller,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls scopes,
+            DocumentPublicationScopeCalls.Call acceptedCall, RepositoryReadControl control) {
+        return openWithScope(coordinator, caller, accepted, control,
+                Objects.requireNonNull(acceptedCall).forkAccepted(scopes));
+    }
+
+    private DocumentHistoricalExecution openWithScope(RepositoryCaller coordinator, RepositoryCaller caller,
+            DocumentHistoricalAssessmentSources.Work accepted, RepositoryReadControl control,
+            DocumentPublicationScopeCalls.Call scope) {
         try {
             var capture = activateAccepted(coordinator, caller, control, accepted);
             return DocumentHistoricalSuccessorExecution.open(tx, budget, plan, retention, sources, capture,
@@ -69,6 +107,7 @@ final class RepositoryHistoricalSuccessorActivation {
             RepositoryCaller executionCaller, RepositoryReadControl control,
             DocumentHistoricalAssessmentSources.Work accepted) {
         Objects.requireNonNull(control).check();
+        if (closing) throw new RepositoryException(RepositoryException.Code.UNAVAILABLE, "Historical activation is closing");
         var next = plan.next();
         DocumentAdmissionAuthorization.requireCaller(coordinator, next.key(), next.key().account());
         DocumentAdmissionAuthorization.requireCaller(executionCaller, next.key(), next.key().account());

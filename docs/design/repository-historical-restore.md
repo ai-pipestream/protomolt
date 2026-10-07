@@ -1649,6 +1649,29 @@ See [source-bound publication evidence](../evidence/repository/2026-10-07-claime
 
 This supersedes the earlier statement that no private claimed publication path
 exists; it does not satisfy every acceptance case in the reviewed seam. Mixed
-claimed publication, scoped successor publication, publication-wins revocation
+successor publication, scoped successor publication, publication-wins revocation
 races, broader recovery discovery and public integration remain open. Wire
 contracts, names, tags, imports and Any URLs are unchanged by this checkpoint.
+
+Initial mixed publication now also passes the full real-provider driver for both
+process authority and a registered scoped credential. One revision combines
+retained historical objects and a freshly uploaded PARSED part; exact provider
+readback, current projection, receipt replay and selected-attempt origin are
+checked. See [mixed-publication evidence](../evidence/repository/2026-10-07-claimed-mixed-publication/README.md).
+This does not qualify mixed successor execution or automatic upload-payload recovery.
+
+Scoped mixed successor publication now passes the full packaged provider driver.
+The successor rereads retained bytes, requires explicitly resubmitted fresh bytes,
+uses new attempt identities and publishes under the scoped credential. Reservation,
+installation, activation and capture drain use a separate process coordinator.
+The expired predecessor is fenced and its unverified upload object is unchanged.
+See [scoped successor evidence](../evidence/repository/2026-10-07-scoped-mixed-successor/README.md).
+This supersedes the mixed/scoped successor test gap above for this single-source
+private path; managed historical orchestration and public exposure remain open.
+
+The private successor attachment now accepts a continuation of an existing host
+call after new publication admission closes. It validates the call's barrier,
+refuses ended permits, refunds failed attachment forks, and keeps the execution
+counted after its parent call ends. Full real-provider qualification passed;
+see [accepted-call evidence](../evidence/repository/2026-10-07-accepted-historical-call/README.md).
+This is a prerequisite for managed historical orchestration, not its public enablement.
