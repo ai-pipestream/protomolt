@@ -10,7 +10,7 @@ import java.util.*;
 
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
-    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP }
+    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
             PayloadBudget budget, long before, RepositoryCaller coordinator, HistoricalGenerationOverlapProbe overlap) implements AutoCloseable {
         @Override public void close() throws Exception {
@@ -69,7 +69,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check == Check.COMMIT_WINS) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -307,8 +307,14 @@ final class HistoricalInstalledOwnerProbe {
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
-                result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
-                        new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                if (check == Check.COMMIT_WINS) {
+                    result = HistoricalPublicationCommitWinnerProbe.run(database, tx, coordinator, owner, plan,
+                            publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
+                } else {
+                    result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                            new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                }
             }
             require(runtime.isIdle(), "publication request releases runtime barrier");
             HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);

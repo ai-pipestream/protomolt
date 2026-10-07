@@ -9,8 +9,13 @@ public final class HistoricalOwnerReconciliationHost {
             Class.forName("org.junit.jupiter.api.Test");
             throw new AssertionError("Ambient test framework leaked into reconciliation host");
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
-        boolean selfSupersession = args.length == 2 && args[1].equals("self-supersession");
-        boolean overlap = args.length == 2 && args[1].equals("overlap");
+        var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
+            case "self-supersession" -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
+            case "overlap" -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
+            case "commit-wins" -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS;
+            default -> throw new IllegalArgumentException("Unknown historical qualification mode");
+        };
+
         var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(args[0]), () -> {});
         try (var provider = new AssessmentProviderProbe();
              var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
@@ -18,9 +23,15 @@ public final class HistoricalOwnerReconciliationHost {
             var tx = new Tx(database.entityManagerFactory());
             var source = AssessmentMixedReuseProbe.publishSource(tx, provider, "reconciliation", true);
             new DocumentSchemaPolicies(tx).activate(AssessmentCreationProbe.initialPolicy(), 0, () -> {});
-            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true, selfSupersession, overlap);
+            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true, check);
             observation.identity(() -> {});
         }
-        System.out.println(overlap ? "HISTORICAL_GENERATION_OVERLAP_HOST_OK" : selfSupersession ? "HISTORICAL_SELF_SUPERSESSION_HOST_OK" : "HISTORICAL_RECONCILIATION_HOST_OK");
+        System.out.println(switch (check) {
+            case OVERLAP -> "HISTORICAL_GENERATION_OVERLAP_HOST_OK";
+            case SELF_SUPERSESSION -> "HISTORICAL_SELF_SUPERSESSION_HOST_OK";
+            case COMMIT_WINS -> "HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK";
+            default -> "HISTORICAL_RECONCILIATION_HOST_OK";
+        });
+
     }
 }

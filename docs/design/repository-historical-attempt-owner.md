@@ -571,3 +571,45 @@ gated Tx only to `DocumentPublicationCommit`, keeping schema staging outside the
 gate. Observe locks using an unwrapped connection. The before-claim case uses a
 publication-only connection gate. No production timeout, lease or SQL guard change
 is implied by these fixtures.
+
+#### Post-finalization fixture qualification
+
+`HistoricalPublicationCommitWinnerProbe` targets the exact operation-success row
+and current transaction ID at JDBC commit. It records the publisher PID, checks
+live claim and owner leases at entry, waits for PostgreSQL expiry, then submits
+V97 through the production reservation adapter. The test requires a lock wait on
+that publisher before releasing commit, terminal rejection of takeover, unchanged
+reservation count and one publication result. The existing provider fixture then
+checks bytes and the receipt. A separate database/JVM retains the 90-second cap.
+Sol reviewed the implementation. The full packaged-provider gate passed in 13m03s,
+with one aggregate case and zero failures/errors/skips (778.536 seconds). Evidence:
+`docs/evidence/repository/2026-10-07-publication-commit-winner/README.md`.
+
+This case tests SQL publication arbitration. It does not exercise a competing
+`beginSuccessor` entry or prove reconciliation of a selected local proposal after
+publication wins. Keep that owner-routing acceptance case separate, together with
+pre-finalization expiry and takeover-before-claim ordering.
+
+#### Local proposal cleanup after predecessor publication
+
+Source review found an existing route for this case, still requiring qualification.
+`retireTerminal` uses active-call checks rather than mutation admission and observes
+the exact command's authorized global terminal result. It can retire an uninstalled
+selected proposal even though V97 never committed. Removing that proposal must not
+remove the older generation's ID. `resumeGeneration` can then retire the older
+entry despite its supersession-pending flag. Accepted Work must prevent final local
+release until the actual worker completes.
+
+Extend the post-finalization fixture by using `beginSuccessor` and its real
+`advancePreparation`, rather than only a direct reservation. Capture the old ID
+before its synchronized publication starts. Prove the pending successor is selected,
+its V97 waits and loses to terminal publication, and cleanup in each order preserves
+both IDs until their individual retirement. Assert no new reservation, installation
+or capture; retain the exact receipt; return all byte reservations after Work ends.
+A mutation attempt on the supersession-pending old entry should report disposal-only
+state, rather than being mistaken for the ordinary repeat-publication path.
+
+Terminal proof requires the retained caller's current replay authority. Revocation
+before proof cannot authorize receipt delivery or mint that proof. Private shutdown
+cleanup exists; coordinator-only targeted terminal retirement after revocation is
+not implemented and must not be inferred from the authorized case.

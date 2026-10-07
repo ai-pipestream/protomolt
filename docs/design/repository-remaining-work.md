@@ -1060,3 +1060,36 @@ It supersedes the earlier suggestion to close/reopen the execution handle on eve
 client call: that would lose START permission and sticky CREATE/publication state.
 Use separate client-call and retained-entry lifetimes and retain the prepared
 assessment where continuation requires it. This design does not enable public routing.
+
+### Historical ownership qualification checkpoint
+
+The private owner now reserves local capacity before SQL and retains exact proposals
+through uncertain replies. It tracks generations independently from the selected
+retry entry. An older worker can remain active while a successor installs, captures
+fresh sources and publishes through real providers. Old-generation retirement waits
+for actual worker completion and preserves the successor route. Separate SQL tests
+cover byte-budget rejection and V98 replacement of an unactivated successor while
+an older generation continues cleanup.
+
+Evidence:
+
+- `../evidence/repository/2026-10-07-historical-generations/README.md`: 61 SQL cases
+  plus the packaged provider regression for the generation ownership foundation.
+- `../evidence/repository/2026-10-07-historical-generation-overlap/README.md`:
+  provider upload, receipt and readback across overlapping generations, including
+  resource return after retirement; final fixture passed the full provider gate.
+- `../evidence/repository/2026-10-07-historical-generation-limits/README.md`:
+  26 SQL cases covering capacity and exact replacement lineage.
+
+These checkpoints do not enable the public historical entrypoint. Outstanding
+acceptance includes publication/takeover transaction orderings, reconciliation of a
+local successor proposal when the predecessor publishes first, and managed-host
+routing with accepted-call shutdown and credential boundaries. Pruning, scale
+qualification and progressive hydration remain separate requirements of the goal.
+
+The race tests must distinguish explicit SQL finalization from JDBC commit:
+`DocumentPublicationCommit` executes `SET CONSTRAINTS ALL IMMEDIATE` before the
+transaction callback returns. Expiry after successful finalization can allow that
+transaction to commit under the fencing locks; a waiting takeover must then reject
+the terminal operation. See `repository-historical-attempt-owner.md` for the
+reviewed barrier positions and current qualification status.
