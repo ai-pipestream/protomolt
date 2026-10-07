@@ -25,9 +25,11 @@ import ai.protomolt.proto.search.v1.SearchRequest;
 import ai.protomolt.proto.search.v1.SearchResponse;
 import ai.protomolt.proto.search.v1.SearchServiceGrpc;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.MetadataUtils;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
@@ -65,6 +67,9 @@ class PlatformSnapshotIT {
 
     @TempDir
     static Path work;
+
+    /** Synthetic operator token: writer nodes mount repo and so guard their listeners. */
+    static final String OPERATOR_TOKEN = "platform-snapshot-operator-token";
 
     static RepoServiceConfig repoConfig() {
         return new RepoServiceConfig(
@@ -112,6 +117,7 @@ class PlatformSnapshotIT {
                 LOCALSTACK.getEndpoint().toString());
         environment.put(SearchSnapshotConfig.ENV_ACCESS_KEY, LOCALSTACK.getAccessKey());
         environment.put(SearchSnapshotConfig.ENV_SECRET_KEY, LOCALSTACK.getSecretKey());
+        environment.put(DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR_TOKEN);
         return environment;
     }
 
@@ -125,8 +131,12 @@ class PlatformSnapshotIT {
     }
 
     static void withChannel(int port, Consumer<ManagedChannel> body) {
+        Metadata operator = new Metadata();
+        operator.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), OPERATOR_TOKEN);
         ManagedChannel channel = NettyChannelBuilder
-                .forAddress("127.0.0.1", port).usePlaintext().build();
+                .forAddress("127.0.0.1", port).usePlaintext()
+                .intercept(MetadataUtils.newAttachHeadersInterceptor(operator))
+                .build();
         try {
             body.accept(channel);
         } finally {

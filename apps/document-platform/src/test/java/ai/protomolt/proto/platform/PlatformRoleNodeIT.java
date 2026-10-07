@@ -50,6 +50,8 @@ class PlatformRoleNodeIT {
 
     static final String ACCOUNT = "acct-platform-rolenode";
     static final String API_KEY = "platform-role-node-key";
+    /** Synthetic operator token: the repo node guards its listener, the intake node presents it. */
+    static final String OPERATOR_TOKEN = "platform-role-node-operator-token";
 
     @Container
     static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:18-alpine");
@@ -88,18 +90,23 @@ class PlatformRoleNodeIT {
                                 "platform-role-node-docs",
                                 0,
                                 null, null, null, null, 0, 0L),
-                        Map.of()),
+                        Map.of(DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR_TOKEN)),
                 null);
 
         intakeNode = DocumentPlatform.start(
                 config(List.of("intake"), null,
                         Map.of("PROTOMOLT_REPO_TARGET",
-                                "127.0.0.1:" + repoNode.repoPort())),
+                                "127.0.0.1:" + repoNode.repoPort(),
+                                DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR_TOKEN)),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
 
+        Metadata operator = new Metadata();
+        operator.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), OPERATOR_TOKEN);
         repoChannel = NettyChannelBuilder.forAddress("127.0.0.1", repoNode.repoPort())
-                .usePlaintext().build();
+                .usePlaintext()
+                .intercept(MetadataUtils.newAttachHeadersInterceptor(operator))
+                .build();
         intakeChannel = NettyChannelBuilder.forAddress("127.0.0.1", intakeNode.intakePort())
                 .usePlaintext().build();
     }
