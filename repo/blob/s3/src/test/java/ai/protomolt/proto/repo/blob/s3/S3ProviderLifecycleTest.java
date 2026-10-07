@@ -47,12 +47,13 @@ class S3ProviderLifecycleTest {
         handle.close();
         handle.close();
         assertThatThrownBy(handle::store).isInstanceOf(IllegalStateException.class);
-        // Observable closure of the underlying client: the adapter fails
-        // explicitly (closed client / terminated SDK executor), never hangs or
-        // silently succeeds.
+        // Observable closure of the underlying client: a store reference kept
+        // past close fails explicitly, never hangs or silently succeeds. The
+        // closed SDK client's terminated timeout scheduler rejects the call;
+        // the adapter does not translate it.
         assertThatThrownBy(() -> store.get("bucket", "key"))
-                .isInstanceOfAny(IllegalStateException.class,
-                        java.util.concurrent.RejectedExecutionException.class);
+                .isExactlyInstanceOf(java.util.concurrent.RejectedExecutionException.class)
+                .hasMessageContaining("Terminated");
     }
 
     @Test

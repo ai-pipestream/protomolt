@@ -43,7 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       through the decorator keep exactly one winner.</li>
  * </ul>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class CacheProviderIT {
 
     @Container
@@ -76,10 +76,15 @@ class CacheProviderIT {
     @AfterEach
     void closeHandles() throws Exception {
         // Closing the handles releases the owned client/pool even on assertion failure.
-        if (s3Handle != null) s3Handle.close();
-        if (redisHandle != null) redisHandle.close();
+        var s3 = s3Handle;
+        var redis = redisHandle;
         s3Handle = null;
         redisHandle = null;
+        try {
+            if (s3 != null) s3.close();
+        } finally {
+            if (redis != null) redis.close();
+        }
     }
 
     private static String redisUri() {

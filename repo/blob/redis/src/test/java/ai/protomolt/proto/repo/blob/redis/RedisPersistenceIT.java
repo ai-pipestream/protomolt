@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Process-crash evidence only: the Docker host and its storage remain running. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RedisPersistenceIT {
     private static final String PREFIX = "restart:";
     private static final String NAMESPACE = "documents";

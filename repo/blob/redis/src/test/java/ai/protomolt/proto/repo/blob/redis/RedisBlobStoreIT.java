@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the 1000-key pipelined {@code deleteAll}, SCAN listing across bucket
  * namespaces, and real TTL expiry. Skips cleanly without docker.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RedisBlobStoreIT {
 
     @Container

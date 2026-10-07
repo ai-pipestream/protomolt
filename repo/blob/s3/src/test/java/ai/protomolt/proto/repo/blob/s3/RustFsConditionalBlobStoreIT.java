@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Actual conditional-write qualification against the deployment-pinned RustFS image. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RustFsConditionalBlobStoreIT {
     private static final String BUCKET = "conditional-it";
 

@@ -29,31 +29,33 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Conditional-write qualification against LocalStack S3 with bucket versioning
- * ENABLED. Measured behavior of the pinned localstack/localstack:3.8 image:
+ * ENABLED, on the pinned localstack/localstack:4.13 image:
  *
  * <ul>
- *   <li>{@code If-None-Match: *} (write-if-absent) IS enforced: duplicate
- *       creates conflict explicitly and concurrent creates have exactly one
- *       winner whose bytes read back.</li>
- *   <li>{@code If-Match: <etag>} (write-if-matching) is NOT enforced: a stale
- *       precondition is ignored and the write succeeds. Matching conditional
- *       writes are therefore NOT qualified on LocalStack 3.8; the
- *       matching-write qualification lives in {@link RustFsConditionalBlobStoreIT}
- *       against the deployment-pinned RustFS image.</li>
+ *   <li>{@code If-None-Match: *} (write-if-absent): duplicate creates conflict
+ *       explicitly and concurrent creates have exactly one winner whose bytes
+ *       read back.</li>
+ *   <li>{@code If-Match: <etag>} (write-if-matching): a stale precondition
+ *       conflicts without mutating the object, and concurrent matching writes
+ *       against one snapshot have exactly one winner.</li>
  * </ul>
+ *
+ * LocalStack 3.8 (still used by the unconditional S3 ITs) ignores
+ * {@code If-Match}, so it cannot qualify matching writes; that is why this
+ * suite pins 4.13.
  *
  * Provider selection goes through packaged ServiceLoader discovery, not direct
  * construction. Refused writes never mutate the object, and the provider's
  * opaque version identity reads back exact historical bytes.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class S3LocalStackConditionalIT {
 
     private static final String BUCKET = "conditional-localstack-it";
 
     @Container
     static final LocalStackContainer LOCALSTACK =
-            new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
+            new LocalStackContainer(DockerImageName.parse("localstack/localstack:4.13"))
                     .withServices("s3");
 
     static S3Client client;
@@ -125,20 +127,39 @@ class S3LocalStackConditionalIT {
     }
 
     @Test
-    void localstack38DoesNotEnforceMatchingPreconditions() {
-        // QUALIFICATION GAP, RECORDED HONESTLY: this probe documents that the
-        // pinned LocalStack 3.8 image ignores a stale If-Match precondition and
-        // lets the write land. It is not a conformance pass. Matching
-        // conditional writes are NOT qualified on this backend; an operator
-        // must not set conditional-writes=true for If-Match semantics against
-        // LocalStack 3.8. If a LocalStack upgrade starts enforcing If-Match,
-        // this probe fails and the qualification must be revisited.
-        var spec = spec("matching-probe/object");
+    void staleMatchingWritesConflictWithoutMutation() {
+        var spec = spec("matching-stale/object");
         store.conditionalPut(spec, bytes("base"), BlobStore.WriteCondition.absent());
         var snapshot = store.getForUpdate(BUCKET, spec.key());
-        store.put(spec, bytes("meanwhile"));
-        store.conditionalPut(spec, bytes("stale-writer"), BlobStore.WriteCondition.matching(snapshot.eTag()));
-        assertThat(store.getForUpdate(BUCKET, spec.key()).data()).isEqualTo(bytes("stale-writer"));
+        var meanwhile = store.put(spec, bytes("meanwhile"));
+
+        // The stale writer loses explicitly on every retry and never lands.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertThatThrownBy(() -> store.conditionalPut(spec, bytes("stale-writer"),
+                    BlobStore.WriteCondition.matching(snapshot.eTag())))
+                    .isInstanceOf(BlobStore.BlobConflictException.class);
+        }
+        var current = store.getForUpdate(BUCKET, spec.key());
+        assertThat(current.data()).isEqualTo(bytes("meanwhile"));
+        assertThat(current.versionId()).isEqualTo(meanwhile.versionId());
+
+        // A writer holding the current ETag succeeds and reads back.
+        var replaced = store.conditionalPut(spec, bytes("fresh-writer"),
+                BlobStore.WriteCondition.matching(current.eTag()));
+        var after = store.getForUpdate(BUCKET, spec.key());
+        assertThat(after.data()).isEqualTo(bytes("fresh-writer"));
+        assertThat(after.versionId()).isEqualTo(replaced.versionId()).isNotEqualTo(meanwhile.versionId());
+    }
+
+    @Test
+    void concurrentMatchingWritesHaveExactlyOneWinner() throws Exception {
+        var spec = spec("matching-race/object");
+        store.conditionalPut(spec, bytes("base"), BlobStore.WriteCondition.absent());
+        var snapshot = store.getForUpdate(BUCKET, spec.key());
+        race(spec, BlobStore.WriteCondition.matching(snapshot.eTag()), "replace");
+        var replaced = store.getForUpdate(BUCKET, spec.key());
+        assertThat(new String(replaced.data(), StandardCharsets.UTF_8)).startsWith("replace-");
+        assertThat(replaced.eTag()).isNotEqualTo(snapshot.eTag());
     }
 
     private static void race(BlobStore.PutSpec spec, BlobStore.WriteCondition condition,
