@@ -7171,3 +7171,10 @@ after its commit, the activation guard sees the rejection and refuses. No durabl
 capture or execution survives; the receipt replays and leases do not change.
 All three concurrency cases pass. V98 supersession remains a separate gate.
 See [activation-race evidence](../evidence/repository/2026-10-07-recovery-limit-activation-race/README.md).
+
+**Recovery-limit supersession contention:** operations are **unchanged**. A
+decision held past real lease expiry blocks V98 on its claim lock, then rolls
+back at normal deferred validation. V98 commits; the old plan is stale and a
+genuine fresh installation can decide. No activation or additional capture is
+created. Committed-terminal replay after expiry remains separate qualification.
+See [supersession evidence](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md).

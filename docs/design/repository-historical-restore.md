@@ -1056,7 +1056,7 @@ now qualifies both actual bounds through `RepositoryHistoricalLimitDecisions`,
 under-bound absence of a decision, rollback before commit, lost acknowledgement
 after commit, exact retry, and current READ-policy and credential checks on scoped
 replay. Retries leave claim/owner leases unchanged. Corrupt-state variants,
-supersession contention, explicit cancellation and expired-lease replay still need
+explicit cancellation and expired-lease replay still need
 handler qualification. Request cancellation is separate from an explicit terminal
 cancellation operation: a signal observed before commit may abort tentative
 work, but a signal arriving after commit cannot undo a durable limit decision.
@@ -1072,8 +1072,13 @@ pair. Leases and retained captures are unchanged.
 The [activation race](../evidence/repository/2026-10-07-recovery-limit-activation-race/README.md)
 also observes V94 waiting on the deciding transaction: after the decision commits,
 activation sees the terminal row and refuses without partial durable capture or
-execution. An exhausted activation is not an eligible winner. Expired-owner
-supersession remains unqualified.
+execution. An exhausted activation is not an eligible winner.
+The [supersession race](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md)
+holds the decision past actual lease expiry while V98 waits on its claim lock.
+Normal deferred validation rolls the decision back; supersession then succeeds.
+The old plan cannot decide, but a genuine fresh installation can. Committed
+decision replay after expiry and terminal supersession rejection remain separate
+qualification, as does the documented early-constraint timing case.
 The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
 now covers lease expiry before rejection insertion, expiry before normal deferred
 validation, and early constraint firing followed by an expired-lease commit.
