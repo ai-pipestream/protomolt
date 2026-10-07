@@ -146,11 +146,8 @@ final class DocumentPublicationReplay {
                     var receipt = DocumentPublicationRejectionCodec.decode(command, key.principal(), generation,
                             (String) row[1], ((Number) row[2]).intValue(), ByteString.copyFrom((byte[]) row[3]), (String) row[4]);
                     long currentGeneration = ((Number) ((Object[]) owner.getFirst())[0]).longValue();
-                    if (generation != currentGeneration || receipt.getRecordedAtEpochMicros() != ((Number) row[5]).longValue()
-                            || receipt.getDispositionValue() != ((Number) row[6]).intValue() || receipt.getReasonValue() != ((Number) row[7]).intValue()
-                            || !receipt.getCommandCodec().equals(row[8]) || receipt.getCommandEncodingVersion() != ((Number) row[9]).intValue()
-                            || !receipt.getCommandSha256().equals(row[10])) throw new IllegalArgumentException("Rejection header differs from receipt");
-                    requireAssessmentBinding(receipt, row);
+                    if (generation != currentGeneration) throw new IllegalArgumentException("Rejection owner differs from receipt");
+                    requireRejectionProjection(receipt, row);
                     return new Observation(State.TERMINATED, Optional.empty(), Optional.of(receipt));
                 } catch (IllegalArgumentException | InvalidProtocolBufferException failure) {
                     throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Stored publication rejection is invalid", failure);
@@ -172,6 +169,19 @@ final class DocumentPublicationReplay {
             }
             requireRevisions(em, key, result, generation);
             return new Observation(State.COMMITTED, Optional.of(result));
+    }
+
+    /** Shared with private cleanup; this validates stored projection, not caller authorization. */
+    static void requireRejectionProjection(DocumentPublicationRejection receipt, Object[] row) {
+        if (receipt.getOwnerGeneration() != ((Number)row[0]).longValue()
+                || receipt.getRecordedAtEpochMicros() != ((Number)row[5]).longValue()
+                || receipt.getDispositionValue() != ((Number)row[6]).intValue()
+                || receipt.getReasonValue() != ((Number)row[7]).intValue()
+                || !receipt.getCommandCodec().equals(row[8])
+                || receipt.getCommandEncodingVersion() != ((Number)row[9]).intValue()
+                || !receipt.getCommandSha256().equals(row[10]))
+            throw new IllegalArgumentException("Rejection header differs from receipt");
+        requireAssessmentBinding(receipt,row);
     }
 
     private static void requireAssessmentBinding(DocumentPublicationRejection receipt, Object[] row) {

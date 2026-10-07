@@ -7202,6 +7202,13 @@ creating a terminal pair or execution. Both cases pass. This does not grant
 source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
 
 **Private preparation-root release:** **new, not yet implemented**. The
+private terminal-evidence inspector is implemented as a prerequisite. It checks
+canonical success/rejection projections or initial abandonment without granting
+root deletion; its real ancestry-limit case does not require a full execution
+ancestry walk. Release receipts, all-capture drainage, guarded deletion and
+post-pruning retry remain separate unfinished work. See
+[terminal evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
+The
 [reviewed release contract](repository-historical-restore.md#release-identity-and-terminal-applicability)
 binds each release to its exact preparation, complete capture/drain evidence and
 an operation-wide success, rejection or exact initial abandonment. Cleanup must

@@ -1106,6 +1106,15 @@ release evidence, rather than re-reading now-absent source content. V104 already
 deliberately has no live pin/object/revision foreign keys. New release evidence
 must preserve that property.
 
+The private `DocumentPreparationTerminalEvidence` inspector now qualifies the
+immutable terminal alternative under claim/preparation locks. It verifies canonical
+receipt identity and stored projections, including the reason-4 transaction pair,
+or exact initial abandonment. It neither grants release nor changes retention.
+Its success qualification uses normal journaled publication; claimed historical
+publication remains gated. V111 release receipts, root deletion guards and released
+coverage/retry handling are still to be implemented. See
+[terminal inspection evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
+
 Required qualification before mounting or advertising this behavior:
 
 - Release after success, each applicable rejection including reason 4, and exact

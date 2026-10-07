@@ -161,6 +161,14 @@ class RepositoryHistoricalRecoveryBoundIT {
         var decisions = new RepositoryHistoricalLimitDecisions(c.tx(), rig.budget());
         var decided = decisions.decide(CALLER, CALLER, plan, rig.record(), NONE).orElseThrow();
         assertThat(decisions.decide(CALLER, CALLER, plan, rig.record(), NONE)).contains(decided);
+        try (var memory=rig.budget().reserve(32L*1024*1024)) {
+            var terminal=new DocumentPreparationTerminalEvidence(rig.record());
+            var evidence=c.tx().inTransaction(em -> { return terminal.lockAndRequire(em,CALLER,NONE); });
+            assertThat(evidence).isInstanceOfSatisfying(DocumentPreparationTerminalEvidence.Outcome.class,e -> {
+                assertThat(e.kind()).isEqualTo("REJECTION");
+                assertThat(e.generation()).isEqualTo(decided.getOwnerGeneration());
+            });
+        }
         assertThat(count(c, "repository_recovery_limit_decisions")).isEqualTo(1);
         assertThat(count(c, "repository_operation_rejection")).isEqualTo(1);
         var replay = new DocumentPublicationReplay(c.tx()).observe(CALLER, rig.record().command());

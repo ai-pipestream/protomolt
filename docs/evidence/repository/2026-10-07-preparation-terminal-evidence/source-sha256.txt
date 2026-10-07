@@ -1,0 +1,5 @@
+740a463efd6d7d154c3a98e921043b340ba426d167b53d01dcb8e9af236f115b  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationTerminalEvidence.java
+2da0454ea1ad6194bb35e2b0f359a1ffc1ec430609aeb0fb93ec05798b4a7f97  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationReplay.java
+21fc950792e09923df9444a4784de5977ed91328129f14355fa952342104cd0d  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationTerminalEvidenceIT.java
+ef90fbf5606fa40b05e86794612a207cbe4e2dca2a726f8aec9b396d9fb1f0d7  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryHistoricalRecoveryBoundIT.java
+dd7f6000e48139a0ba95e0f82174ce97f594a14aeedee24db3cdb189347e5af8  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationCommitIT.java
