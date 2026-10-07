@@ -1115,9 +1115,14 @@ Its success qualification uses normal journaled publication; claimed historical
 publication remains gated. V111 now supplies permanent release receipts, SQL
 capture/terminal checks and atomic root-deletion guards. Its PostgreSQL tests
 cover initial abandonment, canonical cancellation, rollback and migration of
-existing retained rows. The callable release handler, released coverage/retry
-handling, other terminal paths and concurrent release qualification remain
-unfinished; no release API is mounted. See
+existing retained rows. `DocumentPreparationRootReleases` now supplies a bounded
+private handler and release-specific UNKNOWN/LIVE_EXACT/RELEASED_EXACT inspection.
+It confirms retries from permanent evidence without querying source publication
+or part tables. The existing history-root coverage remains a live-execution proof;
+its EXACT value never includes released retention. Actual pruning, other terminal
+release paths and concurrent release qualification remain unfinished; no release
+API is mounted. See
+[private handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL release evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal inspection evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
 

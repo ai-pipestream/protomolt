@@ -7201,15 +7201,19 @@ predecessor digest. The actual ancestry walk reports FAILED_PRECONDITION without
 creating a terminal pair or execution. Both cases pass. This does not grant
 source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
 
-**Private preparation-root release:** **new, SQL foundation implemented; handler unavailable**. The
+**Private preparation-root release:** **new, private handler under qualification; unmounted**. The
 private terminal-evidence inspector is implemented as a prerequisite. It checks
 canonical success/rejection projections or initial abandonment without granting
 root deletion; its real ancestry-limit case does not require a full execution
 ancestry walk. V111 adds immutable release receipts, all-batch SQL drainage
 checks and atomic guarded deletion. Eight PostgreSQL cases qualify abandonment,
 canonical cancellation, changed identities, rollback and existing-row migration;
-the capture/drain regressions also pass. The canonical Java release handler,
-released-coverage state and post-pruning retry remain unfinished. See
+the capture/drain regressions also pass. The bounded private Java handler now
+distinguishes live and released retention, rejects inconsistent roots/receipts,
+and confirms exact retries without source-table reads. JDBC commit faults and
+pre/post-commit cancellation are qualified. Actual post-pruning retry, remaining
+terminal alternatives and concurrency gates remain unfinished. See
+[handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
 The

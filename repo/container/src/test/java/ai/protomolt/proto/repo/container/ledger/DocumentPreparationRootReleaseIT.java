@@ -94,8 +94,7 @@ class DocumentPreparationRootReleaseIT {
     }
 
     @Test void canonicalCancellationBindsExactTerminalReceipt() throws Exception {
-        try (var c=context(POSTGRES); var rig=historicalInitial(c,LEASE);
-             var memory=rig.budget().reserve(32L*1024*1024)) {
+        try (var c=context(POSTGRES); var rig=historicalInitial(c,LEASE)) {
             var command=rig.record().command();
             try (var work=rig.sources().work()) {
                 var admission=RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(),command,
@@ -112,12 +111,10 @@ class DocumentPreparationRootReleaseIT {
             assertThatThrownBy(() -> c.tx().inTransaction(em -> { insertRejection(em,rig,true); }))
                     .hasStackTraceContaining("Release rejection differs");
             assertLive(c,rig);
-            var terminal=new DocumentPreparationTerminalEvidence(rig.record());
-            var captures=DocumentPreparationCaptureCoverage.prepare(rig.record(),NONE);
-            c.tx().inTransaction(em -> {
-                terminal.lockAndRequire(em,CALLER,NONE); captures.lockAndRequireDrained(em,NONE);
-                insertRejection(em,rig,false); assertThat(delete(em,rig)).isEqualTo(1);
-            });
+            var released=DocumentPreparationRootReleases.release(c.tx(),rig.budget(),
+                    CALLER,rig.record(),NONE);
+            assertThat(released.terminal()).isInstanceOfSatisfying(DocumentPreparationTerminalEvidence.Outcome.class,
+                    outcome -> assertThat(outcome.kind()).isEqualTo("REJECTION"));
             assertThat(count(c,rig,"repository_preparation_root_releases")).isEqualTo(1);
             assertThat(count(c,rig,"repository_preparation_history_roots")).isZero();
         }
