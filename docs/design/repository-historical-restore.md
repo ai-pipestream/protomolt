@@ -742,6 +742,38 @@ close-during-work tests must hold an actual schema/provider worker across close,
 not merely hold a permit with no assessment work running. A rejected submission
 must release its permit; a started worker releases it only on actual completion.
 
+### Claimed CREATE transaction refinement (2026-10-07)
+
+The retained-preparation checkpoint `dca42e4b3` does not enable claimed CREATE.
+Its next integration must not call CREATE from `DocumentHistoricalExecution.mutate`:
+that method locks reused/historical origins and retention without including fresh
+selected upload attempts. Extending that set inside CREATE would acquire further
+origin locks after retention locks. Reentrance of the historical subset does not
+make the expanded ordering safe.
+
+Use one caller-owned transaction, with descriptor resolution, schema staging and
+bounded encoding completed outside SQL. Check the live claim, exact preparation,
+history header, fixed modes and committed assessment start; then owner/command,
+current schema policy, complete caller authorization and sorted drive bindings.
+Observed evidence must match the handle's canonical command and fixed modes.
+
+For this claimed path, call `DocumentCommitParts.bindHistoricalAssessment` before
+the assessment-owner INSERT. It discovers the complete historical and fresh
+object/attempt union and locks origins before retention. Bind slots using its
+transaction-local proof, then check the exact registered capture and active native
+pins under those locks. Pass these bound slots to a shared SQL write suffix.
+Do not reacquire a smaller origin set first or extend the set after retention.
+The ordinary and unclaimed paths retain their existing INSERT-then-bind order.
+The common writer must not open a transaction or confer caller authority.
+
+Before enabling this path, verify owner INSERT triggers introduce no conflicting
+cross-operation lock order, and add a real mixed-upload contention test alongside
+policy-lock contention, rollback and lost-acknowledgement cases. A lost CREATE
+acknowledgement requires exact-stage discovery and retained-evidence reconciliation;
+neither absence nor a duplicate permits a new assessment UUID or implicit adoption.
+This refinement was reviewed by Sol against the existing binder and slot code;
+the claimed implementation and its contention evidence remain outstanding.
+
 ### Acceptance before enabling public restore
 
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
