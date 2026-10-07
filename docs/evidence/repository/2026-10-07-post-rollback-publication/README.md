@@ -19,5 +19,12 @@ Assertions cover distinct claim, process, owner, upload and capture identities;
 2 reservations, 2 installations, 3 STARTs, 2 CREATEs, and 1 publication. Cleanup
 returns retained memory and the receipt identifies the successful generation.
 
-The mandatory aggregate requires this result but has not been rerun for this
-extension. Before-claim arbitration and public historical routing remain open.
+The full `:protomolt-repo-container:admissionStorageTest --max-workers=2
+--console=plain` run passed at source commit
+`039ce5dad1326582710dc47c3d2a5baab5c21ea7`: 1 aggregate test, 0 failures/errors/skips;
+Gradle 14m48s, JUnit 886.45s, timestamp 2026-10-07T22:47:08.469Z.
+The checked source hashes match `sources.sha256`. Terminal reports are archived as
+`full-storage.xml.gz` and `full-storage.log.gz`.
+
+This run covers claim-expiry rollback and successor publication, but excludes the
+later before-claim acquisition fixture. Public historical routing remains open.
