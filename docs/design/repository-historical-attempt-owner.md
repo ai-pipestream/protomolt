@@ -866,3 +866,76 @@ The full storage gate includes this host as an additional isolated database; its
 result remains pending. This closes the private initial-owner provider coverage
 item above, but does not enable public historical routing or prove cold anchor
 loading, managed host composition or library/gRPC parity.
+
+### Cold retention-anchor loader design
+
+The next private component loads retention evidence for a reserved successor. It
+must not return an execution, assessment, read pin or provider handle. Its inputs
+are the committed reservation, the exact predecessor owner and preparation, a
+host-supplied process authority, and the current execution caller. Reuse the
+reserved-preparation state check instead of inventing a second reservation test.
+The current predecessor record has its own memory lease. This loader runs before
+the reserved successor is installed. The reservation check requires a live claim,
+an expired predecessor owner and no install. An installed predecessor can be
+inspected under a new reservation; an installed current reservation cannot be reused.
+
+Discovery follows `repository_successor_installs`, whose immutable edges bind the
+current preparation digest and owner nonce to the preceding preparation digest
+and nonce. Every edge must agree on account, principal, operation and command.
+Start at the supplied predecessor preparation, not the greatest generation in
+SQL. Stop only at a matching sealed history set with its sealed initial capture
+and owner binding; a missing edge or inconsistent anchor is an explicit failure.
+Do not select generation zero by convention or accept a numerically older record
+without an ancestry proof. Check any historical activation's recorded retention
+identity against the discovered anchor when present.
+
+Count the planned successor edge toward the activation limit of 64 install edges.
+At most 63 persisted edges can separate the predecessor from the anchor. Exceeding
+that bound is an unsupported recovery depth, never permission to drop ancestors.
+This is a chain-length bound, not a limit on the number of independently retained
+operations. Only the anchor preparation is decoded; intermediate edges and
+preparations require bounded identity metadata. No recursive load of all records
+or unbounded SQL result collection is needed.
+
+The loader has two short database phases around bounded decoding:
+
+1. Require private authority and the exact reserved state. Authorize pending
+   observation of the complete command for the execution caller before revealing
+   lineage or source metadata. Read immutable lineage metadata without taking
+   preparation/root locks after document locks in this phase. Inspect the anchor's
+   encoded size before fetching bytes. Reserve the bytes before allocation.
+2. Decode outside database locks using the existing preparation codec and digest
+   checks. Reenter the reserved-state check, recheck the immutable anchor digest,
+   recheck the identity chain and verify live retained roots with
+   `DocumentHistoricalRetentionBinding.require`,
+   and repeat execution-caller authorization before returning the owned result.
+
+Keep claim/owner checks before preparation/root locks and document observation
+locks. Do not hold provider calls or Java decoding under those locks. A released
+root set cannot support a fresh historical capture even if its permanent release
+receipt is valid. Cancellation, budget refusal and every decode or authorization
+failure close the byte lease. Closing the returned result releases its ownership;
+subsequent capture and successor activation must perform their existing checks.
+Delivery-time authorization is not an enduring grant for later provider access.
+
+Required PostgreSQL cases for this component:
+
+- Initial anchor and a chain with at least two installed successors resolve the
+  same original preparation; the immediate predecessor differs from that anchor.
+- An installed but unactivated predecessor resolves without fabricating activation
+  evidence. Existing activation evidence, when present, must name the same anchor.
+- Wrong reservation, principal, account, command, digest or owner nonce refuses
+  delivery. Missing edges, malformed bytes, incomplete capture evidence and
+  released roots cannot fall back to another generation.
+- Current source READ denial and credential revocation refuse delivery, including
+  a barrier-controlled revocation between the first phase and final authorization.
+- Cancellation, byte-budget refusal, decode failure and explicit close return the
+  budget to baseline. Test the planned edge too: 63 persisted edges fit, while 64
+  persisted edges must fail before new capture.
+- Snapshot counts prove the loader creates no claim, START, capture, activation,
+  assessment, publication or drain receipt. A cold START never becomes live Work.
+
+This is a design requirement, not an available API. Implement and review the
+loader and these tests before composing it into managed historical routing.
+Sol reviewed the design; the pre-install restriction and planned-edge count
+are required parts of that review.
