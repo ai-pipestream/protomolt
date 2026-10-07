@@ -34,17 +34,28 @@ public final class RejectedAssessmentRestartProbe {
                 require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "original provider identity");
                 return provider.store();
             }, 2, 16_000_000, payload);
-            try (reader; var capture = reads.captureRejectedAssessment(caller, command, budget, RepositoryReadControl.NONE)) {
-                var result = DocumentAssessmentReplay.replay(capture, reader, budget,
-                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation, RepositoryReadControl.NONE);
-                require(result.firstFailure().isPresent()
-                        && result.assessment().toString().equals(receipt.getAssessment().getAssessmentId())
-                        && result.manifestSha256().equals(receipt.getAssessment().getManifestSha256())
-                        && result.commandSha256().equals(command.sha256()), "restarted read reproduces exact rejection evidence");
-            } finally {
-                require(reader.awaitIdle(Duration.ofSeconds(5)), "provider workers drain");
-                require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "memory reservations drain");
-                require(reads.releaseDrained(1) == 1 && reads.outstandingReads() == 0, "exact SQL session releases");
+            try (reader) {
+                var capture = reads.captureRejectedAssessment(caller, command, budget, RepositoryReadControl.NONE);
+                try (capture) {
+                    var result = DocumentAssessmentReplay.replay(capture, reader, budget,
+                            new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation, RepositoryReadControl.NONE);
+                    require(result.firstFailure().isPresent()
+                            && result.assessment().toString().equals(receipt.getAssessment().getAssessmentId())
+                            && result.manifestSha256().equals(receipt.getAssessment().getManifestSha256())
+                            && result.commandSha256().equals(command.sha256()), "restarted read reproduces exact rejection evidence");
+                } finally {
+                    reader.close();
+                    require(reader.awaitIdle(Duration.ofSeconds(5)), "provider workers drain");
+                    require(budget.reservedBytes() == 0 && payload.reservedBytes() == 0, "memory reservations drain");
+                    boolean drained = capture.awaitDrained(Duration.ZERO);
+                    int released = reads.releaseDrained(1);
+                    int outstanding = reads.outstandingReads();
+                    System.out.printf("REJECTED_READ_RELEASE_STATE drained=%s released=%d outstanding=%d%n",
+                            drained, released, outstanding);
+                    require(drained, "rejected SQL session local uses drain");
+                    require(released == 1, "exact SQL session release count=" + released);
+                    require(outstanding == 0, "outstanding SQL sessions=" + outstanding);
+                }
             }
             require(new DocumentPublicationReplay(tx).observe(caller, command).rejection().orElseThrow().equals(receipt),
                     "evidence read leaves receipt unchanged");
