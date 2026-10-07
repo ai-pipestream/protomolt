@@ -1,0 +1,9 @@
+Command:
+./gradlew :protomolt-repo-container:admissionStorageTest --tests ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest.observedAssessmentAndSqlRunTogetherOnProductionJars -PtestJdk=25 --max-workers=2 --console=plain --rerun
+
+Captured terminal result:
+BUILD SUCCESSFUL in 10m 24s
+174 actionable tasks: 4 executed, 170 up-to-date
+
+JUnit: one test, zero failures, zero errors, zero skipped; duration 619.119 seconds.
+See local-pass.xml for the complete result.

@@ -546,6 +546,10 @@ public final class ManagedJournaledDrainProbe {
                         "library replay equals fresh transport receipt");
                 require(authenticated.publishDocument(request(work)).equals(response),"transport replay equals library receipt");
                 require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote SPI replay equals library receipt");
+                // Client completion may arrive before the server observes call closure;
+                // drain the one-call transport before checking request validation.
+                require(service.awaitIdle(Duration.ofSeconds(5)),
+                        "completed publication transport calls release their permits before the next validation assertion");
                 expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(request(work).toBuilder().clearPayloads().build()));
                 awaitBudgetRelease(budget);
                 corruptWire.set(true);
