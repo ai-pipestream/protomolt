@@ -7115,3 +7115,15 @@ and no assessment. Canonical encoding and the JSON Schema projection include the
 new reason. SQL still refuses the new value; the decision operation remains
 unimplemented. Older validators can reject unknown enum values, so qualify readers
 before enabling the writer. See [contract checks](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
+
+**Recovery-limit SQL foundation (V110):** **new** immutable decision sidecar and
+**extended** rejection guard permit reason 4 only with matching transaction,
+command and owner evidence. Exact installed identity, live leases, no current
+activation, retained roots and bounded ancestry are checked. Capture exhaustion
+also validates all 16 owned batches and their pin digests. Deferred pairing
+prevents an orphan decision. No generic execution fence changes. Both real-bound
+fixtures produce and replay canonical receipts through test-side SQL; no Java
+decision handler or public operation exists. Guard liveness is checked at guard
+execution, not an absolute commit-instant promise. Lease-fault, corruption,
+concurrency and handler qualification remain open. See
+[SQL evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md).

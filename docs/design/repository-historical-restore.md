@@ -1043,11 +1043,18 @@ unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
 
 This is the next implementation requirement, not an available operation.
 The additive receipt reason `RECOVERY_LIMIT_EXCEEDED = 4` now compiles and passes
-runtime generated/dynamic validation and canonical codec tests. Existing SQL
-reason checks deliberately still refuse it until the guarded sidecar transaction
-is implemented. Descriptor compatibility does not mean old runtime validators
+runtime generated/dynamic validation and canonical codec tests. V110 now allows
+the reason only with an exact same-transaction recovery-limit sidecar. There is
+no Java decision handler or mounted operation yet. Descriptor compatibility does not mean old runtime validators
 accept the new value: qualify and upgrade receipt readers before enabling writes.
 See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
+The [SQL foundation evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md)
+qualifies paired decisions at both actual bounds, under-bound refusal, missing
+receipt refusal, and exclusion of a late activation in the same transaction.
+It does not yet qualify the handler, lease-expiry injection, corruption variants,
+lost replies or concurrent decisions. Liveness is checked when the guards run;
+forcing deferred constraints early can precede later wall-clock lease expiry.
+Do not describe this as an unconditional commit-instant liveness guarantee.
 The ordinary `DocumentPublicationRejections.cancel` path cannot resolve an
 installed but unactivated successor: V95 requires exact activation before its
 owner mutation. A SQL regression preserves this guard and checks ordinary

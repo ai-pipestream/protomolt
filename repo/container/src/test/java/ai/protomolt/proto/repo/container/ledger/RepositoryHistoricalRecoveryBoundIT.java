@@ -21,6 +21,23 @@ class RepositoryHistoricalRecoveryBoundIT {
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
     private static final Duration LEASE = Duration.ofSeconds(2);
 
+    @Test void unexhaustedRecoveryAndUnpairedRejectionAreRefused() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var plan = installedHistoricalSuccessor(c, rig);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                insertDecision(em, rig, plan, "CAPTURES", 16);
+            })).hasStackTraceContaining("Recovery capture limit is not exhausted");
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                insertDecision(em, rig, plan, "ANCESTRY", 65);
+            })).hasStackTraceContaining("Recovery ancestry limit is not exhausted");
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                insertRejection(em, rig, plan);
+            })).hasStackTraceContaining("Recovery rejection requires its atomic limit decision");
+            assertThat(count(c, "repository_recovery_limit_decisions")).isZero();
+            assertThat(count(c, "repository_operation_rejection")).isZero();
+        }
+    }
+
     @Test void sixtyFourInstalledEdgesActivateButSixtyFiveRollBack() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
             var shortLease = Duration.ofSeconds(1);
@@ -69,6 +86,7 @@ class RepositoryHistoricalRecoveryBoundIT {
                     assertThat(count(c, "repository_preparation_capture_drains")).isEqualTo(1);
                     assertThat(leases(c, rig)).containsExactly(before);
                     assertThat(rig.budget().reservedBytes()).isZero();
+                    qualifyLimitDecision(c, rig, next, "ANCESTRY", 65);
                 }
             }
         }
@@ -102,6 +120,7 @@ class RepositoryHistoricalRecoveryBoundIT {
                         assertThat(count(c, "repository_preparation_capture_drains")).isEqualTo(15);
                         assertThat(leases(c, rig)).containsExactly(before);
                         assertThat(rig.budget().reservedBytes()).isZero();
+                        qualifyLimitDecision(c, rig, plan, "CAPTURES", 16);
                         break;
                     }
                     var capture = attempt.activate(CALLER, CALLER, NONE);
@@ -122,5 +141,73 @@ class RepositoryHistoricalRecoveryBoundIT {
                 }
             }
         }
+    }
+
+    private static void qualifyLimitDecision(DocumentNativePublicationFixture.Context c, Rig rig,
+            RepositorySuccessorInstall.Plan plan, String kind, int count) {
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+            insertDecision(em, rig, plan, kind, count);
+        })).hasStackTraceContaining("Recovery limit decision requires atomic rejection");
+        assertThat(count(c, "repository_recovery_limit_decisions")).isZero();
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+            insertDecision(em, rig, plan, kind, count);
+            var digest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.next()));
+            RepositorySuccessorExecution.insertExecution(em, plan, digest, RepositorySuccessorInstall.encodeModes(plan), true);
+            RepositorySuccessorExecution.insertBinding(em, plan);
+            insertRejection(em, rig, plan);
+        })).hasStackTraceContaining("Recovery limit decision cannot accompany activation");
+        c.tx().inTransaction(em -> {
+            insertDecision(em, rig, plan, kind, count);
+            insertRejection(em, rig, plan);
+        });
+        assertThat(count(c, "repository_recovery_limit_decisions")).isEqualTo(1);
+        assertThat(count(c, "repository_operation_rejection")).isEqualTo(1);
+        var replay = new DocumentPublicationReplay(c.tx()).observe(CALLER, rig.record().command());
+        assertThat(replay.state()).isEqualTo(DocumentPublicationReplay.State.TERMINATED);
+        assertThat(replay.rejection().orElseThrow().getReasonValue()).isEqualTo(4);
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+            em.createNativeQuery("SELECT require_repository_execution_claim('account','principal',:o)")
+                    .setParameter("o", rig.record().key().operationId()).getSingleResult();
+        })).hasStackTraceContaining("Coordinator successor requires exact activation");
+    }
+
+    private static void insertRejection(jakarta.persistence.EntityManager em, Rig rig, RepositorySuccessorInstall.Plan plan) {
+            long at = ((Number) em.createNativeQuery("SELECT floor(extract(epoch FROM clock_timestamp())*1000000)")
+                    .getSingleResult()).longValue();
+            var receipt = ai.protomolt.proto.repo.v1.DocumentPublicationRejection.newBuilder()
+                    .setOperationId(rig.record().key().operationId().toString()).setAccountId("account").setPrincipal("principal")
+                    .setOwnerGeneration(plan.next().predecessorGeneration()+1).setCommandCodec("document-publication")
+                    .setCommandEncodingVersion(1).setCommandSha256(rig.record().command().sha256())
+                    .setRecordedAtEpochMicros(at).setDispositionValue(1).setReasonValue(4).build();
+            var encoded = ai.protomolt.proto.repo.spi.DocumentPublicationRejectionCodec.encode(rig.record().command(),
+                    receipt, "principal", receipt.getOwnerGeneration());
+            em.createNativeQuery("""
+                    INSERT INTO repository_operation_rejection(account_id,principal,operation_id,owner_generation,
+                     command_codec,command_version,command_sha256,result_codec,result_version,result_bytes,result_sha256,
+                     recorded_at_epoch_micros,disposition,reason)
+                    VALUES('account','principal',:o,:g,'document-publication',1,:command,
+                     'document-publication-rejection',1,:bytes,:sha,:at,1,4)
+                    """).setParameter("o", rig.record().key().operationId()).setParameter("g", receipt.getOwnerGeneration())
+                    .setParameter("command", java.util.HexFormat.of().parseHex(rig.record().command().sha256()))
+                    .setParameter("bytes", encoded.bytes().toByteArray()).setParameter("sha", java.util.HexFormat.of().parseHex(encoded.sha256()))
+                    .setParameter("at", at).executeUpdate();
+    }
+
+    private static void insertDecision(jakarta.persistence.EntityManager em, Rig rig,
+            RepositorySuccessorInstall.Plan plan, String kind, int count) {
+        int inserted = em.createNativeQuery("""
+                INSERT INTO repository_recovery_limit_decisions(account_id,principal,operation_id,claim_epoch,claim_token,
+                 incarnation,owner_generation,owner_nonce,command_sha256,preparation_sha256,modes_sha256,
+                 retention_generation,retention_sha256,limit_kind,observed_count,inspected_depth,endpoint_generation,endpoint_sha256)
+                SELECT i.account_id,i.principal,i.operation_id,i.successor_epoch,i.successor_token,i.successor_incarnation,
+                 i.predecessor_generation+1,i.owner_nonce,i.command_sha256,i.preparation_sha256,i.modes_sha256,
+                 h.predecessor_generation,h.preparation_sha256,:kind,:count,i.predecessor_generation,0,h.preparation_sha256
+                FROM repository_successor_installs i JOIN repository_preparation_history_sets h
+                 USING(account_id,principal,operation_id)
+                WHERE i.operation_id=:o AND i.successor_epoch=:epoch AND h.predecessor_generation=0
+                """).setParameter("o", rig.record().key().operationId())
+                .setParameter("epoch", plan.reservation().predecessor().epoch()+1)
+                .setParameter("kind", kind).setParameter("count", count).executeUpdate();
+        assertThat(inserted).isEqualTo(1);
     }
 }
