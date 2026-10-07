@@ -161,6 +161,14 @@ class RepositoryHistoricalRecoveryBoundIT {
         var decisions = new RepositoryHistoricalLimitDecisions(c.tx(), rig.budget());
         var decided = decisions.decide(CALLER, CALLER, plan, rig.record(), NONE).orElseThrow();
         assertThat(decisions.decide(CALLER, CALLER, plan, rig.record(), NONE)).contains(decided);
+        try (var memory=rig.budget().reserve(32L*1024*1024)) {
+            var terminal=new DocumentPreparationTerminalEvidence(rig.record());
+            var evidence=c.tx().inTransaction(em -> { return terminal.lockAndRequire(em,CALLER,NONE); });
+            assertThat(evidence).isInstanceOfSatisfying(DocumentPreparationTerminalEvidence.Outcome.class,e -> {
+                assertThat(e.kind()).isEqualTo("REJECTION");
+                assertThat(e.generation()).isEqualTo(decided.getOwnerGeneration());
+            });
+        }
         assertThat(count(c, "repository_recovery_limit_decisions")).isEqualTo(1);
         assertThat(count(c, "repository_operation_rejection")).isEqualTo(1);
         var replay = new DocumentPublicationReplay(c.tx()).observe(CALLER, rig.record().command());
@@ -170,6 +178,32 @@ class RepositoryHistoricalRecoveryBoundIT {
             em.createNativeQuery("SELECT require_repository_execution_claim('account','principal',:o)")
                     .setParameter("o", rig.record().key().operationId()).getSingleResult();
         })).hasStackTraceContaining("Coordinator successor requires exact activation");
+        // Later captures have drained, but the original epoch still owns a live capture.
+        assertThatThrownBy(() -> DocumentPreparationRootReleases.release(c.tx(),rig.budget(),CALLER,rig.record(),NONE))
+                .hasMessageContaining("has not drained");
+        assertThat(count(c,"repository_preparation_root_releases")).isZero();
+        assertThat(count(c,"repository_preparation_history_roots")).isEqualTo(1);
+        rig.sources().close(); rig.history().close(); rig.history().release();
+        rig.reads().fence(); rig.reads().attestLocalQuiescence();
+        var initialDigest=c.tx().readOnly(em -> (byte[])em.createNativeQuery("""
+                SELECT pins_sha256 FROM repository_preparation_pin_batches WHERE operation_id=:o AND initial_capture
+                """).setParameter("o",rig.record().key().operationId()).getSingleResult());
+        var initial=new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(
+                rig.record().key(),rig.record().command().sha256(),rig.claim().epoch(),rig.claim().token(),rig.coordinator()),
+                0,java.util.HexFormat.of().formatHex(initialDigest));
+        assertThat(DocumentPreparationCaptureDrain.recover(c.tx(),CALLER,initial,NONE).kind()).isEqualTo("QUIESCED");
+        var beforeRelease=leases(c,rig);
+        var released=DocumentPreparationRootReleases.release(c.tx(),rig.budget(),CALLER,rig.record(),NONE);
+        assertThat(released.captureCount()).isEqualTo(kind.equals("CAPTURES")?16:2);
+        assertThat(released.terminal()).isInstanceOfSatisfying(DocumentPreparationTerminalEvidence.Outcome.class,e -> {
+            assertThat(e.kind()).isEqualTo("REJECTION");
+            assertThat(e.generation()).isEqualTo(decided.getOwnerGeneration());
+        });
+        assertThat(DocumentPreparationRootReleases.release(c.tx(),rig.budget(),CALLER,rig.record(),NONE)).isEqualTo(released);
+        assertThat(count(c,"repository_preparation_root_releases")).isEqualTo(1);
+        assertThat(count(c,"repository_preparation_history_roots")).isZero();
+        assertThat(leases(c,rig)).containsExactly(beforeRelease);
+        assertThat(rig.budget().reservedBytes()).isZero();
     }
 
     static void insertRejection(jakarta.persistence.EntityManager em, Rig rig, RepositorySuccessorInstall.Plan plan) {

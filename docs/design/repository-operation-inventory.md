@@ -7091,6 +7091,8 @@ capture or record a drain for its own uncommitted capture. See
 This extends SQL fault coverage, not deployed recovery or public execution.
 
 **Historical recovery bounds:** operations and protobuf contracts are **unchanged**.
+The recovery-limit entries below record successive checkpoints; later qualification
+entries supersede earlier statements that their specific checks remain open.
 Actual guarded recovery qualifies 64 ancestry edges versus refused edge 65, and
 16 durable capture batches versus refused capture 17. Refusal rolls back the
 attempted activation without changing leases or earlier evidence. Terminal handling
@@ -7178,3 +7180,57 @@ back at normal deferred validation. V98 commits; the old plan is stale and a
 genuine fresh installation can decide. No activation or additional capture is
 created. Committed-terminal replay after expiry remains separate qualification.
 See [supersession evidence](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md).
+
+**Recovery-limit replay after expiry:** operations are **unchanged**. A decision
+committed while live remains replayable after both database leases expire. V98
+rejects an exact prospective supersession; discovery reports TERMINAL with no
+candidate. Neither lease is renewed and no activation or drain is created. Both
+supersession-class cases pass. See [expired-replay evidence](../evidence/repository/2026-10-07-recovery-limit-expired-replay/README.md).
+
+**Recovery-limit retained-evidence corruption:** operations are **unchanged**.
+Five isolated SQL cases damage root digests, root presence, pin contents, capture
+owner tokens or initial-capture designation. With normal guards restored, each
+handler attempt reports an error and creates no terminal pair or execution.
+Existing source publication remains intact; target success count stays zero.
+All five cases pass. Ancestry corruption remains separate qualification. See
+[corruption evidence](../evidence/repository/2026-10-07-recovery-limit-corruption/README.md).
+
+**Recovery-limit ancestry corruption:** operations are **unchanged**. Two cases
+retain a valid newest installation while damaging an older edge's command or
+predecessor digest. The actual ancestry walk reports FAILED_PRECONDITION without
+creating a terminal pair or execution. Both cases pass. This does not grant
+source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
+
+**Private preparation-root release:** **new, private handler under qualification; unmounted**. The
+private terminal-evidence inspector is implemented as a prerequisite. It checks
+canonical success/rejection projections or initial abandonment without granting
+root deletion; its real ancestry-limit case does not require a full execution
+ancestry walk. V111 adds immutable release receipts, all-batch SQL drainage
+checks and atomic guarded deletion. Eight PostgreSQL cases qualify abandonment,
+canonical cancellation, changed identities, rollback and existing-row migration;
+the capture/drain regressions also pass. The bounded private Java handler now
+distinguishes live and released retention, rejects inconsistent roots/receipts,
+and confirms exact retries without source-table reads. JDBC commit faults and
+pre/post-commit cancellation are qualified. Two concurrent callers now have
+actual SQL-wait evidence for commit and rollback convergence. Release at the
+16-capture and 65-edge recovery limits waits for the original capture to drain
+and then confirms the same receipt without changing leases. Multi-root partial
+deletion now rolls back atomically while complete release preserves another
+preparation's shared-source root. A competing capture waits on the release's
+actual SQL lock and is rejected after release commit or rollback. Other race
+orderings, actual post-pruning retry and remaining terminal alternatives remain
+unfinished. See
+[multi-root/race evidence](../evidence/repository/2026-10-07-multi-root-release/README.md),
+[concurrency/bound evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
+[handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
+[SQL evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
+[terminal evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
+The
+[reviewed release contract](repository-historical-restore.md#release-identity-and-terminal-applicability)
+binds each release to its exact preparation, complete capture/drain evidence and
+an operation-wide success, rejection or exact initial abandonment. Cleanup must
+not inherit the execution ancestry limit: doing so would strand roots after an
+ancestry-limit rejection. Permanent receipt/header identities distinguish released
+retention from missing legacy evidence and allow retry after source pruning. SQL
+coverage states and the remaining terminal and failure/race gates remain required
+before this operation is mounted or advertised. Public contracts are unchanged.

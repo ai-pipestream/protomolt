@@ -1441,6 +1441,34 @@ class DocumentPublicationCommitIT {
                 assertThat(result.getMembersCount()).isEqualTo(1);
                 assertThat(resolutions.get()).isEqualTo(typed ? 1 : 0);
                 assertThat(gateChecks.get()).isPositive();
+                try (var terminalMemory=new PayloadBudget(32L*1024*1024).reserve(32L*1024*1024)) {
+                    var saved=tx.readOnly(em -> (Object[])em.createNativeQuery("""
+                            SELECT preparation_bytes,encode(preparation_sha256,'hex') FROM repository_publication_preparations
+                            WHERE account_id=:account AND principal=:principal AND operation_id=:operation AND predecessor_generation=:generation
+                            """).setParameter("account",command.intent().getAccountId()).setParameter("principal",ADMIN.principalName())
+                            .setParameter("operation",command.operationId()).setParameter("generation",result.getOwnerGeneration()-1).getSingleResult());
+                    var key=new RepositoryOperationLedger.Key(command.intent().getAccountId(),ADMIN.principalName(),command.operationId());
+                    assertThat(java.util.HexFormat.of().formatHex(DocumentPublicationPreparationJournal.digest(ByteString.copyFrom((byte[])saved[0])))).isEqualTo(saved[1]);
+                    var record=DocumentPublicationPreparationCodec.decode(ByteString.copyFrom((byte[])saved[0]),key,command.sha256());
+                    var terminal=new DocumentPreparationTerminalEvidence(record);
+                    var proof=tx.inTransaction(em -> { return terminal.lockAndRequire(em,ADMIN,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE); });
+                    assertThat(proof).isInstanceOfSatisfying(DocumentPreparationTerminalEvidence.Outcome.class,e -> {
+                        assertThat(e.kind()).isEqualTo("SUCCESS");
+                        assertThat(e.resultSha256()).isEqualTo(ai.protomolt.proto.repo.spi.DocumentPublicationResultCodec.encode(command,result,ADMIN.principalName(),result.getOwnerGeneration()).sha256());
+                    });
+                    // Test-only corruption is rolled back with the trigger change.
+                    assertThatThrownBy(() -> tx.inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>)em -> {
+                        em.createNativeQuery("ALTER TABLE repository_operation_success DISABLE TRIGGER repository_operation_success_guard").executeUpdate();
+                        em.createNativeQuery("UPDATE repository_operation_success SET member_count=member_count+1 WHERE operation_id=:id")
+                                .setParameter("id",command.operationId()).executeUpdate();
+                        assertThatThrownBy(() -> terminal.lockAndRequire(em,ADMIN,control))
+                                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                        e -> assertThat(e.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.DATA_LOSS));
+                        throw new TerminalProjectionRollback();
+                    })).isInstanceOf(TerminalProjectionRollback.class);
+                    var repeated=tx.inTransaction(em -> { return terminal.lockAndRequire(em,ADMIN,control); });
+                    assertThat(repeated).isEqualTo(proof);
+                }
                 var published = result.getMembers(0);
                 var revision = UUID.fromString(published.getRevisionId());
                 var history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(reads, reader, budget);
@@ -1469,6 +1497,8 @@ class DocumentPublicationCommitIT {
         }
         assertThat(budget.reservedBytes()).isZero();
     }
+
+    private static final class TerminalProjectionRollback extends RuntimeException {}
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"live", "revoked", "expired"})

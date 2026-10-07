@@ -1036,8 +1036,119 @@ must accept only that transaction's exact receipt, with a deferred zero-root che
 Coverage must distinguish UNKNOWN, LIVE_EXACT and RELEASED_EXACT while retaining the
 original header as creation evidence. Test capture/release races, incomplete batches,
 an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
-lost acknowledgement before enabling this path. This root-release protocol remains
-unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
+lost acknowledgement before enabling this path. V111 now supplies the SQL release
+foundation described below; the callable release protocol remains unavailable.
+Neither V107 nor V108 alone authorizes root deletion.
+
+#### Release identity and terminal applicability
+
+This is the reviewed implementation contract for the next private release step,
+not an available API. It changes no protobuf names, tags, imports or Any URLs.
+
+The release receipt is permanent and keyed by account, principal, operation and
+the target preparation's predecessor generation. It binds that preparation's SHA,
+immutable command SHA, original root count/digest, the terminal evidence below,
+and the release transaction ID. It must also retain a deterministic digest/count
+of the capture batches and their exact owner/drain identities that were checked.
+The receipt authorizes deletion only of that preparation's liveness roots; it
+does not delete publication history, capture evidence, schema assets or provider
+bytes, and it grants no execution or read authority.
+
+For V52 success or V64 rejection, bind the exact outcome kind, owner generation,
+result SHA and outcome creation transaction ID. Check the command codec/version
+and hash against both the retained preparation and admitted operation. The outcome
+generation must be at least the retained predecessor generation plus one. Match
+the terminal owner generation and nonce to its own V81 preparation at generation
+minus one. Conflicting success/rejection/abandonment evidence is corruption.
+A reason-4 rejection additionally retains its exact V110 same-transaction pairing;
+its inspected ancestry prefix is not proof of full ancestry or capture drainage.
+
+Do **not** require a complete V93 ancestry walk to release a terminated operation's
+retention. Execution eligibility and ending retention have different requirements.
+After an ancestry-limit rejection there may be 65 or more installed, unactivated
+attempts. Applying the execution traversal limit to cleanup would strand the
+original roots. The sufficient release proof is the exact target preparation and
+command, the operation-wide immutable terminal outcome, and complete drainage of
+every capture belonging to that target preparation. V81/V93 terminal guards and
+V108 capture closure prevent new work from entering that operation while release
+holds the same claim lock. No ancestry omission may bypass validation of the
+target preparation, its roots, capture identities, or terminal evidence itself.
+
+V85 abandonment is a separate alternative, not a fabricated result receipt.
+Require predecessor generation zero, exact original preparation SHA/owner nonce
+and epoch-1 claim token/binding. Require absence of an admitted operation, owner,
+assessment start, success and rejection. The original capture must still drain;
+abandonment alone does not establish that a local reader has stopped.
+
+The transaction locks claim, target V81 preparation, V103 header and V104 batches
+in digest order. `DocumentPreparationCaptureCoverage` must reconcile the bounded
+canonical command and complete selector/object sets under those locks, including
+all initial and later captures. SQL independently rechecks sealed root count/SHA,
+batch count and pin digests, V105 coordinator bindings, V107 completion identities,
+and absence of native pins and their object-reference mirrors. A count of zero
+captures, missing legacy ownership, or an undrained older epoch remains UNKNOWN
+or incomplete; none is equivalent to successful drainage. Existing 16-batch,
+10,000-pin/root and preparation serialization bounds remain unchanged.
+
+Only after those checks may the same transaction insert the receipt and delete
+all target child roots. The DELETE guard requires that exact receipt and header
+identity with the current transaction ID; receipt mutation/deletion is forbidden.
+A deferred check prevents a receipt committing with remaining child roots. The
+original V103 header and V104/V105/V107 evidence survive. Capture admission also
+checks the permanent release record, so release cannot be followed by a new batch.
+
+Coverage becomes UNKNOWN, LIVE_EXACT or RELEASED_EXACT. RELEASED_EXACT requires
+an exact immutable receipt/header/preparation binding and zero remaining roots.
+A receipt with remaining roots, or missing roots promised by an existing sealed
+header without a receipt, is DATA_LOSS. A missing legacy header remains UNKNOWN.
+Idempotent release confirmation must remain possible after source revisions and
+provider objects are independently pruned: it uses retained identities and the
+release evidence, rather than re-reading now-absent source content. V104 already
+deliberately has no live pin/object/revision foreign keys. New release evidence
+must preserve that property.
+
+The private `DocumentPreparationTerminalEvidence` inspector now qualifies the
+immutable terminal alternative under claim/preparation locks. It verifies canonical
+receipt identity and stored projections, including the reason-4 transaction pair,
+or exact initial abandonment. It neither grants release nor changes retention.
+Its success qualification uses normal journaled publication; claimed historical
+publication remains gated. V111 now supplies permanent release receipts, SQL
+capture/terminal checks and atomic root-deletion guards. Its PostgreSQL tests
+cover initial abandonment, canonical cancellation, rollback and migration of
+existing retained rows. `DocumentPreparationRootReleases` now supplies a bounded
+private handler and release-specific UNKNOWN/LIVE_EXACT/RELEASED_EXACT inspection.
+It confirms retries from permanent evidence without querying source publication
+or part tables. The existing history-root coverage remains a live-execution proof;
+its EXACT value never includes released retention. Concurrent releases now have
+real claim-lock wait evidence for both commit and rollback. The actual 16-capture
+and 65-edge cases prove release after every persisted capture drains, including
+the original epoch. Multi-root partial deletion now rolls back, and complete
+release leaves other preparations' roots intact. A competing capture waits behind
+the real release lock and remains rejected after commit or rollback; its unrelated
+reader pins survive. Actual pruning, remaining race orderings and other terminal
+release paths remain unfinished; no release API is mounted. See
+[multi-root and capture-race evidence](../evidence/repository/2026-10-07-multi-root-release/README.md),
+[concurrency and limit evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
+[private handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
+[SQL release evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
+[terminal inspection evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
+
+Required qualification before mounting or advertising this behavior:
+
+- Release after success, each applicable rejection including reason 4, and exact
+  initial abandonment; an ancestry-limit terminal case must not need a full walk.
+- Pending operation, expired lease alone, coordinator drain alone, stale terminal
+  identity, conflicting outcomes and malformed canonical preparation cannot release.
+- Every original and later capture drains; a missing batch/owner, live native pin,
+  mirror, incomplete selector coverage or corrupted child digest blocks release.
+- Capture versus release and two releases serialize on the real claim lock;
+  demonstrate commit and rollback outcomes using actual SQL wait observations.
+- Cancellation, deferred-check failure and lost commit acknowledgement preserve
+  either the complete live set or a complete receipt with no roots, never a mixture.
+- Exact retry after independently pruning released source history remains valid;
+  changed identity is rejected, and another preparation's roots remain untouched.
+- A database with pre-existing live headers/captures migrates without declaring
+  legacy unknown evidence released or synthesizing drainage.
 
 ### Terminal handling for exhausted historical recovery
 
@@ -1055,9 +1166,8 @@ The [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/
 now qualifies both actual bounds through `RepositoryHistoricalLimitDecisions`,
 under-bound absence of a decision, rollback before commit, lost acknowledgement
 after commit, exact retry, and current READ-policy and credential checks on scoped
-replay. Retries leave claim/owner leases unchanged. Corrupt-state variants,
-explicit cancellation and expired-lease replay still need
-handler qualification. Request cancellation is separate from an explicit terminal
+replay. Retries leave claim/owner leases unchanged. Explicit terminal cancellation
+of a non-exhausted unactivated successor remains unimplemented. Request cancellation is separate from an explicit terminal
 cancellation operation: a signal observed before commit may abort tentative
 work, but a signal arriving after commit cannot undo a durable limit decision.
 If the host cannot deliver that response, the caller must reconcile through
@@ -1076,9 +1186,22 @@ execution. An exhausted activation is not an eligible winner.
 The [supersession race](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md)
 holds the decision past actual lease expiry while V98 waits on its claim lock.
 Normal deferred validation rolls the decision back; supersession then succeeds.
-The old plan cannot decide, but a genuine fresh installation can. Committed
-decision replay after expiry and terminal supersession rejection remain separate
-qualification, as does the documented early-constraint timing case.
+The old plan cannot decide, but a genuine fresh installation can.
+The [expired-replay evidence](../evidence/repository/2026-10-07-recovery-limit-expired-replay/README.md)
+qualifies the converse: a decision committed while live replays after actual
+expiry without renewal, V98 rejects the terminated operation, and discovery
+offers no recovery candidate. The documented early-constraint timing case
+remains distinct.
+The [retention-corruption evidence](../evidence/repository/2026-10-07-recovery-limit-corruption/README.md)
+checks altered root digests, missing roots, changed pin contents, changed owner
+tokens and missing initial-capture evidence. The handler reports each error and
+leaves no terminal pair or execution. Runtime guards are restored before each
+attempt; this is isolated administrative fault injection, not a supported mutation.
+The [ancestry-corruption evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md)
+keeps the newest install valid while damaging the older edge's command or
+predecessor digest. Both produce an error before any terminal pair is recorded.
+These checks do not authorize retained-source release; that remains the separate
+atomic protocol above.
 The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
 now covers lease expiry before rejection insertion, expiry before normal deferred
 validation, and early constraint firing followed by an expired-lease commit.
