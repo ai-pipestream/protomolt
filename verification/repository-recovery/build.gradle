@@ -1,0 +1,41 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+description = 'Offline repository backup and recovery rehearsal over real PostgreSQL and pinned RustFS'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Production repository modules only. No test framework, fixtures or fakes:
+// the seed and recovered hosts run on this exact classpath in child JVMs.
+dependencies {
+    implementation 'ai.pipestream:protomolt-repo-service'
+    implementation 'ai.pipestream:protomolt-repo-container'
+    implementation 'ai.pipestream:protomolt-repo-engine'
+    implementation 'ai.pipestream:protomolt-repo-blob-s3'
+    implementation 'ai.pipestream:protomolt-repo-history-grpc'
+    implementation 'ai.pipestream:protomolt-repo-publication-grpc'
+    implementation 'ai.pipestream:protomolt-repo-schema-registry'
+    implementation 'ai.pipestream:protomolt-schema-registry-git'
+    implementation 'ai.pipestream:protomolt-protobuf-validation'
+    implementation libs.grpc.inprocess
+    implementation libs.grpc.netty.shaded
+    implementation libs.awssdk.s3
+    implementation libs.awssdk.url.connection.client
+    implementation libs.protobuf.java
+    implementation libs.protobuf.java.util
+    runtimeOnly libs.slf4j.simple
+}
+
+application {
+    mainClass = 'ai.protomolt.proto.repo.recovery.RecoveryRehearsal'
+}
