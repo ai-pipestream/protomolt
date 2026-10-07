@@ -810,3 +810,17 @@ durable capture-drain receipt. After confirmed commit, complete or confirm the e
 durable drain receipt. Both paths must wait for actual accepted Work and pin Uses;
 neither may fence unrelated readers. A different initial winner must not cause the
 losing tentative capture to acquire the winner's identity or drain receipt.
+
+### Initial capture classifier checkpoint
+
+`RepositoryInitialHistoricalCaptureState` now supplies a private, process-authorized
+classifier for a joined initial registration attempt. It compares the exact initial
+preparation, modes, coordinator and capture identities. An unrelated same-key winner
+cannot make a rolled-back capture registered. Partial evidence fails explicitly.
+
+A changed current claim after takeover does not erase initial registration evidence.
+For a completed root release, the classifier uses the existing terminal and release
+inspectors to check the permanent receipt and capture fingerprint, including drain
+records, rather than requiring deleted root rows. Classification neither records a
+drain nor grants an execution handle. The initial owner must still enforce stop/join
+before invoking it; that owner and managed routing remain unimplemented.
