@@ -32,6 +32,7 @@ public final class AssessmentStorageProbe {
             observation.identity(() -> {});
         }
         ai.protomolt.proto.repo.service.BoundedPublicationShutdownProbe.run(Path.of(args[0]));
+        ai.protomolt.proto.repo.service.BoundedDocumentPublicFactoryProbe.run(Path.of(args[0]));
         ai.protomolt.proto.repo.service.BoundedDocumentHostProbe.run(Path.of(args[0]));
         System.out.println("OBSERVED_SQL_HOST_OK");
     }

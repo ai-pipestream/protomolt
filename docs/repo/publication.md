@@ -31,6 +31,66 @@ Close the owning `RepoServices` when finished. If drain times out, resources rem
 allocated for accepted work; retry close after that work stops. Close borrowed
 schema-registry resources only after the composition closes successfully.
 
+## Bounded Redis composition
+
+An embedding application can select `RepoServices.buildBoundedDocuments` for
+journaled publication and immutable history over bounded Redis objects. PostgreSQL
+holds repository metadata, ownership and recovery state. Redis holds the payload
+objects. The Java entry point is in `protomolt-repo-service`; it uses provider
+discovery and the same publication engine as the other managed compositions.
+
+Prepare the host configuration, trusted schema access and publication options
+described above. The account, drive and schema policy must already be provisioned;
+this factory does not infer them from a client's proposed ownership. For those
+existing `config`, `schemaAccess`, `publicationOptions`, `caller` and complete
+`request` values, library-only composition is:
+
+```java
+var limits = new BoundedDocumentOptions(1024 * 1024, 64L * 1024 * 1024);
+var host = RepoServices.buildBoundedDocuments(
+        config, BridgeEngine.standard(), null, schemaAccess,
+        publicationOptions, limits);
+try (host) {
+    var receipt = host.publicationRepository().publishDocument(
+            caller, request, RepositoryReadControl.NONE);
+}
+```
+
+`BoundedDocumentOptions` and `RepoServices` are in
+`ai.protomolt.proto.repo.service`; `BridgeEngine` is in
+`ai.protomolt.proto.asset.bridge`. The shared payload allowance is at least 64 MiB;
+the per-part limit can range from 1 byte to 8 MiB. The example selects a 1 MiB part
+limit. These are application allowances, not total JVM or network memory limits.
+An exhausted allowance refuses work instead of waiting for memory capacity.
+
+Select Redis, zero TTL, a provider object cap covering the selected part limit
+and no greater than 9 MiB, a stable managed backend generation, retention
+qualification, and enabled lifecycle recovery. See the existing
+[storage configuration](../apps/bounded-archive.md#configure-storage) for the shared
+environment setting names. Persistence and eviction policy remain the operator's
+responsibility. The host validates its configuration before discovering providers
+or opening SQL. A backend generation must continue to identify the same storage.
+
+For RPC access, add `ManagedPublicationOptions.withTransport` and optionally pass
+`HistoricalReadAccess` instead of `null`. Each transport has separate response or
+delivery byte limits and call limits. With no transport options, the library ports
+are available and no document RPC is mounted. With both options, the service list
+contains publication and history RPCs. Legacy document, archive, drive and HTTP
+upload APIs are unavailable in this bounded composition.
+
+The full service module has provider dependencies in its resolved runtime graph;
+embedding hosts must include that graph. Thin remote consumers should use the
+client module described below. This factory is an embedding API;
+`RepoServiceMain` does not select the bounded document profile from environment
+settings alone.
+
+Cancellation may leave a physical upload pending recovery without committing a
+revision. Shutdown retains shared resources while accepted provider or schema work
+is active. Retry a timed-out close; keep borrowed registry resources open until
+drain succeeds. Real Redis restart and direct recovery of a delayed original write
+are covered by the storage regression. The elapsed background recheck interval
+has not been qualified, so those tests establish no automatic cleanup deadline.
+
 ## Remote composition
 
 The `protomolt-repo-publication-grpc` module contains

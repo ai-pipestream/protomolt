@@ -271,7 +271,7 @@ The separate bounded schema-load case now passes too. It holds actual Git-fetche
 descriptor bytes while the resolver worker remains active after caller cancellation.
 SQL and Redis stay open until worker drain; the closed resolver discards the late
 result. Evidence: `docs/evidence/repository/2026-10-07-schema-worker-shutdown`.
-Public configuration remains unavailable pending public factory and consumer tests.
+The public factory and its consumer qualification are recorded below.
 
 ## Public composition design
 
@@ -293,5 +293,17 @@ Redis persistence and eviction policy remain operator qualifications. The existi
 lifecycle invokes the recovery scan and revisits eligible ABSENT tombstones; the
 late-request evidence exercises direct recovery, not the elapsed background
 recheck interval. Do not advertise an observed automatic cleanup deadline. This
-embedded factory is not a new standalone deployment entry point. Sol reviewed
-this design; implementation and consumer qualification remain open.
+embedded factory is not a new standalone deployment entry point.
+
+## Public factory checkpoint
+
+`BoundedDocumentOptions` and `RepoServices.buildBoundedDocuments` implement the
+design above. Seven focused configuration tests and the complete production-JAR
+storage regression pass. An out-of-package consumer uses discovered Redis for
+typed publication, receipt replay and historical reads, with separate library-only
+and authenticated RPC hosts. It leaves schema lifecycle with the host. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-public-factory`.
+The [publication guide](../repo/publication.md#bounded-redis-composition) describes
+the available embedded API and its required host configuration. Sol reviewed the
+factory, consumer and guide. This is not a new published-service metadata gate or
+standalone launcher, and scoped-key provisioning remains separate work.

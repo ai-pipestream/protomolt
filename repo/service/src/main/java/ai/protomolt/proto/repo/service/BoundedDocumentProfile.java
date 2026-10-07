@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.spi.DocumentPublicationInput;
 
-/** Internal qualification profile; no public factory until the host tests pass. */
+/** Validated internal assembly limits shared with the public bounded document options. */
 record BoundedDocumentProfile(int maxObjectBytes, long payloadBudgetBytes) {
     BoundedDocumentProfile {
         if (maxObjectBytes < 1 || maxObjectBytes > DocumentPublicationInput.MAX_UPLOAD_BYTES)
