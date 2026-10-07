@@ -11,7 +11,7 @@ option java_package = "ai.protomolt.proto.repo.v1";
 enum DocumentPublicationDisposition {
   // Not a terminal decision.
   DOCUMENT_PUBLICATION_DISPOSITION_UNSPECIFIED = 0;
-  // A verified admission or precondition failure prevented publication.
+  // A verified admission, precondition or recovery-limit failure prevented publication.
   DOCUMENT_PUBLICATION_DISPOSITION_REJECTED = 1;
   // An explicit cancellation decision prevented publication.
   DOCUMENT_PUBLICATION_DISPOSITION_ABORTED = 2;
@@ -27,17 +27,24 @@ enum DocumentPublicationRejectionReason {
   DOCUMENT_PUBLICATION_REJECTION_REASON_ADMISSION_REJECTED = 2;
   // An authorized explicit cancellation won the operation fence.
   DOCUMENT_PUBLICATION_REJECTION_REASON_EXPLICIT_CANCELLATION = 3;
+  // A locked recovery decision proved a bounded recovery resource was exhausted.
+  // No automatic decision handler is enabled by this enum value alone.
+  DOCUMENT_PUBLICATION_REJECTION_REASON_RECOVERY_LIMIT_EXCEEDED = 4;
 }
 
 // Additive receipt contract; no rejection RPC is mounted by this definition.
 // A handler must record this in a fresh transaction after failed publication has
-// rolled back, under the exact command/owner fence, excluding successful commits
-// and newer owners. Recheck mutable rejection conditions under their domain and
+// rolled back, excluding successful commits and newer owners. Ordinary decisions
+// use the exact command/owner write fence. Recheck mutable rejection conditions under their domain and
 // policy locks. A timeout, disconnection, expired lease or lost acknowledgment is
 // not rejection. Explicit cancellation is a terminal decision, not a thrown
 // cancellation check. Physical cleanup remains separately owned and observable.
 // Exact replay reauthorizes current target access and returns the stored decision.
 // Shape validation and command binding alone do not prove a durable decision.
+// Recovery-limit decisions instead require a claim-then-owner transaction with
+// the exact installed identity and a matching
+// immutable limit sidecar committed with this receipt. They do not grant execution
+// authority or release retained source roots, and carry no assessment binding.
 message DocumentPublicationRejection {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "publication-rejection-disposition"

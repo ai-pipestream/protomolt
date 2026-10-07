@@ -1,0 +1,3 @@
+28e7c81d411a1a5b6613fe8eff0fd268961a125e6ed114d49160d28c96ce2e13  repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_publication_rejection.proto
+4f7b416b62287519745ee66cfaa09d05882d0f1f998e852e76b36f2406da7dfc  repo/proto/src/test/java/ai/protomolt/proto/repo/proto/DocumentPublicationRejectionContractTest.java
+11efff93fb0a81bf97fced59e0f125ed6d2b08acf56f9b3d999150275cb13ef8  repo/spi/src/test/java/ai/protomolt/proto/repo/spi/DocumentPublicationRejectionCodecTest.java

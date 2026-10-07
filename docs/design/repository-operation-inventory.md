@@ -7074,3 +7074,44 @@ and public execution remain **unchanged**. The 56 passing SQL tests and their
 limits are recorded in the
 [confirmation evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
 Separate connections in one JVM do not establish deployed restart recovery.
+
+**Historical concurrent activation regression:** production operations and wire
+contracts are **unchanged**. Two independent captures compete for one installed
+successor. The SQL test observes the winning backend as the competitor's blocker,
+then verifies exactly one activation and capture registration, exact winner retry
+and unchanged leases. The loser fails before capture registration. The
+[19-test evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md)
+does not qualify a rolling-back winner or deployed process failure.
+
+**Historical activation rollback race:** operations remain **unchanged**. The
+second contention case aborts the first SQL transaction while a separate capture
+waits on it. The waiter then commits; the first attempt cannot confirm the new
+capture or record a drain for its own uncommitted capture. See
+[rollback qualification](../evidence/repository/2026-10-07-historical-race-rollback/README.md).
+This extends SQL fault coverage, not deployed recovery or public execution.
+
+**Historical recovery bounds:** operations and protobuf contracts are **unchanged**.
+Actual guarded recovery qualifies 64 ancestry edges versus refused edge 65, and
+16 durable capture batches versus refused capture 17. Refusal rolls back the
+attempted activation without changing leases or earlier evidence. Terminal handling
+for exhausted bounds is **missing behavior**, not a completed recovery outcome:
+an installed operation remains unable to activate. Track terminal receipt,
+idempotent rejection/cancellation and retained-source cleanup acceptance cases
+before exposing historical recovery. See the
+[bound evidence](../evidence/repository/2026-10-07-historical-recovery-bounds/README.md).
+
+**Installed cancellation boundary:** the existing cancellation operation is
+**unchanged** and requires activated successor authority. Actual SQL refuses an
+installed-unactivated owner; the positive control activates, cancels and replays.
+The [13-test evidence](../evidence/repository/2026-10-07-installed-cancellation/README.md)
+does not close exhaustion handling. A **new, not yet implemented** private
+recovery-limit decision and additive rejection reason are specified in the
+[terminal design](repository-historical-restore.md#terminal-handling-for-exhausted-historical-recovery).
+
+**Recovery-limit receipt contract:** **extended** the rejection reason enum with
+additive value 4, `RECOVERY_LIMIT_EXCEEDED`. Existing fields, enum numbers, codecs,
+imports and Any URLs are unchanged. Runtime rules require REJECTED disposition
+and no assessment. Canonical encoding and the JSON Schema projection include the
+new reason. SQL still refuses the new value; the decision operation remains
+unimplemented. Older validators can reject unknown enum values, so qualify readers
+before enabling the writer. See [contract checks](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).

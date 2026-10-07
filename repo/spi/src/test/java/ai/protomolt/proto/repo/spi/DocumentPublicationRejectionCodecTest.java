@@ -9,6 +9,18 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentPublicationRejectionCodecTest {
     private static final String ID = "10000000-0000-4000-8000-000000000001";
 
+    @Test void recoveryLimitRoundTripsWithoutWeakeningIdentityOrDisposition() throws Exception {
+        var command = command();
+        var limit = rejection(command).toBuilder().setReasonValue(4).build();
+        var encoded = DocumentPublicationRejectionCodec.encode(command, limit, "principal", 2);
+        assertThat(decode(command, encoded.bytes(), encoded.sha256())).isEqualTo(limit);
+        assertThatThrownBy(() -> DocumentPublicationRejectionCodec.encode(command,
+                limit.toBuilder().setDispositionValue(2).build(), "principal", 2))
+                .hasMessageContaining("Invalid publication rejection");
+        assertThatThrownBy(() -> DocumentPublicationRejectionCodec.encode(command, limit, "other", 2))
+                .hasMessageContaining("operation identity");
+    }
+
     @Test void bindsAllIdentityCoordinatesAndRejectsUnknownFields() {
         var command = command();
         var valid = rejection(command);

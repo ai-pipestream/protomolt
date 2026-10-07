@@ -988,8 +988,34 @@ still leaves coverage incomplete until epoch 1 releases its actual pins and gain
 a QUIESCED receipt. All three batches then qualify without changing the current
 leases. See the [confirmation and recovery evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
 
-Concurrent activation, traversal-limit qualification and deployed restart/session
-attachment remain open. Keep claimed historical execution and root release gated.
+Two fresh activation attempts with distinct captures now have a real PostgreSQL
+contention regression. The winner is held before commit; `pg_blocking_pids` proves
+the competitor waits on that exact session. Only one V94/V109 activation and new
+capture batch commit; the losing attempt receives a duplicate-key failure before
+registering its capture. The winner's exact retry and completion remain valid,
+with unchanged leases. A second case aborts the first transaction before commit:
+the waiting attempt commits its distinct capture, and the rolled-back attempt
+cannot confirm that capture or mint a drain receipt for its uncommitted identity.
+Neither case establishes deployed process recovery. See the
+[concurrency evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md).
+The [rollback evidence](../evidence/repository/2026-10-07-historical-race-rollback/README.md)
+records the second case and its explicit drain refusal.
+
+The recovery bounds now have actual SQL qualification: 64 installed ancestry
+edges activate, while edge 65 refuses atomically. Installed but unactivated
+successors use V98 supersession and add no captures, so this reaches the ancestry
+bound independently of the 16-batch limit. A separate case fills all 16 batches
+with real activated owners and refuses capture 17 even after prior successors
+drain. See the [bound evidence](../evidence/repository/2026-10-07-historical-recovery-bounds/README.md).
+
+**Unresolved exhaustion handling:** either refusal leaves an installed current
+owner/claim without an activation. Further retries cannot shorten ancestry or
+erase permanent batches. Before enabling public historical recovery, implement
+an explicit terminal outcome for bound exhaustion and qualify its cancellation,
+idempotency, retained-source cleanup and receipt behavior. Do not describe these
+limits as automatic recovery or self-healing. Deployed restart/session attachment
+also remains open.
+Keep claimed historical execution and root release gated.
 Success publication and broader multi-generation recovery require their own
 qualification; activation and capture registration alone do not prove them.
 
@@ -1012,3 +1038,85 @@ original header as creation evidence. Test capture/release races, incomplete bat
 an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
 lost acknowledgement before enabling this path. This root-release protocol remains
 unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
+
+### Terminal handling for exhausted historical recovery
+
+This is the next implementation requirement, not an available operation.
+The additive receipt reason `RECOVERY_LIMIT_EXCEEDED = 4` now compiles and passes
+runtime generated/dynamic validation and canonical codec tests. Existing SQL
+reason checks deliberately still refuse it until the guarded sidecar transaction
+is implemented. Descriptor compatibility does not mean old runtime validators
+accept the new value: qualify and upgrade receipt readers before enabling writes.
+See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
+The ordinary `DocumentPublicationRejections.cancel` path cannot resolve an
+installed but unactivated successor: V95 requires exact activation before its
+owner mutation. A SQL regression preserves this guard and checks ordinary
+cancellation succeeds after genuine activation. Do not remove the V95 check or
+fabricate V94 activation to terminate an exhausted operation.
+
+Introduce a private limit-decision operation with the following boundary:
+
+1. Require process authority and an exact installed plan, original retention
+   preparation and command. Serialize bounded identities before taking locks.
+   A prior exception, SQL error text or an expired lease is not limit evidence.
+2. Lock the current claim first, then the current owner. Check exact token,
+   epoch, owner generation/nonce, live leases and committed V93 installation,
+   including reservation, preparation digest and modes. A terminal receipt may
+   replay after lease expiry through the existing authorized receipt-read path;
+   a new decision requires current authority. If an installed owner has already
+   expired, use the existing V98 supersession and V93 installation path to obtain
+   a fresh live decision identity; do not renew or impersonate the expired one.
+   Lock order must not reuse the
+   owner-first ordinary cancellation transaction for this claimed path.
+3. Require no V94 execution for this current epoch and no success or rejection.
+   Validate the original retained preparation/header identity. Recheck the bound
+   under those locks: either 16 permanent capture batches for that retention set,
+   or an exact immutable ancestry prefix of 65 links proving it exceeds 64.
+   Every inspected link must match command, generation and predecessor digest.
+   Broken or missing links within that bounded prefix are corruption, not a
+   resource-limit rejection. If the retained anchor is farther away, the remaining
+   ancestry is explicitly unverified by this decision; do not assert complete
+   ancestry or use the sidecar as proof for root release. Record the inspected
+   depth, endpoint generation and endpoint digest in the sidecar.
+   For capture exhaustion, validate sealed batch identities and their ownership;
+   do not require completed drains merely to record a terminal outcome.
+4. Insert an immutable decision sidecar bound to scope, command, current
+   epoch/token/incarnation, installed owner and preparation, retained preparation,
+   limit kind and observed bound. Commit a rejection receipt in the same SQL
+   transaction. Deferred checks must prevent either half committing alone.
+   The sidecar carries decision evidence only; it must confer no generic owner
+   write fence, provider access, publication, source read or capture authority.
+5. Extend the fixed rejection reason enum additively with
+   `RECOVERY_LIMIT_EXCEEDED` and retain REJECTED disposition. Existing enum numbers,
+   receipt fields, codecs, imports and Any URLs stay stable. Update the runtime
+   validator, receipt codec and SQL reason checks together. Do not label an
+   automatic limit decision EXPLICIT_CANCELLATION or ADMISSION_REJECTED.
+6. Narrowly extend rejection insertion checks for this exact same-transaction
+   sidecar; leave ordinary mutation fences unchanged. Current scoped receipt-read
+   authorization still applies. Lost replies reconcile by immutable identities;
+   a different command, installed plan or limit evidence must not borrow a result.
+7. Retain all roots and captures after rejection. Their release remains the
+   separate protocol above, requiring every original capture to drain or obtain
+   actual quiescence evidence. Terminality alone is not permission to prune.
+
+Acceptance before enabling this private decision path:
+
+- Both real bound fixtures obtain one exact durable rejection without a V94/V109
+  row for the current exhausted epoch (earlier activations remain),
+  new captures, provider calls or lease renewal. Under-bound input, wrong retained
+  generation, changed digest/modes, malformed ancestry, wrong caller and replaced
+  or expired ownership refuse with no partial sidecar or receipt.
+- SQL tampering cannot insert a sidecar without its matching rejection, reuse one
+  in another transaction or cause unrelated owner/provider writes to pass.
+- A race against activation, owner supersession or another decision has one
+  coherent outcome with claim-before-owner locking. Cancellation before commit,
+  rollback and lost acknowledgement preserve exact durable state on retry.
+- Old receipts still decode; the new reason passes the real runtime validator,
+  complete-import proto compilation and applicable lint/compatibility checks.
+- All previous captures and roots remain until independently qualified release.
+  Current grant/key revocation blocks external receipt delivery as elsewhere.
+
+An explicit user cancellation of a non-exhausted installed successor is a distinct
+unresolved operation. Do not make the limit operation a general cancellation
+bypass. Public historical execution and automatic recovery remain gated while
+these terminal and release requirements are unfinished.
