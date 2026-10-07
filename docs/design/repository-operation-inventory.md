@@ -13,11 +13,13 @@
   transaction-local evidence only, not authority to delete roots.
 
 Sol reviewed the helper and requested duplicate tuple refusal, now implemented.
-Before release wiring, qualify same-object cross-revision aliases, repeated
-selectors, incomplete selection within an internally consistent batch, multiple
-batches with an earlier undrained owner, and historical legacy initial-batch gaps.
+The [capture selection follow-up](../evidence/repository/2026-10-07-capture-selection/README.md)
+qualifies repeated selectors, internally consistent incomplete/duplicate batches,
+and two captures where the earlier capture has not drained. Both captures in that
+test share an execution owner. Before release wiring, still qualify same-object
+cross-revision aliases, multiple owner epochs and historical legacy initial-batch gaps.
 The [qualification evidence](../evidence/repository/2026-10-07-capture-coverage/README.md)
-records the current test scope; those remaining cases are not claimed complete.
+records the original test scope; the remaining cases above are not claimed complete.
 
 ## Actual history-root integrity (2026-10-07)
 

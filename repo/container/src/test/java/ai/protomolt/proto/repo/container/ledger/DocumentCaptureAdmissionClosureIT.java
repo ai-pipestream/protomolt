@@ -23,6 +23,85 @@ class DocumentCaptureAdmissionClosureIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void internallyConsistentBatchCannotOmitOrDuplicateSelectedObjects(boolean duplicate) throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c, false, !duplicate)) {
+            var history = rig.reads().captureHistorical(CALLER, rig.fixture().address(), rig.fixture().revision());
+            try (var sources = DocumentHistoricalAssessmentSources.open(rig.record().command(), CALLER, List.of(history), NONE)) {
+                var refs = new ArrayList<>(sources.references(rig.record().command(), () -> {}));
+                if (duplicate) refs.addAll(rig.sources().references(rig.record().command(), () -> {}));
+                var full = DocumentPreparationSourcePins.prepare(rig.record().command(), refs, () -> {});
+                assertThat(full.pins()).hasSize(2);
+                DocumentPreparationSourcePins.Prepared candidate = full;
+                if (!duplicate) {
+                    var one = List.of(full.pins().getFirst());
+                    var json = com.google.gson.JsonParser.parseString(full.json()).getAsJsonArray();
+                    var subset = new com.google.gson.JsonArray(); subset.add(json.get(0));
+                    candidate = new DocumentPreparationSourcePins.Prepared(one, DocumentPreparationSourcePins.digest(one, () -> {}), subset.toString());
+                }
+                var pins = candidate;
+                // Exercise low-level persisted evidence with real live pins and valid SQL guards.
+                // Its count and digest agree internally, but its object selection is not canonical.
+                c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                    lockSources(em, rig.fixture(), pins);
+                    DocumentPreparationSourcePins.insert(em, rig.record(), pins, rig.claim(), rig.coordinator(), () -> {});
+                });
+                assertThat(batches(c, rig)).isEqualTo(2);
+                sources.close(); history.close(); history.release();
+                rig.sources().close(); rig.history().close(); rig.history().release();
+                rig.reads().fence(); rig.reads().attestLocalQuiescence();
+                var digests = c.tx().readOnly(em -> em.createNativeQuery(
+                        "SELECT encode(pins_sha256,'hex') FROM repository_preparation_pin_batches WHERE operation_id=:o")
+                        .setParameter("o", rig.record().key().operationId()).getResultList());
+                for (var digest : digests) {
+                    var id = new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(rig.record().key(),
+                            rig.record().command().sha256(), rig.claim().epoch(), rig.claim().token(), rig.coordinator()), 0, (String) digest);
+                    assertThat(DocumentPreparationCaptureDrain.recover(c.tx(), CALLER, id, NONE).kind()).isEqualTo("QUIESCED");
+                }
+                var check = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> { return check.lockAndRequireDrained(em, NONE); }))
+                        .isInstanceOfSatisfying(RepositoryException.class, failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.DATA_LOSS))
+                        .hasMessageContaining("capture coverage differs");
+            } finally { history.close(); history.release(); }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void everyCaptureMustDrainIncludingOriginalWithRepeatedSelectors(boolean repeatedSelector) throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c, repeatedSelector)) {
+            var originalPins = DocumentPreparationSourcePins.prepare(rig.record().command(),
+                    rig.sources().references(rig.record().command(), () -> {}), () -> {});
+            assertThat(originalPins.pins()).hasSize(1);
+            var reader = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = reader.captureHistorical(CALLER, rig.fixture().address(), rig.fixture().revision());
+            try (var sources = DocumentHistoricalAssessmentSources.open(rig.record().command(), CALLER, List.of(history), NONE)) {
+                DocumentPreparationCaptureDrain.Capture later;
+                try (var work = sources.work()) {
+                    var pins = DocumentPreparationSourcePins.prepare(rig.record().command(), work.references(rig.record().command(), () -> {}), () -> {});
+                    assertThat(pins.pins()).hasSize(1);
+                    later = c.tx().inTransaction(em -> {
+                        RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                        lockSources(em, rig.fixture(), pins);
+                        return DocumentPreparationCaptureDrain.register(c.tx(), em, rig.record(), pins, rig.claim(), rig.coordinator(), sources, work, NONE);
+                    });
+                }
+                assertThat(later.complete(CALLER, Duration.ZERO, NONE)).isPresent();
+                var coverage = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); }))
+                        .hasMessageContaining("has not drained");
+                rig.sources().close(); rig.history().close(); rig.history().release();
+                rig.reads().fence(); rig.reads().attestLocalQuiescence();
+                var identity = new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(rig.record().key(),
+                        rig.record().command().sha256(), rig.claim().epoch(), rig.claim().token(), rig.coordinator()), 0,
+                        HexFormat.of().formatHex(originalPins.digest()));
+                assertThat(DocumentPreparationCaptureDrain.recover(c.tx(), CALLER, identity, NONE).kind()).isEqualTo("QUIESCED");
+                int count = c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); });
+                assertThat(count).isEqualTo(2);
+            } finally { history.close(); history.release(); reader.fence(); reader.attestLocalQuiescence(); }
+        }
+    }
+
     @Test void committedCancellationRejectsAnotherCapture() throws Exception {
         try (var c = context(POSTGRES); var rig = prepare(c); var work = rig.sources().work()) {
             var command = rig.record().command();
@@ -161,14 +240,35 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     private static Rig prepare(Context c) throws Exception {
-        var original = DocumentSchemaRetentionFixture.prepare(c);
+        return prepare(c, false);
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector) throws Exception {
+        return prepare(c, repeatedSelector, false);
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts) throws Exception {
+        var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("capture-coverage")
+                .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
+                        .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
+                .setStructuredData(com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("core"), "type.test"));
+        if (twoParts) document.putParserResults("parsed", ai.protomolt.proto.repo.v1.ParserResult.newBuilder()
+                .setDocument(ai.protomolt.proto.repo.v1.ParserDocument.newBuilder()
+                        .setShape(com.google.protobuf.Any.pack(com.google.protobuf.StringValue.of("parsed"), "type.test"))).build());
+        var original = DocumentSchemaRetentionFixture.prepare(c, true, false, document.build(), "node", "capture-coverage");
         new DocumentSchemaPolicies(c.tx()).activate(original.batch().policy().policy(), 0, () -> {});
         var fixture = new Fixture(original, DocumentSchemaRetentionFixture.publishBound(c, original, (em, candidate) -> {},
                 (em, id, manifest) -> original.retention().write(em, original.owner(), id, () -> {})));
         var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
         var history = reads.captureHistorical(CALLER, fixture.address(), fixture.revision());
-        var command = new DocumentPublicationCommand(original.command().intent().toBuilder()
-                .setOperationId(UUID.randomUUID().toString()).setMembers(0, member(fixture, history)).build());
+        var intent = original.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0, member(fixture, history));
+        if (repeatedSelector) {
+            var repeated = intent.getMembers(0).toBuilder().setMemberId("repeat");
+            repeated.setDestination(repeated.getDestination().toBuilder().clearExpectedMutationRevision().setIfAbsent(true)
+                    .setAddress(repeated.getDestination().getAddress().toBuilder().setGraphAddressId("repeat-destination")));
+            intent.addMembers(repeated);
+        }
+        var command = new DocumentPublicationCommand(intent.build());
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var placement = original.prepared().members().getFirst().placement();
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
