@@ -74,6 +74,7 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                         try (var execution = registration.historicalExecution(caller, registeredOwner, modes, RepositoryReadControl.NONE)) {
                             if (revokeKey) credentials.revoke(administrator, binding, caller.principalName());
                             else setPolicy(c, fixture.address(), writeOnly);
+                            denied(denial, () -> execution.admitUploads(caller, RepositoryReadControl.NONE));
                             denied(denial, () -> execution.start(caller, Duration.ofMinutes(5), RepositoryReadControl.NONE));
                             long starts = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
                                     "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:id")

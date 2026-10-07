@@ -14,6 +14,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentPreparationSourcePins.Prepared pins;
     private final DocumentPublicationScopeCalls.Call registration;
     private final Tx tx;
+    private final PayloadBudget budget;
     private final DriveLedger drives;
     private final DocumentPublicationPreparationRecord record;
     private final DocumentPreparationCaptureDrain.Identity capture;
@@ -24,12 +25,12 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared,
             Map<String, DocumentPublicationCandidate.Mode> modes, DocumentPreparationSourcePins.Prepared pins,
-            DocumentPublicationScopeCalls.Call registration, Tx tx, DriveLedger drives,
+            DocumentPublicationScopeCalls.Call registration, Tx tx, PayloadBudget budget, DriveLedger drives,
             DocumentPublicationPreparationRecord record, DocumentPreparationCaptureDrain.Identity capture, byte[] preparationDigest) {
         this.work = work; this.retained = retained; this.owner = owner; this.prepared = prepared;
         this.modes = Map.copyOf(modes); this.pins = pins;
         this.registration = registration;
-        this.tx = tx; this.drives = drives; this.record = record; this.capture = capture;
+        this.tx = tx; this.budget = budget; this.drives = drives; this.record = record; this.capture = capture;
         this.preparationDigest = preparationDigest.clone();
         this.encodedModes = DocumentPublicationModesJournal.encode(record.command(), modes);
     }
@@ -125,7 +126,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             }
             work.authorize(control);
             return new DocumentHistoricalExecution(work, retained, owner, prepared, fixed, pins, registration,
-                    tx, drives, record, identity, digest);
+                    tx, budget, drives, record, identity, digest);
         } catch (RuntimeException | Error failure) {
             var cleanup = new ArrayList<AutoCloseable>(); cleanup.add(work);
             if (retained != null) cleanup.add(retained);
@@ -138,6 +139,23 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
+        return mutate(caller, control, em -> DocumentAssessmentStartJournal.startOrLoadHistorical(
+                em, owner, record.command(), retention, control));
+    }
+
+    /** SQL selection admission only; provider execution must retain its own accepted lifetime. */
+    synchronized DocumentOperationUploadAdmission.Admission admitUploads(RepositoryCaller caller, RepositoryReadControl control) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller); work.authorize(control);
+        try (var scratch = budget.reserve(DocumentOperationUploadAdmission.initialEncodingBytes(prepared))) {
+            var uploads = DocumentOperationUploadAdmission.encodeInitial(prepared);
+            control.check();
+            return mutate(caller, control, em -> DocumentOperationUploadAdmission.admitHistoricalInitial(em, owner, prepared, uploads));
+        }
+    }
+
+    private <T> T mutate(RepositoryCaller caller, RepositoryReadControl control,
+            java.util.function.Function<jakarta.persistence.EntityManager, T> mutation) {
         if (closed) throw new IllegalStateException("Historical execution is closed");
         work.requireCaller(caller); work.authorize(control);
         var command = record.command();
@@ -151,7 +169,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 .map(part -> UUID.fromString(part.hasReuse() ? part.getReuse().getObject().getObjectId()
                         : part.getHistoricalReuse().getObject().getObjectId()))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        var started = tx.inTransaction(em -> {
+        var result = tx.inTransaction(em -> {
             var claim = owner.executionClaim().orElseThrow();
             RepositoryExecutionClaimLedger.lockLive(em, claim);
             var rows = em.createNativeQuery("""
@@ -186,10 +204,11 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             DocumentPublicationLocks.lockIndependentRetention(em, origins);
             for (var reference : references) DocumentHistoricalReferenceAdmission.requireBoundSources(em, reference, origins, control);
             DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, claim, capture.owner().incarnation(), control::check);
-            return DocumentAssessmentStartJournal.startOrLoadHistorical(em, owner, command, retention, control);
+            var value = mutation.apply(em);
+            control.check(); return value;
         });
         work.authorize(control);
-        return started;
+        return result;
     }
 
     @Override public synchronized void close() {

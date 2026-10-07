@@ -211,59 +211,92 @@ final class DocumentOperationUploadAdmission {
                 if (!actual.equals(placement.profile()))
                     throw new IllegalArgumentException("Selected backend profile differs from its immutable registration");
             }
-            if (allowVerifiedReuse && DocumentUploadAdmissionReplay.hasSelections(em, owner)) {
-                requireInitialSelections(em, owner, prepared);
-                return new Admission(DocumentUploadAdmissionReplay.requireVerified(em, owner, uploads), true);
-            }
-            var admitted = new ArrayList<DocumentPartAttemptLedger.Attempt>(uploads.size());
-            for (var upload : uploads) {
-                var member = upload.member;
-                var attempt = member.attempt().orElseThrow();
-                var location = attempt.location();
-                var realm = member.placement().profile().storageRealm();
-                em.createNativeQuery("""
-                        INSERT INTO document_part_attempts(attempt_id,node_id,account_id,sampled_revision,backend_generation,
-                            storage_realm,storage_namespace,planned_count,source_count,lease_token,lease_until,state,
-                            plan_kind,operation_principal,operation_id,operation_generation,member_id,drive_id)
-                        VALUES (:id,:node,:account,:revision,:backend,:realm,:namespace,:count,:sources,:token,
-                            clock_timestamp()+(:millis * interval '1 millisecond'),'PLANNING','NEW_CONTENT',
-                            :principal,:operation,:generation,:member,:drive)
-                        """).setParameter("id", attempt.id()).setParameter("node", member.nodeId())
-                        .setParameter("account", location.accountId())
-                        .setParameter("revision", member.intent().getDestination().getExpectedMutationRevision())
-                        .setParameter("backend", location.backendGeneration()).setParameter("realm", realm)
-                        .setParameter("namespace", location.namespace()).setParameter("count", attempt.uploads().size())
-                        .setParameter("sources", member.sources().size()).setParameter("token", upload.token)
-                        .setParameter("millis", prepared.lease.toMillis()).setParameter("principal", owner.key().principal())
-                        .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
-                        .setParameter("member", member.intent().getMemberId()).setParameter("drive", member.placement().drive().id())
-                        .executeUpdate();
-                DocumentPartAttemptLedger.insertEncodedRows(em, upload.encoded, attempt.id(), realm, location.namespace());
-                em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id")
-                        .setParameter("id", attempt.id()).executeUpdate();
-                admitted.add(DocumentPartAttemptLedger.read(em, attempt.id(), false).orElseThrow());
-            }
-            if (!admitted.isEmpty()) {
-                boolean live = (Boolean) em.createNativeQuery("""
-                        SELECT count(*)=:count AND bool_and(state='STAGING') AND min(lease_until)>clock_timestamp()
-                        FROM document_part_attempts WHERE attempt_id IN (:attempts)
-                        """).setParameter("count", admitted.size())
-                        .setParameter("attempts", admitted.stream().map(DocumentPartAttemptLedger.Attempt::id).toList()).getSingleResult();
-                if (!live) throw new DocumentPartAttemptLedger.FenceException("New-content attempt expired before admission completed");
-            }
-            if (replacements.isEmpty()) {
-                DocumentOperationSelection.insert(em, owner, prepared.selections, prepared.plan.members().size());
-            } else {
-                for (var upload : uploads) DocumentOperationSelection.replace(em, owner,
-                        upload.member.intent().getMemberId(), replacements.get(upload.member.intent().getMemberId()),
-                        upload.member.attempt().orElseThrow().id());
-            }
-            // Includes reuse-only commands and lease expiry during drive lock waits.
-            em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
-                    .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
-                    .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
-            return new Admission(List.copyOf(admitted), false);
+            return writeAdmissions(em, owner, prepared, uploads, replacements, allowVerifiedReuse);
         });
+    }
+
+    /** Caller must hold the historical handle's full mutation fence. No replacements are accepted. */
+    static Admission admitHistoricalInitial(jakarta.persistence.EntityManager em, RepositoryOperationLedger.Owner owner,
+            Prepared prepared, List<EncodedMember> uploads) {
+        return writeAdmissions(em, owner, prepared, uploads, Map.of(), true);
+    }
+
+    static List<EncodedMember> encodeInitial(Prepared prepared) {
+        return prepared.uploads.stream().map(upload -> new EncodedMember(upload.member, upload.token,
+                DocumentAttemptPlanEncoding.prepare(upload.member))).toList();
+    }
+
+    /** Conservative UTF-16/JSON scratch bound, including duplicate keys and per-row field overhead. */
+    static long initialEncodingBytes(Prepared prepared) {
+        long bytes = 1024;
+        for (var upload : prepared.uploads) {
+            bytes = Math.addExact(bytes, Math.multiplyExact(256L, upload.member.sources().size()));
+            for (var planned : upload.member.attempt().orElseThrow().uploads()) {
+                var object = planned.object();
+                long characters = 2L * object.objectKey().length() + object.subKey().length()
+                        + object.contentType().length() + object.sha256().length();
+                // Each character may require six JSON escape characters of two bytes each.
+                bytes = Math.addExact(bytes, Math.addExact(2048L, Math.multiplyExact(12L, characters)));
+            }
+        }
+        return bytes;
+    }
+
+    private static Admission writeAdmissions(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Prepared prepared, List<EncodedMember> uploads,
+            Map<String, DocumentOperationSelection.Expected> replacements, boolean allowVerifiedReuse) {
+        if (allowVerifiedReuse && DocumentUploadAdmissionReplay.hasSelections(em, owner)) {
+            requireInitialSelections(em, owner, prepared);
+            return new Admission(DocumentUploadAdmissionReplay.requireVerified(em, owner, uploads), true);
+        }
+        var admitted = new ArrayList<DocumentPartAttemptLedger.Attempt>(uploads.size());
+        for (var upload : uploads) {
+            var member = upload.member;
+            var attempt = member.attempt().orElseThrow();
+            var location = attempt.location();
+            var realm = member.placement().profile().storageRealm();
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempts(attempt_id,node_id,account_id,sampled_revision,backend_generation,
+                        storage_realm,storage_namespace,planned_count,source_count,lease_token,lease_until,state,
+                        plan_kind,operation_principal,operation_id,operation_generation,member_id,drive_id)
+                    VALUES (:id,:node,:account,:revision,:backend,:realm,:namespace,:count,:sources,:token,
+                        clock_timestamp()+(:millis * interval '1 millisecond'),'PLANNING','NEW_CONTENT',
+                        :principal,:operation,:generation,:member,:drive)
+                    """).setParameter("id", attempt.id()).setParameter("node", member.nodeId())
+                    .setParameter("account", location.accountId())
+                    .setParameter("revision", member.intent().getDestination().getExpectedMutationRevision())
+                    .setParameter("backend", location.backendGeneration()).setParameter("realm", realm)
+                    .setParameter("namespace", location.namespace()).setParameter("count", attempt.uploads().size())
+                    .setParameter("sources", member.sources().size()).setParameter("token", upload.token)
+                    .setParameter("millis", prepared.lease.toMillis()).setParameter("principal", owner.key().principal())
+                    .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
+                    .setParameter("member", member.intent().getMemberId()).setParameter("drive", member.placement().drive().id())
+                    .executeUpdate();
+            DocumentPartAttemptLedger.insertEncodedRows(em, upload.encoded, attempt.id(), realm, location.namespace());
+            em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id")
+                    .setParameter("id", attempt.id()).executeUpdate();
+            admitted.add(DocumentPartAttemptLedger.read(em, attempt.id(), false).orElseThrow());
+        }
+        if (!admitted.isEmpty()) {
+            boolean live = (Boolean) em.createNativeQuery("""
+                    SELECT count(*)=:count AND bool_and(state='STAGING') AND min(lease_until)>clock_timestamp()
+                    FROM document_part_attempts WHERE attempt_id IN (:attempts)
+                    """).setParameter("count", admitted.size())
+                    .setParameter("attempts", admitted.stream().map(DocumentPartAttemptLedger.Attempt::id).toList()).getSingleResult();
+            if (!live) throw new DocumentPartAttemptLedger.FenceException("New-content attempt expired before admission completed");
+        }
+        if (replacements.isEmpty()) {
+            DocumentOperationSelection.insert(em, owner, prepared.selections, prepared.plan.members().size());
+        } else {
+            for (var upload : uploads) DocumentOperationSelection.replace(em, owner,
+                    upload.member.intent().getMemberId(), replacements.get(upload.member.intent().getMemberId()),
+                    upload.member.attempt().orElseThrow().id());
+        }
+        // Includes reuse-only commands and lease expiry during drive lock waits.
+        em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
+                .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
+        return new Admission(List.copyOf(admitted), false);
     }
 
     /** Initial preparation only. Includes immutable zero-upload members, not just selected attempts. */
