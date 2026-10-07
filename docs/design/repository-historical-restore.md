@@ -743,12 +743,47 @@ revision and its schemas; recording unselected parts adds no retention guarantee
 Pin identities must originate from the captured history under a live Use, not from
 caller-supplied identifiers. The internal projection is data, not release authority.
 
-Durable association remains implementation work. It must preserve capture batches
-across retries and recovery: a fresh capture adds its own exact identities instead
-of replacing the pins an earlier attempt borrowed. Validate and lock live pin rows
-only after the ordered origin and retention locks, matching normal pin release.
-Keep associations after pins disappear; do not add a restrictive foreign key to
-live pin rows. Distinguish an exact retry from another capture and legacy missing
-associations. Association alone does not establish drained provider or schema work.
-Existing process-death recovery still requires durable reader quiescence; without
-the required recovery evidence, keep the roots retained.
+V104 implements immutable capture batches under the retained preparation. A batch
+contains the selected pin identities, sorted by pin UUID and sealed against a
+versioned SHA-256 digest. A fresh capture adds its own identities instead of
+replacing earlier evidence. New pin rows are checked and locked after the complete
+ordered origin and retention sets, matching normal pin release. Exact confirmation
+compares the persisted canonical tuples without requiring released pins to reappear.
+There is no foreign key to live pins, physical objects or source revisions: their
+eventual release must not erase or be prevented by this association evidence.
+
+New nonempty V103 sets must commit a sealed initial capture batch in their creation
+transaction. Existing sets are not backfilled, so missing initial capture remains
+unknown. Each preparation permits at most 16 batches, each bounded to 10,000 pins.
+An exact retry consumes no new batch. A seventeenth fresh capture fails closed;
+qualified batch retirement or a revised bounded recovery policy is required before
+general repeated execution relies on this facility. Encoding is done before SQL
+locks under an additional 4 MiB serialized-data allowance, not a heap-size guarantee.
+
+The SQL guards check root membership and exact live pin identity. They do not parse
+the canonical protobuf command to prove complete selected-object coverage. The
+Java registration derives pins from complete prepared sources; any future release
+must independently reconcile persisted batches against the canonical command's
+distinct source node/revision/object set. An initial flag or matching count alone
+is not a release proof. Association also does not establish drained provider or
+schema work. Existing process-death recovery still requires durable reader
+quiescence; without the required recovery evidence, keep the roots retained.
+
+Before release is implemented, bind each capture batch to its exact execution
+claim epoch/token and coordinator incarnation, verified against the live claim
+and durable coordinator binding. V104 does not yet record that association.
+A later claim may append another capture; the latest coordinator's local drain
+cannot certify work from every earlier epoch. Do not backfill missing identity
+by assuming that an operation's current coordinator owned its older captures.
+
+Normal release needs a batch-local barrier that closes source admission, drains
+the borrowed Uses and actual schema/provider workers, releases exact native pins,
+and records an immutable drain for that capture and epoch. Registration currently
+leaves source Uses with the caller, so V91's host-local marker is insufficient
+unless those lifetimes are explicitly enrolled in its barrier. Other active
+handles in the same reader incarnation need not block a qualified normal release.
+Under the claim and preparation-set locks, release must also verify terminal or
+qualified initial-abandonment identity, complete canonical coverage, all batches'
+drain evidence, and absence of exact native pins and their DOCUMENT_READER mirrors.
+Prevent new captures once terminal release begins. V85 is initial pre-owner
+abandonment only, not a generic successor cancellation mechanism.

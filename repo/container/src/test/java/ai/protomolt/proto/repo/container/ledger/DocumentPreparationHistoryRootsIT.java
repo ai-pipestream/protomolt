@@ -139,6 +139,13 @@ class DocumentPreparationHistoryRootsIT {
             });
             assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, NONE))
                     .hasMessageContaining("differs from its canonical command");
+            org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema()).defaultSchema(c.pool().getSchema())
+                    .locations("classpath:db/migration/repo").target("104").load().migrate();
+            // Migration does not invent an initial capture for an existing V103 projection.
+            assertThat(count(c, "repository_preparation_pin_batches")).isZero();
+            assertThat(count(c, "repository_preparation_source_pins")).isZero();
+            assertThatThrownBy(() -> journal.acquireInitial(CALLER, value, token, NONE))
+                    .hasMessageContaining("differs from its canonical command");
         }
     }
 

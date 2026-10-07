@@ -1,5 +1,23 @@
 # Repository operation inventory
 
+## Durable historical source pin batches (2026-10-07)
+
+- **Extended private registration:** V104 records the selected capture pins in
+  immutable, digest-sealed batches in the same transaction as preparation and owner
+  admission. New historical preparations require an initial batch atomically.
+- **Extended retry evidence:** exact confirmation preserves its batch and leases;
+  fresh captures append bounded batches. Evidence survives live pin release.
+  Existing V103 rows receive no invented capture history.
+- **Unchanged:** public contracts, publication execution gates, schema bindings,
+  ownership rules, normal reads and retention release. No new RPC is advertised.
+- **Limit:** at most 16 batches per preparation and 10,000 pins per batch. Fresh
+  captures beyond that limit fail closed; batch retirement remains future work.
+
+The [release design](repository-historical-restore.md#retention-release-requirements-before-implementation)
+separates stored capture identity from complete command coverage and actual drain.
+The latter checks remain prerequisites for releasing history roots. See
+[qualification evidence](../evidence/repository/2026-10-07-source-pin-batches/README.md).
+
 ## Selected historical source pin projection (2026-10-07)
 
 - **Extended internal preparation:** historical source references expose immutable

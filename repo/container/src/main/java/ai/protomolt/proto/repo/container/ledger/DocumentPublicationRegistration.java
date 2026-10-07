@@ -135,7 +135,8 @@ final class DocumentPublicationRegistration {
                 "Publication modes must be fixed before durable registration");
         try (var scope = registrations.enter();
              var reserved = budget.reserve((long) DocumentPublicationPreparationCodec.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES
-                     + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES)) {
+                     + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES
+                     + (historical == null ? 0 : DocumentPreparationSourcePins.MAX_BYTES))) {
             // Reject an immediately denied caller before marking the session uncertain.
             // Authorization is checked again under the claim lock before any domain writes.
             preflight(caller,control);
@@ -148,6 +149,8 @@ final class DocumentPublicationRegistration {
                     : RepositoryOperationLedger.prepareHistoricalAdmission(preparation.key(), preparation.command(),
                             preparation.seeds().ownerNonce(), preparation.lease(), historical);
             var reuse = historical == null ? null : DocumentReuseAdmission.prepare(plan);
+            var sourcePins = historical == null ? null : DocumentPreparationSourcePins.prepare(preparation.command(),
+                    historical.references(preparation.command(), control::check), control::check);
             var objects = historical == null ? java.util.Set.<UUID>of() : plan.members().stream()
                     .flatMap(member -> member.intent().getPartsList().stream())
                     .filter(part -> part.hasReuse() || part.hasHistoricalReuse())
@@ -183,6 +186,7 @@ final class DocumentPublicationRegistration {
                     DocumentPublicationLocks.lockIndependentRetention(em, origins);
                     for (var source : historical.references(preparation.command(), control::check))
                         DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, origins, control);
+                    DocumentPreparationSourcePins.insert(em, preparation, sourcePins, control::check);
                 }
                 DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
                 control.check();
