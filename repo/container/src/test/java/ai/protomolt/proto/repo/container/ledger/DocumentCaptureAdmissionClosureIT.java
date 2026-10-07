@@ -23,6 +23,48 @@ class DocumentCaptureAdmissionClosureIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void historicalSuccessorInstallDoesNotGrantActivationOrInventCaptureCoverage() throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c, false, false, true, Duration.ofSeconds(1))) {
+            var command = rig.record().command();
+            var modes = Map.of(command.intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
+            try (var work = rig.sources().work()) {
+                var admission = RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(), command,
+                        rig.record().seeds().ownerNonce(), Duration.ofSeconds(1), work);
+                c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                    DocumentPublicationModesJournal.insert(em, rig.claim(), rig.record(),
+                            DocumentPublicationModesJournal.encode(command, modes));
+                    admission.apply(em, rig.claim());
+                });
+            }
+            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            var identity = new RepositoryCoordinatorDrain.Identity(rig.record().key(), command.sha256(),
+                    rig.claim().epoch(), rig.claim().token(), rig.coordinator());
+            var reservation = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity,
+                    UUID.randomUUID(), UUID.randomUUID(), LEASE,
+                    new RepositoryCoordinatorReservation.OwnerIdentity(1, rig.record().seeds().ownerNonce()));
+            RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER, reservation, NONE);
+            var plan = RepositorySuccessorInstall.prepare(reservation, rig.record(), LEASE, modes);
+            RepositorySuccessorInstall.install(c.tx(), rig.budget(), CALLER, plan, NONE);
+            assertThatThrownBy(() -> RepositorySuccessorExecution.activate(c.tx(), rig.budget(), CALLER, CALLER, plan, NONE))
+                    .isInstanceOf(UnsupportedOperationException.class).hasMessage("Historical reuse execution is not implemented");
+            long grants = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_successor_executions WHERE operation_id=:o")
+                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
+            long bindings = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_coordinator_bindings WHERE operation_id=:o AND claim_epoch=2")
+                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
+            assertThat(grants).isZero(); assertThat(bindings).isZero();
+            assertThat(batches(c, rig)).isEqualTo(1);
+            var oldCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, rig.record(),
+                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(rig.record()))));
+            var nextCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, plan.next(),
+                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.next()))));
+            assertThat(oldCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+            assertThat(nextCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.UNKNOWN);
+        }
+    }
+
     @Test void migrationCannotInventInitialCaptureForRetainedLegacyHistory() throws Exception {
         try (var c = context(POSTGRES, "103"); var rig = prepare(c, false, false, false)) {
             org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
@@ -349,6 +391,10 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture) throws Exception {
+        return prepare(c, repeatedSelector, twoParts, capture, LEASE);
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture, Duration lease) throws Exception {
         var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("capture-coverage")
                 .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                         .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
@@ -373,7 +419,7 @@ class DocumentCaptureAdmissionClosureIT {
         var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
         var placement = original.prepared().members().getFirst().placement();
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
-                Map.of(placement.drive().id(), placement), LEASE, 0);
+                Map.of(placement.drive().id(), placement), lease, 0);
         var sources = DocumentHistoricalAssessmentSources.open(command, CALLER, List.of(history), NONE);
         var coordinator = UUID.randomUUID();
         var budget = new PayloadBudget(64L * 1024 * 1024);
@@ -381,7 +427,7 @@ class DocumentCaptureAdmissionClosureIT {
         try {
             var pins = DocumentPreparationSourcePins.prepare(command, sources.references(command, () -> {}), () -> {});
             var claim = c.tx().inTransaction(em -> {
-                var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, key, command, UUID.randomUUID(), LEASE, sources);
+                var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, key, command, UUID.randomUUID(), lease, sources);
                 RepositoryCoordinatorBinding.bindInitial(em, acquired, coordinator);
                 var bytes = DocumentPublicationPreparationCodec.encode(record);
                 DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,

@@ -870,6 +870,86 @@ cannot substitute for the missing creation-time batch. See the
 [migration evidence](../evidence/repository/2026-10-07-legacy-capture/README.md).
 Multiple owner epochs still require qualification before release wiring.
 
+### Historical successor activation and shared retention
+
+Source review found a sequencing gap, not evidence that historical successor
+execution is available. `RepositorySuccessorInstall.install` can persist the next
+historical preparation, fixed modes and owner. It does not create a V103 source
+set or any capture evidence. `RepositorySuccessorExecution.activate` calls
+`next.prepare()`, which refuses historical inputs. V105 requires the exact new
+coordinator binding; V94 creates that binding only during activation. Advancing
+the claim with SQL or fabricating a binding is not a valid multi-owner fixture.
+
+The next private implementation should use the following sequence. It does not
+change the public protocol or enable historical staging and commit by itself.
+
+1. Keep the original, canonically checked V103 retention set through operation
+   terminality. Reserve the successor through V92/V97/V98 and install V93 using
+   the existing reviewed protocol. Expired-unquiesced reservation must not be
+   treated as completion of the predecessor's readers or remote provider work.
+2. Reacquire the complete selected historical inputs under the current execution
+   caller. Hold their source Work/Uses through transaction completion, including
+   an uncertain commit reply. Use `prepareHistorical`, the recorded placements,
+   fixed modes and the new attempt identities. Resolve or inspect remote data
+   outside SQL locks; preserve existing byte, selector and capture-batch bounds.
+3. In one private activation transaction, establish the exact V94 claim/owner
+   identity, check current source/destination permissions and immutable backend
+   placements, and insert its coordinator binding. Lock and validate the retained
+   original preparation/header, then the sorted physical origins and retention
+   records before validating every selected pin. Append a V104/V105 capture under
+   that original header with the successor's epoch, token and incarnation. The
+   capture is non-initial; its ownership never rewrites the initial capture.
+   Execution identity, binding and capture must commit together or all roll back.
+4. Persist an immutable historical-activation sidecar in that same transaction.
+   Bind its account/principal/operation, V94 epoch/token/incarnation and successor
+   preparation digest to the original V103 generation/preparation digest, command
+   digest, and this activation's exact V104 batch digest. Validate the matching
+   V105 owner and same-transaction batch creation; deferred completeness checks
+   must prevent a partial historical activation from committing. V94 identity
+   alone is insufficient historical activation evidence. This association must
+   survive lost replies and process restart, not live only in a host object.
+   Prove ancestry through immutable V93 predecessor-preparation bindings, not
+   merely matching command text and an earlier generation. Walk only within an
+   explicit bounded traversal budget; exhaustion or a missing link refuses
+   attachment and preserves retention. A previously verified sidecar can anchor
+   the next link only after its exact retained identities are checked. Also check
+   live root coverage and complete selected-object coverage. Successor generations
+   intentionally share the original header until terminal release; their absent
+   V103 headers remain UNKNOWN, never empty. Ordinary attachment must not silently
+   accept that state. A fresh attachment revalidates the durable association and
+   registers its own capture before borrowing source data.
+5. Retain the tentative capture capability before the activation transaction can
+   commit. A lost reply must leave it available for exact confirmation or cleanup.
+   Confirm the sidecar, execution identity and this capture's digest/owner tuple;
+   execution identity alone cannot confirm that a competing caller's capture was
+   recorded. A fresh process or fresh reader cannot inherit a previous process's
+   local completion capability. Its new capture requires current authorization.
+6. Drain the successor capture and the original capture independently. Only their
+   own Sources/Uses and exact pins participate. After all capture batches have
+   matching V107 completion, the retained-set inspector may qualify coverage;
+   that still grants no root release without the separately checked terminal
+   outcome. A successor's successful activation, lease expiry or completed capture
+   must not close an unfinished predecessor capture.
+
+Acceptance uses a real initial historical preparation and admitted owner, then
+actual expired-unquiesced reservation, install and private activation. Leave the
+initial reader live while the second owner completes its capture: retention
+qualification must refuse. Release and quiesce the initial reader, record its
+original-epoch completion, and require both batches to qualify without renewing
+either lease. Also cover current access revocation, changed placements, a missing
+or released retention anchor, the seventeenth batch, capture-insert rollback,
+lost activation acknowledgement, concurrent exact activation, cancellation on
+both sides of commit, and stale token/incarnation. Verify no partial V94 identity
+or coordinator binding survives an unsuccessful activation. Include a missing or
+mismatched sidecar, a broken or exhausted ancestry chain, cold confirmation after
+a lost reply, and a fresh process registering a distinct capture. Use actual SQL guards
+and captured handles, never fabricated successor grants.
+
+Until that implementation passes, keep claimed historical execution and root
+release gated. The existing ordinary successor path remains unchanged. Success
+publication and multi-generation recovery still require their own qualification;
+activation and capture registration alone do not prove them.
+
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
 batches in digest order. Decode the bounded canonical preparation, match its hashes,
