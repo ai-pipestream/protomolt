@@ -174,23 +174,7 @@ final class RepositoryHistoricalSuccessorActivation {
     }
 
     private void lockRetention(EntityManager em, byte[] retainedSha) {
-        var rows = scope(em.createNativeQuery("""
-                SELECT preparation_sha256 FROM repository_publication_preparations
-                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:retained FOR UPDATE
-                """)).setParameter("retained", retention.predecessorGeneration()).getResultList();
-        if (rows.size()!=1 || !MessageDigest.isEqual((byte[]) rows.getFirst(), retainedSha)) throw unavailable();
-        var roots = scope(em.createNativeQuery("""
-                SELECT h.predecessor_generation FROM repository_preparation_history_sets h
-                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:retained
-                AND EXISTS(SELECT 1 FROM repository_preparation_pin_batches b
-                  JOIN repository_preparation_pin_owners own USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
-                  WHERE b.account_id=h.account_id AND b.principal=h.principal AND b.operation_id=h.operation_id
-                    AND b.predecessor_generation=h.predecessor_generation AND b.initial_capture AND b.sealed
-                    AND b.creation_xid=h.creation_xid)
-                FOR UPDATE OF h
-                """)).setParameter("retained", retention.predecessorGeneration()).getResultList();
-        if (roots.isEmpty() || DocumentPreparationHistoryRoots.coverage(em, retention, retainedSha)
-                != DocumentPreparationHistoryRoots.Coverage.EXACT) throw unavailable();
+        DocumentHistoricalRetentionBinding.require(em, retention, retainedSha, true);
     }
 
     private boolean confirms(EntityManager em, byte[] sha, byte[] retainedSha, String modes) {

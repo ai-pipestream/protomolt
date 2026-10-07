@@ -38,7 +38,8 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         private Work(DocumentHistoricalSourceLifetime.Work permit) { this.permit = permit; }
         List<DocumentHistoricalReferenceAdmission.Prepared> references(DocumentPublicationCommand expected, Runnable control) {
             permit.requireActive();
-            if (!command.equals(expected)) throw new IllegalArgumentException("Historical source command differs");
+            if (!command.operationId().equals(expected.operationId()) || !command.canonical().equals(expected.canonical()))
+                throw new IllegalArgumentException("Historical source command differs");
             return DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
         }
         void authorize(RepositoryReadControl control) { permit.requireActive(); authorizeAccepted(control); }

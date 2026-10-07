@@ -11,8 +11,89 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check { ORDINARY, REVOKED, EXPIRED }
+    record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
+            PayloadBudget budget, long before, RepositoryCaller coordinator) implements AutoCloseable {
+        @Override public void close() throws Exception {
+            attempts.close();
+            require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
+                    "proposed owner drains on every exit path");
+            require(budget.reservedBytes() == before, "proposed owner returns retained preparation bytes");
+        }
+    }
+
+    /** One owner is installed before the caller captures fresh historical sources. */
+    static Prepared prepare(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationPreparationRecord original, Map<Integer, ByteString> fragments,
+            PayloadBudget budget, Check check) throws Exception {
+        long before = budget.reservedBytes();
+        var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
+        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), 1);
+        try {
+            var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
+            var command = original.command();
+            var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
+                    .inspect(coordinator, original.key(), command.sha256(), RepositoryReadControl.NONE);
+            require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND,
+                    "provider owner begins from actual expired predecessor discovery");
+            var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
+            require(command.intent().getMembersCount() == 1, "fixture has one mixed member");
+            var member = command.intent().getMembers(0);
+            for (int ordinal = 0; ordinal < member.getPartsCount(); ordinal++) {
+                var part = member.getParts(ordinal);
+                if (part.hasUpload()) bodies.put(new DocumentUploadPayloads.Key(member.getMemberId(), ordinal),
+                        new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(), part.getSlot().getSubKey(),
+                                Objects.requireNonNull(fragments.get(ordinal)).toByteArray(), part.getUpload().getSha256()));
+            }
+            require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
+            var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
+            try (var request = attempts.beginProposed(caller, original, modes, observed, Duration.ofMinutes(2), timeouts)) {
+                try {
+                    request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
+                    throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
+                } catch (IllegalArgumentException refused) {
+                    require(refused.getMessage().contains("complete command upload payloads"), "missing bytes refused before reservation");
+                }
+                var uploadKey = bodies.keySet().iterator().next();
+                var valid = bodies.get(uploadKey); var corrupt = valid.bytes().clone(); corrupt[0] ^= 1;
+                try {
+                    request.advancePreparation(coordinator, modes, Map.of(uploadKey,
+                            new ai.protomolt.proto.repo.codec.PartObject(valid.part(), valid.subKey(), corrupt, valid.sha256())),
+                            RepositoryReadControl.NONE);
+                    throw new AssertionError("Corrupt resubmitted bytes reserved historical recovery");
+                } catch (IllegalArgumentException refused) {
+                    require(refused.getMessage().contains("checksum differs"), "actual bytes are checked before reservation");
+                }
+                require(count(tx, "repository_coordinator_expirations", command.operationId()) == 0
+                        && count(tx, "repository_successor_installs", command.operationId()) == 0,
+                        "bad payloads perform no reservation or installation writes");
+                require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
+                        == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "first call reserves one proposal");
+            }
+            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "proposal survives first call");
+            final RepositorySuccessorInstall.Plan plan;
+            try (var request = attempts.resume(caller, command).orElseThrow()) {
+                require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
+                        == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "second call confirms retained installation");
+                plan = request.installedPlan(coordinator, RepositoryReadControl.NONE);
+            }
+            require(count(tx, "repository_coordinator_expirations", command.operationId()) == 1
+                    && count(tx, "repository_successor_installs", command.operationId()) == 1,
+                    "one exact reservation and installation before any new history capture");
+            System.out.println("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
+            return new Prepared(attempts, plan, budget, before, coordinator);
+        } catch (Exception | Error failure) {
+            attempts.close();
+            try {
+                require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
+                        "failed preparation releases its local owner");
+                require(budget.reservedBytes() == before, "failed preparation returns retained bytes");
+            } catch (Exception | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, RepositoryCaller coordinator,
-            DocumentPublicationPreparationRecord original, RepositorySuccessorInstall.Plan plan,
+            DocumentPublicationPreparationRecord original, Prepared prepared,
             DocumentHistoricalAssessmentSources sources, DocumentHistoricalAssessmentSources.Work accepted,
             DocumentSchemaPolicies.Selection policy, Map<Integer, ByteString> fragments,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
@@ -20,17 +101,17 @@ final class HistoricalInstalledOwnerProbe {
             DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault,
             javax.sql.DataSource database, Check check) throws Exception {
         require(!caller.processAuthority(), "installed owner uses scoped execution caller");
+        var plan = prepared.plan();
         var command = plan.next().command();
-        long before = budget.reservedBytes();
-        var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
-        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), 1);
+        long before = prepared.before();
+        var attempts = prepared.attempts();
         var runtime = new DocumentPublicationScopeCalls();
         boolean transferred = false;
         Throwable primary = null;
         try {
             DocumentAssessmentStartJournal.Started started;
             DocumentOperationUploadAdmission.Admission admitted;
-            try (var call = runtime.enter(); var request = attempts.beginInstalled(caller, plan, original)) {
+            try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 request.attachSources(sources, accepted, RepositoryReadControl.NONE); transferred = true;
                 request.openExecution(coordinator, RepositoryReadControl.NONE);
                 admitted = request.admitUploads(RepositoryReadControl.NONE);

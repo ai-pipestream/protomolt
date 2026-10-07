@@ -158,6 +158,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK", "SCOPED_CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK");
                 assertThat(result).contains("SCOPED_HISTORICAL_MIXED_SUCCESSOR_PUBLICATION_OK");
                 assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
+                assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
                 assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 assertThat(result).contains("HISTORICAL_CREATE_RECONCILED_OK", "HISTORICAL_CREATE_ROLLBACK_RECONCILED_OK",
                         "HISTORICAL_RECONCILIATION_MANIFEST_REFUSED_OK");
@@ -313,6 +314,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 String result = Files.readString(reconciliationLog);
                 assertThat(reconciliation.exitValue()).as(result).isZero();
                 assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK", "HISTORICAL_RECONCILIATION_HOST_OK");
+                assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
                 assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
                         "HISTORICAL_RECONCILIATION_RELEASED_OK");

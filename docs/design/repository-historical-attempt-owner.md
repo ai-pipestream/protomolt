@@ -1,6 +1,6 @@
 # Managed historical attempt ownership
 
-Status: reviewed design; a private installed-plan owner is implemented. Public
+Status: reviewed design; a private owner spans proposal, installation and execution. Public
 routing and the complete managed recovery path are not implemented.
 Build on `RepositoryHistoricalSuccessorActivation`, its accepted-call attachment,
 and its classified capture disposal. Keep the public historical publication gate
@@ -167,7 +167,8 @@ upload/readback, exact receipt replay and final ownership drainage. Its standalo
 request barrier exercises the private owner; it does not establish managed runtime
 routing. See [multi-call publication evidence](../evidence/repository/2026-10-07-installed-historical-publication/README.md).
 
-Still required before managed use: own proposal/install uncertainty, then wire and
+Still required before managed use: reconcile this owner's expired reservations and
+uncertain attached activations, then wire and
 qualify both library and transport entry points. The private owner now supports
 authenticated terminal/fenced retirement, as qualified below. The facade gate remains unchanged.
 
@@ -262,7 +263,7 @@ for post-proof root Work closure with an actual child still held; cancellation r
 the entry and its budget until a later call completes drainage. See
 [retirement evidence](../evidence/repository/2026-10-07-historical-retirement/README.md).
 
-## Next: retain ownership before reservation and installation
+## Implemented: private preparation ownership
 
 Extend this same per-key owner backward through proposed, reserved and installed
 phases. Do not transfer a completed ordinary recovery entry into a second map: its
@@ -292,4 +293,69 @@ Qualification must cover lost reservation and installation replies with unchange
 identities, capacity refusal before reservation, exact-plan confirmation after install,
 failed capture transfer without leaked ownership, unchanged execution across activation,
 terminal/fenced disposal before installation, and shutdown with actual workers held.
-These are the next implementation requirements, not available public behavior.
+These remain qualification requirements, not available public behavior.
+
+`RepositoryHistoricalAttemptPreparation` now retains proposed/reserved/installed
+state inside the existing owner's entry. `beginProposed` preserves exact caller,
+command, requested modes and retention bytes, including when a retry decodes a new
+Java object for the same retained record. Advance snapshots and checks resubmitted
+upload bytes before reservation mutations. It verifies the exact durable preparation,
+history projection and initial capture anchor using the same check as activation;
+activation retains its original SQL locks. Fixed predecessor modes are checked before
+reservation. The same loaded preparation and minted plan survive interrupted replies.
+
+Eleven new SQL cases plus 38 owner/activation/disposal regressions pass. They include
+actual post-commit JDBC reply loss with confirmation interrupted, exact identities on
+retry, fresh-owner recovery of expired unactivated reservations/installations, wrong
+retention and mode refusal before writes, metadata-only shutdown, and byte capacity
+refusal. Source setup uses synthetic provider observations. The expanded production-JAR
+gate separately qualifies the same owner from pre-reservation through source capture,
+assessment, actual provider publication, receipt replay and terminal retirement.
+Missing and corrupt resubmitted bytes cause zero reservation/installation writes.
+Existing CREATE reply-loss reconciliation and revocation/expiry cases now use this
+preparation path too. See [preparation evidence](../evidence/repository/2026-10-07-historical-proposed-owner/README.md).
+This private qualification does not enable managed public recovery.
+
+The tests exposed an object-identity comparison in historical source Work. The binding
+now compares operation ID and canonical command bytes, so a decoded exact command is
+valid but another operation with identical semantic content is not. Canonical command
+bytes alone are insufficient because they intentionally exclude operation ID.
+
+Current limitations: reservation preflight authorization and the private reservation
+write are separate transactions. Later loading and activation reauthorize, and no
+provider execution is granted by reservation. Decide and qualify the required
+revocation boundary before public dispatch. Preparation currently retains the bounded
+maximum next-record lease until disposal; lowering this to measured retained bytes is
+a memory-capacity optimization still to assess, not a qualified throughput claim.
+
+## Next: recover this owner's expired unactivated proposal
+
+Permit a retained V98 transition only when no sources, activation, execution or
+retirement proof have attached to the entry. This covers an uncertain V97 reply,
+reserved work, and an installed plan that has not started activation. Fresh discovery
+must identify exactly this entry's successor epoch, token and incarnation, together
+with the expected predecessor owner/preparation/install tuple. A still-original
+predecessor requires retrying the retained V97; it does not justify a fresh proposal.
+
+Retain a pending supersession before its first SQL submission. On retry, confirm that
+exact pending proposal before considering discovery. Require complete resubmitted
+payloads, current caller authorization, exact historical retention, and fixed modes.
+Only after V98 confirmation may the exclusively borrowed entry adopt the pending
+proposal, release old preparation leases and clear its old installation plan. Resume
+at RESERVED in the same map entry. A lost reply must not mint another identity.
+
+Refuse that transition once any source or activation attaches. An uncertain V94 may
+already be bound: reservation fencing neither drains its readers nor permits resetting
+acknowledged START, assessment, CREATE or publication state. Recovery of those states
+requires exact capture classification and actual local drainage, or terminal/fenced
+retirement followed by a separately qualified successor path.
+
+Test each unactivated phase with real expiry, lost V98 acknowledgment, refusal of a
+foreign successor, retained budgets on refusal, and no new history capture before the
+replacement installation is confirmed. These transitions are not implemented yet.
+
+While a supersession is pending, refuse ordinary advancement, installed-plan delivery
+and source transfer until it is confirmed. Fenced retirement must check both current
+and pending successor identities; fencing the old claim alone must not discard a
+potentially committed replacement. Keep a single authoritative current proposal in
+the preparation helper rather than independently mutating an entry-level copy.

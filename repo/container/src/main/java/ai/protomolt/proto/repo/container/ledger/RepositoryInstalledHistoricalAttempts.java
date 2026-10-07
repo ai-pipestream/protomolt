@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.function.Function;
 
-/** Private ownership after installation. Does not own reservation/install or enable public recovery. */
+/** Private historical ownership from proposal through execution. Does not enable public recovery. */
 final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     record Drain(int active, int unresolved) {}
     enum Retirement { NOT_PROVEN, RETAINED, RETIRED }
@@ -27,7 +27,11 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
 
     private static final class Entry {
         final RepositoryCaller caller;
-        final RepositorySuccessorInstall.Plan plan;
+        final RepositoryOperationLedger.Key key;
+        final DocumentPublicationCommand command;
+        final RepositoryCoordinatorReservation.Proposal reservation;
+        final RepositoryHistoricalAttemptPreparation preparation;
+        RepositorySuccessorInstall.Plan plan;
         final DocumentPublicationPreparationRecord retention;
         final DocumentSuccessorFingerprint fingerprint;
         final ByteString retentionDigest;
@@ -48,6 +52,18 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 ByteString retentionDigest, PayloadBudget.Lease bytes) {
             this.caller = caller; this.plan = plan; this.retention = retention;
             this.fingerprint = fingerprint; this.retentionDigest = retentionDigest; this.bytes = bytes;
+            key = plan.next().key(); command = plan.next().command(); reservation = plan.reservation(); preparation = null;
+        }
+        Entry(RepositoryCaller caller, DocumentPublicationPreparationRecord retention,
+                RepositoryCoordinatorReservation.Proposal reservation, RepositoryHistoricalAttemptPreparation preparation,
+                PayloadBudget.Lease bytes, ByteString retentionDigest) {
+            this.caller = caller; this.retention = retention; this.reservation = reservation;
+            this.preparation = preparation; this.bytes = bytes;
+            key = retention.key(); command = retention.command(); fingerprint = null; this.retentionDigest = retentionDigest;
+        }
+        void releaseBytes() {
+            if (preparation != null) preparation.close();
+            bytes.close();
         }
     }
 
@@ -72,11 +88,12 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         if (existing != null && existing.borrowed) throw conflict("Historical attempt is in use");
         if (active >= capacity || existing == null && entries.size() >= capacity)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
-        if (existing != null && existing.caller.equals(caller) && existing.plan.equals(plan)
+        if (existing != null && existing.caller.equals(caller) && Objects.equals(existing.plan, plan)
                 && existing.retention.equals(retention)) {
             existing.borrowed = true; active++;
             return new Attempt(existing);
         }
+        if (existing != null && existing.preparation != null) throw conflict("Historical retry must resume retained preparation");
         // Scratch is temporary; retained accounting uses the actual bounded encoded sizes.
         try (var scratch = budget.reserve(3L * DocumentPublicationPreparationCodec.MAX_BYTES
                 + DocumentPublicationModesJournal.MAX_BYTES)) {
@@ -102,6 +119,64 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         }
     }
 
+    /** No SQL. Store one proposal before reservation; newer discovery never replaces a retained entry. */
+    synchronized Attempt beginProposed(RepositoryCaller caller, DocumentPublicationPreparationRecord retention,
+            Map<String, DocumentPublicationCandidate.Mode> modes,
+            RepositoryCoordinatorRecoveryDiscovery.Observation observed, Duration lease, SqlTimeouts timeouts) {
+        if (closed) throw unavailable();
+        Objects.requireNonNull(caller); Objects.requireNonNull(retention); Objects.requireNonNull(timeouts);
+        Objects.requireNonNull(lease);
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Historical recovery lease requires one second to one day");
+        var key = retention.key(); var command = retention.command();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        var requested = Map.copyOf(modes);
+        var encodedModes = DocumentPublicationModesJournal.encode(command, requested);
+        var existing = entries.get(key);
+        if (existing != null) {
+            if (!existing.caller.equals(caller) || existing.preparation == null || !existing.preparation.matches(requested, lease, timeouts))
+                throw conflict("Historical retry identity changed");
+            if (!existing.retention.equals(retention)) {
+                try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+                    if (!existing.retentionDigest.equals(digest(DocumentPublicationPreparationCodec.encode(retention))))
+                        throw conflict("Historical retry retention changed");
+                }
+            }
+            return resume(caller, command).orElseThrow();
+        }
+        if (entries.size() >= capacity || active >= capacity)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
+        try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+            var retained = DocumentPublicationPreparationCodec.encode(retention);
+            var bytes = budget.reserve((long) retained.size() + command.canonical().size()
+                    + command.intent().getSerializedSize() + encodedModes.length() * 2L);
+            try {
+                Objects.requireNonNull(observed);
+                RepositoryCoordinatorReservation.Proposal proposal;
+                if (observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND) {
+                    var source = observed.candidate().orElseThrow();
+                    proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(source.predecessor(),
+                            UUID.randomUUID(), UUID.randomUUID(), lease, source.owner());
+                } else if (observed.unactivated().isPresent()) {
+                    var source = observed.unactivated().orElseThrow();
+                    proposal = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                            UUID.randomUUID(), UUID.randomUUID(), lease, source.owner(), source.preparationSha256(), source.installation());
+                } else throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Historical recovery state is not eligible: " + observed.status());
+                var owner = RepositoryCoordinatorReservation.owner(proposal).orElseThrow();
+                if (!proposal.predecessor().key().equals(key) || !proposal.predecessor().commandSha256().equals(command.sha256())
+                        || owner.generation() <= retention.predecessorGeneration()
+                        || owner.generation() == retention.predecessorGeneration() + 1 && !owner.nonce().equals(retention.seeds().ownerNonce()))
+                    throw conflict("Historical recovery observation differs from retained command");
+                var preparation = new RepositoryHistoricalAttemptPreparation(tx, budget, timeouts, proposal, command, requested, lease,
+                        retention, DocumentPublicationPreparationJournal.digest(retained));
+                var entry = new Entry(caller, retention, proposal, preparation, bytes, digest(retained));
+                entries.put(key, entry); entry.borrowed = true; active++;
+                return new Attempt(entry);
+            } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
+        }
+    }
+
     /** Resume before discovery or allocating another capture. The exact entry's plan remains fixed. */
     synchronized Optional<Attempt> resume(RepositoryCaller caller, DocumentPublicationCommand command) {
         if (closed) throw unavailable();
@@ -110,7 +185,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
         var entry = entries.get(key);
         if (entry == null) return Optional.empty();
-        if (!entry.caller.equals(caller) || !entry.plan.next().command().canonical().equals(command.canonical()))
+        if (!entry.caller.equals(caller) || !entry.command.canonical().equals(command.canonical()))
             throw conflict("Historical retry identity changed");
         if (entry.borrowed) throw conflict("Historical attempt is in use");
         if (active >= capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
@@ -139,10 +214,31 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 throw conflict("Historical attempt is retained for disposal only");
         }
 
+        synchronized RepositoryHistoricalAttemptPreparation.Phase advancePreparation(RepositoryCaller coordinator,
+                Map<String, DocumentPublicationCandidate.Mode> modes,
+                Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> payloads,
+                RepositoryReadControl control) {
+            requireMutable(control);
+            if (entry.preparation == null) throw conflict("Historical entry already began installed");
+            var phase = entry.preparation.advance(coordinator, entry.caller, modes, payloads, control);
+            if (phase == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED)
+                entry.plan = entry.preparation.installedPlan(); // Same immutable object; preparation owns its byte lease.
+            return phase;
+        }
+
+        /** Private coordinator view of a confirmed plan; this grants no execution authority. */
+        synchronized RepositorySuccessorInstall.Plan installedPlan(RepositoryCaller coordinator, RepositoryReadControl control) {
+            requireMutable(control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
+            if (entry.plan == null) throw conflict("Historical installation is not confirmed");
+            return entry.plan;
+        }
+
         /** Success transfers sources, root Work and exact histories. Failure transfers nothing. */
         synchronized void attachSources(DocumentHistoricalAssessmentSources sources,
                 DocumentHistoricalAssessmentSources.Work work, RepositoryReadControl control) {
             requireMutable(control);
+            if (entry.plan == null) throw conflict("Historical installation is not confirmed");
             if (entry.sources != null) throw conflict("Historical sources are already attached");
             Objects.requireNonNull(sources); Objects.requireNonNull(work);
             var histories = work.histories(sources);
@@ -157,7 +253,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         /** Retains the same handle, including acknowledged START and sticky mutation flags, across calls. */
         synchronized void openExecution(RepositoryCaller coordinator, RepositoryReadControl control) {
             authorize(control);
-            RepositoryCoordinatorReservation.require(coordinator, entry.plan.reservation(), control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
             if (entry.execution == null) entry.execution = entry.activation.openAcceptedExecution(coordinator, entry.caller,
                     entry.work, entry.scopes, entry.parent, control);
         }
@@ -233,9 +329,9 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 RepositoryReadControl control, boolean terminal) throws InterruptedException {
             requireActive(control);
             long nanos = checkedNanos(timeout), start = System.nanoTime();
-            RepositoryCoordinatorReservation.require(coordinator, entry.plan.reservation(), control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
             if (entry.retirement == RetirementProof.NONE) {
-                var command = entry.plan.next().command();
+                var command = entry.command;
                 if (terminal) {
                     // Observe the global terminal outcome, which may belong to a later generation.
                     var observed = new DocumentPublicationReplay(tx).observe(entry.caller, command);
@@ -246,8 +342,8 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                     }
                     entry.retirement = RetirementProof.TERMINAL;
                 } else {
-                    var reservation = entry.plan.reservation();
-                    var identity = new RepositoryCoordinatorDrain.Identity(entry.plan.next().key(), command.sha256(),
+                    var reservation = entry.reservation;
+                    var identity = new RepositoryCoordinatorDrain.Identity(entry.key, command.sha256(),
                             reservation.predecessor().epoch() + 1, reservation.successorToken(), reservation.successorIncarnation());
                     if (!RepositoryClaimRetirement.fenced(tx, command, List.of(identity), control)) return Retirement.NOT_PROVEN;
                     entry.retirement = RetirementProof.FENCED;
@@ -257,9 +353,9 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             if (!disposeEntry(entry, coordinator, nanos, start, control)) return Retirement.RETAINED;
             control.check();
             synchronized (RepositoryInstalledHistoricalAttempts.this) {
-                if (!entries.remove(entry.plan.next().key(), entry))
+                if (!entries.remove(entry.key, entry))
                     throw new IllegalStateException("Historical entry lost exclusive retirement ownership");
-                entry.bytes.close();
+                entry.releaseBytes();
                 ended = true; entry.borrowed = false; active--;
                 RepositoryInstalledHistoricalAttempts.this.notifyAll();
             }
@@ -302,12 +398,12 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         try {
             for (var entry : retained) {
                 control.check();
-                var coordinator = Objects.requireNonNull(authority.apply(entry.plan.next().key()));
-                RepositoryCoordinatorReservation.require(coordinator, entry.plan.reservation(), control);
+                var coordinator = Objects.requireNonNull(authority.apply(entry.key));
+                RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
                 if (!disposeEntry(entry, coordinator, nanos, start, control)) return false;
                 control.check();
-                entry.bytes.close();
-                synchronized (this) { entries.remove(entry.plan.next().key(), entry); }
+                entry.releaseBytes();
+                synchronized (this) { entries.remove(entry.key, entry); }
             }
             return true;
         } finally { synchronized (this) { detaching = false; notifyAll(); } }

@@ -47,10 +47,17 @@ final class HistoricalSuccessorCreateProbe {
                             && refused.getMessage().contains("private process authority"), "recovery requires host authority");
                 }
             }
-            RepositoryCoordinatorExpiration.reserve(tx, coordinator, reservation, RepositoryReadControl.NONE);
             var modes = Map.of("a", DocumentPublicationCandidate.Mode.TYPED);
-            var plan = RepositorySuccessorInstall.prepare(reservation, original, Duration.ofMinutes(2), modes);
-            RepositorySuccessorInstall.install(tx, budget, coordinator, plan, RepositoryReadControl.NONE);
+            try (var preparedOwner = installedOwner ? HistoricalInstalledOwnerProbe.prepare(tx, caller, coordinator,
+                    original, fragments, budget, check) : null) {
+            final RepositorySuccessorInstall.Plan plan;
+            if (preparedOwner != null) {
+                plan = preparedOwner.plan();
+            } else {
+                RepositoryCoordinatorExpiration.reserve(tx, coordinator, reservation, RepositoryReadControl.NONE);
+                plan = RepositorySuccessorInstall.prepare(reservation, original, Duration.ofMinutes(2), modes);
+                RepositorySuccessorInstall.install(tx, budget, coordinator, plan, RepositoryReadControl.NONE);
+            }
             var selector = command.intent().getMembers(0).getPartsList().stream().filter(p -> p.hasHistoricalReuse())
                     .findFirst().orElseThrow().getHistoricalReuse();
             var reads = new DocumentReadLedger(tx, UUID.randomUUID());
@@ -88,7 +95,7 @@ final class HistoricalSuccessorCreateProbe {
                 }
                 require(fresh.size() == fragments.size(), "every fragment is reread or explicitly resubmitted");
                 if (installedOwner) {
-                    HistoricalInstalledOwnerProbe.run(tx, provider, caller, coordinator, original, plan, sources, accepted,
+                    HistoricalInstalledOwnerProbe.run(tx, provider, caller, coordinator, original, preparedOwner, sources, accepted,
                             policy, fresh, container, resolver, limits, budget, observation, fault, database, check);
                     return;
                 }
@@ -262,6 +269,7 @@ final class HistoricalSuccessorCreateProbe {
             } finally {
                 scopes.close(); history.close(); require(history.awaitDrained(Duration.ofSeconds(1)), "new history drains");
                 history.release(); reads.fence(); reads.attestLocalQuiescence();
+            }
             }
         }
     }
