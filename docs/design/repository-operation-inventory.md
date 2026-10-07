@@ -1,5 +1,48 @@
 # Repository operation inventory
 
+## Archive snapshots and restore activation inventory (2026-10-07)
+
+Current source baseline: `50e01d7e2aea365ec298df8bca9ce00488a160db`.
+Earlier dated checkpoints below describe their original state, not current
+availability. This inventory does not mark the full repository goal complete.
+
+- **Extended, implemented:** archive unary put, managed/streaming upload, and
+  bridge publication capture `VersionManifest.metadata_snapshot`. Historical
+  manifest reads and version listings return it; response `info` stays current.
+  V102 freezes snapshots and snapshot-bearing identity. Legacy absence is unknown.
+  [Evidence](../evidence/repository/2026-10-07-archive-metadata/README.md).
+- **Unchanged:** equal-content archive deduplication, rendition checksums, current
+  classification/display-label edits, existing write attribution, mutation receipts,
+  physical-object references and protobuf identities. No archive schema-admission
+  receipt is created by the snapshot change.
+- **Existing, internal:** `PublicationHistoricalReuse` binds source address, revision
+  UUID, manifest ordinal, slot and physical identity into the canonical command.
+  `DocumentHistoricalAssessmentSources` owns exact source Uses;
+  `DocumentPublicationAssessment.Historical` retains schemas and publishes through
+  `DocumentPublicationCommit`. It is not a public restore endpoint.
+- **Existing regression evidence:** `HistoricalMixedPublicationProbe` emits
+  `HISTORICAL_MIXED_MEMBER_PROVIDER_OK`, required by
+  `DocumentAssessmentStorageRuntimeTest`. Historical CORE plus fresh PARSED bytes
+  in one member therefore has real-provider coverage, beyond the earlier SQL-only
+  checkpoint. Re-run it when changing this execution path.
+- **Extended, implemented:** private preparation serialization can validate and
+  round-trip inert historical intents, using the existing codec and shared
+  placement/attempt checks. It creates no pin, claim, journal row or executable
+  plan. Ordinary preparation, claim acquisition and facade execution remain gated.
+- **Extended, designed next:** claimed registration, durable pending-source
+  retention, resumed source capture, assessment ownership and commit fencing
+  for historical commands. Reuse the existing journal and claim epochs; do not
+  invent another operation ledger. See
+  [claimed historical execution](repository-historical-restore.md#claimed-historical-execution-plan).
+- **Unchanged until qualified:** `PublishDocument` continues refusing historical
+  execution. `DocumentPublicationRestoration` resumes ordinary interrupted
+  assessments; its name does not mean user-requested historical restoration.
+- **Still missing:** archive typed rendition admission and immutable schema
+  references, complete archive source/derivation bindings, public historical
+  restore composition, backup recovery qualification, and progressive hydration.
+  An archive `schema_subject` string is currently recorded, not enforced or an
+  immutable retained descriptor identity.
+
 ## Durable credential authority primitive (2026-10-06)
 
 - **New internal operations:** register an exact credential authority, revoke its

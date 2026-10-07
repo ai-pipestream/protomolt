@@ -16,8 +16,15 @@ record DocumentPublicationPreparationRecord(RepositoryOperationLedger.Key key, D
         if (predecessorGeneration < 0 || predecessorGeneration == Long.MAX_VALUE)
             throw new IllegalArgumentException("Invalid preparation predecessor");
         seeds.requireCommand(key, command);
-        // Reuse the production coverage, placement and upload identity checks.
-        DocumentOperationUploadAdmission.prepare(command, placements, seeds.attempts(), lease, seeds.uploadTokens());
+        if (command.intent().getMembersList().stream().anyMatch(member -> member.getPartsList().stream()
+                .anyMatch(ai.protomolt.proto.repo.v1.DocumentPublicationPart::hasHistoricalReuse))) {
+            // Persisting selectors does not reacquire live historical source preparations.
+            DocumentOperationUploadAdmission.requireLease(lease);
+            DocumentUploadPlan.validatePreparationShape(command, placements, seeds.attempts());
+        } else {
+            // Preserve the existing full ordinary preparation validation.
+            DocumentOperationUploadAdmission.prepare(command, placements, seeds.attempts(), lease, seeds.uploadTokens());
+        }
     }
 
     DocumentOperationUploadAdmission.Prepared prepare() {

@@ -529,8 +529,124 @@ historical CORE and a fresh PARSED upload within one typed member. It refuses an
 unverified upload, preserves historical manifest entries and physical identities,
 checks the fresh upload's selected attempt and byte metadata, and replays both
 roots using retained schemas without registry access. Provider observations in
-this test are synthetic; actual-provider same-member reads remain unqualified.
+that SQL test are synthetic. Subsequent `HistoricalMixedPublicationProbe` coverage
+also exercises the same-member path against a real provider; its
+`HISTORICAL_MIXED_MEMBER_PROVIDER_OK` marker is required by
+`DocumentAssessmentStorageRuntimeTest`.
 See [same-member evidence](../evidence/repository/2026-10-06-historical-mixed-member/README.md).
 Public restoration, claimed-session activation and automatic
 claim transfer remain disabled. These are required follow-ups, not an assertion
 that the full repository goal is complete.
+
+## Claimed historical execution plan
+
+Source audit baseline: `50e01d7e2aea365ec298df8bca9ce00488a160db`.
+This is the next implementation boundary, not an enabled capability.
+
+The wire selector and canonical command already bind the historical revision and
+exact object. No new restore RPC or selector field is needed for this boundary.
+The missing part is the normal coordinator lifetime: initial claim, sealed
+preparation, owner registration, restart, successor fencing, and durable replay.
+
+At the audit baseline, `DocumentPublicationPreparationRecord` validated and reconstructed via
+ordinary `DocumentOperationUploadAdmission.prepare`. Historical plans instead
+require live source preparations from `prepareHistorical`. The preparation codec
+already stores the canonical intent; it must not serialize live Uses or pretend
+that decoding an intent recreates pins. `RepositoryExecutionClaimLedger` and the
+ordinary facade explicitly refuse historical execution. Historical assessment
+creation also refuses an execution claim. Remove these barriers only at their
+reviewed shared boundary, not as an independent enablement patch.
+
+The first implementation now separates inert validation: historical records use
+the same private member/placement/attempt loop and lease rule without returning
+a prepared plan. Owner/attempt/token coverage still comes from
+`DocumentPublicationSeeds`. The existing codec can round-trip the intent with
+or without fresh uploads; no format change or duplicated selector list is needed.
+Ordinary records retain their existing full preparation validation. Record
+`prepare()`, claim acquisition and public execution still refuse historical
+commands. This is serialization groundwork, not durable registration or recovery.
+
+### Durable intent and live authority
+
+1. Separate pure preparation-shape validation from acquisition of live source
+   references. Persist the existing exact command, placements, owner/attempt seeds,
+   mode binding and predecessor generation. Its historical selectors are the
+   authoritative source identities; do not add a second independently mutable
+   selector list. Decode into inert data, not an executable session.
+2. Reacquire each distinct `(source address, revision UUID)` through
+   `DocumentReadLedger.captureHistorical` under the authenticated caller. Use
+   `DocumentHistoricalAssessmentSources` to check complete selector coverage,
+   ordinals, slots, bytes and original backend bindings. Current-head advancement
+   is allowed; source pruning, changed physical identity or revoked READ is not a
+   reason to substitute another version. Reuse the existing byte budget and limits.
+3. Bind the initial claim, preparation digest, modes and owner atomically using
+   the existing registration journal. Source preparation remains live through
+   registration, assessment and commit. Registration checks current credential
+   generation, source READ, destination WRITE/creation authority and placement.
+   A retained preparation is neither an access grant nor proof that pins survived
+   a crash. Acquire resources outside SQL; SQL verifies the captured witnesses.
+   Verify exact sources with the existing historical reference checks in the
+   operation/policy, destination/source revision, drive/backend, independent
+   origin/retention lock order before registration commits.
+4. On resumed execution, authenticate again, reconcile a terminal result first,
+   verify the stored command/preparation/modes, and reacquire fresh pins before
+   constructing a historical execution owner. Keep existing successor epochs,
+   owner fencing, deterministic lock order and database lease time. A replaced
+   owner must not publish even if its provider work eventually returns.
+5. Extend historical assessment creation and publication to accept only the exact
+   current claimed owner and sealed preparation. Keep promotion inside the source
+   owner. V83 assessment-start identity is sticky within an owner generation:
+   reuse its exact assessment only after fresh authorization and policy checks.
+   If it is ineligible, fail/fence that generation and use an explicitly qualified
+   new-generation or new-operation protocol; never silently create another
+   assessment in the same generation. Reconcile uncertain CREATE or consumed
+   promotion against the exact durable identity first. Retained definitions remain historical; a
+   newer registry definition under the same URL cannot replace them.
+6. Release Uses after work drains and committed references or recovery own the
+   physical effects. Cancellation before commit cannot create success. An uncertain
+   commit is resolved by durable outcome lookup, not by repeating a consumed
+   assessment or copying the selected bytes to a new untracked location.
+
+Before claimed restore is activated, durable pending preparations need indexed
+source and schema retention across process death. An in-memory Use and an opaque
+journal blob do not supply that protection. Bind retention to the exact sealed
+preparation in the registration transaction, transfer it under successor fencing,
+and release it only after terminal/abandoned-state recovery establishes safety.
+Source pruning must remain disabled until this index and cleanup protocol are
+qualified. Fresh execution still reacquires read pins and current permission;
+durable retention grants neither. Coordinator process authority must remain
+separate from the freshly authenticated execution caller; a journaled principal
+or credential identifier cannot be borrowed as authority after revocation.
+
+Source metadata/security remains provenance. Restoration updates a destination
+under its current ownership; it does not install historical ACLs. Keep historical
+restore distinct from optional JCR graph/version restoration. No JCR dependency
+or document-only transaction restriction is introduced.
+
+### Acceptance before enabling public restore
+
+- With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
+  unchanged. Exact retries return the same terminal receipt without uploads.
+- A changed selector, physical identity, mode, placement or destination condition
+  under one operation identity is a conflict. Decode of tampered or mismatched
+  preparation fails before provider work.
+- Restart after sealed registration and before commit reacquires r1, even when the
+  current head advances. Stale destination conditions still fail. Revoked READ,
+  WRITE, credential generation or creation grant cannot be revived by the journal.
+- Real SQL barriers prove both revocation/commit orderings and successor fencing;
+  no provider/schema calls execute under SQL locks. Independent operations using
+  the same credential can still overlap.
+- Crash/uncertain commit, held provider read, cancellation and failed pin release
+  preserve exact recovery ownership. A late predecessor cannot commit.
+- Retained definitions decode and validate without the original registry. Changed
+  current policy is evaluated explicitly; opaque content is not silently promoted
+  to typed success. Both semantic and contract-invalid fixtures retain their
+  distinct meanings.
+- Run the same completed operation through library and authenticated gRPC, then
+  remove the public historical guard. Until these cases pass, the guard remains.
+
+The first deliverable is private claimed preparation/recovery with real SQL and
+provider evidence, followed by shared session integration and transport parity.
+Published examples must wait for the public acceptance cases. Pending-source
+retention and safe cleanup are prerequisites for claimed restore activation;
+broader backup qualification and progressive hydration remain required afterward.
