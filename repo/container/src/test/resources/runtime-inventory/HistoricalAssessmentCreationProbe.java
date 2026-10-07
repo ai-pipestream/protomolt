@@ -15,7 +15,7 @@ public final class HistoricalAssessmentCreationProbe {
         ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
-        SCOPED_MIXED_SUCCESSOR
+        SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
@@ -47,9 +47,10 @@ public final class HistoricalAssessmentCreationProbe {
         boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
         boolean mixed = scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
                 || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION
-                || scenario == Scenario.SCOPED_MIXED_SUCCESSOR;
+                || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || scenario == Scenario.OWNED_SCOPED_MIXED_SUCCESSOR;
         boolean scoped = scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
-                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || gate != null;
+                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                || scenario == Scenario.OWNED_SCOPED_MIXED_SUCCESSOR || gate != null;
         var credential = new RepositoryCredentialBinding("historical-create", UUID.randomUUID(), 1);
         var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
                 : new RepositoryCaller("principal", true);
@@ -187,7 +188,8 @@ public final class HistoricalAssessmentCreationProbe {
         var key = new RepositoryOperationLedger.Key("account", caller.principalName(), command.operationId());
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                 Map.of(placement.drive().id(), placement),
-                scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
+                scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || scenario == Scenario.OWNED_SCOPED_MIXED_SUCCESSOR ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
         var scopes = new DocumentPublicationScopeCalls();
         try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
             var registration = DocumentPublicationRegistration.historical(tx, budget, record, sources, UUID.randomUUID(),
@@ -217,9 +219,11 @@ public final class HistoricalAssessmentCreationProbe {
                         "repeated start preserves coordinates and acknowledged permission");
                 if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
                         "lost START acknowledgement recovers identity; rolled back START permits a new identity");
-                if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR) {
+                if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || scenario == Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) {
                     HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
-                            policy, fragments, budget, observation, registration.drainIdentity());
+                            policy, fragments, budget, observation, registration.drainIdentity(),
+                            scenario == Scenario.OWNED_SCOPED_MIXED_SUCCESSOR);
                     return;
                 }
                 var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());

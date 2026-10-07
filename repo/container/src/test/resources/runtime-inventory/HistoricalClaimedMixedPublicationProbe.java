@@ -19,6 +19,23 @@ final class HistoricalClaimedMixedPublicationProbe {
         var result = execution.publishAssessment(caller, assessment, selections, observation,
                 new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false),
                 stage, RepositoryReadControl.NONE);
+        verify(tx, provider, caller, command, owner, selections, fragments, result);
+        try {
+            execution.publishAssessment(caller, assessment, selections, observation,
+                    new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false),
+                    stage, RepositoryReadControl.NONE);
+            throw new AssertionError("Mixed publication allowed another promotion");
+        } catch (RepositoryException refused) {
+            require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                    && refused.getMessage().contains("requires reconciliation"), "mixed retry requires reconciliation");
+        }
+        System.out.println(caller.processAuthority() ? "CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK"
+                : "SCOPED_CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK");
+    }
+
+    static void verify(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
+            RepositoryOperationLedger.Owner owner, Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+            Map<Integer, ByteString> fragments, ai.protomolt.proto.repo.v1.DocumentPublicationResult result) throws Exception {
         require(result.getMembersCount() == 1 && result.getOwnerGeneration() == owner.generation()
                 && result.getCommandSha256().equals(command.sha256()), "mixed receipt binds exact owner and command");
         require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
@@ -72,17 +89,6 @@ final class HistoricalClaimedMixedPublicationProbe {
             require(retained.awaitDrained(Duration.ofSeconds(1)), "mixed read capture drains");
             retained.release(); reads.fence(); reads.attestLocalQuiescence();
         }
-        try {
-            execution.publishAssessment(caller, assessment, selections, observation,
-                    new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false),
-                    stage, RepositoryReadControl.NONE);
-            throw new AssertionError("Mixed publication allowed another promotion");
-        } catch (RepositoryException refused) {
-            require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
-                    && refused.getMessage().contains("requires reconciliation"), "mixed retry requires reconciliation");
-        }
-        System.out.println(caller.processAuthority() ? "CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK"
-                : "SCOPED_CLAIMED_HISTORICAL_MIXED_PUBLICATION_OK");
     }
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
 }

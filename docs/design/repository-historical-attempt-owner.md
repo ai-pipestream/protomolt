@@ -161,9 +161,36 @@ observations; it is not provider durability evidence. The 21 existing activation
 capture-disposal tests also pass. See the
 [installed owner evidence](../evidence/repository/2026-10-07-installed-historical-owner/README.md).
 
-Still required before managed use: qualify retained assessment plus CREATE/publication
-across distinct client calls against real providers; reconcile uncertain CREATE into
+The packaged `HistoricalInstalledOwnerProbe` now qualifies retained assessment plus
+CREATE/publication across separate client calls with a scoped caller, real provider
+upload/readback, exact receipt replay and final ownership drainage. Its standalone
+request barrier exercises the private owner; it does not establish managed runtime
+routing. See [multi-call publication evidence](../evidence/repository/2026-10-07-installed-historical-publication/README.md).
+
+Still required before managed use: reconcile uncertain CREATE into
 an exact verified stage without reissuing CREATE; retire authenticated terminal/fenced
 entries during normal service operation; own proposal/install uncertainty; and wire and
 qualify both library and transport entry points. Currently entries remain until shutdown,
 so capacity can fill over a long-running service. The facade gate remains unchanged.
+
+## Next: reconcile an uncertain CREATE
+
+Before CREATE SQL, retain its immutable proposal on the execution: acknowledged START
+identity/deadline, manifest SHA and exact upload selections. A later call can reconcile
+only this same handle and retained assessment, under its private assessment identity,
+source Work, command, modes and current runtime observation. No arbitrary stage setter
+or cold receipt may restore execution authority.
+
+Use a dedicated transaction path, not `mutate()`: the latter acquires physical-origin
+locks before its callback, whereas retained verification needs the assessment-owner
+lock first. Keep the established order: registration/claim, operation owner/command,
+current policy, full document/credential authorization, fixed modes, retained assessment
+verification, then any required physical/capture checks. Recheck expiry and authority
+at delivery. Publication repeats its own fences; stage reconciliation grants no
+publication permission by itself.
+
+Only an exact verified committed stage can populate the owner's stage field. Empty or
+failed observation retains the attempted proposal and sticky CREATE flag; it never
+authorizes another CREATE. Qualification must cover after-commit reply loss followed
+by exact adoption/publication, rollback with empty observation and refused restaging,
+changed selection/manifest, revoked authority, and expired/released assessments.
