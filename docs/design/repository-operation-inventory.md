@@ -7211,8 +7211,13 @@ canonical cancellation, changed identities, rollback and existing-row migration;
 the capture/drain regressions also pass. The bounded private Java handler now
 distinguishes live and released retention, rejects inconsistent roots/receipts,
 and confirms exact retries without source-table reads. JDBC commit faults and
-pre/post-commit cancellation are qualified. Actual post-pruning retry, remaining
-terminal alternatives and concurrency gates remain unfinished. See
+pre/post-commit cancellation are qualified. Two concurrent callers now have
+actual SQL-wait evidence for commit and rollback convergence. Release at the
+16-capture and 65-edge recovery limits waits for the original capture to drain
+and then confirms the same receipt without changing leases. Actual post-pruning
+retry, multi-root cases, capture-versus-release races and remaining terminal
+alternatives remain unfinished. See
+[concurrency/bound evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
 [handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).

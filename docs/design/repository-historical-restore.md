@@ -1119,9 +1119,12 @@ existing retained rows. `DocumentPreparationRootReleases` now supplies a bounded
 private handler and release-specific UNKNOWN/LIVE_EXACT/RELEASED_EXACT inspection.
 It confirms retries from permanent evidence without querying source publication
 or part tables. The existing history-root coverage remains a live-execution proof;
-its EXACT value never includes released retention. Actual pruning, other terminal
-release paths and concurrent release qualification remain unfinished; no release
-API is mounted. See
+its EXACT value never includes released retention. Concurrent releases now have
+real claim-lock wait evidence for both commit and rollback. The actual 16-capture
+and 65-edge cases prove release after every persisted capture drains, including
+the original epoch. Actual pruning, multi-root/capture races and other terminal
+release paths remain unfinished; no release API is mounted. See
+[concurrency and limit evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
 [private handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL release evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal inspection evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
