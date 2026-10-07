@@ -91,16 +91,24 @@ class DocumentRevisionSchemaArtifactsIT {
     }
 
     @Test void wrongAccountPrincipalOrGenerationCannotBorrowTheWriteFence() {
-        for (int variant = 0; variant < 3; variant++) {
+        for (int variant = 0; variant < 4; variant++) {
             try (var c = context(POSTGRES)) {
                 var p = prepare(c, 1);
                 String hash = stage(c, p.owner());
+                var key = p.owner().key();
+                // Real admitted operations under the foreign account and principal: their scopes exist,
+                // so exactly one binding differs from the owner fenced in this transaction.
+                foreignScopedOwner(c, "foreign", key.principal(), key.operationId());
+                foreignScopedOwner(c, key.account(), "foreign", key.operationId());
                 int choice = variant;
                 assertThatThrownBy(() -> publish(c, p, Fault.NONE, false, (em, revision) -> {
-                    insert(em, revision, choice == 0 ? "foreign" : p.owner().key().account(),
-                            choice == 1 ? "foreign" : p.owner().key().principal(), p.owner().key().operationId(),
+                    insert(em, revision, choice == 0 ? "foreign" : choice == 3 ? "unscoped" : key.account(),
+                            choice == 1 ? "foreign" : key.principal(), key.operationId(),
                             choice == 2 ? p.owner().generation() + 1 : p.owner().generation(), hash);
-                }, em -> {})).hasStackTraceContaining("live owner write fence");
+                }, em -> {})).hasStackTraceContaining(choice == 3 ? "Repository execution scope is absent"
+                        : "live owner write fence");
+                assertThat(count(c, "document_revision_schema_artifacts")).isZero();
+                assertThat(count(c, "document_revision_commits")).isZero();
             }
         }
     }

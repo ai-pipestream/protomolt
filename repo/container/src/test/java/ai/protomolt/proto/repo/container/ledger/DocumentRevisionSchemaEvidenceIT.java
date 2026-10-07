@@ -50,14 +50,20 @@ class DocumentRevisionSchemaEvidenceIT {
     }
 
     @Test void rawFragmentHashSizeOrdinalAndSupportedPartAreChecked() {
-        for (int fault = 0; fault < 7; fault++) {
+        for (int fault = 0; fault < 8; fault++) {
             try (var c = context(POSTGRES)) {
                 var p = prepare(c, 1);
+                var key = p.owner().key();
+                // Real admitted operations under the foreign account and principal: their scopes exist,
+                // so variants 4-6 reach the owner write fence with exactly one binding changed.
+                foreignScopedOwner(c, "foreign-account", key.principal(), key.operationId());
+                foreignScopedOwner(c, key.account(), "foreign-principal", key.operationId());
                 final int selected = fault;
                 assertThatThrownBy(() -> publish(c, p, Fault.NONE, false, (em, revision) -> {
                     if (selected == 1) insert(em, revision, p.owner(), 1, bytes(8)); // CHUNKS sub-key is not a root fragment.
                     else insertVariant(em, revision, p.owner(), selected, bytes(8));
-                }, em -> {})).hasStackTraceContaining(selected >= 4 ? "live owner write fence"
+                }, em -> {})).hasStackTraceContaining(selected == 7 ? "Repository execution scope is absent"
+                        : selected >= 4 ? "live owner write fence"
                         : "Revision schema evidence differs from a supported verified fragment");
                 assertThat(count(c, "document_revision_schema_evidence")).isZero();
             }
@@ -211,7 +217,7 @@ class DocumentRevisionSchemaEvidenceIT {
                 VALUES(:r,:o,:a,:p,:op,:g,:loc,:fh,:fs,'document-root-schema-evidence',1,:b,:eh)
                 """);
         q.setParameter("r", revision).setParameter("o", variant == 2 ? 1 : 0)
-                .setParameter("a", variant == 4 ? "foreign-account" : owner.key().account())
+                .setParameter("a", variant == 4 ? "foreign-account" : variant == 7 ? "unscoped-account" : owner.key().account())
                 .setParameter("p", variant == 5 ? "foreign-principal" : owner.key().principal())
                 .setParameter("op", owner.key().operationId()).setParameter("g", variant == 6 ? owner.generation() + 1 : owner.generation())
                 .setParameter("loc", digest("variant" + variant)).setParameter("fh", variant == 0 ? digest("wrong-raw") : raw.hash)
