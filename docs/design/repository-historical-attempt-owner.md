@@ -852,3 +852,17 @@ shutdown and initial-to-successor overlap. These fixtures supply historical sour
 provider observations; they do not qualify new initial-owner publication against a
 real object provider. Packaged-provider coverage, cold retention-anchor discovery,
 managed host routing and library/gRPC parity remain required before public enablement.
+
+### Initial owner provider checkpoint
+
+The packaged initial-owner probe now publishes through the real PostgreSQL and
+LocalStack adapters without a successor reservation. Normal CREATE and a lost
+CREATE reply both resume the same retained initial generation across calls. Exact
+provider bytes, receipt replay, repeated-publication refusal and capture drainage
+under held Work are asserted. The focused gate passes; evidence is recorded in
+`docs/evidence/repository/2026-10-07-initial-owner-provider/`.
+
+The full storage gate includes this host as an additional isolated database; its
+result remains pending. This closes the private initial-owner provider coverage
+item above, but does not enable public historical routing or prove cold anchor
+loading, managed host composition or library/gRPC parity.

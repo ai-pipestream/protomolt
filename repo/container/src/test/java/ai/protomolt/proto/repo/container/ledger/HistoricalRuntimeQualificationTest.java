@@ -16,6 +16,10 @@ class HistoricalRuntimeQualificationTest {
         run(null, "HISTORICAL_RECONCILIATION_HOST_OK", "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK",
                 "HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK", "HISTORICAL_RECONCILIATION_RELEASED_OK");
     }
+    @Test void initialOwner() throws Exception {
+        run("initial-owner", "HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
+    }
     @Test void selfSupersession() throws Exception {
         run("self-supersession", "HISTORICAL_SELF_SUPERSESSION_HOST_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK",
                 "SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
@@ -69,8 +73,10 @@ class HistoricalRuntimeQualificationTest {
                 String output = Files.readString(log);
                 assertThat(process.exitValue()).as(output).isZero();
                 assertThat(output).contains(markers);
-                assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
-                        "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                if (!"initial-owner".equals(mode)) {
+                    assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
+                            "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                }
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

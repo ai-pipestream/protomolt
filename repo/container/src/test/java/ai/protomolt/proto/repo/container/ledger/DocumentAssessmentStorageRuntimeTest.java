@@ -252,7 +252,8 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry", "historical_takeover_first")) {
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry", "historical_takeover_first", "historical_initial_owner")) {
+                boolean initialOwner = databaseName.equals("historical_initial_owner");
                 boolean takeoverFirst = databaseName.equals("historical_takeover_first");
                 boolean claimExpiry = databaseName.equals("historical_claim_expiry");
                 boolean oldFirst = databaseName.equals("historical_commit_winner_old_first");
@@ -269,6 +270,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         classpath + java.io.File.pathSeparator + probe,
                         "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
                 if (takeoverFirst) reconciliationBuilder.command().add("takeover-first");
+                if (initialOwner) reconciliationBuilder.command().add("initial-owner");
                 if (claimExpiry) reconciliationBuilder.command().add("claim-expires");
                 if (commitWins) reconciliationBuilder.command().add(oldFirst ? "commit-wins-old-first" : "commit-wins");
                 if (overlap) reconciliationBuilder.command().add("overlap");
@@ -285,7 +287,10 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
                     String result = Files.readString(reconciliationLog);
                     assertThat(reconciliation.exitValue()).as(result).isZero();
-                    if (takeoverFirst) {
+                    if (initialOwner) {
+                        assertThat(result).contains("HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                                "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
+                    } else if (takeoverFirst) {
                         assertThat(result).contains("HISTORICAL_TAKEOVER_FIRST_HOST_OK", "HISTORICAL_TAKEOVER_BEFORE_CLAIM_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
                     } else if (claimExpiry) {
                         assertThat(result).contains("HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
@@ -305,8 +310,10 @@ class DocumentAssessmentStorageRuntimeTest {
                         assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
                                 "HISTORICAL_RECONCILIATION_RELEASED_OK");
                     }
-                    assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-                    assertThat(result).contains((claimExpiry || takeoverFirst) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                    if (!initialOwner) {
+                        assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
+                        assertThat(result).contains((claimExpiry || takeoverFirst) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                    }
                 } finally {
                     if (reconciliation.isAlive()) {
                         reconciliation.destroyForcibly();

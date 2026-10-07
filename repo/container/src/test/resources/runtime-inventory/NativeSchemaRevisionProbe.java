@@ -91,7 +91,8 @@ public final class NativeSchemaRevisionProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(attempts == 0, "no empty upload attempt for unchanged bytes");
                 }
-                if (check == HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST) HistoricalAssessmentCreationProbe.takeoverFirst(tx, provider, source, published.getFirst(), database);
+                if (check == HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER) HistoricalAssessmentCreationProbe.initialOwner(tx, provider, source, published.getFirst(), database);
+                else if (check == HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST) HistoricalAssessmentCreationProbe.takeoverFirst(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.CLAIM_EXPIRES) HistoricalAssessmentCreationProbe.claimExpires(tx, provider, source, published.getFirst(), database);
                 else if (check.commitWinner()) HistoricalAssessmentCreationProbe.commitWins(tx, provider, source, published.getFirst(), database, check == HistoricalInstalledOwnerProbe.Check.COMMIT_WINS_OLD_FIRST);
                 else if (check == HistoricalInstalledOwnerProbe.Check.OVERLAP) HistoricalAssessmentCreationProbe.overlappingGenerations(tx, provider, source, published.getFirst(), database);
