@@ -586,6 +586,9 @@ public final class DocumentReadLedger {
         /** Does SQL only after actual local drain; failures propagate and remain retryable. */
         public void release() { finish(Completion.RELEASE); }
 
+        /** Local completion fact; an uncertain capture can defer release without throwing. */
+        boolean isReleased() { synchronized (releaseLock) { return released; } }
+
         /** Requires local drain and V46's durable QUIESCED proof; does not attest that proof. */
         public void recover() { finish(Completion.RECOVER); }
 

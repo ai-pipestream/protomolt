@@ -1042,3 +1042,14 @@ remote quiescence from local disposal. Test rollback, lost acknowledgment, commi
 then fenced takeover, unavailable confirmation, held workers and exact pin release.
 This is a design requirement for managed historical ownership, not implemented
 public recovery behavior.
+
+The private disposal primitive described above is now implemented on the activation
+owner. It closes further local activation, classifies exact durable state under a
+short claim lock, then releases the activation monitor and SQL lock before local
+work drainage. Persisted pin tuples are rehashed; partial or mismatched evidence
+refuses disposal. NO_CAPTURE explicitly leaves preactivation sources with the caller.
+Rollback/lost acknowledgment, held work, failed confirmation, later takeover,
+corruption and real claim-lock race tests pass, along with packaged regression.
+See [capture disposal evidence](../evidence/repository/2026-10-07-historical-capture-disposal/README.md).
+Managed historical ownership and its accepted-call drain ordering remain to be wired;
+this primitive does not itself wait for the managed runtime's outer call barrier.

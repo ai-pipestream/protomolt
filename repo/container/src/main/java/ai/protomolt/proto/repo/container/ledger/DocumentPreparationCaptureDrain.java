@@ -49,19 +49,26 @@ final class DocumentPreparationCaptureDrain {
         /** Timeout bounds local waiting, not JDBC. Partial release remains retryable; no reader-wide fence. */
         Optional<Receipt> complete(RepositoryCaller caller, Duration timeout, RepositoryReadControl control) throws InterruptedException {
             require(caller, identity, control);
+            if (!releaseLocal(timeout, control)) return Optional.empty();
+            return Optional.of(record(tx, caller, identity, "LOCAL", control));
+        }
+
+        /** Owning local resources only; does not assert durable capture registration or remote quiescence. */
+        boolean releaseLocal(Duration timeout, RepositoryReadControl control) throws InterruptedException {
+            Objects.requireNonNull(control).check();
             Objects.requireNonNull(timeout);
             if (timeout.isNegative()) throw new IllegalArgumentException("Negative capture drain wait");
             long budget = timeout.toNanos(), start = System.nanoTime();
             sources.close();
             histories.forEach(DocumentReadLedger.PinnedHistory::close);
-            if (!await(sources::awaitDrained, budget, start, control)) return Optional.empty();
+            if (!await(sources::awaitDrained, budget, start, control)) return false;
             for (var history : histories) {
                 control.check();
-                if (!await(history::awaitDrained, budget, start, control)) return Optional.empty();
+                if (!await(history::awaitDrained, budget, start, control)) return false;
             }
             for (var history : histories) { control.check(); history.release(); }
             control.check();
-            return Optional.of(record(tx, caller, identity, "LOCAL", control));
+            return histories.stream().allMatch(DocumentReadLedger.PinnedHistory::isReleased);
         }
     }
 
