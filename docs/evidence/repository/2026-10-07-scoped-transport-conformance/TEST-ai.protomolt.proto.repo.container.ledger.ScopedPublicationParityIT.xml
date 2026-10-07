@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.ScopedPublicationParityIT" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-07T04:59:55.671Z" hostname="krick" time="66.397">
+  <properties/>
+  <testcase name="scopedPublicationAuthorizationIsEquivalentAcrossLibraryAndAuthenticatedGrpc()" classname="ai.protomolt.proto.repo.container.ledger.ScopedPublicationParityIT" time="66.389"/>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+SCOPED_PUBLICATION_TYPED_LIBRARY_OK
+SCOPED_PUBLICATION_OPAQUE_LIBRARY_OK
+SCOPED_PUBLICATION_KEY_SEPARATION_LIBRARY_OK
+SCOPED_PUBLICATION_ROTATION_LIBRARY_OK
+SCOPED_PUBLICATION_UNBOUND_LIBRARY_OK
+SCOPED_PUBLICATION_ACCOUNT_LIBRARY_OK
+SCOPED_PUBLICATION_COMMAND_LIBRARY_OK
+SCOPED_PUBLICATION_MIXED_ATOMICITY_LIBRARY_OK
+SCOPED_PUBLICATION_GRANT_REVOCATION_LIBRARY_OK
+SCOPED_PUBLICATION_GRANT_EXPIRY_LIBRARY_OK
+SCOPED_PUBLICATION_REPLAY_ROTATION_LIBRARY_OK
+SCOPED_PUBLICATION_READ_REVOCATION_LIBRARY_OK
+SCOPED_PUBLICATION_UPLOAD_HELD_LIBRARY_OK
+SCOPED_PUBLICATION_COMMIT_WINS_LIBRARY_OK
+SCOPED_PUBLICATION_SHARED_KEY_CONCURRENCY_LIBRARY_OK
+SCOPED_PUBLICATION_RETRY_LIBRARY_OK
+SCOPED_PUBLICATION_CONTRACT_VS_AUTHZ_LIBRARY_OK
+SCOPED_PUBLICATION_FINAL_CHECK_REVOKED_LIBRARY_OK
+SCOPED_PUBLICATION_FINAL_CHECK_HELD_LIVE_LIBRARY_OK
+SCOPED_PUBLICATION_FINAL_CHECK_EXPIRED_LIBRARY_OK
+SCOPED_PUBLICATION_TYPED_GRPC_OK
+SCOPED_PUBLICATION_OPAQUE_GRPC_OK
+SCOPED_PUBLICATION_KEY_SEPARATION_GRPC_OK
+SCOPED_PUBLICATION_ROTATION_GRPC_OK
+SCOPED_PUBLICATION_UNBOUND_GRPC_OK
+SCOPED_PUBLICATION_ACCOUNT_GRPC_OK
+SCOPED_PUBLICATION_COMMAND_GRPC_OK
+SCOPED_PUBLICATION_MIXED_ATOMICITY_GRPC_OK
+SCOPED_PUBLICATION_GRANT_REVOCATION_GRPC_OK
+SCOPED_PUBLICATION_GRANT_EXPIRY_GRPC_OK
+SCOPED_PUBLICATION_REPLAY_ROTATION_GRPC_OK
+SCOPED_PUBLICATION_READ_REVOCATION_GRPC_OK
+SCOPED_PUBLICATION_UPLOAD_HELD_GRPC_OK
+SCOPED_PUBLICATION_COMMIT_WINS_GRPC_OK
+SCOPED_PUBLICATION_SHARED_KEY_CONCURRENCY_GRPC_OK
+SCOPED_PUBLICATION_RETRY_GRPC_OK
+SCOPED_PUBLICATION_CONTRACT_VS_AUTHZ_GRPC_OK
+SCOPED_PUBLICATION_FINAL_CHECK_REVOKED_GRPC_OK
+SCOPED_PUBLICATION_FINAL_CHECK_HELD_LIVE_GRPC_OK
+SCOPED_PUBLICATION_FINAL_CHECK_EXPIRED_GRPC_OK
+SCOPED_PUBLICATION_TRANSPORT_FAIL_CLOSED_OK
+SCOPED_PUBLICATION_PARITY_OK
+]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker:
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 363fdbc5d722cf7d043b7c8ea8c48873ee61db8419f5515b5c51d3b63b12a1e3
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.355229403S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 237ec9ca05c4a152af76d8333cdfa0855537c176a85afc01ee0e2ccc55f1555d
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.96551123S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:52164/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 8773f8e20511ef0939941b680b9d80f2d75c47e14ce1c31d0dee0db4aa32f62d
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.335318703S
+]]></system-err>
+</testsuite>

@@ -1,5 +1,20 @@
 # Repository operation inventory
 
+## Scoped library and gRPC parity (2026-10-07)
+
+- **Extended verification:** one shared scenario driver runs publication through
+  the library facade and authenticated in-process gRPC, using PostgreSQL and
+  versioned LocalStack storage. It checks typed/opaque publication, key separation,
+  revocation, expiry, mixed-batch refusal, exact retry and concurrent operations.
+- **New build gate:** `:protomolt-repo-container:scopedPublicationTest` is part of
+  `check`. It launches a fresh JVM using the observed production JAR runtime.
+- **Unchanged:** production repository APIs, protobuf identities, grant-provisioning
+  visibility and provider behavior. Fixture resolvers supply synthetic credentials;
+  this is not external identity-provider or public provisioning qualification.
+- Adapter write-call counts are checked separately from recorded SQL versions.
+  The held-upload scenario pauses before the SDK PUT, not inside a remote request.
+  [Evidence and limits](../evidence/repository/2026-10-07-scoped-transport-conformance/README.md).
+
 ## Archive snapshots and restore activation inventory (2026-10-07)
 
 Committed source baseline: `1dd49f259f73a072b2bd29166fa7c9c9c9de16c7`, with

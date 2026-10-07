@@ -99,6 +99,8 @@ class ScopedPublicationParityIT {
                 for (String marker : markers) {
                     assertThat(result).as("probe log contains %s", marker).contains(marker);
                 }
+                // Retain only verified scenario markers in JUnit evidence, not environment logs.
+                markers.forEach(System.out::println);
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

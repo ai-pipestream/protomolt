@@ -24,7 +24,7 @@ channel in front of the same boundary.
 | Two independent operations sharing one scoped key progress concurrently | Only shared-reader overlap on one key (`RepositoryCredentialAuthoritiesIT.concurrentReadersOverlapAndRevocationWaitsForTheirDecision`); **no two-operation overlap with real SQL/provider work** | None |
 | Exact retries preserve identity, no duplicate receipts; pre-admission denials produce no provider effects | `DocumentPublicationCommitIT.callerFailureAfterCommitReplaysWithoutRepeatingPublication`, `2026-10-05-scoped-provider` (with the recorded caveat that the store handle was pre-opened) | None |
 
-## Remaining coverage to add
+## Gaps identified before implementing this harness
 
 Library path: (a) mixed-batch atomicity under a valid grant (no partial commit);
 (b) explicit committed-receipt replay refusal after post-commit READ revocation;
@@ -43,6 +43,11 @@ no fallthrough to another authority or the operator principal, and
 binding-dropping host mapper refusal.
 
 ## Result (2026-10-07)
+
+The following records the external agent's original run. Coordinator integration
+adds direct adapter-call observations and positive controls; current integration
+results and remaining limits are recorded in [README.md](README.md). Recorded SQL
+versions alone are not proof of zero provider writes.
 
 The planned harness exists and is green on unmodified production code:
 
