@@ -1001,7 +1001,20 @@ Neither case establishes deployed process recovery. See the
 The [rollback evidence](../evidence/repository/2026-10-07-historical-race-rollback/README.md)
 records the second case and its explicit drain refusal.
 
-Traversal-limit qualification and deployed restart/session attachment remain open.
+The recovery bounds now have actual SQL qualification: 64 installed ancestry
+edges activate, while edge 65 refuses atomically. Installed but unactivated
+successors use V98 supersession and add no captures, so this reaches the ancestry
+bound independently of the 16-batch limit. A separate case fills all 16 batches
+with real activated owners and refuses capture 17 even after prior successors
+drain. See the [bound evidence](../evidence/repository/2026-10-07-historical-recovery-bounds/README.md).
+
+**Unresolved exhaustion handling:** either refusal leaves an installed current
+owner/claim without an activation. Further retries cannot shorten ancestry or
+erase permanent batches. Before enabling public historical recovery, implement
+an explicit terminal outcome for bound exhaustion and qualify its cancellation,
+idempotency, retained-source cleanup and receipt behavior. Do not describe these
+limits as automatic recovery or self-healing. Deployed restart/session attachment
+also remains open.
 Keep claimed historical execution and root release gated.
 Success publication and broader multi-generation recovery require their own
 qualification; activation and capture registration alone do not prove them.
