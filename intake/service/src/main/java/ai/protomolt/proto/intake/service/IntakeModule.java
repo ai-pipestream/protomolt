@@ -66,12 +66,15 @@ public final class IntakeModule implements ServiceModule {
         ApiKeyIdentityResolver resolver = config.resolver() != null
                 ? config.resolver()
                 : IntakeServiceMain.selectResolver(context.environment());
+        // The node's channel to repo: in-process when co-mounted, otherwise opened by the
+        // node's remote opener, which presents the node's credential to a guarded repo.
         services = IntakeServices.build(
                 new IntakeServiceConfig(
                         config.grpcPort(),
                         context.channels().targetOf("repo"),
                         config.maxPayloadBytes()),
-                resolver);
+                resolver,
+                context.channels().to("repo"));
         String inProcessName = ROLE + "-" + context.nodeId();
         inProcess = services.startInProcess(inProcessName);
         context.channels().publishInProcess(ROLE, inProcessName);
