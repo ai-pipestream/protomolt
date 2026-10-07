@@ -59,7 +59,7 @@ jobs:
           output="$RUNNER_TEMP/repository-host-diagnostics"
           mkdir -p "$output"
           if [[ -f "$report" ]]; then
-            log=$(sed -n '/log: / { s/.*log: \([^" ]*\).*/\1/; p; q; }' "$report")
+            log=$(sed -n '/log: / { s/.*log: \([^" ]*\).*/\1/; s/\]$//; p; q; }' "$report")
             if [[ -n "$log" && -f "$log" ]]; then
               awk '/^[A-Z0-9_]+$/ && /(_OK|_START|_BEGIN|_END|_FAILED)$/' "$log" \
                 > "$output/assessment-host-progress.log"
