@@ -17,6 +17,7 @@ final class DocumentPublicationScopeCalls {
     }
 
     synchronized void close() { closed = true; }
+    synchronized boolean isIdle() { return active == 0; }
 
     synchronized boolean awaitIdle(Duration timeout) throws InterruptedException {
         Objects.requireNonNull(timeout);

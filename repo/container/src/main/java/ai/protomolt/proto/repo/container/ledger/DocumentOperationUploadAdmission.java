@@ -129,9 +129,7 @@ final class DocumentOperationUploadAdmission {
 
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, UUID> attempts, Duration lease) {
-        Objects.requireNonNull(lease);
-        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
-            throw new IllegalArgumentException("Upload admission lease requires one second to one day");
+        requireLease(lease);
         var tokens = new java.util.HashMap<String, UUID>();
         command.intent().getMembersList().stream().filter(member -> member.getPartsList().stream().anyMatch(part -> part.hasUpload()))
                 .forEach(member -> tokens.put(member.getMemberId(), UUID.randomUUID()));
@@ -141,9 +139,7 @@ final class DocumentOperationUploadAdmission {
     /** Rebuild exact executable placement/attempt/lease identities without minting replacements. */
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, UUID> attempts, Duration lease, Map<String, UUID> uploadTokens) {
-        Objects.requireNonNull(lease); Objects.requireNonNull(uploadTokens);
-        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
-            throw new IllegalArgumentException("Upload admission lease requires one second to one day");
+        requireLease(lease); Objects.requireNonNull(uploadTokens);
         return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts), lease, uploadTokens);
     }
 
@@ -151,10 +147,14 @@ final class DocumentOperationUploadAdmission {
     static Prepared prepareHistorical(DocumentPublicationCommand command, Map<UUID, DocumentUploadPlan.Placement> placements,
             Map<String, UUID> attempts, Duration lease, Map<String, UUID> uploadTokens,
             List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
-        Objects.requireNonNull(lease); Objects.requireNonNull(uploadTokens);
+        requireLease(lease); Objects.requireNonNull(uploadTokens);
+        return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts, historical, control), lease, uploadTokens);
+    }
+
+    static void requireLease(Duration lease) {
+        Objects.requireNonNull(lease);
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Upload admission lease requires one second to one day");
-        return new Prepared(DocumentUploadPlan.prepare(command, placements, attempts, historical, control), lease, uploadTokens);
     }
 
     /** All rows commit together; duplicate attempt identity fails without adopting existing bytes. */

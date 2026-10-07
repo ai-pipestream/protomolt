@@ -170,6 +170,35 @@ class BoundedArchiveTransportIT {
         }
     }
 
+    @Test void snapshotBytesCountTowardTheTransportResponseLimit() throws Exception {
+        try (var f = new Fixture(false, false, 1024, 8192)) {
+            var candidate = f.request.toBuilder().putMetadata("label", "x".repeat(200)).build();
+            f.archive.putEntry(candidate);
+            f.awaitBudget(0);
+            var request = GetEntryManifestRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            var local = f.host.archiveRepository().getManifest(CALLER, request);
+            assertThat(local.getManifest().hasMetadataSnapshot()).isTrue();
+            assertThat(local.getSerializedSize()).isGreaterThan(1024);
+            assertThat(local.toBuilder().setManifest(local.getManifest().toBuilder().clearMetadataSnapshot())
+                    .build().getSerializedSize()).isLessThanOrEqualTo(1024);
+            assertThatThrownBy(() -> f.archive.getEntryManifest(request)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            f.archive.putEntry(candidate.toBuilder().setRenditions(0, candidate.getRenditions(0).toBuilder()
+                    .setData(ByteString.copyFromUtf8("second"))).build());
+            f.awaitBudget(0);
+            var versions = ListVersionsRequest.newBuilder().setAddress(f.request.getAddress()).build();
+            var retained = f.host.archiveRepository().listVersions(CALLER, versions);
+            assertThat(retained.getVersionsList()).hasSize(2).allSatisfy(version ->
+                    assertThat(version.hasMetadataSnapshot()).isTrue());
+            assertThat(retained.getSerializedSize()).isGreaterThan(1024);
+            assertThatThrownBy(() -> f.archive.listVersions(versions)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+            f.awaitBudget(0);
+            assertThat(f.reads.get()).isZero();
+        }
+    }
+
     @Test void oversizedMetadataAndListRepliesAreRefusedWithoutPoisoningSubsequentReads() throws Exception {
         try (var f = new Fixture(false, false, 64)) {
             f.archive.putEntry(f.request); f.awaitBudget(0);

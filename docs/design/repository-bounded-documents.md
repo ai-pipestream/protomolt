@@ -246,3 +246,64 @@ schema-load windows in separate hosts. In the confirmed held-PUT window, native
 publication waits for the provider worker to exit, so a cancelled RPC must retain
 its call slot until that producer exits. Check actual byte persistence separately
 from committed document visibility. Sol reviewed these acceptance conditions.
+
+## Publication cancellation qualification
+
+`BoundedPublicationShutdownProbe` holds a completed real Redis PUT inside the
+provider call. Library cancellation and a short host close leave the accepted
+worker active, SQL usable and the provider open. New publication is refused after
+admission closes. After release, the publisher reports cancellation, no success
+or revision commit exists, and the physical upload remains available for recovery.
+Final host shutdown releases the provider. This does not prove remote quiescence
+or immediate cleanup of the cancelled upload.
+
+A separate host runs `BoundedPublicationRpcCancellationProbe` with authenticated
+operator-token RPCs and a one-call transport limit. The fixture waits for actual
+server-context cancellation before checking that the held producer still occupies
+the call slot. A second RPC receives RESOURCE_EXHAUSTED. After the PUT exits and
+the transport drains, a distinct operation publishes and replays successfully.
+This is not scoped-key authorization qualification.
+
+Both cases passed in the complete production-JAR storage regression. Evidence:
+`docs/evidence/repository/2026-10-07-publication-cancellation`.
+
+The separate bounded schema-load case now passes too. It holds actual Git-fetched
+descriptor bytes while the resolver worker remains active after caller cancellation.
+SQL and Redis stay open until worker drain; the closed resolver discards the late
+result. Evidence: `docs/evidence/repository/2026-10-07-schema-worker-shutdown`.
+The public factory and its consumer qualification are recorded below.
+
+## Public composition design
+
+Expose bounded document limits through `BoundedDocumentOptions`, following the
+existing bounded archive options convention. A `RepoServices.buildBoundedDocuments`
+factory should use the existing assembly path and provider discovery. Validate
+required schema/publication options and the Redis configuration before discovery
+or resource acquisition. Preserve library-only use: historical transport and
+publication transport remain explicit, independent options with their existing
+byte and concurrency limits. Do not duplicate those limits in document options.
+
+Before documenting that factory as available, test a consumer using the public
+entry point with discovered Redis, typed publication and historical decoding.
+Test invalid providers, lifecycle/retention settings, TTL and object limits against
+an unreachable database to prove configuration fails before resource acquisition.
+Keep legacy document, archive and HTTP APIs unavailable in this composition.
+
+Redis persistence and eviction policy remain operator qualifications. The existing
+lifecycle invokes the recovery scan and revisits eligible ABSENT tombstones; the
+late-request evidence exercises direct recovery, not the elapsed background
+recheck interval. Do not advertise an observed automatic cleanup deadline. This
+embedded factory is not a new standalone deployment entry point.
+
+## Public factory checkpoint
+
+`BoundedDocumentOptions` and `RepoServices.buildBoundedDocuments` implement the
+design above. Seven focused configuration tests and the complete production-JAR
+storage regression pass. An out-of-package consumer uses discovered Redis for
+typed publication, receipt replay and historical reads, with separate library-only
+and authenticated RPC hosts. It leaves schema lifecycle with the host. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-public-factory`.
+The [publication guide](../repo/publication.md#bounded-redis-composition) describes
+the available embedded API and its required host configuration. Sol reviewed the
+factory, consumer and guide. This is not a new published-service metadata gate or
+standalone launcher, and scoped-key provisioning remains separate work.

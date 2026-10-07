@@ -529,8 +529,486 @@ historical CORE and a fresh PARSED upload within one typed member. It refuses an
 unverified upload, preserves historical manifest entries and physical identities,
 checks the fresh upload's selected attempt and byte metadata, and replays both
 roots using retained schemas without registry access. Provider observations in
-this test are synthetic; actual-provider same-member reads remain unqualified.
+that SQL test are synthetic. Subsequent `HistoricalMixedPublicationProbe` coverage
+also exercises the same-member path against a real provider; its
+`HISTORICAL_MIXED_MEMBER_PROVIDER_OK` marker is required by
+`DocumentAssessmentStorageRuntimeTest`.
 See [same-member evidence](../evidence/repository/2026-10-06-historical-mixed-member/README.md).
 Public restoration, claimed-session activation and automatic
 claim transfer remain disabled. These are required follow-ups, not an assertion
 that the full repository goal is complete.
+
+## Claimed historical execution plan
+
+Source audit baseline: `50e01d7e2aea365ec298df8bca9ce00488a160db`.
+This is the next implementation boundary, not an enabled capability.
+
+The wire selector and canonical command already bind the historical revision and
+exact object. No new restore RPC or selector field is needed for this boundary.
+The missing part is the normal coordinator lifetime: initial claim, sealed
+preparation, owner registration, restart, successor fencing, and durable replay.
+
+At the audit baseline, `DocumentPublicationPreparationRecord` validated and reconstructed via
+ordinary `DocumentOperationUploadAdmission.prepare`. Historical plans instead
+require live source preparations from `prepareHistorical`. The preparation codec
+already stores the canonical intent; it must not serialize live Uses or pretend
+that decoding an intent recreates pins. `RepositoryExecutionClaimLedger` and the
+ordinary facade explicitly refuse historical execution. Historical assessment
+creation also refuses an execution claim. Remove these barriers only at their
+reviewed shared boundary, not as an independent enablement patch.
+
+The first implementation now separates inert validation: historical records use
+the same private member/placement/attempt loop and lease rule without returning
+a prepared plan. Owner/attempt/token coverage still comes from
+`DocumentPublicationSeeds`. The existing codec can round-trip the intent with
+or without fresh uploads; no format change or duplicated selector list is needed.
+Ordinary records retain their existing full preparation validation. Record
+`prepare()`, claim acquisition and public execution still refuse historical
+commands. This is serialization groundwork, not durable registration or recovery.
+
+### Durable intent and live authority
+
+1. Separate pure preparation-shape validation from acquisition of live source
+   references. Persist the existing exact command, placements, owner/attempt seeds,
+   mode binding and predecessor generation. Its historical selectors are the
+   authoritative source identities; do not add a second independently mutable
+   selector list. Decode into inert data, not an executable session.
+2. Reacquire each distinct `(source address, revision UUID)` through
+   `DocumentReadLedger.captureHistorical` under the authenticated caller. Use
+   `DocumentHistoricalAssessmentSources` to check complete selector coverage,
+   ordinals, slots, bytes and original backend bindings. Current-head advancement
+   is allowed; source pruning, changed physical identity or revoked READ is not a
+   reason to substitute another version. Reuse the existing byte budget and limits.
+3. Bind the initial claim, preparation digest, modes and owner atomically using
+   the existing registration journal. Source preparation remains live through
+   registration, assessment and commit. Registration checks current credential
+   generation, source READ, destination WRITE/creation authority and placement.
+   A retained preparation is neither an access grant nor proof that pins survived
+   a crash. Acquire resources outside SQL; SQL verifies the captured witnesses.
+   Verify exact sources with the existing historical reference checks in the
+   operation/policy, destination/source revision, drive/backend, independent
+   origin/retention lock order before registration commits.
+4. On resumed execution, authenticate again, reconcile a terminal result first,
+   verify the stored command/preparation/modes, and reacquire fresh pins before
+   constructing a historical execution owner. Keep existing successor epochs,
+   owner fencing, deterministic lock order and database lease time. A replaced
+   owner must not publish even if its provider work eventually returns.
+5. Extend historical assessment creation and publication to accept only the exact
+   current claimed owner and sealed preparation. Keep promotion inside the source
+   owner. V83 assessment-start identity is sticky within an owner generation:
+   reuse its exact assessment only after fresh authorization and policy checks.
+   If it is ineligible, fail/fence that generation and use an explicitly qualified
+   new-generation or new-operation protocol; never silently create another
+   assessment in the same generation. Reconcile uncertain CREATE or consumed
+   promotion against the exact durable identity first. Retained definitions remain historical; a
+   newer registry definition under the same URL cannot replace them.
+6. Release Uses after work drains and committed references or recovery own the
+   physical effects. Cancellation before commit cannot create success. An uncertain
+   commit is resolved by durable outcome lookup, not by repeating a consumed
+   assessment or copying the selected bytes to a new untracked location.
+
+Before claimed restore is activated, durable pending preparations need indexed
+source and schema retention across process death. An in-memory Use and an opaque
+journal blob do not supply that protection. Bind retention to the exact sealed
+preparation in the registration transaction, transfer it under successor fencing,
+and release it only after terminal/abandoned-state recovery establishes safety.
+Source pruning must remain disabled until this index and cleanup protocol are
+qualified. Fresh execution still reacquires read pins and current permission;
+durable retention grants neither. Coordinator process authority must remain
+separate from the freshly authenticated execution caller; a journaled principal
+or credential identifier cannot be borrowed as authority after revocation.
+
+Source metadata/security remains provenance. Restoration updates a destination
+under its current ownership; it does not install historical ACLs. Keep historical
+restore distinct from optional JCR graph/version restoration. No JCR dependency
+or document-only transaction restriction is introduced.
+
+### Acceptance before enabling public restore
+
+- With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
+  unchanged. Exact retries return the same terminal receipt without uploads.
+- A changed selector, physical identity, mode, placement or destination condition
+  under one operation identity is a conflict. Decode of tampered or mismatched
+  preparation fails before provider work.
+- Restart after sealed registration and before commit reacquires r1, even when the
+  current head advances. Stale destination conditions still fail. Revoked READ,
+  WRITE, credential generation or creation grant cannot be revived by the journal.
+- Real SQL barriers prove both revocation/commit orderings and successor fencing;
+  no provider/schema calls execute under SQL locks. Independent operations using
+  the same credential can still overlap.
+- Crash/uncertain commit, held provider read, cancellation and failed pin release
+  preserve exact recovery ownership. A late predecessor cannot commit.
+- Retained definitions decode and validate without the original registry. Changed
+  current policy is evaluated explicitly; opaque content is not silently promoted
+  to typed success. Both semantic and contract-invalid fixtures retain their
+  distinct meanings.
+- Run the same completed operation through library and authenticated gRPC, then
+  remove the public historical guard. Until these cases pass, the guard remains.
+
+The first deliverable is private claimed preparation/recovery with real SQL and
+provider evidence, followed by shared session integration and transport parity.
+Published examples must wait for the public acceptance cases. Pending-source
+retention and safe cleanup are prerequisites for claimed restore activation;
+broader backup qualification and progressive hydration remain required afterward.
+
+### Pending source projection checkpoint (2026-10-07)
+
+V103 adds an indexed set of distinct source `(node_id, revision_id)` pairs for an
+exact preparation and predecessor generation. The header binds the preparation
+and command digests, expected count and ordered source digest. A live execution
+claim fences creation; the header and its children must seal in one transaction.
+Sealed sets cannot be changed or deleted. Revision foreign keys retain the
+existing revision closure, including its physical references and schema bindings,
+under the current immutable revision guards. This is not a new physical owner.
+
+New ordinary registrations atomically record an explicit empty set. Pre-migration
+preparations remain unknown, including on exact retry; absence is never inferred
+to mean no historical sources. SQL validates internal projection consistency but
+does not decode the protobuf command. Java therefore reconciles the sealed set
+against canonical command intent. A future pruning consumer must require that
+reconciliation, not merely trust the sealed flag. A mismatch is data loss.
+
+This checkpoint does not enable historical execution, source pruning or retention
+release. Historical registration still requires complete prepared source proofs;
+ordinary registration supplies none and cannot bypass that check. Release needs
+a separate fenced protocol proving terminal or qualified abandoned state and
+drained readers/owners. Expiry alone is insufficient. Keep lock acquisition in
+claim/preparation-header, sorted revision, then origin/retention order; a future
+pruner must not acquire these in reverse. The current guards already prevent
+revision deletion, so this projection is groundwork for safe future pruning,
+not evidence of a repaired current data-loss path.
+
+The multi-revision SQL fixture now checks projection deduplication across
+destinations, distinct revisions of one source node, SQL/Java digest agreement,
+complete prepared source coverage and refusal after the source owner closes.
+Its provider observations are synthetic; it does not qualify nonempty claimed
+registration. See `docs/evidence/repository/2026-10-07-history-root-selection`.
+
+The next private registration boundary must accept a preparation and live pinned
+sources together. Pre-encode preparation and modes before SQL locks, then register
+claim/binding, preparation, nonempty retention set, modes and operation owner in
+one transaction with current authorization and exact physical witness checks.
+Reuse existing claim and typed owner admission through narrow historical entry
+points; keep ordinary entry-point guards and the public facade unchanged. Retain
+source Uses through commit or uncertain-outcome reconciliation. Registration
+qualification must precede session execution and recovery activation.
+
+### Private historical registration checkpoint
+
+`DocumentPublicationRegistration.historical` now prepares an initial registration
+from the exact journal seeds and a live `DocumentHistoricalAssessmentSources`
+owner. This remains package-private. The caller must retain that owner and the
+registration object across uncertain responses; recreating the registration
+would mint a different claim token. Closing the source owner makes retries fail.
+
+Registration checks current source/destination authorization, selected drives
+and backend profiles, then writes the preparation and retention roots before
+locking physical origins and retention. Exact physical witnesses must pass before
+modes and the operation owner commit. The entire transaction rolls back together.
+Historical retries require canonical coverage; a legacy unknown source set cannot
+be adopted. Ordinary claim acquisition and preparation retain their historical
+guards. Assessment start and claimed historical execution remain refused.
+
+This private boundary is not yet wired into the runtime or public transport.
+Qualification still needs source authorization races, full physical-failure
+coverage, recovery/successor attachment and a fenced retention-release protocol.
+The registration itself neither executes provider work nor creates a successful
+publication receipt. Selecting TYPED mode records intent, not successful validation.
+
+### Retention release requirements before implementation
+
+The V103 count and digest describe the original sealed set. They cannot prove
+live retention after roots have been released. A future release migration must
+introduce an immutable per-preparation release record and update canonical
+coverage to distinguish live retention, released retention and legacy unknown
+coverage. Creation identity remains available for audit. A release record and
+removal of all child roots must commit together; guarded deletion and a deferred
+zero-child check must reject incomplete release. Until then, deletion stays refused.
+
+Require exact terminal success or rejection plus drained accepted work, source
+Uses and schema workers, or the existing pre-owner abandonment proof. A claim
+lease expiring, coordinator DRAINING state, local drain record or successor
+installation alone is insufficient. Keep predecessor-generation roots until
+terminal completion unless a separately qualified atomic transfer protects all
+sources needed by the successor. Current read pins protect their own physical
+objects; they do not replace proof of schema-worker quiescence or historical
+schema retention. No release API or compliance claim follows from this design.
+
+The release proof must identify the exact source pins borrowed by the preparation.
+Waiting for every reader of a source revision, or for all work in a shared reader
+incarnation, would couple unrelated operations. Record only distinct selected
+objects with their reader incarnation, pin UUID, physical object UUID, source node,
+source revision and publication revision. V103 already retains the complete source
+revision and its schemas; recording unselected parts adds no retention guarantee.
+Pin identities must originate from the captured history under a live Use, not from
+caller-supplied identifiers. The internal projection is data, not release authority.
+
+V104 implements immutable capture batches under the retained preparation. A batch
+contains the selected pin identities, sorted by pin UUID and sealed against a
+versioned SHA-256 digest. A fresh capture adds its own identities instead of
+replacing earlier evidence. New pin rows are checked and locked after the complete
+ordered origin and retention sets, matching normal pin release. Exact confirmation
+compares the persisted canonical tuples without requiring released pins to reappear.
+There is no foreign key to live pins, physical objects or source revisions: their
+eventual release must not erase or be prevented by this association evidence.
+
+New nonempty V103 sets must commit a sealed initial capture batch in their creation
+transaction. Existing sets are not backfilled, so missing initial capture remains
+unknown. Each preparation permits at most 16 batches, each bounded to 10,000 pins.
+An exact retry consumes no new batch. A seventeenth fresh capture fails closed;
+qualified batch retirement or a revised bounded recovery policy is required before
+general repeated execution relies on this facility. Encoding is done before SQL
+locks under an additional 4 MiB serialized-data allowance, not a heap-size guarantee.
+
+The SQL guards check root membership and exact live pin identity. They do not parse
+the canonical protobuf command to prove complete selected-object coverage. The
+Java registration derives pins from complete prepared sources; any future release
+must independently reconcile persisted batches against the canonical command's
+distinct source node/revision/object set. An initial flag or matching count alone
+is not a release proof. Association also does not establish drained provider or
+schema work. Existing process-death recovery still requires durable reader
+quiescence; without the required recovery evidence, keep the roots retained.
+
+V105 binds new capture batches to their exact execution claim epoch/token and
+coordinator incarnation. Its immutable owner row must be inserted while the batch
+is unsealed in its creation transaction. The database verifies the live claim
+write fence, the command digest in V103, and the exact durable coordinator binding.
+A deferred check prevents committing a new batch without its owner. Closed current
+coordinators and terminal operations cannot own fresh batches. Existing V104 batches
+remain unowned; neither migration nor exact retry retroactively assigns them.
+
+A batch belongs permanently to its original execution. A later claim must obtain
+a fresh capture instead of reassigning that batch. The latest coordinator's local
+drain cannot certify work from every earlier epoch. This association grants no
+execution, release or quiescence authority; historical successor capture and the
+batch-local drain protocol still need end-to-end qualification.
+
+The private source lifetime now closes admission independently of accepted work.
+Registration retains a Work through transaction completion and response unwinding;
+returned member schema resolutions retain theirs until component cleanup finishes.
+New admissions fail after close. `awaitDrained` requires all accepted Works to end
+and borrowed Uses to close successfully. This does not release physical pins or
+write a durable drain record. Factory setup is not an accepted registration and
+may fail safely if its sources close during construction.
+
+The running-worker cancellation test deliberately waits for actual worker exit,
+not Future completion. Any future asynchronous submission must additionally handle
+rejection or cancellation before the task starts, handing ownership to the worker
+only when it actually starts; otherwise a queued task could leak its Work. That
+submission integration is not implemented or qualified by this checkpoint.
+See the [local lifetime evidence](../evidence/repository/2026-10-07-source-lifetime/README.md).
+
+V106 makes a captured pin ID permanently non-reusable after its native pin is
+released. An AFTER INSERT guard rejects any `document_read_pins` insertion whose
+UUID already occurs in immutable V104 capture evidence, including a changed reader
+or object tuple. The check uses the existing pin-ID index and runs after any unique
+index wait on a concurrent deletion. Existing native pins survive migration; fresh
+UUIDs and unrelated handles on the same reader remain usable. Without this guard,
+an absence observation could become false after a drain record commits. This
+protection does not itself record drain or release any history roots.
+
+V107 adds private capture completion. Registration retains a process-local capability
+with its exact batch digest, V105 owner tuple and originating source/history handles;
+the immutable batch retains the selected pin identities. This capability is tentative
+until registration commits. A failed acknowledgement does not discard it, but a
+rolled-back registration cannot mint durable completion evidence.
+
+Completion closes source admission and the captured histories, waits for Sources
+and every captured history to drain, and releases each captured history. Shared
+handles wait for their other Uses; unrelated handles on the reader are not fenced.
+Waits observe local timeout, cancellation and deadline; the local timeout does not
+replace JDBC timeouts. Bounded hosts retain transaction-local SQL timeout settings
+for confirmation as well as insertion. Partial cleanup and uncertain marker replies
+remain retryable. Confirmation returns the exact first committed receipt and never
+turns a cancelled response into success.
+
+The immutable marker locks claim, preparation set and batch in that order, checks
+original owner/command identity and requires both native pins and their mirrors to
+be absent. It neither stamps execution authority nor renews a lease. Completion can
+follow claim expiry or a guarded SQL epoch transfer; neither event proves drain or
+invalidates actual original-owner completion. Public historical takeover remains
+gated. LOCAL attests the owning process's enrolled Work/Use lifetimes; arbitrary
+external tasks still need explicit enrollment before submission.
+
+A new QUIESCED recovery marker requires every exact batch reader permanently
+QUIESCED and its pins already recovered. ACTIVE, FENCED and expired states remain
+insufficient. V46/V47 still own native-pin recovery. Existing valid completion may
+be confirmed through either path without changing its original evidence kind.
+Migration invents no completion for existing batches. See the
+[capture-drain qualification](../evidence/repository/2026-10-07-capture-drains/README.md).
+
+Normal root release must consume this batch-local completion, including all actual
+schema/provider workers enrolled in its lifetimes. V91's host-local marker alone is
+insufficient. Other active handles in the same reader incarnation need not block
+a qualified normal release.
+Under the claim and preparation-set locks, release must also verify terminal or
+qualified initial-abandonment identity, complete canonical coverage, all batches'
+drain evidence, and absence of exact native pins and their DOCUMENT_READER mirrors.
+Prevent new captures once terminal release begins. V85 is initial pre-owner
+abandonment only, not a generic successor cancellation mechanism.
+
+V108 now guards new V104 batches and V105 owners against V85 abandonment and
+V52/V64 terminal outcomes. AFTER INSERT preserves confirmation of an existing
+batch discarded by ON CONFLICT. The existing claim fence serializes closure with
+capture insertion; a real lock-wait regression qualifies committed abandonment.
+The follow-up fixture also qualifies closure after real V64 cancellation. V52
+success coverage awaits the currently gated claimed historical commit path; a
+bare success-row fixture is not a substitute for that path. Root release must
+extend this guard to its future release receipt before that protocol is enabled.
+
+The private `DocumentPreparationCaptureCoverage` helper now implements the
+transaction-local inspection below: canonical selector matching, root integrity,
+batch digest/object coverage, original owner/drain equality and absent pins. It
+does not check terminality or release roots. Repeated selectors and internally
+consistent incomplete/duplicate batches now have real SQL qualification. A later
+capture's drain cannot substitute for an earlier capture's missing completion.
+Cross-revision aliases now have a real historical publication fixture: one physical
+object in two revisions produces two distinct captured tuples. A real populated
+V103 migration now qualifies the legacy initial-batch gap: retained roots remain
+exact, and a legitimate later capture with a completed quiescence receipt still
+cannot substitute for the missing creation-time batch. See the
+[migration evidence](../evidence/repository/2026-10-07-legacy-capture/README.md).
+V109 now qualifies separate completion of two capture-owner epochs through the
+private historical activation path described below. Release wiring remains gated.
+
+### Historical successor activation and shared retention
+
+Source review found a sequencing gap in ordinary activation.
+`RepositorySuccessorInstall.install` can persist the next
+historical preparation, fixed modes and owner. It does not create a V103 source
+set or any capture evidence. `RepositorySuccessorExecution.activate` calls
+`next.prepare()`, which refuses historical inputs. V105 requires the exact new
+coordinator binding; V94 creates that binding only during activation. Advancing
+the claim with SQL or fabricating a binding is not a valid multi-owner fixture.
+
+The private implementation follows the activation/capture portion of this sequence.
+It does not change the public protocol or enable historical staging and commit.
+Fresh-process attachment and broader recovery qualification remain follow-up work.
+
+1. Keep the original, canonically checked V103 retention set through operation
+   terminality. Reserve the successor through V92/V97/V98 and install V93 using
+   the existing reviewed protocol. Expired-unquiesced reservation must not be
+   treated as completion of the predecessor's readers or remote provider work.
+2. Reacquire the complete selected historical inputs under the current execution
+   caller. Hold their source Work/Uses through transaction completion, including
+   an uncertain commit reply. Use `prepareHistorical`, the recorded placements,
+   fixed modes and the new attempt identities. Resolve or inspect remote data
+   outside SQL locks; preserve existing byte, selector and capture-batch bounds.
+3. In one private activation transaction, establish the exact V94 claim/owner
+   identity, check current source/destination permissions and immutable backend
+   placements, and insert its coordinator binding. Lock and validate the retained
+   original preparation/header, then the sorted physical origins and retention
+   records before validating every selected pin. Append a V104/V105 capture under
+   that original header with the successor's epoch, token and incarnation. The
+   capture is non-initial; its ownership never rewrites the initial capture.
+   Execution identity, binding and capture must commit together or all roll back.
+4. Persist an immutable historical-activation sidecar in that same transaction.
+   Bind its account/principal/operation, V94 epoch/token/incarnation and successor
+   preparation digest to the original V103 generation/preparation digest, command
+   digest, and this activation's exact V104 batch digest. Validate the matching
+   V105 owner and same-transaction batch creation; deferred completeness checks
+   must prevent a partial historical activation from committing. V94 identity
+   alone is insufficient historical activation evidence. This association must
+   survive lost replies and process restart, not live only in a host object.
+   Prove ancestry through immutable V93 predecessor-preparation bindings, not
+   merely matching command text and an earlier generation. Walk only within an
+   explicit bounded traversal budget; exhaustion or a missing link refuses
+   attachment and preserves retention. A previously verified sidecar can anchor
+   the next link only after its exact retained identities are checked. Also check
+   live root coverage and complete selected-object coverage. Successor generations
+   intentionally share the original header until terminal release; their absent
+   V103 headers remain UNKNOWN, never empty. Ordinary attachment must not silently
+   accept that state. A fresh attachment revalidates the durable association and
+   registers its own capture before borrowing source data.
+5. Retain the tentative capture capability before the activation transaction can
+   commit. A lost reply must leave it available for exact confirmation or cleanup.
+   Confirm the sidecar, execution identity and this capture's digest/owner tuple;
+   execution identity alone cannot confirm that a competing caller's capture was
+   recorded. A fresh process or fresh reader cannot inherit a previous process's
+   local completion capability. Its new capture requires current authorization.
+6. Drain the successor capture and the original capture independently. Only their
+   own Sources/Uses and exact pins participate. After all capture batches have
+   matching V107 completion, the retained-set inspector may qualify coverage;
+   that still grants no root release without the separately checked terminal
+   outcome. A successor's successful activation, lease expiry or completed capture
+   must not close an unfinished predecessor capture.
+
+Acceptance uses a real initial historical preparation and admitted owner, then
+actual expired-unquiesced reservation, install and private activation. Leave the
+initial reader live while the second owner completes its capture: retention
+qualification must refuse. Release and quiesce the initial reader, record its
+original-epoch completion, and require both batches to qualify without renewing
+either lease. Also cover current access revocation, changed placements, a missing
+or released retention anchor, the seventeenth batch, capture-insert rollback,
+lost activation acknowledgement, concurrent exact activation, cancellation on
+both sides of commit, and stale token/incarnation. Verify no partial V94 identity
+or coordinator binding survives an unsuccessful activation. Include a missing or
+mismatched sidecar, a broken or exhausted ancestry chain, cold confirmation after
+a lost reply, and a fresh process registering a distinct capture. Use actual SQL guards
+and captured handles, never fabricated successor grants.
+
+V109 and `RepositoryHistoricalSuccessorActivation` implement the private atomic
+activation boundary. The attempt retains its tentative capture before sidecar
+insertion, including when the transaction rolls back or its reply is lost. Exact
+retry confirms this capture's immutable binding without renewing leases. The
+ancestry walk is bounded at 64 immutable V93 links, using the existing unique
+operation/generation index. No remote provider or registry call runs inside these
+SQL locks. The sidecar and capture use the same activation transaction; a deferred
+constraint refuses a required binding that is missing at commit.
+
+The new required-capture flag defaults to false for existing V94 rows. SQL does
+not infer historical selectors from protobuf bytes. Future historical attachment,
+execution and root release must therefore require the V109 sidecar explicitly;
+a bare V94 execution row is not historical activation evidence. The ordinary
+activation path still refuses a fresh historical command.
+
+Qualification covers actual two-owner captures, separate drain receipts, omitted
+or altered sidecar identities, rollback, lost reply and cancellation around commit.
+`RepositoryHistoricalActivationEvidence.confirm` now returns immutable V94/V109
+identity from a separate connection without source handles, session attachment,
+lease renewal or local-drain authority. It binds command, epoch/token/incarnation,
+successor and retained preparation digests, capture digest and activation transaction.
+Missing activation returns absent; bare V94 execution is not historical evidence.
+Exact readback remains valid after capture completion or credential/source revocation;
+it does not authorize new reads or execution. Scoped activation tests separately
+check current source READ, creation grant and credential revocation after capture.
+
+A restarted process must not reuse the saved incarnation as process authority.
+The original live manager can reconcile its own retained attempt after a lost
+reply. Another process needs a fresh reservation, epoch, incarnation and source
+capture once the prior claim and owner expire. Old capture evidence remains
+required; only actual completion or durable reader quiescence can satisfy it.
+The cold-confirmation tests use a separate entity-manager factory in the same JVM,
+not a deployed restart or newly attached execution session.
+
+A three-owner regression now waits for actual epoch-2 claim and owner expiry,
+reserves a distinct epoch-3 incarnation, and follows two immutable V93 preparation
+links back to the original generation-0 retention set. Completing epochs 3 and 2
+still leaves coverage incomplete until epoch 1 releases its actual pins and gains
+a QUIESCED receipt. All three batches then qualify without changing the current
+leases. See the [confirmation and recovery evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
+
+Concurrent activation, traversal-limit qualification and deployed restart/session
+attachment remain open. Keep claimed historical execution and root release gated.
+Success publication and broader multi-generation recovery require their own
+qualification; activation and capture registration alone do not prove them.
+
+The reviewed next step retains the V103 header and adds a permanent per-preparation
+release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
+batches in digest order. Decode the bounded canonical preparation, match its hashes,
+and compare every batch's distinct source node/revision/object tuples to the complete
+canonical selection. Require the same-creation initial batch, every exact V105 owner
+and every V107 completion. The coverage check now recomputes actual root
+count/digest in the header's SQL snapshot; release must use it under the locks
+above before deletion. Do not rely on a sealed header alone. Missing legacy coverage is UNKNOWN, not an empty
+set. Require matching V52 success or V64 rejection with an applicable owner generation,
+or exact V85 initial abandonment with no admitted owner/start. Expiry, coordinator
+drain and successor installation alone are insufficient.
+
+Insert the release receipt and delete all child roots atomically. The delete guard
+must accept only that transaction's exact receipt, with a deferred zero-root check.
+Coverage must distinguish UNKNOWN, LIVE_EXACT and RELEASED_EXACT while retaining the
+original header as creation evidence. Test capture/release races, incomplete batches,
+an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
+lost acknowledgement before enabling this path. This root-release protocol remains
+unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.

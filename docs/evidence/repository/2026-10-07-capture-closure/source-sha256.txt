@@ -1,0 +1,4 @@
+e2e8a00e4922db176b4157ea2da876a52b82bad7326911abae268791eaa71ae5  repo/container/src/main/resources/db/migration/repo/V108__preparation_capture_admission_closure.sql
+06ae3b566632d2900115733a9e68964410f0cffdb63d90601ffbb52522178828  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentCaptureAdmissionClosureIT.java
+5aef5c9dc891cfccfb25ea3058e59aab59ddd69f330183a4cc38de188a3db865  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationAbandonmentIT.java
+403b0c3a435459893ad9e8ad2830adcea0c6861b978e00c8d1250ef2bc4ee0f9  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/LegacyPublicationPreparationFixture.java

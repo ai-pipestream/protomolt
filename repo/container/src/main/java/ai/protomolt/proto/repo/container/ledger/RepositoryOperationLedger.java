@@ -157,6 +157,20 @@ final class RepositoryOperationLedger {
             Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
         Objects.requireNonNull(ownerNonce);
         command.requireExecutionSupported();
+        return prepareCheckedAdmission(key, command, ownerNonce, lease);
+    }
+
+    /** Preparation of private registration only; this grants no historical execution capability. */
+    static java.util.function.BiFunction<EntityManager, RepositoryExecutionClaimLedger.Claim, Admission> prepareHistoricalAdmission(
+            Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease, DocumentHistoricalAssessmentSources.Work sources) {
+        if (sources.references(command, () -> {}).isEmpty())
+            throw new IllegalArgumentException("Historical registration requires pinned sources");
+        return prepareCheckedAdmission(key, command, ownerNonce, lease);
+    }
+
+    private static java.util.function.BiFunction<EntityManager, RepositoryExecutionClaimLedger.Claim, Admission> prepareCheckedAdmission(
+            Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease) {
+        Objects.requireNonNull(ownerNonce);
         if (!key.account.equals(command.intent().getAccountId()) || !key.operationId.equals(command.operationId()))
             throw new IllegalArgumentException("Publication command differs from operation scope");
         var encoded = new EncodedCommand(DocumentPublicationCommand.CODEC,

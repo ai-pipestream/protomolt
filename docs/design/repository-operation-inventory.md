@@ -1,5 +1,256 @@
 # Repository operation inventory
 
+## Private capture qualification for retention release (2026-10-07)
+
+- **New private helper:** `DocumentPreparationCaptureCoverage` pre-encodes
+  canonical historical selectors, then locks the claim, preparation, root header
+  and digest-ordered batches. It checks actual roots, exact selected revision
+  slots/objects, every batch's count/digest, original owner/drain binding, and
+  absence of native pins and mirrors. It requires READ COMMITTED and does not
+  renew the claim. Missing legacy evidence is incomplete, not an empty proof.
+- **Unchanged:** public and wire APIs, capture insertion, root retention and
+  deletion. The helper is not wired to a release path and its returned count is
+  transaction-local evidence only, not authority to delete roots.
+
+Sol reviewed the helper and requested duplicate tuple refusal, now implemented.
+The [capture selection follow-up](../evidence/repository/2026-10-07-capture-selection/README.md)
+qualifies repeated selectors, internally consistent incomplete/duplicate batches,
+and two captures where the earlier capture has not drained. Both captures in that
+test share an execution owner. The [alias follow-up](../evidence/repository/2026-10-07-capture-alias/README.md)
+also qualifies one physical object selected from two real historical revisions;
+each revision retains a separate pin tuple. Multiple owner epochs and historical
+legacy initial-batch gaps remain to be qualified before release wiring.
+The [qualification evidence](../evidence/repository/2026-10-07-capture-coverage/README.md)
+records the original test scope; the remaining cases above are not claimed complete.
+
+## Actual history-root integrity (2026-10-07)
+
+- **Extended private coverage check:** one SQL snapshot compares the actual root
+  count and ordered digest with both the sealed header and canonical command.
+  Missing, extra or substituted roots produce DATA_LOSS. No locks are added.
+- **Unchanged:** absent legacy headers remain UNKNOWN; genuine sealed empty
+  sets remain EXACT. Wire contracts, root retention and release are unchanged.
+
+The [28-test qualification](../evidence/repository/2026-10-07-root-integrity/README.md)
+includes a failing missing-root baseline, real SQL corruption injection with
+rollback, multi-revision selection, migration, capture closure and capture drain.
+Sol reviewed without a blocker. Future release must call this integrity check
+under its claim/preparation/header locks and separately prove every capture's
+canonical object coverage, ownership and completed drain.
+
+## Bounded abandonment confirmation and terminal capture refusal (2026-10-07)
+
+- **Extended private confirmation:** abandonment evidence is read inside a SQL
+  transaction, allowing timeout-aware `Tx` views. Exact original identity remains
+  required after expiry or transfer; confirmation does not renew the claim.
+- **Qualified existing terminal closure:** a real cancellation of a privately
+  admitted historical operation records V64 evidence and then refuses a fresh
+  V104 capture through V108. Existing capture evidence remains retained.
+- **Unchanged:** protobuf contracts, public historical execution, retention roots
+  and release. Claimed historical success remains gated; V52 capture-refusal
+  qualification must accompany that path rather than bypass its guards.
+
+See [regression evidence](../evidence/repository/2026-10-07-bounded-abandonment/README.md)
+for bounded lost-response recovery, exact confirmation after transfer, and a real
+SQL lock timeout followed by successful retry. Sol reviewed without a blocker.
+
+## Capture admission closure (2026-10-07)
+
+- **Extended private capture insertion:** V108 rejects new batches and capture
+  owners after initial abandonment or a terminal result. It uses the existing
+  execution-claim fence, without another lock order or a provider call.
+- **Unchanged confirmation:** an existing batch remains confirmable; an SQL
+  duplicate discarded by ON CONFLICT does not reopen admission or create a row.
+- **Unchanged:** wire contracts, public historical execution gates, root retention
+  and root deletion. A future release receipt still needs its own closure guard.
+
+The [qualification evidence](../evidence/repository/2026-10-07-capture-closure/README.md)
+includes the original failing abandonment regression, populated V107 migration,
+owner insertion after an interposed marker, and an observed PostgreSQL lock wait.
+The combined 38-test run passes. Sol found no blocker; the subsequent checkpoint
+above qualifies terminal cancellation. Success capture coverage remains pending.
+Historical V84 migration
+fixtures use the original V81 preparation columns, not the current journal writer.
+The subsequent checkpoint also corrects abandonment confirmation's use of
+`Tx.readOnly`, which bounded `Tx` views do not support.
+
+## Durable capture drain (2026-10-07)
+
+- **Extended private registration:** retains a capture capability bound to the
+  exact V104 batch and V105 owner, including when commit acknowledgement is lost.
+  A tentative capability from a rolled-back registration cannot create a marker.
+- **New private completion:** closes source admission and the exact captured
+  history handles, waits for their Work/Use owners, releases native pins, then
+  records V107 evidence. Unrelated handles on the reader remain usable. Local
+  timeout, cancellation and deadline leave incomplete cleanup retryable.
+- **New private recovery confirmation:** requires absent exact pins/mirrors and
+  every original reader permanently QUIESCED before inserting recovery evidence.
+  Fencing, lease expiry and elapsed time do not qualify. Existing V46/V47 pin
+  recovery remains responsible for recovering physical read protection.
+- **Unchanged:** protobuf contracts, public historical execution gates, prepared
+  history roots and retention release. This is capture cleanup, not publication or
+  general successor execution authority.
+
+The marker preserves original ownership after lease expiry or a guarded SQL epoch
+transfer. It neither renews the current claim nor fences the reader incarnation.
+LOCAL is an owning-process attestation for enrolled work; QUIESCED consumes durable
+reader evidence. Exact confirmation preserves the first committed evidence kind.
+See [qualification evidence](../evidence/repository/2026-10-07-capture-drains/README.md).
+
+## Captured pin identity protection (2026-10-07)
+
+- **Extended native pin insertion:** V106 refuses UUIDs already recorded in
+  permanent preparation capture evidence. The AFTER INSERT check covers an insert
+  that waited for another transaction to release the original pin.
+- **Unchanged:** existing live pins, fresh captures, unrelated reader handles,
+  protobuf contracts and pin-release behavior. No durable source-drain marker or
+  history-root release is enabled.
+
+The [regression evidence](../evidence/repository/2026-10-07-captured-pin-reuse/README.md)
+records successful resurrection before the fix and rejection afterward, including
+an observed PostgreSQL lock wait and migration with existing captures.
+
+## Historical source lifetime (2026-10-07)
+
+- **Extended private registration:** an accepted call holds a source Work through
+  transaction completion and response unwinding. Closing source admission refuses
+  new calls without ending accepted calls' borrowed Uses.
+- **Extended schema resolution:** returned member resolutions hold that Work until
+  their components have all been offered cleanup. Cleanup failures propagate with
+  suppressed secondary errors. Failed construction also ends its Work.
+- **New internal drain observation:** source drain requires admission closure,
+  actual Work completion and successful release of borrowed Uses. Cancelling a
+  running future is not evidence that its worker has finished.
+- **Unchanged:** protobuf contracts, durable pin batches, physical pin release,
+  V91 attestations, public historical execution gates and retention pruning.
+
+The [14-test qualification](../evidence/repository/2026-10-07-source-lifetime/README.md)
+includes real PostgreSQL gates before commit and after commit before acknowledgement,
+retained schema resolution, cleanup failure and running-worker cancellation.
+Sol reviewed this checkpoint without a blocker. Factory setup still requires open
+sources. Queued-task cancellation and durable batch drain are not qualified here.
+
+## Historical capture ownership (2026-10-07)
+
+- **Extended private registration:** V105 requires an immutable owner for each new
+  pin batch, recording its exact claim epoch/token and coordinator incarnation in
+  the batch's creation transaction. The guard matches the preparation's command
+  digest and live coordinator binding.
+- **Extended retry checks:** missing legacy ownership is unknown and refused;
+  another execution must obtain a fresh capture. Ownership cannot be rewritten.
+- **Unchanged:** public protobuf contracts, history access policy, schema identity,
+  execution gates and retention release. Owner association is not drain evidence.
+
+Existing V104 batches are deliberately not assigned an assumed owner. Batch-local
+source/worker drainage, successor capture qualification and canonical coverage
+remain required before history roots can be released.
+The [36-test qualification](../evidence/repository/2026-10-07-capture-owners/README.md)
+includes fresh registration, populated-database migration, coordinator drainage
+and corrected pre-V103 fixtures; Sol reviewed the changes without a blocker.
+
+## Durable historical source pin batches (2026-10-07)
+
+- **Extended private registration:** V104 records the selected capture pins in
+  immutable, digest-sealed batches in the same transaction as preparation and owner
+  admission. New historical preparations require an initial batch atomically.
+- **Extended retry evidence:** exact confirmation preserves its batch and leases;
+  fresh captures append bounded batches. Evidence survives live pin release.
+  Existing V103 rows receive no invented capture history.
+- **Unchanged:** public contracts, publication execution gates, schema bindings,
+  ownership rules, normal reads and retention release. No new RPC is advertised.
+- **Limit:** at most 16 batches per preparation and 10,000 pins per batch. Fresh
+  captures beyond that limit fail closed; batch retirement remains future work.
+
+The [release design](repository-historical-restore.md#retention-release-requirements-before-implementation)
+separates stored capture identity from complete command coverage and actual drain.
+The latter checks remain prerequisites for releasing history roots. See
+[qualification evidence](../evidence/repository/2026-10-07-source-pin-batches/README.md).
+
+## Selected historical source pin projection (2026-10-07)
+
+- **Extended internal preparation:** historical source references expose immutable
+  selected reader/pin/object/source-revision identities while their borrowed Use
+  remains active. Identities come from the actual capture, not caller-provided pins.
+  Duplicate selections share one physical pin; unselected objects are excluded.
+- **Unchanged:** public operations, protobuf contracts, ownership, receipts,
+  idempotency and pin-release behavior. The projection grants no release authority.
+- **Pending:** durable capture-batch association, recovery and terminal/drain checks
+  before V103 retention roots can be released. Roots remain protected.
+
+Eight focused PostgreSQL tests passed; provider observations in those fixtures are
+synthetic. Sol reviewed the change without a blocker. See the
+[test receipts](../evidence/repository/2026-10-07-historical-source-pins/README.md)
+and [release design](repository-historical-restore.md#retention-release-requirements-before-implementation).
+
+## Scoped library and gRPC parity (2026-10-07)
+
+- **Extended verification:** one shared scenario driver runs publication through
+  the library facade and authenticated in-process gRPC, using PostgreSQL and
+  versioned LocalStack storage. It checks typed/opaque publication, key separation,
+  revocation, expiry, mixed-batch refusal, exact retry and concurrent operations.
+- **New build gate:** `:protomolt-repo-container:scopedPublicationTest` is part of
+  `check`. It launches a fresh JVM using the observed production JAR runtime.
+- **Unchanged:** production repository APIs, protobuf identities, grant-provisioning
+  visibility and provider behavior. Fixture resolvers supply synthetic credentials;
+  this is not external identity-provider or public provisioning qualification.
+- Adapter write-call counts are checked separately from recorded SQL versions.
+  The held-upload scenario pauses before the SDK PUT, not inside a remote request.
+  [Evidence and limits](../evidence/repository/2026-10-07-scoped-transport-conformance/README.md).
+
+## Archive snapshots and restore activation inventory (2026-10-07)
+
+Committed source baseline: `1dd49f259f73a072b2bd29166fa7c9c9c9de16c7`, with
+private historical registration added in this checkpoint.
+Earlier dated checkpoints below describe their original state, not current
+availability. This inventory does not mark the full repository goal complete.
+
+- **Extended, implemented:** archive unary put, managed/streaming upload, and
+  bridge publication capture `VersionManifest.metadata_snapshot`. Historical
+  manifest reads and version listings return it; response `info` stays current.
+  V102 freezes snapshots and snapshot-bearing identity. Legacy absence is unknown.
+  [Evidence](../evidence/repository/2026-10-07-archive-metadata/README.md).
+- **Unchanged:** equal-content archive deduplication, rendition checksums, current
+  classification/display-label edits, existing write attribution, mutation receipts,
+  physical-object references and protobuf identities. No archive schema-admission
+  receipt is created by the snapshot change.
+- **Existing, internal:** `PublicationHistoricalReuse` binds source address, revision
+  UUID, manifest ordinal, slot and physical identity into the canonical command.
+  `DocumentHistoricalAssessmentSources` owns exact source Uses;
+  `DocumentPublicationAssessment.Historical` retains schemas and publishes through
+  `DocumentPublicationCommit`. It is not a public restore endpoint.
+- **Existing regression evidence:** `HistoricalMixedPublicationProbe` emits
+  `HISTORICAL_MIXED_MEMBER_PROVIDER_OK`, required by
+  `DocumentAssessmentStorageRuntimeTest`. Historical CORE plus fresh PARSED bytes
+  in one member therefore has real-provider coverage, beyond the earlier SQL-only
+  checkpoint. Re-run it when changing this execution path.
+- **Extended, implemented:** private preparation serialization can validate and
+  round-trip inert historical intents, using the existing codec and shared
+  placement/attempt checks. It creates no pin, claim, journal row or executable
+  plan. Ordinary preparation, claim acquisition and facade execution remain gated.
+- **New internal storage, implemented:** V103 indexes exact source revision roots
+  by sealed preparation. Legacy missing projections remain unknown. Java checks
+  canonical coverage; SQL sealing alone does not decode the command. Release and
+  pruning remain unavailable.
+- **Extended, implemented privately:** historical initial registration
+  binds claim/coordinator, preparation/source roots, modes and operation owner in
+  one transaction. Current authorization and retained physical witnesses must pass.
+  JDBC fault tests cover rollback and committed lost acknowledgments. Current READ
+  revocation refuses initial registration and retry. Execution
+  and assessment-start guards remain active; this is not a new public API.
+- **Extended, designed next:** resumed source capture, assessment ownership,
+  retention release and commit fencing for historical commands. Reuse the existing
+  journal and claim epochs; do not
+  invent another operation ledger. See
+  [claimed historical execution](repository-historical-restore.md#claimed-historical-execution-plan).
+- **Unchanged until qualified:** `PublishDocument` continues refusing historical
+  execution. `DocumentPublicationRestoration` resumes ordinary interrupted
+  assessments; its name does not mean user-requested historical restoration.
+- **Still missing:** archive typed rendition admission and immutable schema
+  references, complete archive source/derivation bindings, public historical
+  restore composition, backup recovery qualification, and progressive hydration.
+  An archive `schema_subject` string is currently recorded, not enforced or an
+  immutable retained descriptor identity.
+
 ## Durable credential authority primitive (2026-10-06)
 
 - **New internal operations:** register an exact credential authority, revoke its
@@ -6795,3 +7046,31 @@ Kafka and provider dependency exclusions. See
 [consumer evidence](../evidence/repository/2026-10-06-publication-consumer/README.md).
 No remote artifact release occurred. Non-S3 complete-document qualification,
 throughput/scaling and the remaining recovery/history/hydration work stay open.
+
+**Historical successor activation checkpoint (V109):** ordinary successor
+activation and installation remain unchanged in behavior. A **new private**
+historical activation helper commits V94 execution identity, coordinator binding,
+V104/V105 reader capture and an immutable V109 retention/capture association in
+one transaction. This extends internal recovery preparation, not public execution.
+The association binds the original retained preparation digest through immutable
+V93 ancestry, the command, successor epoch/token/incarnation and exact capture
+digest. Exact retry confirms this attempt without renewing leases. Existing
+protobuf names, tags, imports, Any URLs and public receipt encodings are unchanged.
+
+Real SQL qualification now covers two independently drained capture-owner epochs,
+rollback, omitted/altered bindings, lost acknowledgement and cancellation around
+commit. Source provider observations remain synthetic. See the
+[activation evidence](../evidence/repository/2026-10-07-historical-activation/README.md).
+Cold attachment, concurrent fresh attempts and ancestry-limit qualification remain
+open. Public historical execution and root release stay gated.
+
+**Historical confirmation and scoped recovery:** a **new private** immutable
+readback operation confirms the exact activation from an independent connection,
+without restoring execution or local drain authority. Same-attempt confirmation
+reuses it. Scoped activation now has explicit credential, creation-grant and
+source-READ revocation cases. Actual lease expiry and a third owner exercise two
+ancestry edges; all three captures must independently drain. Protobuf contracts
+and public execution remain **unchanged**. The 56 passing SQL tests and their
+limits are recorded in the
+[confirmation evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
+Separate connections in one JVM do not establish deployed restart recovery.

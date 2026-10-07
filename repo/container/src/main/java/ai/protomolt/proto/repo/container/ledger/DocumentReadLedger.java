@@ -333,6 +333,7 @@ public final class DocumentReadLedger {
     }
 
     public final class PinnedHistory extends PinnedRead<DocumentHistoricalReadPlan> {
+        private final DocumentReadPins.Captured<DocumentHistoricalReadPlan> historicalCapture;
         private final RepositoryCaller caller;
         private final DocumentHistoricalReadPlan plan;
         private final ai.protomolt.proto.repo.v1.NodeAddress address;
@@ -350,10 +351,42 @@ public final class DocumentReadLedger {
         }
         private PinnedHistory(DocumentReadPins.Captured<DocumentHistoricalReadPlan> captured, RepositoryCaller caller) {
             super(captured);
+            this.historicalCapture = captured;
             this.plan = captured.plan();
             this.caller = Objects.requireNonNull(caller);
             this.address = captured.plan().address();
             this.revision = captured.plan().revision();
+        }
+
+        /** Projects selected pins from this capture, without accepting caller-supplied pin identities. */
+        java.util.List<DocumentHistoricalSourcePin> selectedPins(PinnedRead<?>.Use use,
+                java.util.List<DocumentHistoricalReadPlan.Entry> entries,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
+            Objects.requireNonNull(control).check();
+            if (Objects.requireNonNull(use).plan() != plan)
+                throw new IllegalArgumentException("Pin selection use belongs to another historical capture");
+            if (entries.isEmpty() || entries.size() > ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_PARTS)
+                throw new IllegalArgumentException("Historical pin selection count exceeds bounds");
+            var retained = new java.util.HashSet<>(plan.entries());
+            var selected = new java.util.HashSet<UUID>();
+            for (var entry : entries) {
+                control.check();
+                if (!retained.contains(entry))
+                    throw new IllegalArgumentException("Pin selection differs from captured historical entry");
+                selected.add(entry.objectId());
+            }
+            var result = new java.util.ArrayList<DocumentHistoricalSourcePin>(selected.size());
+            for (var pin : historicalCapture.pins()) {
+                control.check();
+                if (selected.remove(pin.object())) result.add(new DocumentHistoricalSourcePin(
+                        historicalCapture.reader(), pin.id(), pin.object(),
+                        ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address),
+                        revision, plan.publicationRevision()));
+            }
+            if (!selected.isEmpty()) throw new IllegalStateException("Historical capture lacks selected pins");
+            control.check();
+            use.plan();
+            return java.util.List.copyOf(result);
         }
 
         /** A captured principal or process grant cannot be lent to a different assessment actor. */

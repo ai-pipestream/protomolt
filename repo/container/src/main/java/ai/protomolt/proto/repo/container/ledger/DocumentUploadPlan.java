@@ -81,6 +81,19 @@ final class DocumentUploadPlan {
     static Prepared prepare(DocumentPublicationCommand command, Map<UUID, Placement> selected,
             Map<String, UUID> attempts, List<DocumentHistoricalReferenceAdmission.Prepared> historical, Runnable control) {
         historical = DocumentHistoricalReferenceAdmission.requireComplete(command, historical, control);
+        var members = prepareMembers(command, selected, attempts, control);
+        control.run(); historical.forEach(source -> source.selectors());
+        return new Prepared(command, members, historical);
+    }
+
+    /** Inert journal validation only: no executable plan, source pin or authority escapes. */
+    static void validatePreparationShape(DocumentPublicationCommand command, Map<UUID, Placement> selected,
+            Map<String, UUID> attempts) {
+        prepareMembers(Objects.requireNonNull(command), selected, attempts, () -> {});
+    }
+
+    private static List<Member> prepareMembers(DocumentPublicationCommand command, Map<UUID, Placement> selected,
+            Map<String, UUID> attempts, Runnable control) {
         Objects.requireNonNull(selected); Objects.requireNonNull(attempts);
         int memberCount = command.intent().getMembersCount();
         if (selected.size() > memberCount || attempts.size() > memberCount)
@@ -134,8 +147,8 @@ final class DocumentUploadPlan {
         }
         if (!usedDrives.equals(selected.keySet()) || !usedMembers.equals(attempts.keySet()))
             throw new IllegalArgumentException("Extraneous drive selection or attempt for a non-uploading member");
-        control.run(); historical.forEach(source -> source.selectors());
-        return new Prepared(command, members, historical);
+        control.run();
+        return List.copyOf(members);
     }
 
     private static void addSource(Map<UUID, Long> sources, DocumentRevisionCondition source, Map<UUID, NodeAddress> identities) {

@@ -404,6 +404,33 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
+     * Builds journaled publication and immutable history over qualified bounded
+     * Redis storage. Library access is always available; historical and publication
+     * transports are independently optional. Legacy document, archive and HTTP
+     * upload APIs are not mounted. The host requires retention qualification,
+     * lifecycle recovery and zero Redis TTL; persistence and eviction configuration
+     * remain the operator's responsibility.
+     *
+     * Schema lifecycle ownership transfers only on successful construction. Keep
+     * borrowed registry stores open until this host has successfully drained.
+     * The assessment bundle and authority callbacks are trusted host configuration.
+     * Built-in publication transports require authentication; embedded transports
+     * must also install the documented parser limit and caller context.
+     */
+    public static RepoServices buildBoundedDocuments(RepoServiceConfig config, BridgeEngine bridges,
+            HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess,
+            ManagedPublicationOptions publication, BoundedDocumentOptions options) {
+        java.util.Objects.requireNonNull(config, "config");
+        java.util.Objects.requireNonNull(bridges, "bridges");
+        java.util.Objects.requireNonNull(schemaAccess, "schemaAccess");
+        java.util.Objects.requireNonNull(publication, "publication");
+        var profile = java.util.Objects.requireNonNull(options, "options").profile();
+        profile.validate(config);
+        return new RepoServices(config, bridges, ai.protomolt.proto.repo.blob.spi.BlobStores.discover(),
+                historicalAccess, schemaAccess, null, publication.journaled(), profile);
+    }
+
+    /**
      * Builds the service set with an explicit bridge engine. The default
      * engine runs what needs no other service; a host that can reach a
      * parser supplies one that also runs the text and OCR bridges.

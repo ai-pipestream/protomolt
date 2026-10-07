@@ -64,6 +64,10 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                                 .setSourceSlot(newSelector.getSourceSlot()).setObject(newSelector.getObject()))).build();
                 var command = new DocumentPublicationCommand(first.command().intent().toBuilder().clearMembers()
                         .setOperationId(UUID.randomUUID().toString()).addMembers(oldMember).addMembers(newMember).build());
+                var placements = Map.of(first.prepared().members().getFirst().placement().drive().id(),
+                        first.prepared().members().getFirst().placement(), second.prepared().members().getFirst().placement().drive().id(),
+                        second.prepared().members().getFirst().placement());
+                verifyRetentionProjection(c, command, oldMember, oldHistory, newHistory, currentSecond, placements);
                 var resolutions = new java.util.concurrent.atomic.AtomicInteger();
                 try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, first.batch().policy(),
                         Map.of("old", DocumentPublicationCandidate.Mode.TYPED, "new", DocumentPublicationCandidate.Mode.TYPED),
@@ -117,6 +121,319 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 oldHistory.release(); newHistory.release(); reads.fence(); reads.attestLocalQuiescence();
             }
         }
+    }
+
+    private static void verifyRetentionProjection(Context c, DocumentPublicationCommand command,
+            DocumentPublicationMember oldMember, DocumentReadLedger.PinnedHistory oldHistory,
+            DocumentReadLedger.PinnedHistory newHistory, boolean currentSecond,
+            Map<UUID, DocumentUploadPlan.Placement> placements) {
+        // Repeated use in a different destination retains one source revision.
+        // A different revision of the same node must remain a distinct root.
+        var repeated = new DocumentPublicationCommand(command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .addMembers(destination(oldMember, "repeat-old")).build());
+        var roots = DocumentPreparationHistoryRoots.roots(command);
+        assertThat(roots).hasSize(currentSecond ? 1 : 2);
+        assertThat(DocumentPreparationHistoryRoots.roots(repeated)).isEqualTo(roots);
+        assertThat(roots.stream().map(DocumentPreparationHistoryRoots.Root::node).distinct()).hasSize(1);
+        var revisions = roots.stream().map(root -> UUID.fromString(root.revision())).toList();
+        byte[] sqlDigest = c.tx().readOnly(em -> (byte[]) em.createNativeQuery("""
+                SELECT sha256(convert_to('protomolt/preparation-history/v1' || chr(10) ||
+                  string_agg(node_id::text || '/' || revision_id::text || chr(10),'' ORDER BY node_id,revision_id),'UTF8'))
+                FROM document_revision_publications WHERE revision_id IN (:revisions)
+                """).setParameter("revisions", revisions).getSingleResult());
+        assertThat(DocumentPreparationHistoryRoots.digest(roots)).isEqualTo(sqlDigest);
+        List<DocumentHistoricalReferenceAdmission.Prepared> borrowed;
+        try (var sources = DocumentHistoricalAssessmentSources.open(repeated, CALLER,
+                currentSecond ? List.of(oldHistory) : List.of(newHistory, oldHistory), RepositoryReadControl.NONE)) {
+            borrowed = sources.references(repeated, () -> {});
+            assertThat(borrowed).hasSize(roots.size());
+            assertThat(borrowed.stream().flatMap(source -> source.pins().stream()).toList())
+                    .hasSize(roots.size())
+                    .extracting(DocumentHistoricalSourcePin::revision).containsExactlyInAnyOrderElementsOf(revisions);
+            assertThat(DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
+                    .isEqualTo(borrowed);
+            var incomplete = borrowed.subList(1, borrowed.size());
+            assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, incomplete, () -> {}))
+                    .hasMessageContaining("Historical preparations differ from complete command");
+            verifyHistoricalRegistration(c, repeated, sources, placements, roots.size());
+        }
+        // The projection is data; source admission still requires live Uses.
+        assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> borrowed.getFirst().pins()).isInstanceOf(IllegalStateException.class);
+    }
+
+    private static void verifyHistoricalRegistration(Context c, DocumentPublicationCommand command,
+            DocumentHistoricalAssessmentSources sources, Map<UUID, DocumentUploadPlan.Placement> placements, int roots) {
+        var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+        var seeds = DocumentPublicationSeeds.mint(key, command);
+        var record = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 0);
+        var budget = new PayloadBudget(64L * 1024 * 1024);
+        var fault = new java.util.concurrent.atomic.AtomicInteger();
+        var acknowledged = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+            if (fault.get() == 1 && registrationRows(c, "repository_operation_owners", key) == 1
+                    && fault.compareAndSet(1, 2))
+                throw new java.sql.SQLException("Historical registration acknowledgment lost", "08006");
+        });
+        var datasource = DocumentJdbcFaults.beforeCommit(acknowledged, connection -> {
+            if (fault.get() != 0) return;
+            try (var statement = connection.prepareStatement("SELECT count(*) FROM repository_operation_owners WHERE operation_id=?")) {
+                statement.setObject(1, key.operationId());
+                try (var rows = statement.executeQuery()) {
+                    rows.next();
+                    if (rows.getInt(1) == 1 && fault.compareAndSet(0, 1))
+                        throw new java.sql.SQLException("Historical registration commit refused", "08006");
+                }
+            }
+        });
+        try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"))) {
+            var registration = DocumentPublicationRegistration.historical(new Tx(emf), budget, record, sources,
+                    UUID.randomUUID(), new DocumentPublicationScopeCalls(), new DriveLedger(c.tx()), RepositoryReadControl.NONE);
+            var modes = command.intent().getMembersList().stream().collect(java.util.stream.Collectors.toMap(
+                    DocumentPublicationMember::getMemberId, ignored -> DocumentPublicationCandidate.Mode.TYPED));
+            var tables = List.of("repository_execution_claims", "repository_coordinator_bindings",
+                    "repository_publication_preparations", "repository_preparation_history_sets",
+                    "repository_preparation_history_roots", "repository_publication_modes", "repository_operations",
+                    "repository_operation_owners", "repository_preparation_pin_batches", "repository_preparation_source_pins",
+                    "repository_preparation_pin_owners");
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION test_require_initial_pins_early() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN SET CONSTRAINTS repository_preparation_initial_pins IMMEDIATE; RETURN NEW; END; $$
+                        """).executeUpdate();
+                em.createNativeQuery("CREATE TRIGGER test_require_initial_pins_early AFTER UPDATE ON repository_preparation_history_sets "
+                        + "FOR EACH ROW EXECUTE FUNCTION test_require_initial_pins_early()").executeUpdate();
+            });
+            // Force the deferred completeness gate before source association: no partial preparation may escape.
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("requires its initial source pin batch");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table).isZero();
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER test_require_initial_pins_early ON repository_preparation_history_sets").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION test_require_initial_pins_early()").executeUpdate();
+            });
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION test_require_capture_owner_early() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN SET CONSTRAINTS repository_preparation_pin_owner_complete IMMEDIATE; RETURN NEW; END; $$
+                        """).executeUpdate();
+                em.createNativeQuery("CREATE TRIGGER test_require_capture_owner_early AFTER INSERT ON repository_preparation_pin_batches "
+                        + "FOR EACH ROW EXECUTE FUNCTION test_require_capture_owner_early()").executeUpdate();
+            });
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("requires its exact coordinator owner");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table).isZero();
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER test_require_capture_owner_early ON repository_preparation_pin_batches").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION test_require_capture_owner_early()").executeUpdate();
+            });
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("Historical registration commit refused");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table).isZero();
+            assertThat(registration.mayHaveCommitted()).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("Historical registration acknowledgment lost");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table)
+                    .isEqualTo(table.equals("repository_preparation_history_roots")
+                            || table.equals("repository_preparation_source_pins") ? roots : 1);
+            var leases = registrationLeases(c, key);
+            var owner = registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE).orElseThrow();
+            assertThat(owner.executionClaim()).isPresent();
+            assertThat(registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE)).contains(owner);
+            assertThat(registrationRows(c, "repository_preparation_pin_batches", key)).isEqualTo(1);
+            var pinBatch = DocumentPreparationSourcePins.prepare(command, sources.references(command, () -> {}), () -> {});
+            verifyPinBatchGuards(c, record, owner, pinBatch);
+            verifyCaptureOwner(c, record, owner, pinBatch, registration.drainIdentity().incarnation());
+            if (roots == 1) verifyNewPinBatches(c, record, owner, sources, registration.drainIdentity().incarnation());
+            c.tx().readOnly(em -> {
+                assertThat(DocumentPreparationHistoryRoots.coverage(em, record,
+                        DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record))))
+                        .isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+                assertThat(((Number) em.createNativeQuery("SELECT count(*) FROM repository_preparation_history_roots WHERE operation_id=:id")
+                        .setParameter("id", key.operationId()).getSingleResult()).intValue()).isEqualTo(roots);
+                return null;
+            });
+            verifyRootCorruptionRefused(c, record, roots);
+            assertThatThrownBy(() -> registration.start(CALLER, owner, Duration.ofMinutes(5), RepositoryReadControl.NONE))
+                    .isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(record::prepare).isInstanceOf(UnsupportedOperationException.class);
+            sources.close();
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(registrationLeases(c, key)).isEqualTo(leases);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    private static final class RollBackCorruption extends RuntimeException {}
+
+    private static void verifyRootCorruptionRefused(Context c, DocumentPublicationPreparationRecord record, int roots) {
+        var digest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record));
+        for (int variant = 0; variant < (roots == 1 ? 3 : 1); variant++) {
+            int corruption = variant; // Missing child, additional revision, same-count replacement.
+            assertThatThrownBy(() -> c.tx().inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+                // Administrative corruption injection only. DDL and data changes roll back together;
+                // production users cannot mutate sealed roots through the guarded API.
+                em.createNativeQuery("ALTER TABLE repository_preparation_history_roots DISABLE TRIGGER repository_preparation_history_root_guard").executeUpdate();
+                var expected = DocumentPreparationHistoryRoots.roots(record.command()).getFirst();
+                if (corruption != 1) {
+                    assertThat(em.createNativeQuery("DELETE FROM repository_preparation_history_roots WHERE operation_id=:id AND revision_id=:revision")
+                            .setParameter("id", record.key().operationId()).setParameter("revision", UUID.fromString(expected.revision()))
+                            .executeUpdate()).isEqualTo(1);
+                }
+                if (corruption != 0) {
+                    assertThat(em.createNativeQuery("""
+                            INSERT INTO repository_preparation_history_roots(account_id,principal,operation_id,predecessor_generation,node_id,revision_id)
+                            SELECT :a,:p,:o,:g,node_id,revision_id FROM document_revision_publications
+                            WHERE node_id=:node AND revision_id<>:revision
+                            """).setParameter("a", record.key().account()).setParameter("p", record.key().principal())
+                            .setParameter("o", record.key().operationId()).setParameter("g", record.predecessorGeneration())
+                            .setParameter("node", UUID.fromString(expected.node())).setParameter("revision", UUID.fromString(expected.revision()))
+                            .executeUpdate()).isEqualTo(1);
+                }
+                assertThatThrownBy(() -> DocumentPreparationHistoryRoots.coverage(em, record, digest))
+                        .isInstanceOf(RepositoryException.class)
+                        .hasMessageContaining("Preparation history projection differs");
+                throw new RollBackCorruption();
+            })).isInstanceOf(RollBackCorruption.class);
+            var coverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, record, digest));
+            assertThat(coverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+        }
+    }
+
+    private static void verifyPinBatchGuards(Context c, DocumentPublicationPreparationRecord record,
+            RepositoryOperationLedger.Owner owner, DocumentPreparationSourcePins.Prepared pins) {
+        var claim = owner.executionClaim().orElseThrow();
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+            RepositoryExecutionClaimLedger.lockLive(em, claim);
+            em.createNativeQuery("UPDATE repository_preparation_pin_batches SET sealed=false WHERE operation_id=:id")
+                    .setParameter("id", record.key().operationId()).executeUpdate();
+        })).hasStackTraceContaining("immutable after sealing");
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+            RepositoryExecutionClaimLedger.lockLive(em, claim);
+            em.createNativeQuery("DELETE FROM repository_preparation_source_pins WHERE operation_id=:id")
+                    .setParameter("id", record.key().operationId()).executeUpdate();
+        })).hasStackTraceContaining("permanent evidence");
+        for (int variant = 0; variant < 3; variant++) {
+            int attempt = variant;
+            var failure = catchThrowable(() -> c.tx().inTransaction(em -> {
+                RepositoryExecutionClaimLedger.lockLive(em, claim);
+                em.createNativeQuery("""
+                        INSERT INTO repository_preparation_pin_batches(account_id,principal,operation_id,predecessor_generation,
+                         pins_sha256,expected_count,initial_capture)
+                        SELECT account_id,principal,operation_id,predecessor_generation,:digest,expected_count,false
+                        FROM repository_preparation_pin_batches WHERE operation_id=:id AND pins_sha256=:original
+                        """).setParameter("id", record.key().operationId()).setParameter("digest", new byte[32])
+                        .setParameter("original", pins.digest()).executeUpdate();
+                if (attempt == 0) return;
+                if (attempt == 1) {
+                    em.createNativeQuery("""
+                            UPDATE repository_preparation_pin_batches SET sealed=true WHERE operation_id=:id AND pins_sha256=:digest
+                            """).setParameter("id", record.key().operationId()).setParameter("digest", new byte[32]).executeUpdate();
+                } else {
+                    em.createNativeQuery("""
+                            INSERT INTO repository_preparation_source_pins(account_id,principal,operation_id,predecessor_generation,
+                             pins_sha256,pin_id,reader_incarnation,object_id,node_id,revision_id,publication_revision)
+                            SELECT account_id,principal,operation_id,predecessor_generation,:digest,gen_random_uuid(),
+                             reader_incarnation,object_id,node_id,revision_id,publication_revision
+                            FROM repository_preparation_source_pins WHERE operation_id=:id AND pins_sha256=:original
+                            """).setParameter("id", record.key().operationId()).setParameter("digest", new byte[32])
+                            .setParameter("original", pins.digest()).executeUpdate();
+                }
+            }));
+            assertThat(failure).hasStackTraceContaining(switch (attempt) {
+                case 0 -> "must seal atomically";
+                case 1 -> "count or digest differs";
+                default -> "differs from live historical capture";
+            });
+            assertThat(registrationRows(c, "repository_preparation_pin_batches", record.key())).isEqualTo(1);
+        }
+    }
+
+    private static void verifyNewPinBatches(Context c, DocumentPublicationPreparationRecord record,
+            RepositoryOperationLedger.Owner owner, DocumentHistoricalAssessmentSources original, UUID coordinator) {
+        var plans = original.references(record.command(), () -> {}).stream().map(source -> source.plan()).toList();
+        var leases = registrationLeases(c, record.key());
+        for (int batch = 1; batch <= 16; batch++) {
+            var reader = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var histories = plans.stream().map(plan -> reader.captureHistorical(CALLER, plan.address(), plan.revision())).toList();
+            DocumentPreparationSourcePins.Prepared pins;
+            try (var sources = DocumentHistoricalAssessmentSources.open(record.command(), CALLER, histories, RepositoryReadControl.NONE)) {
+                pins = DocumentPreparationSourcePins.prepare(record.command(), sources.references(record.command(), () -> {}), () -> {});
+                Runnable insert = () -> c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, owner.executionClaim().orElseThrow());
+                    var objects = pins.pins().stream().map(DocumentHistoricalSourcePin::object).collect(java.util.stream.Collectors.toSet());
+                    var destinations = record.command().intent().getMembersList().stream()
+                            .map(member -> DocumentIds.nodeId(member.getDestination().getAddress()))
+                            .collect(java.util.stream.Collectors.toSet());
+                    var locks = DocumentPublicationLocks.lockIndependentOrigins(em, destinations, objects, java.util.Set.of());
+                    DocumentPublicationLocks.lockIndependentRetention(em, locks);
+                    DocumentPreparationSourcePins.insert(em, record, pins, owner.executionClaim().orElseThrow(), coordinator, () -> {});
+                });
+                if (batch < 16) insert.run();
+                else assertThatThrownBy(insert::run).hasStackTraceContaining("capture batch limit exceeded");
+            } finally {
+                for (var history : histories) { history.close(); history.release(); }
+                reader.fence(); reader.attestLocalQuiescence();
+            }
+            if (batch < 16) {
+                // Confirmation of an immutable exact batch does not require its released live pins.
+                c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, owner.executionClaim().orElseThrow());
+                    DocumentPreparationSourcePins.insert(em, record, pins, owner.executionClaim().orElseThrow(), coordinator, () -> {});
+                });
+            }
+            assertThat(registrationRows(c, "repository_preparation_pin_batches", record.key())).isEqualTo(Math.min(batch + 1, 16));
+            assertThat(registrationRows(c, "repository_preparation_source_pins", record.key())).isEqualTo(Math.min(batch + 1, 16));
+        }
+        assertThat(registrationLeases(c, record.key())).isEqualTo(leases);
+        long initial = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM repository_preparation_pin_batches WHERE operation_id=:id AND initial_capture")
+                .setParameter("id", record.key().operationId()).getSingleResult()).longValue());
+        assertThat(initial).isEqualTo(1);
+    }
+
+    private static void verifyCaptureOwner(Context c, DocumentPublicationPreparationRecord record,
+            RepositoryOperationLedger.Owner owner, DocumentPreparationSourcePins.Prepared pins, UUID coordinator) {
+        var claim = owner.executionClaim().orElseThrow();
+        Object[] stored = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT claim_epoch,claim_token,incarnation FROM repository_preparation_pin_owners WHERE operation_id=:id
+                """).setParameter("id", record.key().operationId()).getSingleResult());
+        assertThat(((Number) stored[0]).longValue()).isEqualTo(claim.epoch());
+        assertThat(stored[1]).isEqualTo(claim.token());
+        assertThat(stored[2]).isEqualTo(coordinator);
+        var wrongToken = new RepositoryExecutionClaimLedger.Claim(claim.key(), claim.commandSha256(), claim.epoch(), UUID.randomUUID(), claim.leaseUntil());
+        var wrongEpoch = new RepositoryExecutionClaimLedger.Claim(claim.key(), claim.commandSha256(), claim.epoch() + 1, claim.token(), claim.leaseUntil());
+        for (var wrong : List.of(wrongToken, wrongEpoch))
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentPreparationSourcePins.insert(em, record, pins, wrong, coordinator, () -> {}); }))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                DocumentPreparationSourcePins.insert(em, record, pins, claim, UUID.randomUUID(), () -> {}); }))
+                .hasMessageContaining("binding differs");
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(
+                "UPDATE repository_preparation_pin_owners SET incarnation=gen_random_uuid() WHERE operation_id=:id")
+                .setParameter("id", record.key().operationId()).executeUpdate(); }))
+                .hasStackTraceContaining("capture owner is immutable");
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(
+                "DELETE FROM repository_preparation_pin_owners WHERE operation_id=:id")
+                .setParameter("id", record.key().operationId()).executeUpdate(); }))
+                .hasStackTraceContaining("capture owner is immutable");
+    }
+
+    private static long registrationRows(Context c, String table, RepositoryOperationLedger.Key key) {
+        return c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                .setParameter("id", key.operationId()).getSingleResult()).longValue());
+    }
+
+    private static List<?> registrationLeases(Context c, RepositoryOperationLedger.Key key) {
+        return c.tx().readOnly(em -> Arrays.asList((Object[]) em.createNativeQuery("""
+                SELECT c.lease_until,o.lease_until FROM repository_execution_claims c
+                JOIN repository_operation_owners o USING(account_id,principal,operation_id) WHERE c.operation_id=:id
+                """).setParameter("id", key.operationId()).getSingleResult()));
     }
 
     private static DocumentPublicationMember destination(DocumentPublicationMember source, String member) {

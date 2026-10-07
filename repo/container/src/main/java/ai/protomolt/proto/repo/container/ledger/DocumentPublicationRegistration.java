@@ -25,6 +25,8 @@ final class DocumentPublicationRegistration {
     private final DriveLedger drives;
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
+    private final DocumentHistoricalAssessmentSources historical;
+    private volatile DocumentPreparationCaptureDrain.Capture historicalCapture;
     private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
@@ -40,6 +42,14 @@ final class DocumentPublicationRegistration {
     private DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
             DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations,
             RepositorySuccessorInstall.Plan successor, DriveLedger drives) {
+        this(tx, budget, preparation, plan, coordinator, registrations, successor, drives, null);
+    }
+
+    private DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
+            DocumentUploadPlan.Prepared plan, UUID coordinator, DocumentPublicationScopeCalls registrations,
+            RepositorySuccessorInstall.Plan successor, DriveLedger drives, DocumentHistoricalAssessmentSources historical) {
+        this.historical = historical;
+        if (historical == null) preparation.command().requireExecutionSupported();
         this.successor = successor;
         this.drives = drives;
         claimToken = successor == null ? UUID.randomUUID() : successor.reservation().successorToken();
@@ -53,13 +63,31 @@ final class DocumentPublicationRegistration {
         if (!plan.command().sha256().equals(preparation.command().sha256())
                 || !plan.command().operationId().equals(preparation.command().operationId()))
             throw new IllegalArgumentException("Registration plan differs from preparation");
-        authorization = DocumentAdmissionAuthorization.prepare(plan);
+        authorization = DocumentAdmissionAuthorization.prepare(plan, plan.historical());
         creation = drives == null ? null : new DocumentCreationAuthorization(plan, drives);
         if (successor == null && preparation.predecessorGeneration() != 0) throw new IllegalArgumentException("Initial registration requires no predecessor");
         access = new JournalAccess(preparation, claimToken, claimEpoch);
         mayHaveCommitted = successor != null;
         modes = new DocumentPublicationModesJournal(tx, budget);
         starts = new DocumentAssessmentStartJournal(tx, budget);
+    }
+
+    /**
+     * Private registration qualification. Setup requires open sources; accepted admission
+     * holds its own Work through commit/response unwinding, even if source admission closes.
+     * Reconciliation after an uncertain response needs open sources or a fresh capture.
+     * No session is enabled.
+     */
+    static DocumentPublicationRegistration historical(Tx tx, PayloadBudget budget,
+            DocumentPublicationPreparationRecord preparation, DocumentHistoricalAssessmentSources sources,
+            UUID coordinator, DocumentPublicationScopeCalls registrations, DriveLedger drives,
+            RepositoryReadControl control) {
+        var references = Objects.requireNonNull(sources).references(preparation.command(), control::check);
+        if (references.isEmpty()) throw new IllegalArgumentException("Historical registration requires pinned sources");
+        var prepared = DocumentOperationUploadAdmission.prepareHistorical(preparation.command(), preparation.placements(),
+                preparation.seeds().attempts(), preparation.lease(), preparation.seeds().uploadTokens(), references, control::check);
+        return new DocumentPublicationRegistration(tx, budget, preparation, prepared.plan(), coordinator,
+                registrations, null, Objects.requireNonNull(drives), sources);
     }
 
     static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
@@ -90,10 +118,12 @@ final class DocumentPublicationRegistration {
 
     DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             java.time.Duration retention, RepositoryReadControl control) {
+        requireExecutable();
         return starts.startOwned(access, caller, owner, preparation.command(), UUID.randomUUID(), retention, control);
     }
 
     void requireStart(RepositoryCaller caller, RepositoryOperationLedger.Owner owner, RepositoryReadControl control) {
+        requireExecutable();
         access.requireOwner(caller, owner, preparation.command(), control);
         preflight(caller, control);
     }
@@ -106,27 +136,63 @@ final class DocumentPublicationRegistration {
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
-        try (var scope = registrations.enter();
+        try (var sourceWork = historical == null ? null : historical.work();
+             var scope = registrations.enter();
              var reserved = budget.reserve((long) DocumentPublicationPreparationCodec.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES
-                     + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES)) {
+                     + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES
+                     + (historical == null ? 0 : DocumentPreparationSourcePins.MAX_BYTES))) {
             // Reject an immediately denied caller before marking the session uncertain.
             // Authorization is checked again under the claim lock before any domain writes.
-            preflight(caller,control);
+            preflight(caller,control,sourceWork);
             var bytes = DocumentPublicationPreparationCodec.encode(preparation);
             var digest = DocumentPublicationPreparationJournal.digest(bytes);
             var encodedModes = DocumentPublicationModesJournal.encode(preparation.command(),fixedModes);
-            var admission = RepositoryOperationLedger.prepareAdmission(preparation.key(),preparation.command(),
-                    preparation.seeds().ownerNonce(),preparation.lease());
+            var admission = historical == null
+                    ? RepositoryOperationLedger.prepareAdmission(preparation.key(), preparation.command(),
+                            preparation.seeds().ownerNonce(), preparation.lease())
+                    : RepositoryOperationLedger.prepareHistoricalAdmission(preparation.key(), preparation.command(),
+                            preparation.seeds().ownerNonce(), preparation.lease(), sourceWork);
+            var reuse = historical == null ? null : DocumentReuseAdmission.prepare(plan);
+            var sourcePins = historical == null ? null : DocumentPreparationSourcePins.prepare(preparation.command(),
+                    sourceWork.references(preparation.command(), control::check), control::check);
+            var objects = historical == null ? java.util.Set.<UUID>of() : plan.members().stream()
+                    .flatMap(member -> member.intent().getPartsList().stream())
+                    .filter(part -> part.hasReuse() || part.hasHistoricalReuse())
+                    .map(part -> UUID.fromString(part.hasReuse() ? part.getReuse().getObject().getObjectId()
+                            : part.getHistoricalReuse().getObject().getObjectId()))
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
             control.check();
             mayHaveCommitted = true;
             var result = tx.inTransaction(em -> {
-                var acquired = RepositoryExecutionClaimLedger.acquireInitialInTransaction(em,preparation.key(),
-                        preparation.command(),claimToken,preparation.lease());
+                var acquired = historical == null
+                        ? RepositoryExecutionClaimLedger.acquireInitialInTransaction(em, preparation.key(),
+                                preparation.command(), claimToken, preparation.lease())
+                        : RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, preparation.key(),
+                                preparation.command(), claimToken, preparation.lease(), sourceWork);
                 var claim = acquired.claim();
                 RepositoryCoordinatorBinding.bindInitial(em,acquired,coordinator);
                 DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization,creation);
                 control.check();
-                DocumentPublicationPreparationJournal.insert(em,claim,preparation,bytes,digest);
+                if (historical != null) {
+                    for (var placement : preparation.placements().values().stream()
+                            .sorted(java.util.Comparator.comparing(value -> value.drive().id())).toList()) {
+                        placement.drive().lock(em, drives);
+                        if (!ManagedBackendLedger.find(em, placement.generation()).filter(placement.profile()::equals).isPresent())
+                            throw new IllegalArgumentException("Selected backend profile differs from immutable registration");
+                    }
+                }
+                DocumentPublicationPreparationJournal.insert(em,claim,preparation,bytes,digest,plan.historical());
+                if (historical != null) {
+                    // Header and revision FK locks precede physical origins/retention.
+                    // Exact source Uses and current authorization are required on every retry.
+                    DocumentReuseAdmission.requireBoundSources(em, reuse);
+                    var origins = DocumentPublicationLocks.lockIndependentOrigins(em, authorization.destinations(), objects, java.util.Set.of());
+                    DocumentPublicationLocks.lockIndependentRetention(em, origins);
+                    for (var source : sourceWork.references(preparation.command(), control::check))
+                        DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, origins, control);
+                    historicalCapture = DocumentPreparationCaptureDrain.register(tx, em, preparation, sourcePins,
+                            claim, coordinator, historical, sourceWork, control);
+                }
                 DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
                 control.check();
                 var admitted = admission.apply(em,claim);
@@ -137,6 +203,11 @@ final class DocumentPublicationRegistration {
     }
 
     boolean mayHaveCommitted() { return mayHaveCommitted; }
+
+    /** Includes uncertain registration; capture completion independently requires durable exact binding. */
+    java.util.Optional<DocumentPreparationCaptureDrain.Capture> historicalCapture() {
+        return java.util.Optional.ofNullable(historicalCapture);
+    }
 
     RepositoryCoordinatorDrain.Identity drainIdentity() {
         return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), claimEpoch, claimToken, coordinator);
@@ -149,13 +220,25 @@ final class DocumentPublicationRegistration {
     }
 
     private void preflight(RepositoryCaller caller, RepositoryReadControl control) {
+        try (var work = historical == null ? null : historical.work()) { preflight(caller, control, work); }
+    }
+
+    private void preflight(RepositoryCaller caller, RepositoryReadControl control, DocumentHistoricalAssessmentSources.Work work) {
         control.check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
+        if (historical != null) {
+            work.requireCaller(caller);
+            work.references(preparation.command(), control::check);
+        }
         tx.inTransaction(em -> {
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization,creation);
             control.check(); return null;
         });
         control.check();
+    }
+
+    private void requireExecutable() {
+        if (historical != null) throw new UnsupportedOperationException("Claimed historical execution is not implemented");
     }
 
     /** Host-held, nonserializable authority for this session's journal only; never a document grant. */

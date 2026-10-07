@@ -281,7 +281,8 @@ message GetEntryRequest {
 // Unary: the requested renditions transit memory — size the read
 // accordingly, or read the manifest first and fetch selectively.
 message GetEntryResponse {
-  // The entry's metadata.
+  // Current entry metadata, even when reading an older version. Historical
+  // descriptive metadata, when recorded, is manifest.metadata_snapshot.
   EntryInfo info = 1;
   // The read version's full manifest — including renditions NOT requested
   // and renditions whose bytes are gone.
@@ -306,7 +307,8 @@ message GetEntryManifestRequest {
 
 // Response carrying only the manifest and the entry metadata.
 message GetEntryManifestResponse {
-  // The entry's metadata.
+  // Current entry metadata. Historical descriptive metadata, when recorded,
+  // is manifest.metadata_snapshot.
   EntryInfo info = 1;
   // The requested version's manifest.
   VersionManifest manifest = 2;

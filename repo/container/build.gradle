@@ -132,7 +132,7 @@ def transportAdmissionInventory = layout.buildDirectory.dir('admission-transport
 tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
 // The scoped publication parity suite needs the observed admission runtime bundle;
 // run it through the dedicated scopedPublicationTest task below.
-tasks.named('test') { exclude '**/ScopedPublication*IT*' }
+tasks.named('test') { exclude '**/ScopedPublicationParityIT*' }
 tasks.register('scopedPublicationTest', Test) {
     group = 'verification'
     description = 'Run scoped publication authorization parity across library and authenticated gRPC'

@@ -12,6 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -69,6 +71,51 @@ class DocumentPublicationPreparationCodecIT {
                     .isNotEqualTo(DocumentPublicationPreparationCodec.placementDigest(value.placements()));
             assertThat(DocumentPublicationPreparationCodec.encode(new DocumentPublicationPreparationRecord(value.key(), value.command(),
                     value.seeds(), Map.of(d.id(), reordered), LEASE, 7))).isEqualTo(DocumentPublicationPreparationCodec.encode(value));
+            assertThat(new RepositoryOperationLedger(c.tx()).find(value.key())).isEmpty();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void historicalIntentRoundTripsAsInertDataWithoutOpeningExecution(boolean includesUpload) {
+        try (var c = context(POSTGRES)) {
+            var ordinary = input(c);
+            var member = ordinary.command().intent().getMembers(0);
+            var part = member.getParts(0);
+            var reuse = part.getReuse();
+            // Synthetic revision identity: encoding must not imply source existence or retention.
+            var selector = ai.protomolt.proto.repo.v1.PublicationHistoricalReuse.newBuilder()
+                    .setSource(reuse.getSource().getAddress()).setRevisionId(UUID.randomUUID().toString())
+                    .setRevisionOrdinal(0).setSourceSlot(reuse.getSourceSlot()).setObject(reuse.getObject()).build();
+            var selected = member.toBuilder().setParts(0, part.toBuilder().setHistoricalReuse(selector));
+            if (!includesUpload) {
+                for (int ordinal = 0; ordinal < selected.getPartsCount(); ordinal++) {
+                    if (selected.getParts(ordinal).hasUpload())
+                        selected.setParts(ordinal, selected.getParts(ordinal).toBuilder().setEmpty(true));
+                }
+            }
+            var command = new DocumentPublicationCommand(ordinary.command().intent().toBuilder().setMembers(0, selected).build());
+            var seeds = DocumentPublicationSeeds.mint(ordinary.key(), command);
+            var value = new DocumentPublicationPreparationRecord(ordinary.key(), command, seeds, ordinary.placements(), LEASE, 0);
+            var encoded = DocumentPublicationPreparationCodec.encode(value);
+            var restored = decode(encoded, value);
+            assertThat(restored.command().canonical()).isEqualTo(command.canonical());
+            assertThat(restored.command().intent().getMembers(0).getParts(0).getHistoricalReuse()).isEqualTo(selector);
+            assertThat(DocumentPublicationPreparationCodec.encode(restored)).isEqualTo(encoded);
+            assertThat(restored.seeds().attempts().isEmpty()).isEqualTo(!includesUpload);
+            assertThat(restored.seeds().uploadTokens().isEmpty()).isEqualTo(!includesUpload);
+            assertThatThrownBy(restored::prepare).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(command::requireExecutionSupported).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> new RepositoryExecutionClaimLedger(c.tx()).acquire(value.key(), command, UUID.randomUUID(), LEASE))
+                    .isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> new DocumentPublicationPreparationRecord(value.key(), command, seeds, Map.of(), LEASE, 0))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new DocumentPublicationPreparationRecord(value.key(), command, seeds, value.placements(), Duration.ZERO, 0))
+                    .isInstanceOf(IllegalArgumentException.class);
+            var wrongIdentities = includesUpload ? Map.<String, UUID>of() : Map.of("member-0", UUID.randomUUID());
+            assertThatThrownBy(() -> DocumentPublicationSeeds.restore(value.key(), command, seeds.ownerNonce(), wrongIdentities, seeds.uploadTokens()))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> DocumentPublicationSeeds.restore(value.key(), command, seeds.ownerNonce(), seeds.attempts(), wrongIdentities))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThat(new RepositoryOperationLedger(c.tx()).find(value.key())).isEmpty();
         }
     }
@@ -183,7 +230,7 @@ class DocumentPublicationPreparationCodecIT {
     private static DocumentPublicationPreparationRecord decode(ByteString bytes, DocumentPublicationPreparationRecord value) {
         return DocumentPublicationPreparationCodec.decode(bytes, value.key(), value.command().sha256());
     }
-    private static DocumentPublicationPreparationRecord input(Context c) {
+    static DocumentPublicationPreparationRecord input(Context c) {
         var source = prepare(c, 2, true);
         var command = new DocumentPublicationCommand(source.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), "principal", command.operationId());

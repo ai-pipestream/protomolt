@@ -35,8 +35,13 @@ class RepositorySuccessorInstallIT {
         var previous = new DocumentPublicationPreparationRecord(input.key(), input.command(), input.seeds(),
                 input.placements(), Duration.ofSeconds(1), 0);
         var budget = new PayloadBudget(64_000_000);
-        var claim = new DocumentPublicationPreparationJournal(c.tx(), budget)
-                .acquireInitial(CALLER, previous, UUID.randomUUID(), incarnation, NONE);
+        int version = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT max(CAST(version AS integer)) FROM flyway_schema_history WHERE success AND version IS NOT NULL")
+                .getSingleResult()).intValue());
+        var claim = version < 103
+                ? LegacyPublicationPreparationFixture.acquire(c.tx(), previous, UUID.randomUUID(), incarnation)
+                : new DocumentPublicationPreparationJournal(c.tx(), budget)
+                    .acquireInitial(CALLER, previous, UUID.randomUUID(), incarnation, NONE);
         new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
         new RepositoryOperationLedger(c.tx()).admit(previous.key(), previous.command(), previous.seeds().ownerNonce(), Duration.ofSeconds(1), claim);
         RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);

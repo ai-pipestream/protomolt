@@ -359,6 +359,13 @@ class ArchiveManagedUploadIT {
         assertThat(response.getOutcomesList()).anySatisfy(outcome ->
                 assertThat(outcome.getStatus()).isEqualTo(BridgeStatus.BRIDGE_STATUS_PRODUCED));
         var manifest = ArchiveManifests.fromJson(ledger.findVersion(UUID.fromString(first.getEntryUuid()), response.getVersion()).orElseThrow().manifest);
+        assertThat(manifest.getMetadataSnapshot().getCurrentVersion()).isEqualTo(response.getVersion());
+        assertThat(manifest.getMetadataSnapshot().getFilename()).isEqualTo("rows.csv");
+        assertThat(manifest.getMetadataSnapshot().getAddress()).isEqualTo(request.getAddress());
+        assertThat(manifest.getMetadataSnapshot().getEntryUuid()).isEqualTo(first.getEntryUuid());
+        assertThat(manifest.getMetadataSnapshot().getClassification()).isEqualTo(first.getManifest().getMetadataSnapshot().getClassification());
+        assertThat(ArchiveManifests.fromJson(ledger.findVersion(UUID.fromString(first.getEntryUuid()), first.getVersion()).orElseThrow().manifest)
+                .getMetadataSnapshot()).isEqualTo(first.getManifest().getMetadataSnapshot());
         assertThat(manifest.getRenditionsList()).allSatisfy(item -> assertThat(item.getStorageObjectId()).isNotBlank());
         assertThat(manifest.getRenditionsList().stream().filter(r -> r.getRendition().getName().equals("original")).findFirst().orElseThrow()
                 .getStorageObjectId()).isEqualTo(first.getManifest().getRenditions(0).getStorageObjectId());

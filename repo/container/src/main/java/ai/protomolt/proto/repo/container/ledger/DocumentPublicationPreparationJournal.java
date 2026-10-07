@@ -76,9 +76,16 @@ final class DocumentPublicationPreparationJournal {
 
     static void insert(EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
             DocumentPublicationPreparationRecord record, ByteString encoded, byte[] digest) {
+        insert(em, claim, record, encoded, digest, java.util.List.of());
+    }
+
+    static void insert(EntityManager em, RepositoryExecutionClaimLedger.Claim claim,
+            DocumentPublicationPreparationRecord record, ByteString encoded, byte[] digest,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> sources) {
+        DocumentHistoricalReferenceAdmission.requireComplete(record.command(), sources, () -> {});
         // Exact claim retries must re-establish the current-transaction fence for V81's guard.
         RepositoryExecutionClaimLedger.lockLive(em, claim);
-        bind(em.createNativeQuery("""
+        int inserted = bind(em.createNativeQuery("""
                 INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
                   owner_nonce,command_codec,command_version,command_bytes,command_sha256,preparation_bytes,preparation_sha256)
                 VALUES (:a,:p,:o,:g,:owner,:codec,:version,:command,:commandDigest,:bytes,:digest)
@@ -88,6 +95,11 @@ final class DocumentPublicationPreparationJournal {
                 .setParameter("command", record.command().canonical().toByteArray())
                 .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
                 .setParameter("bytes", encoded.toByteArray()).setParameter("digest", digest).executeUpdate();
+        if (inserted == 1) DocumentPreparationHistoryRoots.insert(em, record, digest, sources);
+        else if (DocumentPreparationHistoryRoots.coverage(em, record, digest) == DocumentPreparationHistoryRoots.Coverage.UNKNOWN
+                && !sources.isEmpty())
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical preparation retention is unknown");
     }
 
     /** Trusted process-only bootstrap before claim acquisition; never returns private seeds or placement. */

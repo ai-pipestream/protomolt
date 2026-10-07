@@ -299,7 +299,7 @@ class ArchiveClassificationIT {
 
     @Test
     void classifyEntryDeclaresAfterTheFactAndRereadsTheBytes() {
-        archives.putEntry(PutEntryRequest.newBuilder()
+        var saved = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address("late"))
                 .setFilename("late.tar")
                 .addRenditions(RenditionContent.newBuilder()
@@ -319,6 +319,11 @@ class ArchiveClassificationIT {
                 .getClassification();
         assertThat(after.getState())
                 .isEqualTo(ClassificationState.CLASSIFICATION_STATE_VERIFIED);
+        var retained = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address("late")).build());
+        assertThat(retained.getInfo().getClassification()).isEqualTo(after);
+        assertThat(retained.getManifest().getMetadataSnapshot()).isEqualTo(saved.getManifest().getMetadataSnapshot());
+        assertThat(retained.getManifest().getMetadataSnapshot().getClassification()).isEqualTo(before);
     }
 
     @Test

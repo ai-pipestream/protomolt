@@ -1,112 +1,52 @@
-# Scoped publication authorization parity: library and authenticated gRPC
+# Scoped publication parity integration
 
-Base: `695371b241f2096e762ec65ed1af6107278e3325` (`refactor/repository-composition`).
-Head: `5d92bd4cc` (`agent/scoped-transport-conformance`).
-Date: 2026-10-07. The coverage matrix this qualification executes is in
-[COVERAGE.md](COVERAGE.md).
+External contribution: `5d92bd4cc054c707c4ec1416e5879521c269e6c2`, based on
+`695371b241f2096e762ec65ed1af6107278e3325`. Integrated as `5396e5002` on top of
+`e57e61fc800f5b66e82a95bc43c259aa27f53aa6`, with coordinator review fixes in this
+checkpoint. Sol reviewed the original harness; no authorization bypass was found.
 
-## What is qualified
-
-The same scoped publication authorization scenarios run through two invocation
-paths in front of one production publisher, in a fresh standard JVM whose
-classpath is exactly the observed admission-transport runtime plus the compiled
-probe (the `admissionStorageTest` mechanism; no ambient test classes):
-
-- **Library**: `DocumentPublicationRuntime` journaled → `repository(selector)`
-  facade, invoked directly with the provisioned `RepositoryCaller`.
-- **gRPC**: an actual in-process gRPC server/channel with the production
-  `ApiTokenServerInterceptor`, a fixture `AuthenticatedCallerResolver` mapping
-  synthetic tokens to provisioned `CredentialBinding`s (two keys for one
-  principal provision distinct identities), the production
-  `DocumentPublicationGrpcService` adapter, and the same facade.
-
-Provisioning uses the internal process-only ports
-(`RepositoryCredentialAuthorities.register/revoke/rotate`,
-`RepositoryCreationGrants.prepare/install/revoke`); no SQL is issued to
-fabricate grants or receipts. Scoped calls are asserted at the repository
-boundary to carry the provisioned key and never the operator token or process
-authority. Storage is versioned LocalStack S3; SQL is PostgreSQL 18. Every
-scenario asserts receipts, durable SQL state and provider effects — never
-status alone — and distinguishes request/contract validity from authorization.
-
-Scenario families (each run on both paths unless noted): exact-grant typed
-publication with retained schema and cross-path receipt replay; opaque
-publication; same-principal different key; rotation (old generation fenced,
-grant not transferred); unbound principal; wrong account (a supplied account
-name is not membership); changed command digest; mixed-batch atomicity under a
-valid grant (source READ and existing-target WRITE denials; no partial commit,
-no provider effects); transport fail-closed (missing/wrong token, resolver
-outage without fallthrough to another authority or the operator principal,
-binding-dropping host mapper; transport-only); grant-only revocation and
-database-clock expiry blocking unfinished creation while the committed receipt
-survives with the original binding and a live generation; credential rotation
-refusing committed replay in both directions; post-commit READ revocation
-blocking receipt replay and content delivery; revocation while a real provider
-upload is held (the effect settles, never commits, stays recovery-owned); real
-PostgreSQL barrier orderings (authorized commit wins and revocation waits, the
-publisher waits in the final grant check for the revoker's outcome, expiry
-evaluated on database time after the lock wait); two independent operations
-sharing one scoped key progressing concurrently under a held pre-commit
-transaction with real SQL/provider work; exact retry identity without duplicate
-receipts or provider effects; contract violation (checksum) refused as
-INVALID_ARGUMENT without consuming the grant.
-
-## Commands and results
+The probe uses PostgreSQL 18, versioned LocalStack S3, production repository code
+and an authenticated in-process gRPC server. Its resolver, tokens, placements and
+schema selection are explicit fixture inputs. A fresh JVM loads the observed
+production JAR runtime plus the compiled probe. Provisioning uses existing internal
+process-only ports. This does not qualify public provisioning or an external
+identity provider.
 
 ```sh
 ./gradlew :protomolt-repo-container:scopedPublicationTest --max-workers=2 --console=plain
 ```
 
-Exit 0 (two consecutive runs, 1m 8s / 1m 9s). JUnit: 1 test, 0 failures, 0
-errors, 0 skipped, 66.5 s probe time. The probe printed all 42 scenario markers
-(17 scenario families × LIBRARY/GRPC, 3 final-check orderings × 2 paths,
-transport fail-closed, parity sentinel) and `SCOPED_PUBLICATION_PARITY_OK`; the
-driver asserted each marker. `scoped-publication-green.tar.gz` retains the XML
-and binary results plus the persisted probe log.
+The final local run passed: exit 0 in 1 minute 8 seconds, one JUnit harness test,
+zero failures, errors or skips. Its XML retains all 42 verified probe markers;
+these are scenario markers, not 42 independent JUnit tests. `gradle.log` records
+the command result. XML trailing whitespace was normalized. The driver requires:
+17 shared scenarios through each invocation path, three final-check orderings
+through each path, transport refusal and the final parity marker. See COVERAGE.md
+and the probe assertions for the scenario details; markers alone do not define
+what a scenario proves.
 
-Regressions for the surrounding scoped suites on the same checkout
-(`:protomolt-repo-container:test`, one invocation, exit 0, no skips):
+## Review changes and evidence limits
 
-| Suite | Tests |
-| --- | --- |
-| `RepositoryCredentialAuthoritiesIT` | 7 |
-| `RepositoryCreationGrantsIT` | 16 |
-| `DocumentScopedRegistrationIT` | 7 |
-| `ScopedRepositorySuccessorIT` | 5 |
-| `DocumentPublicationCommitIT` | 32 |
+The original `providerEffects` helper counted recorded SQL versions. It is now
+named `recordedVersions`. A delegating real-store observer separately counts PUT,
+streaming PUT, conditional PUT and COPY calls and their normal returns. Refusal
+cases and exact-retry cases compare snapshots, including cases with prior writes
+for fixture seeding. The observer does not fabricate responses or intercept SDK
+exceptions. Its counts are adapter invocations, not HTTP retry counts; normal
+return does not independently prove durability. Existing version/receipt and byte
+readback assertions supply separate evidence for successful publications.
+The positive control requires both initial call and normal-return counts to equal
+the number of uploaded parts, separately through library and gRPC. This prevents
+negative checks from passing merely because the observer was bypassed. Sol
+reviewed this addition with no blocker.
 
-`scoped-regressions-green.tar.gz` retains those XML results.
+The held-upload wrapper pauses before delegating to the SDK. That case proves
+an accepted invocation may settle after revocation without publishing its bytes.
+It does not demonstrate a remotely in-flight request. Independent operations
+sharing a key are checked for overlap using real SQL commit barriers; this is not
+a throughput benchmark. RustFS performance qualification remains separate.
 
-`:protomolt-repo-container:admissionStorageTest` (the packaged production-JAR
-baseline, unchanged by this work): exit 0 in 7m 45s, 1 test, no failures or
-skips; its XML is in the same archive. The default `test` task provably
-excludes the bundle-dependent driver (`No tests found for given includes:
-[... **/ScopedPublication*IT* ...] [*ScopedPublicationParityIT]`).
-
-## Production defects
-
-None demonstrated. The acceptance matrix passed on unmodified production
-sources. All bring-up fixes were inside the new harness: probe-side seeding and
-readback helpers, the host drain authority resolving per-operation callers,
-scenario-appropriate SQL lock/statement timeouts for the long barrier holds,
-and runtime/transport resource ordering in the barrier scenarios.
-
-## Boundaries and remaining gaps
-
-- Fixture tokens are synthetic; the resolver is test-side host code. Production
-  authentication stores (`AccessPolicyCallers`, JDBC, OIDC) stay principal-only;
-  no public credential/grant provisioning API was added or qualified.
-- The gRPC leg is in-process. Loopback Netty parity of this adapter is already
-  evidenced by `2026-10-06-publication-transport`; nothing here changes it.
-- Grant retention/pruning, external identity-provider revocation, host
-  provisioning and deployment remain out of scope per the assignment.
-- The `expired` final-check cases wait on the database clock (20 s grant
-  lifetimes) and use host SQL timeouts above those holds; on an overloaded host
-  the pre-expiry wait assertions could time out. No clocks are mocked and no
-  durable timestamps are rewritten.
-- Concurrency evidence proves overlap functionally (the second operation
-  commits while the first operation's pre-commit transaction is held, with real
-  provider writes for both); it is not a throughput or latency benchmark, and
-  no RustFS run was needed for this correctness slice.
-- This is local qualification on one host, not hosted CI, merge, deployment or
-  performance certification.
+The runtime is closed by each host after its scenarios. The observer borrows the
+real store; environment teardown owns it. No runtime API or protobuf contract is
+changed by these test additions. Hosted CI, main merge and deployment are not
+claimed by this local checkpoint.

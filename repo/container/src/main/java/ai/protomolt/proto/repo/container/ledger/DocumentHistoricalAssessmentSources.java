@@ -19,7 +19,40 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
     private final Map<Key, Source> sources = new LinkedHashMap<>();
     private final Map<PublicationHistoricalReuse, DocumentHistoricalReadPlan.Entry> entries = new HashMap<>();
     private List<DocumentHistoricalReferenceAdmission.Prepared> references = List.of();
-    private boolean closed;
+    private final DocumentHistoricalSourceLifetime lifetime = new DocumentHistoricalSourceLifetime(this::releaseSources);
+
+    /**
+     * Hold through actual work and cleanup. For asynchronous submission, the submitter
+     * must release rejected or confirmed never-started work; once started, only the
+     * worker's completion releases it. Future cancellation alone is not completion.
+     */
+    Work work() {
+        try { return new Work(lifetime.enter()); }
+        catch (ai.protomolt.proto.repo.spi.RepositoryException closed) {
+            if (closed.code() != ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE) throw closed;
+            throw new IllegalStateException("Historical assessment sources are closed", closed);
+        }
+    }
+    final class Work implements AutoCloseable {
+        private final DocumentHistoricalSourceLifetime.Work permit;
+        private Work(DocumentHistoricalSourceLifetime.Work permit) { this.permit = permit; }
+        List<DocumentHistoricalReferenceAdmission.Prepared> references(DocumentPublicationCommand expected, Runnable control) {
+            permit.requireActive();
+            if (!command.equals(expected)) throw new IllegalArgumentException("Historical source command differs");
+            return DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
+        }
+        void authorize(RepositoryReadControl control) { permit.requireActive(); authorizeAccepted(control); }
+        List<DocumentReadLedger.PinnedHistory> histories(DocumentHistoricalAssessmentSources expected) {
+            permit.requireActive();
+            if (expected != DocumentHistoricalAssessmentSources.this) throw new IllegalArgumentException("Source Work owner differs");
+            return sources.values().stream().map(Source::history).toList();
+        }
+        void requireCaller(ai.protomolt.proto.repo.spi.RepositoryCaller caller) {
+            permit.requireActive();
+            for (var source : sources.values()) source.history().requireCaller(caller);
+        }
+        @Override public void close() { permit.close(); }
+    }
 
     private DocumentHistoricalAssessmentSources(DocumentPublicationCommand command) { this.command = command; }
 
@@ -72,25 +105,28 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
     }
 
     List<DocumentHistoricalReferenceAdmission.Prepared> references(DocumentPublicationCommand expected, Runnable control) {
-        requireOpen();
-        if (!command.equals(expected)) throw new IllegalArgumentException("Historical source command differs");
-        return DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
+        try (var work = work()) { return work.references(expected, control); }
     }
 
     void authorize(RepositoryReadControl control) {
-        requireOpen();
+        try (var work = work()) { work.authorize(control); }
+    }
+
+    private void authorizeAccepted(RepositoryReadControl control) {
         for (var source : sources.values()) {
             control.check(); source.use().plan(); source.history().authorizeDelivery(control); source.use().plan();
         }
     }
 
     void requireCaller(ai.protomolt.proto.repo.spi.RepositoryCaller caller) {
-        requireOpen();
-        for (var source : sources.values()) source.history().requireCaller(caller);
+        try (var work = work()) { work.requireCaller(caller); }
     }
 
     void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
-        requireOpen();
+        try (var work = work()) { requireOpaqueAccepted(member, control); }
+    }
+
+    private void requireOpaqueAccepted(DocumentPublicationMember member, RepositoryReadControl control) {
         if (!command.intent().getMembersList().contains(member)) throw new IllegalArgumentException("Historical assessment member differs");
         var checked = new HashSet<Key>();
         for (var part : member.getPartsList()) {
@@ -109,7 +145,18 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
     MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
             DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
             PayloadBudget budget, RepositoryReadControl control) {
-        requireOpen();
+        var work = work();
+        boolean transferred = false;
+        try {
+            var result = resolveAccepted(member, ordinaryContainer, ordinary, limits, budget, control, work);
+            transferred = true;
+            return result;
+        } finally { if (!transferred) work.close(); }
+    }
+
+    private MemberResolution resolveAccepted(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
+            DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
+            PayloadBudget budget, RepositoryReadControl control, Work work) {
         if (!command.intent().getMembersList().contains(member)) throw new IllegalArgumentException("Historical assessment member differs");
         var mappings = new LinkedHashMap<Key, Map<Integer, Integer>>();
         var selected = new LinkedHashMap<Key, List<DocumentHistoricalReadPlan.Entry>>();
@@ -124,6 +171,7 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         var loaders = new ArrayList<DocumentHistoricalSchemaResolution>();
         DocumentCompositeSchemaResolution composite = null;
         boolean delivered = false;
+        Throwable primary = null;
         try {
             for (var entry : mappings.entrySet()) {
                 var source = sources.get(entry.getKey());
@@ -144,11 +192,16 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
                                     "Historical composite schema capacity exhausted", exhausted);
                         }
                     }, control::check);
-            var result = new MemberResolution(loaders, composite); delivered = true; return result;
+            var result = new MemberResolution(loaders, composite, work); delivered = true; return result;
+        } catch (RuntimeException | Error failure) {
+            primary = failure; throw failure;
         } finally {
             if (!delivered) {
-                if (composite != null) composite.close();
-                for (int i = loaders.size() - 1; i >= 0; i--) loaders.get(i).close();
+                try { closeResolution(composite, loaders, work); }
+                catch (RuntimeException | Error cleanup) {
+                    if (primary == null) throw cleanup;
+                    if (primary != cleanup) primary.addSuppressed(cleanup);
+                }
             }
         }
     }
@@ -156,24 +209,46 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
     static final class MemberResolution implements AutoCloseable {
         private final List<DocumentHistoricalSchemaResolution> loaders;
         private final DocumentCompositeSchemaResolution composite;
-        private MemberResolution(List<DocumentHistoricalSchemaResolution> loaders, DocumentCompositeSchemaResolution composite) {
-            this.loaders = List.copyOf(loaders); this.composite = composite;
+        private final Work work;
+        private MemberResolution(List<DocumentHistoricalSchemaResolution> loaders, DocumentCompositeSchemaResolution composite, Work work) {
+            this.loaders = List.copyOf(loaders); this.composite = composite; this.work = work;
         }
         DocumentCompositeSchemaResolution resolver() { return composite; }
         @Override public void close() {
-            composite.close();
-            for (int i = loaders.size() - 1; i >= 0; i--) loaders.get(i).close();
+            closeResolution(composite, loaders, work);
         }
+    }
+
+    private static void closeResolution(DocumentCompositeSchemaResolution composite,
+            List<DocumentHistoricalSchemaResolution> loaders, Work work) {
+        var cleanup = new ArrayList<AutoCloseable>();
+        if (composite != null) cleanup.add(composite);
+        for (int i = loaders.size() - 1; i >= 0; i--) cleanup.add(loaders.get(i));
+        cleanup.add(work); // Last: drain cannot be observed while component cleanup still runs.
+        closeAll(cleanup);
+    }
+
+    static void closeAll(List<? extends AutoCloseable> resources) {
+        Throwable first = null;
+        for (var resource : resources) {
+            try { resource.close(); }
+            catch (Exception | Error failure) {
+                if (first == null) first = failure;
+                else if (first != failure) first.addSuppressed(failure);
+            }
+        }
+        if (first instanceof RuntimeException failure) throw failure;
+        if (first instanceof Error failure) throw failure;
+        if (first != null) throw new IllegalStateException("Historical schema cleanup failed", first);
     }
 
     private static Key key(PublicationHistoricalReuse selector) {
         return new Key(selector.getSource(), UUID.fromString(selector.getRevisionId()));
     }
-    private void requireOpen() { if (closed) throw new IllegalStateException("Historical assessment sources are closed"); }
-    @Override public void close() {
-        if (closed) return;
-        closed = true;
+    private void releaseSources() {
         for (var source : sources.values()) source.use().close();
         sources.clear(); entries.clear(); references = List.of();
     }
+    @Override public void close() { lifetime.close(); }
+    boolean awaitDrained(java.time.Duration timeout) throws InterruptedException { return lifetime.awaitDrained(timeout); }
 }

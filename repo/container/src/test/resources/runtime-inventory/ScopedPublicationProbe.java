@@ -156,8 +156,10 @@ public final class ScopedPublicationProbe {
         };
     }
 
-    private static void requireRefusal(Invocation via, RepositoryException.Code code, Call call, String message) throws Exception {
+    private static void requireRefusal(Host host, Invocation via, RepositoryException.Code code, Call call, String message) throws Exception {
+        var writes = host.writes.snapshot();
         var result = outcome(call);
+        requireEquals(writes, host.writes.snapshot(), message + ": no new provider write calls or returns");
         if (!(result instanceof RuntimeException failure))
             throw new AssertionError(message + ": expected " + code + " refusal but completed with " + result);
         var actual = codeOf(via, failure);
@@ -181,7 +183,7 @@ public final class ScopedPublicationProbe {
             var response = host.publish(via, key, "principal", host.request());
             host.requireCommitted(response, host.command(), "principal");
             requireEquals(1L, host.successRows(host.command()), "typed success rows");
-            requireEquals((long) host.bodies().size(), host.providerEffects(host.command()), "typed provider effects");
+            requireEquals((long) host.bodies().size(), host.recordedVersions(host.command()), "typed provider effects");
             require(host.documentExists(destination(host.command())), "typed destination committed");
             requireEquals(1, host.schemaResolutions.get(), "typed schema resolutions");
             host.requireExactReadback(host.libraryCaller(key, "principal"), response.getCommitted().getMembers(0), host.bodies(), true);
@@ -189,7 +191,7 @@ public final class ScopedPublicationProbe {
             var other = via == Invocation.LIBRARY ? Invocation.GRPC : Invocation.LIBRARY;
             requireEquals(response, host.publish(other, key, "principal", host.request()), "cross-path typed replay");
             requireEquals(1L, host.successRows(host.command()), "typed replay added no success row");
-            requireEquals((long) host.bodies().size(), host.providerEffects(host.command()), "typed replay added no provider effects");
+            requireEquals((long) host.bodies().size(), host.recordedVersions(host.command()), "typed replay added no provider effects");
             requireEquals(1, host.schemaResolutions.get(), "typed replay resolved no schemas");
             host.requireScopedCallersOnly("principal");
         }
@@ -236,17 +238,17 @@ public final class ScopedPublicationProbe {
                     "two keys for one principal must provision distinct identities");
             host.grantAccounts("principal");
             host.installGrant(keyA, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, keyB, "principal", host.request()), "second key cannot use first key's grant");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, keyB, "principal", host.request()), "exact refusal retry stays refused");
             requireEquals(0L, host.successRows(host.command()), "refusal left no success row");
-            requireEquals(0L, host.providerEffects(host.command()), "refusal left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "refusal left no provider effects");
             requireEquals(0L, host.selectedAttempts(host.command()), "refusal left no selected attempts");
             require(!host.documentExists(destination(host.command())), "refusal created no document");
             var response = host.publish(via, keyA, "principal", host.request());
             host.requireCommitted(response, host.command(), "principal");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, keyB, "principal", host.request()), "second key cannot replay first key's operation");
             requireEquals(response, host.publish(via, keyA, "principal", host.request()), "first key replays its receipt");
             requireEquals(1L, host.successRows(host.command()), "still one success row");
@@ -264,12 +266,12 @@ public final class ScopedPublicationProbe {
             host.grantAccounts("principal");
             host.installGrant(keyV1, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             var keyV2 = host.retoken("principal", host.rotate(keyV1, "principal"));
-            requireRefusal(via, RepositoryException.Code.UNAUTHENTICATED,
+            requireRefusal(host, via, RepositoryException.Code.UNAUTHENTICATED,
                     () -> host.publish(via, keyV1, "principal", host.request()), "rotated old generation is not live");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, keyV2, "principal", host.request()), "rotation did not transfer the grant");
             requireEquals(0L, host.successRows(host.command()), "rotation refusals left no success row");
-            requireEquals(0L, host.providerEffects(host.command()), "rotation refusals left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "rotation refusals left no provider effects");
             require(!host.documentExists(destination(host.command())), "rotation refusals created no document");
         }
         System.out.println("SCOPED_PUBLICATION_ROTATION_" + via + "_OK");
@@ -284,10 +286,10 @@ public final class ScopedPublicationProbe {
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             var unbound = host.mintUnbound("principal");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, unbound, "principal", host.request()), "unbound principal cannot use the grant");
             requireEquals(0L, host.successRows(host.command()), "unbound refusal left no success row");
-            requireEquals(0L, host.providerEffects(host.command()), "unbound refusal left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "unbound refusal left no provider effects");
             require(!host.documentExists(destination(host.command())), "unbound refusal created no document");
         }
         System.out.println("SCOPED_PUBLICATION_UNBOUND_" + via + "_OK");
@@ -301,10 +303,10 @@ public final class ScopedPublicationProbe {
             var key = host.registerKey("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             host.grantAccounts("principal", Set.of("elsewhere-" + UUID.randomUUID()));
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", host.request()), "a supplied account name is not membership");
             requireEquals(0L, host.successRows(host.command()), "account refusal left no success row");
-            requireEquals(0L, host.providerEffects(host.command()), "account refusal left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "account refusal left no provider effects");
             require(!host.documentExists(destination(host.command())), "account refusal created no document");
         }
         System.out.println("SCOPED_PUBLICATION_ACCOUNT_" + via + "_OK");
@@ -324,10 +326,10 @@ public final class ScopedPublicationProbe {
                                     host.command().intent().getMembers(0).getDestination().getAddress().toBuilder()
                                             .setDocId("changed-" + UUID.randomUUID())))).build());
             var changedRequest = request(changed, host.bodies(), Map.of("member-0", false));
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", changedRequest), "changed command digest refused");
             requireEquals(0L, host.successRows(changed), "changed command left no success row");
-            requireEquals(0L, host.providerEffects(changed), "changed command left no provider effects");
+            requireEquals(0L, host.recordedVersions(changed), "changed command left no provider effects");
             require(!host.documentExists(destination(changed)), "changed command created no document");
             host.requireCommitted(host.publish(via, key, "principal", host.request()), host.command(), "principal");
         }
@@ -374,7 +376,7 @@ public final class ScopedPublicationProbe {
                 var key = host.registerKey("principal");
                 host.grantAccounts("principal");
                 host.installGrant(key, "principal", command, env.dbNowMicros() + GRANT_LIFETIME_MICROS);
-                requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+                requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                         () -> host.publish(via, key, "principal", request), "grant does not waive " + denial);
                 require(!host.documentExists(destination(command)), denial + ": grant-covered member never committed");
                 if (targetWrite) {
@@ -385,7 +387,7 @@ public final class ScopedPublicationProbe {
                     require(!host.documentExists(member1.getDestination().getAddress()), denial + ": second member never committed");
                 }
                 requireEquals(0L, host.successRows(command), denial + ": no success row");
-                requireEquals(0L, host.providerEffects(command), denial + ": no provider effects");
+                requireEquals(0L, host.recordedVersions(command), denial + ": no provider effects");
                 requireEquals(0L, host.selectedAttempts(command), denial + ": no selected attempts");
                 host.requireScopedCallersOnly("principal");
             }
@@ -432,6 +434,7 @@ public final class ScopedPublicationProbe {
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             int reached = host.received.size();
+            var writes = host.writes.snapshot();
             var missing = outcome(() -> host.plainStub().publishDocument(host.request()));
             require(missing instanceof StatusRuntimeException failure
                             && failure.getStatus().getCode() == Status.Code.UNAUTHENTICATED,
@@ -465,6 +468,7 @@ public final class ScopedPublicationProbe {
                     "a binding-dropping host mapper fails closed: " + dropped);
             host.dropBindings(false);
             requireEquals(reached, host.received.size(), "identity refusals never reached the repository");
+            requireEquals(writes, host.writes.snapshot(), "transport refusals make no provider write calls");
             host.requireCommitted(host.publish(Invocation.GRPC, key, "principal", host.request()), host.command(), "principal");
         }
         System.out.println("SCOPED_PUBLICATION_TRANSPORT_FAIL_CLOSED_OK");
@@ -480,10 +484,10 @@ public final class ScopedPublicationProbe {
             var unfinished = host.anotherUploadCommand(false, "doc-" + UUID.randomUUID());
             var revokedGrant = host.installGrant(key, "principal", unfinished.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             host.revokeGrant(revokedGrant);
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", unfinished.request()), "revoked grant blocks unfinished creation");
             requireEquals(0L, host.successRows(unfinished.command()), "revoked grant left no success row");
-            requireEquals(0L, host.providerEffects(unfinished.command()), "revoked grant left no provider effects");
+            requireEquals(0L, host.recordedVersions(unfinished.command()), "revoked grant left no provider effects");
             require(!host.documentExists(destination(unfinished.command())), "revoked grant created no document");
             var grant = host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             var response = host.publish(via, key, "principal", host.request());
@@ -492,7 +496,7 @@ public final class ScopedPublicationProbe {
             requireEquals(response, host.publish(via, key, "principal", host.request()),
                     "grant-only revocation does not erase the committed receipt");
             host.revokeCredential(key, "principal");
-            requireRefusal(via, RepositoryException.Code.UNAUTHENTICATED,
+            requireRefusal(host, via, RepositoryException.Code.UNAUTHENTICATED,
                     () -> host.publish(via, key, "principal", host.request()), "credential revocation refuses committed replay");
             requireEquals(1L, host.successRows(host.command()), "committed receipt retained as provenance");
         }
@@ -510,10 +514,10 @@ public final class ScopedPublicationProbe {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
             while (env.dbNowMicros() <= grant.expiresAtEpochMicros() && System.nanoTime() < deadline) Thread.sleep(25);
             require(env.dbNowMicros() > grant.expiresAtEpochMicros(), "database clock passed the grant deadline");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", host.request()), "expired grant blocks creation");
             requireEquals(0L, host.successRows(host.command()), "expired grant left no success row");
-            requireEquals(0L, host.providerEffects(host.command()), "expired grant left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "expired grant left no provider effects");
             require(!host.documentExists(destination(host.command())), "expired grant created no document");
         }
         System.out.println("SCOPED_PUBLICATION_GRANT_EXPIRY_" + via + "_OK");
@@ -530,9 +534,9 @@ public final class ScopedPublicationProbe {
             var response = host.publish(via, keyV1, "principal", host.request());
             host.requireCommitted(response, host.command(), "principal");
             var keyV2 = host.retoken("principal", host.rotate(keyV1, "principal"));
-            requireRefusal(via, RepositoryException.Code.UNAUTHENTICATED,
+            requireRefusal(host, via, RepositoryException.Code.UNAUTHENTICATED,
                     () -> host.publish(via, keyV1, "principal", host.request()), "rotated key cannot replay");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, keyV2, "principal", host.request()), "new generation does not inherit the operation");
             requireEquals(1L, host.successRows(host.command()), "committed receipt retained");
         }
@@ -555,7 +559,7 @@ public final class ScopedPublicationProbe {
             row.writeSecurity(DocumentSecurity.getDefaultInstance());
             env.tx.inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:id")
                     .setParameter("policy", row.security).setParameter("id", row.nodeId).executeUpdate(); });
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", host.request()), "receipt replay requires current READ");
             var published = response.getCommitted().getMembers(0);
             var read = outcome(() -> {
@@ -595,10 +599,10 @@ public final class ScopedPublicationProbe {
                             "held-then-revoked publication refusal code");
                 } finally { held.release(); }
             }
-            require(host.providerEffects(host.command()) > 0, "settled provider bytes remain attributed to the attempt");
+            require(host.recordedVersions(host.command()) > 0, "settled provider bytes remain attributed to the attempt");
             require(!host.documentExists(destination(host.command())), "held-then-revoked publication never committed");
             requireEquals(0L, host.successRows(host.command()), "held-then-revoked publication has no success row");
-            requireRefusal(via, RepositoryException.Code.NOT_FOUND,
+            requireRefusal(host, via, RepositoryException.Code.NOT_FOUND,
                     () -> host.publish(via, key, "principal", host.request()), "recovery-owned effect cannot be replayed by the client");
         }
         System.out.println("SCOPED_PUBLICATION_UPLOAD_HELD_" + via + "_OK");
@@ -691,7 +695,7 @@ public final class ScopedPublicationProbe {
                                 ordering + " refusal code");
                         require(!host.documentExists(destination(host.command())), ordering + " created no document");
                         requireEquals(0L, host.successRows(host.command()), ordering + " has no success row");
-                        require(host.providerEffects(host.command()) > 0, ordering + " retained provider effects for recovery");
+                        require(host.recordedVersions(host.command()) > 0, ordering + " retained provider effects for recovery");
                     }
                 } finally {
                     held.release();
@@ -728,8 +732,8 @@ public final class ScopedPublicationProbe {
                 } finally { barrier.release(); }
                 requireEquals(1L, host.successRows(host.command()), "first operation success row");
                 requireEquals(1L, host.successRows(second.command()), "second operation success row");
-                requireEquals((long) host.bodies().size(), host.providerEffects(host.command()), "first operation provider effects");
-                requireEquals((long) second.bodies().size(), host.providerEffects(second.command()), "second operation provider effects");
+                requireEquals((long) host.bodies().size(), host.recordedVersions(host.command()), "first operation provider effects");
+                requireEquals((long) second.bodies().size(), host.recordedVersions(second.command()), "second operation provider effects");
                 host.requireScopedCallersOnly("principal");
             } finally {
                 // The runtime borrows the barrier's entity manager factory; shut it down first.
@@ -747,13 +751,20 @@ public final class ScopedPublicationProbe {
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
+            var before = host.writes.snapshot();
             var response = host.publish(via, key, "principal", host.request());
             host.requireCommitted(response, host.command(), "principal");
-            long effects = host.providerEffects(host.command());
+            long effects = host.recordedVersions(host.command());
+            var writes = host.writes.snapshot();
+            requireEquals((long) host.bodies().size(), writes.calls() - before.calls(),
+                    "positive control observes every uploaded part at the real adapter");
+            requireEquals((long) host.bodies().size(), writes.returned() - before.returned(),
+                    "positive control observes every completed adapter write");
             requireEquals(response, host.publish(via, key, "principal", host.request()), "first exact retry");
             requireEquals(response, host.publish(via, key, "principal", host.request()), "second exact retry");
             requireEquals(1L, host.successRows(host.command()), "retries added no success row");
-            requireEquals(effects, host.providerEffects(host.command()), "retries added no provider effects");
+            requireEquals(effects, host.recordedVersions(host.command()), "retries added no recorded versions");
+            requireEquals(writes, host.writes.snapshot(), "exact retries make no new provider write calls");
         }
         System.out.println("SCOPED_PUBLICATION_RETRY_" + via + "_OK");
     }
@@ -771,10 +782,10 @@ public final class ScopedPublicationProbe {
             corrupted[0] ^= 1;
             var invalid = host.request().toBuilder()
                     .setPayloads(0, payload.toBuilder().setContent(ByteString.copyFrom(corrupted))).build();
-            requireRefusal(via, RepositoryException.Code.INVALID_ARGUMENT,
+            requireRefusal(host, via, RepositoryException.Code.INVALID_ARGUMENT,
                     () -> host.publish(via, key, "principal", invalid), "checksum-invalid request is a contract violation");
             requireEquals(0L, host.selectedAttempts(host.command()), "contract violation reached no staging");
-            requireEquals(0L, host.providerEffects(host.command()), "contract violation left no provider effects");
+            requireEquals(0L, host.recordedVersions(host.command()), "contract violation left no provider effects");
             requireEquals(0L, host.successRows(host.command()), "contract violation left no success row");
             host.requireCommitted(host.publish(via, key, "principal", host.request()), host.command(), "principal");
         }
@@ -1038,11 +1049,39 @@ public final class ScopedPublicationProbe {
         @Override public void headObject(String bucket, String key) { delegate.headObject(bucket, key); }
     }
 
-    /**
-     * One scoped host: unique account, real S3 drive, one command, the journaled
-     * runtime/facade, and an in-process gRPC server with the production token
-     * interceptor and a binding-aware fixture resolver over synthetic tokens.
-     */
+    /** Counts adapter invocations and normal returns while delegating actual storage behavior. */
+    static final class ObservedStore implements BlobStore {
+        private final BlobStore delegate;
+        private final java.util.concurrent.atomic.AtomicLong calls = new java.util.concurrent.atomic.AtomicLong();
+        private final java.util.concurrent.atomic.AtomicLong returned = new java.util.concurrent.atomic.AtomicLong();
+        record Writes(long calls, long returned) {}
+        ObservedStore(BlobStore delegate) { this.delegate = delegate; }
+        Writes snapshot() { return new Writes(calls.get(), returned.get()); }
+        private <T> T write(java.util.function.Supplier<T> action) {
+            calls.incrementAndGet();
+            T result = action.get();
+            returned.incrementAndGet();
+            return result;
+        }
+        @Override public PutResult put(PutSpec spec, byte[] body) { return write(() -> delegate.put(spec, body)); }
+        @Override public PutResult put(PutSpec spec, InputStream body, long length) { return write(() -> delegate.put(spec, body, length)); }
+        @Override public PutResult conditionalPut(PutSpec spec, byte[] body, WriteCondition condition) {
+            return write(() -> delegate.conditionalPut(spec, body, condition));
+        }
+        @Override public void copy(String sourceBucket, String sourceKey, String targetBucket, String targetKey) {
+            write(() -> { delegate.copy(sourceBucket, sourceKey, targetBucket, targetKey); return null; });
+        }
+        @Override public GetResult get(String bucket, String key, String version) { return delegate.get(bucket, key, version); }
+        @Override public GetResult getBounded(String bucket, String key, String version, int bound) { return delegate.getBounded(bucket, key, version, bound); }
+        @Override public GetResult getForUpdate(String bucket, String key) { return delegate.getForUpdate(bucket, key); }
+        @Override public boolean delete(String bucket, String key) { return delegate.delete(bucket, key); }
+        @Override public BatchDeleteResult deleteAll(String bucket, List<String> keys) { return delegate.deleteAll(bucket, keys); }
+        @Override public List<ListedObject> list(String bucket, String prefix) { return delegate.list(bucket, prefix); }
+        @Override public void headBucket(String bucket) { delegate.headBucket(bucket); }
+        @Override public void headObject(String bucket, String key) { delegate.headObject(bucket, key); }
+    }
+
+    /** One account and journaled host with authenticated in-process transport and synthetic tokens. */
     static final class Host implements AutoCloseable {
         final Environment env;
         final Path bundle;
@@ -1058,6 +1097,7 @@ public final class ScopedPublicationProbe {
         private final Map<String, Set<String>> hostAccounts = Collections.synchronizedMap(new HashMap<>());
         private final AtomicReference<AuthenticatedCallerResolver> resolverDelegate;
         private final AtomicBoolean dropBindings = new AtomicBoolean();
+        private ObservedStore writes;
         private PayloadBudget budget;
         private DocumentReadLedger reads;
         private ai.protomolt.proto.repo.engine.DocumentPartReader reader;
@@ -1099,6 +1139,7 @@ public final class ScopedPublicationProbe {
         }
 
         void openRuntime(Tx tx, BlobStore storeOverride, SqlTimeouts sqlTimeouts) throws java.io.IOException {
+            this.writes = new ObservedStore(storeOverride == null ? env.opened.store() : storeOverride);
             this.budget = new PayloadBudget(64_000_000);
             this.reads = new DocumentReadLedger(tx, UUID.randomUUID());
             activateSchemaPolicy();
@@ -1107,7 +1148,7 @@ public final class ScopedPublicationProbe {
                 if (!GENERATION.equals(generation) || !env.profile.equals(selected))
                     throw new IllegalStateException("Publication selected an unconfigured backend");
                 return new DocumentPublicationRuntime.Backend(env.profile.identity(),
-                        storeOverride == null ? env.opened : new OpenedBlobStore(storeOverride, () -> {}, env.opened.capabilities(),
+                        new OpenedBlobStore(writes, () -> {}, env.opened.capabilities(),
                                 env.opened::ensureNamespace, env.opened.reclaimer()));
             };
             this.reader = new ai.protomolt.proto.repo.engine.DocumentPartReader(
@@ -1256,8 +1297,8 @@ public final class ScopedPublicationProbe {
                     .setParameter("op", command.operationId()).getSingleResult()).longValue());
         }
 
-        /** Provider effects attributed to this operation's selected attempts (real versioned writes only). */
-        long providerEffects(DocumentPublicationCommand command) {
+        /** Recorded versions only; ObservedStore separately checks actual adapter invocations. */
+        long recordedVersions(DocumentPublicationCommand command) {
             return env.tx.readOnly(em -> ((Number) em.createNativeQuery("""
                     SELECT count(*) FROM document_part_attempt_objects o
                     JOIN document_operation_selections s ON s.attempt_id=o.attempt_id

@@ -25,7 +25,8 @@ class RepositoryCoordinatorDrainIT {
             var original = input(c); var budget = new PayloadBudget(64_000_000);
             var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
                     original.placements(), java.time.Duration.ofSeconds(1), 0);
-            new DocumentPublicationPreparationJournal(c.tx(), budget)
+            if (migrateExisting) LegacyPublicationPreparationFixture.acquire(c.tx(), value, UUID.randomUUID(), UUID.randomUUID());
+            else new DocumentPublicationPreparationJournal(c.tx(), budget)
                     .acquireInitial(CALLER, value, UUID.randomUUID(), UUID.randomUUID(), NONE);
             if (migrateExisting) {
                 var schema = c.pool().getSchema();
@@ -211,7 +212,7 @@ class RepositoryCoordinatorDrainIT {
         try (var c = context(POSTGRES, "89")) {
             var value = input(c); var budget = new PayloadBudget(64_000_000); var incarnation = UUID.randomUUID();
             var preparations = new DocumentPublicationPreparationJournal(c.tx(), budget);
-            var claim = preparations.acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            var claim = LegacyPublicationPreparationFixture.acquire(c.tx(), value, UUID.randomUUID(), incarnation);
             var modes = new DocumentPublicationModesJournal(c.tx(), budget);
             var operations = new RepositoryOperationLedger(c.tx());
             var starts = new DocumentAssessmentStartJournal(c.tx(), budget);

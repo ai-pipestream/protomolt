@@ -407,11 +407,11 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
+            entry.currentVersion = newVersion;
             VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
-                    ordered, now);
+                    ordered, now, entry);
             ArchiveVersionRecord versionRow = versionRow(entryUuid, newVersion, manifest,
                     root, totalBytes, now);
-            entry.currentVersion = newVersion;
 
             Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
                     manifest);
@@ -590,8 +590,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     ArchiveManifests.referencedObjects(manifests(retained));
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
-            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
-                    ordered, now);
             ArchiveEntryRecord entry = existing.orElseGet(() -> {
                 ArchiveEntryRecord created = new ArchiveEntryRecord();
                 created.entryUuid = entryUuid;
@@ -617,6 +615,8 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
             entry.currentVersion = newVersion;
             entry.updatedAt = now;
+            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+                    ordered, now, entry);
             Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
                     manifest);
             StatsDelta delta = delta(existing.isEmpty() ? 1 : 0,
@@ -1060,10 +1060,10 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
-            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
-                    ordered, now);
             entry.currentVersion = newVersion;
             entry.updatedAt = now;
+            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+                    ordered, now, entry);
             Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
                     manifest);
             StatsDelta delta = delta(0, 1 - (dropVersion != 0 ? 1 : 0), before, after,
@@ -1360,10 +1360,15 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         return row;
     }
 
-    private static VersionManifest manifestProto(EntryAddress address, long version,
+    private VersionManifest manifestProto(EntryAddress address, long version,
                                                  String root, long totalBytes,
                                                  List<RenditionManifestEntry> ordered,
-                                                 Instant createdAt) {
+                                                 Instant createdAt, ArchiveEntryRecord entry) {
+        EntryInfo snapshot = toProto(entry);
+        if (!snapshot.getAddress().equals(address) || entry.currentVersion != version
+                || !ArchiveIds.entryUuid(address).equals(entry.entryUuid)) {
+            throw new IllegalStateException("Archive version metadata does not match its entry identity");
+        }
         return VersionManifest.newBuilder()
                 .setAddress(address)
                 .setVersion(version)
@@ -1371,6 +1376,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 .setTotalBytes(totalBytes)
                 .setCreatedAt(Timestamps.fromMillis(createdAt.toEpochMilli()))
                 .addAllRenditions(ordered)
+                .setMetadataSnapshot(snapshot)
                 .build();
     }
 

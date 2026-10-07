@@ -1,0 +1,5 @@
+f5059e1839bacb70fb1ac0a80208e1b7ca011219082a4fb865338f993bdc2035  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationCaptureDrain.java
+f1d2ccd9c2cf27a6f97ea9f2e9e1ce24477ed16ebced7765541f76846e6c2dad  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalAssessmentSources.java
+6a90a178661e51b00078bd12f27439525837d7a794ce58519fbf0952d8c3a01c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistration.java
+d90e628a41a713668037b9add15a5ef86ba470283a153f014c367f3703f5048d  repo/container/src/main/resources/db/migration/repo/V107__preparation_capture_drains.sql
+126bb16be6a465def3cbd14ebc1f30f335ebdc9e3b2f65126b20be69f3766bc9  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationCaptureDrainIT.java
