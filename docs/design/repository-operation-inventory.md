@@ -1,5 +1,18 @@
 # Repository operation inventory
 
+## Captured pin identity protection (2026-10-07)
+
+- **Extended native pin insertion:** V106 refuses UUIDs already recorded in
+  permanent preparation capture evidence. The AFTER INSERT check covers an insert
+  that waited for another transaction to release the original pin.
+- **Unchanged:** existing live pins, fresh captures, unrelated reader handles,
+  protobuf contracts and pin-release behavior. No durable source-drain marker or
+  history-root release is enabled.
+
+The [regression evidence](../evidence/repository/2026-10-07-captured-pin-reuse/README.md)
+records successful resurrection before the fix and rejection afterward, including
+an observed PostgreSQL lock wait and migration with existing captures.
+
 ## Historical source lifetime (2026-10-07)
 
 - **Extended private registration:** an accepted call holds a source Work through

@@ -798,6 +798,28 @@ only when it actually starts; otherwise a queued task could leak its Work. That
 submission integration is not implemented or qualified by this checkpoint.
 See the [local lifetime evidence](../evidence/repository/2026-10-07-source-lifetime/README.md).
 
+V106 makes a captured pin ID permanently non-reusable after its native pin is
+released. An AFTER INSERT guard rejects any `document_read_pins` insertion whose
+UUID already occurs in immutable V104 capture evidence, including a changed reader
+or object tuple. The check uses the existing pin-ID index and runs after any unique
+index wait on a concurrent deletion. Existing native pins survive migration; fresh
+UUIDs and unrelated handles on the same reader remain usable. Without this guard,
+an absence observation could become false after a drain record commits. This
+protection does not itself record drain or release any history roots.
+
+The next drain implementation must retain a process-local registered-capture
+capability with its exact batch digest, V105 owner tuple, selected pin identities
+and originating source/history handles. Closing that capability must drain Sources
+first, then close/drain and release each captured history. Shared handles can wait
+for their other Uses; unrelated handles on the reader must not be fenced. Persisting
+the marker locks claim, preparation set and batch in that order, checks immutable
+owner/command identity and requires both native pins and their mirrors to be absent.
+Completion may legitimately follow claim expiry or transfer; neither event proves
+drain or invalidates an actual original-owner completion. Crash recovery requires
+each exact batch reader to be durably QUIESCED and its pins recovered. ACTIVE,
+FENCED and expired states remain insufficient. This capability/marker protocol is
+reviewed design, not implemented by V106.
+
 Normal release still needs a batch-local barrier that closes source admission, drains
 the borrowed Uses and actual schema/provider workers, releases exact native pins,
 and records an immutable drain for that capture and epoch. Registration currently
