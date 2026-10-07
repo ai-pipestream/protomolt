@@ -80,7 +80,7 @@ final class DocumentPublicationReplay {
             if (result.state() == State.COMMITTED || result.state() == State.TERMINATED) {
                 long generation = result.result().map(DocumentPublicationResult::getOwnerGeneration)
                         .orElseGet(() -> result.rejection().orElseThrow().getOwnerGeneration());
-                DocumentPublicationModesJournal.requireTerminalModes(em, key, command, generation, encoded);
+                DocumentPublicationModesJournal.requireBoundModes(em, key, command, generation, encoded);
             }
             control.check();
             return result;

@@ -87,8 +87,8 @@ final class DocumentPublicationModesJournal {
 
     private record Captured(Object[] preparation, Object[] modes) {}
 
-    /** Called only after authorized terminal observation, with its owner row locked in the same transaction. */
-    static void requireTerminalModes(jakarta.persistence.EntityManager em, RepositoryOperationLedger.Key key,
+    /** Compare immutable bindings after current authorization, with the owner locked in this transaction. */
+    static void requireBoundModes(jakarta.persistence.EntityManager em, RepositoryOperationLedger.Key key,
             DocumentPublicationCommand command, long generation, String encoded) {
         var rows = em.createNativeQuery("""
                 SELECT p.owner_nonce=m.owner_nonce AND p.owner_nonce=o.owner_token

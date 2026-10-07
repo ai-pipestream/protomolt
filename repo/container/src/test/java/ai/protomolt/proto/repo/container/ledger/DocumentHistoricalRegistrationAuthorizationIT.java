@@ -52,9 +52,14 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                             UUID.randomUUID(), new DocumentPublicationScopeCalls(), new DriveLedger(c.tx()), RepositoryReadControl.NONE);
                     var modes = Map.of("member", DocumentPublicationCandidate.Mode.TYPED);
                     List<?> before = List.of();
+                    RepositoryOperationLedger.Owner registeredOwner = null;
                     if (!beforeRegistration) {
                         var owner = registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE).orElseThrow();
+                        registeredOwner = owner;
                         assertThat(registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE)).contains(owner);
+                        try (var execution = registration.historicalExecution(CALLER, owner, modes, RepositoryReadControl.NONE)) {
+                            assertThat(budget.reservedBytes()).isPositive();
+                        }
                         before = leases(c, key);
                     }
                     var writeOnly = POLICY.toBuilder().clearPermissions().addPermissions(POLICY.getPermissions(1)).build();
@@ -69,6 +74,8 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                         assertThat(count).as(table).isZero();
                     }
                     if (!beforeRegistration) {
+                        var owner = registeredOwner;
+                        denied(() -> registration.historicalExecution(CALLER, owner, modes, RepositoryReadControl.NONE));
                         assertThat(leases(c, key)).isEqualTo(before);
                         assertThat(new RepositoryOperationLedger(c.tx()).find(key)).isPresent();
                     }

@@ -1,0 +1,6 @@
+faab4195ad78935d21deaed63e003d34b3b22d4e458faa0828f3db167c2b3cf0  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalExecution.java
+b145f0d2f345abde2911ea694ab8ff6acf0be2b475aadafc1d7824f3ce9c7426  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationModesJournal.java
+bb4aceb0a5f9da4c85eed77fd1c3737fd9f06a0b7978af40b931938ff92d0004  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistration.java
+15b2162fd162be486601c595bcba1f63a5620957fdb6a14d1748ff8b22b40766  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationReplay.java
+c1c1bbab67c8d9c94aa88eab6939b603b9e459f98db602e5688f36880043b74d  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalExecutionIT.java
+50ccbf26caac5909b47c214fece40dc5ca813f0d33ac999132dd9f272d36a21f  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalRegistrationAuthorizationIT.java
