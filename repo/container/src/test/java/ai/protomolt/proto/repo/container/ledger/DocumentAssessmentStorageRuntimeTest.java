@@ -1,10 +1,15 @@
 package ai.protomolt.proto.repo.container.ledger;
 
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,7 +22,23 @@ class DocumentAssessmentStorageRuntimeTest {
     // retention deadline. Add its wait plus bounded fixture setup to the existing
     // host budget; individual operation/provider deadlines remain unchanged.
     private static final long SQL_HOST_TIMEOUT_SECONDS = 180 + 30;
+    private static final int HOST_DIAGNOSTIC_TAIL_BYTES = 64 * 1024;
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
+
+    @Test void hostTimeoutDiagnosticIsBoundedAndRedactsFixtureSecrets() throws Exception {
+        var source = directory.resolve("synthetic-host.log");
+        var diagnostic = directory.resolve("repository-host-diagnostics/observed-sql-host-timeout.log");
+        Files.writeString(source, "discarded-prefix\n" + "x".repeat(70 * 1024)
+                + "\npassword=fixture-password\nconfigured=fixture-secret\nTAIL_MARKER\n");
+
+        writeBoundedHostDiagnostic(source, diagnostic, List.of("fixture-secret"));
+
+        String result = Files.readString(diagnostic);
+        assertThat(Files.size(diagnostic)).isLessThan(66 * 1024);
+        assertThat(result).contains("[truncated tail; omitted_bytes=", "TAIL_MARKER", "password=[REDACTED]",
+                "configured=[REDACTED]");
+        assertThat(result).doesNotContain("fixture-password", "fixture-secret", "discarded-prefix");
+    }
 
     @Test void observedAssessmentAndSqlRunTogetherOnProductionJars() throws Exception {
         String bundleProperty = System.getProperty("protomolt.test.admissionRuntimeBundle");
@@ -102,7 +123,26 @@ class DocumentAssessmentStorageRuntimeTest {
             try {
                 // This host runs the aggregate provider, publication and crash-recovery probes.
                 // Their operation-specific deadlines remain separate from this harness cap.
-                assertThat(process.waitFor(SQL_HOST_TIMEOUT_SECONDS, TimeUnit.SECONDS)).as("Observed SQL host completed; log: %s", log).isTrue();
+                boolean completed = process.waitFor(SQL_HOST_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (!completed) {
+                    process.destroyForcibly();
+                    boolean terminated = process.waitFor(10, TimeUnit.SECONDS);
+                    Path diagnostic = Path.of(System.getenv().getOrDefault(
+                            "PROTOMOLT_TEST_HOST_DIAGNOSTIC_PATH", directory.resolve("host-timeout.log").toString()));
+                    String diagnosticResult;
+                    try {
+                        writeBoundedHostDiagnostic(log, diagnostic, List.of(postgres.getJdbcUrl(),
+                                postgres.getUsername(), postgres.getPassword(), gate.uri(), storage.getEndpoint().toString(),
+                                storage.getRegion(), storage.getAccessKey(), storage.getSecretKey(), "fixture-token",
+                                "history-fixture-token", "bounded-fixture-token", "public-bounded-fixture-token",
+                                "wrong-fixture-token", "publication-cancellation-fixture-token"));
+                        diagnosticResult = diagnostic.toString();
+                    } catch (java.io.IOException captureFailure) {
+                        diagnosticResult = "capture failed: " + captureFailure.getClass().getSimpleName();
+                    }
+                    assertThat(completed).as("Observed SQL host completed; bounded sanitized log: %s; terminated=%s",
+                            diagnosticResult, terminated).isTrue();
+                }
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
@@ -251,5 +291,25 @@ class DocumentAssessmentStorageRuntimeTest {
             }
             }
         }
+    }
+
+    private static void writeBoundedHostDiagnostic(Path source, Path destination, List<String> secrets)
+            throws java.io.IOException {
+        long size = Files.size(source);
+        long offset = Math.max(0, size - HOST_DIAGNOSTIC_TAIL_BYTES);
+        int length = Math.toIntExact(size - offset);
+        var bytes = ByteBuffer.allocate(length);
+        try (var channel = FileChannel.open(source, StandardOpenOption.READ)) {
+            channel.position(offset);
+            while (bytes.hasRemaining() && channel.read(bytes) >= 0) { }
+        }
+        bytes.flip();
+        String content = StandardCharsets.UTF_8.decode(bytes).toString();
+        if (offset > 0) content = "[truncated tail; omitted_bytes=" + offset + "]\n" + content;
+        for (String secret : secrets) if (secret != null && !secret.isBlank()) content = content.replace(secret, "[REDACTED]");
+        content = Pattern.compile("(?im)(password|secret(?:[_-]?key)?|access[_-]?key|api[_-]?token|authorization)(\\s*[=:]\\s*)[^\\s,;]+")
+                .matcher(content).replaceAll("$1$2[REDACTED]");
+        Files.createDirectories(destination.getParent());
+        Files.writeString(destination, content, StandardCharsets.UTF_8);
     }
 }

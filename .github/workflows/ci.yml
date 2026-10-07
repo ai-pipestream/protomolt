@@ -61,6 +61,8 @@ jobs:
           cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unavailable
 
       - name: Repository storage host tests
+        env:
+          PROTOMOLT_TEST_HOST_DIAGNOSTIC_PATH: ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
         run: ./gradlew :protomolt-repo-container:admissionStorageTest --rerun --console=plain -PtestJdk=${{ matrix.test-jdk }} --max-workers=2
 
       - name: Save failed sample test reports
@@ -85,7 +87,8 @@ jobs:
           if [[ -f "$report" ]]; then
             log=$(sed -n '/log: / { s/.*log: \([^" ]*\).*/\1/; s/\]$//; p; q; }' "$report")
             if [[ -n "$log" && -f "$log" ]]; then
-              awk '/^[A-Z0-9_]+$/ && /(_OK|_START|_BEGIN|_END|_FAILED)$/' "$log" \
+              awk '/^[A-Z0-9_]+$/ && /(_OK|_START|_BEGIN|_END|_FAILED)$/ { print; next } \
+                   /^PHASE name=[a-z-]+ elapsed_ms=[0-9]+$/ { print }' "$log" \
                 > "$output/assessment-host-progress.log"
             fi
           fi
@@ -100,6 +103,7 @@ jobs:
             repo/container/build/reports/tests/test/
             repo/container/build/test-results/admissionStorageTest/*.xml
             repo/container/build/reports/tests/admissionStorageTest/
+            ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
             repo/service/build/test-results/test/*.xml
             repo/service/build/reports/tests/test/
             ${{ runner.temp }}/repository-host-diagnostics/
