@@ -793,6 +793,42 @@ coordinates. Principal-only hosts remain a separate authentication model and gai
 no key-specific grant. These are corrections to authorization behavior, not new
 wire fields or a promise of recovery on behalf of a revoked caller.
 
+### CREATE ownership across initial handles
+
+V83 coordinates are not a transferable CREATE capability. Preserve `start()`'s
+coordinate idempotence: competing handles load one committed UUID/deadline, a
+rolled-back start may retry, and a lost start acknowledgement reloads its original
+coordinates. Only the handle whose INSERT is positively acknowledged may CREATE.
+Record an internal insert outcome from the SQL update count; do not infer the
+winner from a proposed UUID or a pre-insert read. Arm its private permission only
+after commit and final authorization return normally. Validate full persisted
+scope, command, owner, retention and expiry on readback/conflict.
+
+Repeated start on the acknowledged winning handle keeps the same permission.
+A handle that only loads a start, including the original handle after losing its
+start acknowledgement, is reconciliation-only. Refuse its CREATE before schema
+claims even when it prepares its own valid assessment. A CREATE SQL attempt
+consumes the local permission before entering the transaction; loaded coordinates
+or empty discovery cannot restore it. Schema staging is a separate authorized,
+idempotent transaction and is not represented by the CREATE-attempt marker.
+
+Qualification must show two independent handles returning identical start
+coordinates but only one able to CREATE; the other must write no schema claims.
+Real before-commit rollback must allow a later acknowledged start to win. Real
+after-commit acknowledgement loss must leave both coordinate recovery and new
+handles unable to CREATE, while a positively committed assessment can still be
+discovered and reconciled under current authority. Repeat, expiry, retention
+mismatch and credential revocation checks must retain their existing semantics.
+
+This is an intermediate ownership boundary, not complete crash recovery. If the
+winning handle disappears before CREATE, another handle cannot restage within
+that generation. The completed service must resolve that case through explicit
+drain/abandonment or a qualified successor with fresh captured-source ownership;
+the existing V109 attachment and successor fences require historical execution
+qualification before they can serve that purpose. Keep the public path closed
+until this recovery sequence and publication are proven. No protobuf change or
+new repository-wide transaction boundary is introduced by the private permit.
+
 ### Acceptance before enabling public restore
 
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
@@ -1452,3 +1488,45 @@ An explicit user cancellation of a non-exhausted installed successor is a distin
 unresolved operation. Do not make the limit operation a general cancellation
 bypass. Public historical execution and automatic recovery remain gated while
 these terminal and release requirements are unfinished.
+
+### Next execution slice: historical successor CREATE ownership
+
+After qualifying initial-handle CREATE ownership, extend private execution to an
+exact activated historical successor. V83 is immutable staging intent, not a
+transferable CREATE permit. V85 explicitly refuses pre-owner abandonment when an
+owner or start exists; it cannot resolve a vanished initial handle after START.
+
+For uncertain CREATE, use exact `DocumentAssessmentDiscovery.discover` followed
+by `DocumentAssessmentReconciliation.observeRetained` under current authority.
+A positive retained stage must match generation, assessment, selections, manifest
+and deadline. Empty discovery is not rollback proof and must not rearm the old
+handle or create another stage in the same generation.
+
+When no retained stage can be reconciled, reuse successor reservation/installation
+(V97/V93 and applicable supersession), retained preparation and modes, and the
+fresh historical capture/activation protocol (V109). Existing activation evidence
+does not itself supply an executable session or live source Uses. The next private
+handle must be minted from the exact live activation and fresh capture, with current
+source READ, destination WRITE, credential and policy checks. Cold confirmation
+must never fabricate borrowed resources or reuse an old incarnation. Scope V83
+start identity to the successor's predecessor generation, retaining acknowledged
+INSERT ownership and sticky CREATE attempts. Drain earlier captures independently.
+
+Acceptance for this next slice:
+
+- Initial START committed, no assessment, winning handle lost: V85 refuses; an
+  empty discovery result grants neither CREATE nor abandonment.
+- After real expiry or qualified handoff, a genuine fresh successor obtains new
+  capture/pins and activation; its new start/CREATE leaves the original V83 intact.
+- A late old-owner CREATE is fenced. Successor success does not attest old-reader
+  quiescence; original capture drain is separately proven.
+- Lost CREATE acknowledgement reconciles only exact positive retained evidence;
+  rollback/absent evidence never silently restages the old generation.
+- Revoked keys/policies, changed source identities, missing retained schema assets,
+  and failed activation leave no partially granted execution or new assessment.
+- Cancellation and uncertain commit outcomes preserve exact recoverable identities;
+  no lease renewal, source-release authority or public availability is implied.
+
+This is planned work, not an enabled API. Preserve the separately reviewed recovery
+limits, terminal decisions and source-release protocol; do not bypass them to make
+successor execution work.
