@@ -9,6 +9,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisDataException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -130,16 +131,23 @@ class RedisPersistenceIT {
 
     private static void awaitReady(String host, int port) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
-        JedisConnectionException last = null;
+        RuntimeException last = null;
         do {
             try (var client = new Jedis(host, port, 500)) {
                 assertThat(client.ping()).isEqualTo("PONG");
                 return;
             } catch (JedisConnectionException starting) {
                 last = starting;
+            } catch (JedisDataException starting) {
+                // Redis opens its port before AOF replay finishes. During that bounded
+                // startup window PING can receive the explicit transient LOADING reply.
+                if (starting.getMessage() == null || !starting.getMessage().startsWith("LOADING "))
+                    throw new AssertionError("Redis returned a non-transient PING error during restart readiness: "
+                            + starting.getMessage(), starting);
+                last = starting;
             }
             Thread.sleep(25);
         } while (System.nanoTime() < deadline);
-        throw new AssertionError("Redis did not become ready after process restart", last);
+        throw new AssertionError("Redis did not become ready after process restart; last startup response: " + last, last);
     }
 }
