@@ -21,6 +21,70 @@ class RepositoryHistoricalSuccessorActivationIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void acceptedActivationSurvivesSourceClosureAndBlocksDrainUntilItsOwnerFinishes() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var plan = installedHistoricalSuccessor(c, rig);
+            try (var later = capture(c, rig)) {
+                var activation = activation(c.tx(), c, rig, plan, later);
+                DocumentPreparationCaptureDrain.Capture committed;
+                try (var accepted = later.sources().work()) {
+                    later.sources().close();
+                    assertThatThrownBy(later.sources()::work).hasMessageContaining("sources are closed");
+                    committed = activation.activateAccepted(CALLER, CALLER, NONE, accepted);
+                    assertThat(count(c, "repository_historical_activations")).isEqualTo(1);
+                    assertThat(committed.complete(CALLER, Duration.ZERO, NONE)).isEmpty();
+                    assertThat(DocumentPreparationCaptureDrain.confirm(c.tx(), CALLER, committed.identity(), NONE)).isEmpty();
+                }
+                assertThat(committed.complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            }
+        }
+    }
+
+    @Test void acceptedWorkSurvivesLostActivationReplyWithoutReopeningSourceAdmission() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var plan = installedHistoricalSuccessor(c, rig);
+            var armed = new AtomicBoolean(true);
+            var datasource = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (count(c, "repository_historical_activations") == 1 && armed.compareAndSet(true, false))
+                    throw new java.sql.SQLException("accepted activation reply lost", "08006");
+            });
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger", Map.of(
+                    "hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"));
+                 var later = capture(c, rig)) {
+                var activation = activation(new Tx(emf), c, rig, plan, later);
+                DocumentPreparationCaptureDrain.Capture committed;
+                try (var accepted = later.sources().work()) {
+                    later.sources().close();
+                    assertThatThrownBy(() -> activation.activateAccepted(CALLER, CALLER, NONE, accepted))
+                            .hasStackTraceContaining("accepted activation reply lost");
+                    assertThat(armed).isFalse();
+                    committed = activation.tentativeCapture().orElseThrow();
+                    assertThat(count(c, "repository_historical_activations")).isEqualTo(1);
+                    assertThat(count(c, "repository_preparation_pin_batches")).isEqualTo(2);
+                    assertThat(activation.activateAccepted(CALLER, CALLER, NONE, accepted)).isSameAs(committed);
+                    assertThat(count(c, "repository_preparation_pin_batches")).isEqualTo(2);
+                    assertThat(committed.complete(CALLER, Duration.ZERO, NONE)).isEmpty();
+                }
+                assertThat(committed.complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            }
+        }
+    }
+
+    @Test void acceptedActivationRejectsWorkFromAnotherCaptureOfTheSameCommand() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var plan = installedHistoricalSuccessor(c, rig);
+            try (var later = capture(c, rig); var foreign = capture(c, rig);
+                 var wrongWork = foreign.sources().work()) {
+                var activation = activation(c.tx(), c, rig, plan, later);
+                assertThatThrownBy(() -> activation.activateAccepted(CALLER, CALLER, NONE, wrongWork))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessage("Source Work owner differs");
+                assertThat(count(c, "repository_historical_activations")).isZero();
+                assertThat(count(c, "repository_successor_executions")).isZero();
+                assertThat(activation.tentativeCapture()).isEmpty();
+            }
+        }
+    }
+
     @Test void successorCompletionCannotReplaceUndrainedOriginalEpoch() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
             var plan = installedHistoricalSuccessor(c, rig);

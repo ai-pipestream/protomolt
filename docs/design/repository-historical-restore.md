@@ -1530,3 +1530,34 @@ Acceptance for this next slice:
 This is planned work, not an enabled API. Preserve the separately reviewed recovery
 limits, terminal decisions and source-release protocol; do not bypass them to make
 successor execution work.
+
+#### Successor execution binding and accepted activation work
+
+Reuse the existing `DocumentHistoricalExecution` CREATE implementation through a
+private validated initial/successor binding. It must distinguish the current
+executable preparation and mode row (successor generation) from the original
+retention preparation and capture root set. Parameterizing every check with a
+single generation would be incorrect: current preparation ownership advances,
+while original historical retention does not move to the successor's generation.
+
+The activation attempt must retain accepted source Work before activation and
+across uncertain acknowledgement. An internal accepted-work activation entry
+point can fork this permit, verify its exact source owner and caller, and run the
+same activation transaction without reopening closed source admission. Existing
+capture-only callers keep their existing lifecycle. The caller-owned permit must
+be closed on disposal; capture completion must remain pending while it is held.
+The initial prerequisite is qualified separately from executable attachment.
+
+Later attachment must verify the exact committed V94/V109 identity, next
+preparation/modes, current claim/owner and retained-root/capture bindings, then
+transfer a live child Work and accepted scope Call into the execution handle.
+A cold activation receipt cannot supply either resource. Failed attachment closes
+only tentative local resources and preserves uncertain durable identity for exact
+confirmation; it must not silently mint another activation or abandon capture
+cleanup. Post-commit authorization and lost-reply behavior require their own tests
+before this becomes an executable successor path.
+
+Accepted-work activation qualification passed 17 real PostgreSQL normal/scoped
+tests with no failures or skips and Sol review. See
+[accepted activation evidence](../evidence/repository/2026-10-07-historical-accepted-activation/README.md).
+This does not qualify successor handle attachment or CREATE.

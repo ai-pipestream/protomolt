@@ -36,6 +36,24 @@ final class RepositoryHistoricalSuccessorActivation {
 
     synchronized DocumentPreparationCaptureDrain.Capture activate(RepositoryCaller coordinator,
             RepositoryCaller executionCaller, RepositoryReadControl control) {
+        return activateWithWork(coordinator, executionCaller, control, null);
+    }
+
+    /** Continue already accepted source work; the caller retains its permit across an uncertain reply. */
+    synchronized DocumentPreparationCaptureDrain.Capture activateAccepted(RepositoryCaller coordinator,
+            RepositoryCaller executionCaller, RepositoryReadControl control,
+            DocumentHistoricalAssessmentSources.Work accepted) {
+        try (var continuation = Objects.requireNonNull(accepted).fork()) {
+            continuation.histories(sources); // Reject a permit from a different capture, even for the same command.
+            continuation.requireCaller(executionCaller);
+            continuation.authorize(control);
+            return activateWithWork(coordinator, executionCaller, control, continuation);
+        }
+    }
+
+    private DocumentPreparationCaptureDrain.Capture activateWithWork(RepositoryCaller coordinator,
+            RepositoryCaller executionCaller, RepositoryReadControl control,
+            DocumentHistoricalAssessmentSources.Work accepted) {
         Objects.requireNonNull(control).check();
         var next = plan.next();
         DocumentAdmissionAuthorization.requireCaller(coordinator, next.key(), next.key().account());
@@ -54,7 +72,7 @@ final class RepositoryHistoricalSuccessorActivation {
             if (RepositoryCoordinatorReservation.confirm(tx, coordinator, plan.reservation(), control).isEmpty()
                     || !RepositorySuccessorInstall.confirm(tx, coordinator, plan, previousSha, sha, modes, control))
                 throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Historical successor is not installed");
-            try (var work = sources.work()) {
+            try (var work = accepted == null ? sources.work() : accepted.fork()) {
                 work.requireCaller(executionCaller);
                 var references = work.references(next.command(), control::check);
                 var prepared = DocumentOperationUploadAdmission.prepareHistorical(next.command(), next.placements(),
