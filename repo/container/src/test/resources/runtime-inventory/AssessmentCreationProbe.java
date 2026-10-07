@@ -40,11 +40,7 @@ public final class AssessmentCreationProbe {
                     .setAddress(member.getDestination().getAddress().toBuilder().setGraphId("rejection-authorization"))).build());
         }
         var rejectionTargets = AssessmentRestartProbe.seedDestinations(tx, rejectionMembers);
-        var policy = DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
-                .setValidationProfile(DocumentSchemaAdmission.PROFILE).setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED)
-                .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(20).setMaxFragmentBytes(4_000_000)
-                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
-                        .setMaxDecodedBytes(1_000_000)).build(), () -> {});
+        var policy = initialPolicy();
         var initial = new DocumentSchemaPolicies(tx).activate(policy, 0, () -> {});
         initial = PromotedAssessmentCommitProbe.run(tx, provider, promotedSource, initial);
         JournaledSuccessorPublicationProbe.run(tx, provider, successorSource, observation);
@@ -425,6 +421,13 @@ public final class AssessmentCreationProbe {
         for (var cause = failure; cause != null; cause = cause.getCause())
             if (cause.getMessage() != null && cause.getMessage().contains(text)) return true;
         return false;
+    }
+    static DocumentAdmissionPolicy initialPolicy() {
+        return DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId("account")
+                .setValidationProfile(DocumentSchemaAdmission.PROFILE).setMode(DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED)
+                .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder().setMaxFragments(20).setMaxFragmentBytes(4_000_000)
+                        .setMaxRoots(100).setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
+                        .setMaxDecodedBytes(1_000_000)).build(), () -> {});
     }
     private static boolean hasSqlState(Throwable failure, String state) {
         for (var cause = failure; cause != null; cause = cause.getCause())

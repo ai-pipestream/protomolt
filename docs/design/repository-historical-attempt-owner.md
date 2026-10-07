@@ -167,13 +167,12 @@ upload/readback, exact receipt replay and final ownership drainage. Its standalo
 request barrier exercises the private owner; it does not establish managed runtime
 routing. See [multi-call publication evidence](../evidence/repository/2026-10-07-installed-historical-publication/README.md).
 
-Still required before managed use: reconcile uncertain CREATE into
-an exact verified stage without reissuing CREATE; retire authenticated terminal/fenced
+Still required before managed use: retire authenticated terminal/fenced
 entries during normal service operation; own proposal/install uncertainty; and wire and
 qualify both library and transport entry points. Currently entries remain until shutdown,
 so capacity can fill over a long-running service. The facade gate remains unchanged.
 
-## Next: reconcile an uncertain CREATE
+## Implemented: reconcile an uncertain CREATE
 
 Before CREATE SQL, retain its immutable proposal on the execution: acknowledged START
 identity/deadline, manifest SHA and exact upload selections. A later call can reconcile
@@ -194,3 +193,63 @@ failed observation retains the attempted proposal and sticky CREATE flag; it nev
 authorizes another CREATE. Qualification must cover after-commit reply loss followed
 by exact adoption/publication, rollback with empty observation and refused restaging,
 changed selection/manifest, revoked authority, and expired/released assessments.
+
+The private qualification adds direct rollback and lost-reply checks,
+same-owner lost-reply adoption followed by publication, changed selections,
+credential revocation, and expiry while waiting for a real PostgreSQL row lock.
+The expanded packaged run passed with no failures or skips, including dedicated
+changed-manifest and explicitly released-assessment cases. The former changes evaluation time through
+normal assessment preparation, then retries the original evidence. The latter uses
+the existing SQL recovery function after real expiry, then requires empty
+reconciliation and refusal of another CREATE. Neither case bypasses SQL guards.
+See [CREATE reconciliation evidence](../evidence/repository/2026-10-07-historical-create-reconciliation/README.md).
+
+## Next: retire completed or permanently fenced entries
+
+Normal service operation must release completed entries without waiting for host
+shutdown. Implement this after CREATE reconciliation, using the existing replay,
+claim-fencing and capture-disposal primitives. A lease expiring or discovery returning
+no result is not proof that an attempt can be discarded.
+
+Keep the exact entry exclusively borrowed throughout proof and disposal. For terminal
+retirement, observe the exact command through
+`DocumentPublicationReplay.observe(caller, command)` using the entry's authenticated
+caller, with explicit control checks before and after observation. A committed or terminated
+outcome makes the entry permanently retirement-only before any drainage starts.
+For superseded work, separately establish permanent fencing of the retained claim
+with `RepositoryClaimRetirement`; do not infer fencing from a timeout.
+The fenced-retirement entry point must first verify private process authority for
+the entry's exact reservation; the claim-fencing helper does not authorize a caller.
+
+The terminal outcome may belong to a later generation with different valid modes.
+Do not compare that generation's mode journal against this entry's original modes:
+the global terminal fact suffices for local retirement and grants no publication
+authority. If checking own-generation mode integrity, do it separately and only
+when the terminal generation is the entry's generation.
+
+After either proof, close the assessment and execution, drain their owner scopes,
+close source Work and classify/dispose the exact activation capture. Reuse the
+shutdown disposal order. No SQL lock or owner-map monitor may span worker or reader
+waits. Durable terminal state and permanent fencing do not establish that local
+workers have stopped using bytes.
+
+After proof, cancellation, timeout or cleanup failure retains the entry, its
+retirement-only state and remaining reservations for another disposal attempt.
+A failed or cancelled observation before proof must not make the entry retirement-only.
+Once the immutable
+proof has been established, private process authority may finish local disposal
+even if the original credential is subsequently revoked. Returning a receipt still
+requires fresh caller authorization; cleanup authority never substitutes for it.
+
+Remove the entry and end its borrowed-call accounting together only after successful
+disposal. Closing the Attempt afterward must not decrement active calls twice.
+Future public routing must replay terminal outcomes before beginning a replacement
+entry, so retirement cannot recreate execution authority for a completed operation.
+
+Acceptance tests must cover pending-state refusal, committed and rejected outcomes,
+later-generation terminal outcomes, lost replies, held worker permits, timeout and
+retry, revocation after proof, and two independent operation keys. Assert retained
+budgets while blocked and released budgets only after actual drainage. This is a
+design requirement, not a claim that normal retirement is implemented.
+The later-generation case must use different valid modes where the protocol allows
+them, so a misplaced cross-generation mode check cannot strand completed entries.

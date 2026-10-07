@@ -189,6 +189,16 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             entry.stage = execution.createAssessment(entry.caller, entry.assessment, selections, observation, storage, started, control);
             return entry.stage;
         }
+        synchronized Optional<DocumentAssessmentCreation.Created> reconcileAssessment(
+                Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                DocumentAssessmentRuntimeObserver.Observation observation, RepositoryReadControl control)
+                throws InvalidProtocolBufferException {
+            var execution = execution(control);
+            if (entry.assessment == null) throw new IllegalStateException("Historical assessment is not prepared");
+            var verified = execution.reconcileAssessment(entry.caller, entry.assessment, selections, observation, control);
+            if (verified.isPresent()) entry.stage = verified.orElseThrow();
+            return verified;
+        }
         synchronized ai.protomolt.proto.repo.v1.DocumentPublicationResult publishAssessment(
                 Map<String, DocumentSelectedAttemptLedger.Selected> selections,
                 DocumentAssessmentRuntimeObserver.Observation observation, RepositorySchemaArtifacts storage,

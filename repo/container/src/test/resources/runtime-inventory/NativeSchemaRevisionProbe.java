@@ -19,6 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Real retained bytes with changing descriptor contracts and immutable metadata snapshots. */
 public final class NativeSchemaRevisionProbe {
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, database, false);
+    }
+    static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            javax.sql.DataSource database, boolean reconciliationOnly) throws Exception {
         var caller = new RepositoryCaller("principal", true);
         var budget = new PayloadBudget(128_000_000);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
@@ -78,7 +82,7 @@ public final class NativeSchemaRevisionProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(attempts == 0, "no empty upload attempt for unchanged bytes");
                 }
-                HistoricalAssessmentCreationProbe.run(tx, provider, source, published.getFirst(), opaqueRevision, database);
+                HistoricalAssessmentCreationProbe.run(tx, provider, source, published.getFirst(), opaqueRevision, database, reconciliationOnly);
                 NativeHistoricalMaterializationProbe.run(tx, provider, published.getFirst());
                 require(registryCalls.get() == 3, "one explicit contract selection for each revision");
                 for (var definition : List.of(a, b)) {

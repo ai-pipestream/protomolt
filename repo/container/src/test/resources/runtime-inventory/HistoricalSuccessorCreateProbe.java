@@ -14,7 +14,8 @@ final class HistoricalSuccessorCreateProbe {
             DocumentHistoricalExecution oldExecution, DocumentAssessmentStartJournal.Started oldStart,
             DocumentSchemaPolicies.Selection policy, Map<Integer, ByteString> fragments, PayloadBudget budget,
             DocumentAssessmentRuntimeObserver.Observation observation, RepositoryCoordinatorDrain.Identity oldIdentity,
-            boolean installedOwner) throws Exception {
+            boolean installedOwner, HistoricalCreateCommitFault fault, javax.sql.DataSource database,
+            HistoricalInstalledOwnerProbe.Check check) throws Exception {
         var command = original.command();
         boolean mixed = command.intent().getMembers(0).getPartsList().stream().anyMatch(part -> part.hasUpload());
         Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container = mixed
@@ -88,7 +89,7 @@ final class HistoricalSuccessorCreateProbe {
                 require(fresh.size() == fragments.size(), "every fragment is reread or explicitly resubmitted");
                 if (installedOwner) {
                     HistoricalInstalledOwnerProbe.run(tx, provider, caller, coordinator, original, plan, sources, accepted,
-                            policy, fresh, container, resolver, limits, budget, observation);
+                            policy, fresh, container, resolver, limits, budget, observation, fault, database, check);
                     return;
                 }
                 var activation = new RepositoryHistoricalSuccessorActivation(tx, budget, plan, original, sources, new DriveLedger(tx));

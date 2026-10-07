@@ -24,9 +24,16 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
     private boolean assessmentCreateAttempted;
+    private AttemptedCreate attemptedCreate;
     private boolean publicationAttempted;
     private boolean closed;
     private boolean successorAttachmentVerified;
+
+    /** Exact original proposal, retained even when CREATE's transaction reply is lost. */
+    private record AttemptedCreate(DocumentAssessmentCreation.Created stage,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections) {
+        AttemptedCreate { selections = Map.copyOf(selections); }
+    }
 
     DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared,
@@ -209,6 +216,59 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 observation, control, evidence -> createObserved(caller, selected, evidence, storage, started, control));
     }
 
+    /** Confirms only this handle's original CREATE; absence never permits restaging. */
+    synchronized Optional<DocumentAssessmentCreation.Created> reconcileAssessment(RepositoryCaller caller,
+            DocumentPublicationAssessment.Historical assessment,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+            DocumentAssessmentRuntimeObserver.Observation observation, RepositoryReadControl control)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller); work.authorize(control);
+        if (!assessmentCreateAttempted || attemptedCreate == null || acknowledgedStart == null || publicationAttempted)
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical CREATE reconciliation requires its retained original attempt");
+        if (!attemptedCreate.selections().equals(Map.copyOf(selections)))
+            throw new IllegalArgumentException("Reconciliation selections differ from attempted CREATE");
+        return assessment.withRetainedEvidence(assessmentIdentity, caller, work, owner, record.command(), modes,
+                observation, control, evidence -> {
+                    evidence.requireOwner(owner, control::check);
+                    var expected = attemptedCreate.stage();
+                    if (!expected.manifestSha256().equals(evidence.manifestSha256(control::check))
+                            || !expected.assessment().equals(acknowledgedStart.assessment())
+                            || !expected.retainUntil().equals(acknowledgedStart.retainUntil()))
+                        throw new IllegalArgumentException("Reconciliation evidence differs from attempted CREATE");
+                    var references = work.references(record.command(), control::check);
+                    var authorization = DocumentAdmissionAuthorization.prepare(prepared.plan(), references);
+                    var creation = DocumentCreationAuthorization.prepare(prepared.plan(), drives, caller);
+                    var result = tx.inTransaction(em -> {
+                        // Do not use mutate(): it locks physical origins before the retained assessment owner.
+                        lockRegistration(em);
+                        DocumentAssessmentStartJournal.requireCreation(em, owner, record.command(),
+                                expected.assessment(), expected.retainUntil());
+                        RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                        RepositoryOperationLedger.requireCommand(em, owner.key(), record.command());
+                        DocumentSchemaPolicies.lockCurrent(em, evidence.policy(control::check), control::check);
+                        DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan(), authorization, creation);
+                        DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), record.command(), owner.generation(), encodedModes);
+                        var verified = DocumentAssessmentReconciliation.verifyRetainedInTransaction(em, caller, owner,
+                                record.command(), DocumentAssessmentRetainedSlots.uploadSelections(attemptedCreate.selections()),
+                                expected, budget, control::check);
+                        requireCapture(em, control);
+                        RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                        if (verified.isPresent() && !Boolean.TRUE.equals(em.createNativeQuery("""
+                                SELECT retain_until>clock_timestamp() AND sealed AND release_xid IS NULL
+                                FROM document_assessment_owners WHERE assessment_id=:id
+                                """).setParameter("id", expected.assessment()).getSingleResult()))
+                            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                                    "Reconciled assessment expired or was released");
+                        evidence.check(control::check);
+                        return verified;
+                    });
+                    work.authorize(control);
+                    return result;
+                });
+    }
+
     /** Private publication of this handle's exact retained assessment; uncertain commit requires replay. */
     synchronized ai.protomolt.proto.repo.v1.DocumentPublicationResult publishAssessment(RepositoryCaller caller,
             DocumentPublicationAssessment.Historical assessment,
@@ -354,6 +414,8 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             var writes = new DocumentAssessmentCreationWrites.Prepared(command, plan, selected, reuse, slotPlan,
                     true, manifest.toByteArray(), manifestSha, count, artifacts, roots);
             // Sticky before SQL: even a lost acknowledgement cannot lead this handle to CREATE twice.
+            attemptedCreate = new AttemptedCreate(new DocumentAssessmentCreation.Created(
+                    started.assessment(), manifestSha, started.retainUntil()), selected);
             assessmentCreateAttempted = true;
             var result = tx.inTransaction(em -> {
                 lockRegistration(em);
