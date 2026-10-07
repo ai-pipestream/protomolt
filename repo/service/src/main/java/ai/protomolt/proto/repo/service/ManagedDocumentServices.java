@@ -57,6 +57,12 @@ final class ManagedDocumentServices {
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
             ManagedSchemaAccess schemas, Journaled journaled) {
+        this(tx,drives,generation,profile,backing,deliverEvents,access,schemas,journaled,null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
+            ManagedSchemaAccess schemas, Journaled journaled, BoundedDocumentProfile boundedDocuments) {
         Objects.requireNonNull(backing);
         managedDrain = journaled != null;
         if (managedDrain) Objects.requireNonNull(schemas, "Managed journaled publication requires owned schema access");
@@ -73,7 +79,7 @@ final class ManagedDocumentServices {
         var transport=journaled==null ? null : journaled.transport();
         publicationService=transport==null ? null : new DocumentPublicationGrpcService(this::publish,
                 transport.bindings(),new PayloadBudget(transport.deliveryBudgetBytes()),transport.maxConcurrentCalls());
-        var budget = new PayloadBudget(64L * 1024 * 1024);
+        var budget = new PayloadBudget(boundedDocuments == null ? 64L * 1024 * 1024 : boundedDocuments.payloadBudgetBytes());
         var reader = new DocumentPartReader((original, selected) -> {
             requireOriginal(generation, profile, original, selected);
             return backing.store();
@@ -104,7 +110,9 @@ final class ManagedDocumentServices {
                             },journaled.recovery());
                 } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException("Cannot observe managed publication runtime", failure); }
             }
-            publicationRepository=selection==null ? null : publication.repository(selection);
+            publicationRepository=selection==null ? null : publication.repository(selection,
+                    boundedDocuments == null ? (int)ai.protomolt.proto.repo.spi.DocumentPublicationInput.MAX_UPLOAD_BYTES
+                            : boundedDocuments.maxObjectBytes());
         } catch (RuntimeException | Error failure) {
             // Nothing has been exposed: no calls, batches or provider workers can exist.
             try {

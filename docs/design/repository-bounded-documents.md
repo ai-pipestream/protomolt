@@ -122,3 +122,10 @@ DriveService. Continue document reader reconciliation, attempt recovery and sche
 workers; omit legacy purge/sweeper and unrelated raw/archive maintenance.
 A host fixture must enumerate rejected access paths, not merely prove a successful
 publication. Sol reviewed this assembly map against the current source.
+
+## Internal implementation checkpoint
+
+A package-private Redis document profile now passes typed Any publication,
+receipt replay and historical validation after the live resolver closes.
+Evidence: `docs/evidence/repository/2026-10-07-bounded-document-startup`.
+The public factory remains unavailable pending the other acceptance cases above.

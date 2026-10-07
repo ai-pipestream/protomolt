@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
+        for (String name : List.of("BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -59,15 +59,19 @@ class DocumentAssessmentStorageRuntimeTest {
             }
         }
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
+                var redis = new org.testcontainers.containers.GenericContainer<>("redis:7-alpine")
+                        .withCommand("redis-server","--appendonly","yes","--appendfsync","always","--maxmemory-policy","noeviction").withExposedPorts(6379);
                 var storage = new AssessmentStorageBackend(System.getProperty("protomolt.test.nativeStorage", "localstack"))) {
             postgres.start();
             storage.start();
+            redis.start();
             var log = directory.resolve("host.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                     classpath + java.io.File.pathSeparator + probe,
                     "ai.protomolt.proto.repo.container.ledger.AssessmentStorageProbe", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
+            builder.environment().put("PROTOMOLT_TEST_REDIS_URI","redis://"+redis.getHost()+":"+redis.getMappedPort(6379));
             builder.environment().put("PROTOMOLT_TEST_RUNTIME_BUNDLE", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
@@ -85,7 +89,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
-                assertThat(result).contains("OBSERVED_SQL_HOST_OK");
+                assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
                 assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("RECOVERY_OPEN_TERMINAL_DISPOSAL_OK");
