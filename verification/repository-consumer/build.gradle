@@ -68,18 +68,27 @@ dependencies {
 // Boundary decisions use group:artifact identity, not artifact-name fragments.
 // Families: SQL/ORM/pooling/migration, Kafka, repository server/engine, AWS,
 // Azure and Redis. Azure has no implementation anywhere; no row allows it.
+// In-house modules are classified too: a JDBC adapter, Kafka bridge or server
+// host from this repository is the same leak as the third-party library it wraps.
 def familyOf
 familyOf = { String group, String name ->
     if (group == 'software.amazon.awssdk') return 'aws-sdk'
     if (group.startsWith('com.azure')) return 'azure-sdk'
     if (group == 'redis.clients') return 'redis-sdk'
-    if (group == 'org.postgresql' || group == 'org.hibernate' || group == 'org.hibernate.orm'
-            || group == 'com.zaxxer' || group == 'org.flywaydb'
-            || ['hibernate-core', 'HikariCP', 'postgresql', 'flyway-core'].contains(name)) return 'sql'
-    if (group == 'org.apache.kafka') return 'kafka'
-    if (group == 'ai.pipestream'
-            && ['protomolt-repo-container', 'protomolt-repo-service', 'protomolt-repo-engine'].contains(name)) {
-        return 'server-engine'
+    if (['org.postgresql', 'org.hibernate', 'org.hibernate.orm', 'com.zaxxer', 'org.flywaydb',
+            'org.liquibase', 'org.xerial', 'com.h2database', 'org.mariadb.jdbc', 'com.mysql',
+            'org.jooq', 'io.agroal'].contains(group)) return 'sql'
+    if (['org.apache.kafka', 'io.confluent'].contains(group)
+            || (group == 'io.apicurio' && name.contains('kafka'))) return 'kafka'
+    if (['io.vertx', 'io.micronaut', 'io.quarkus', 'org.springframework.boot'].contains(group)) return 'server-engine'
+    if (group == 'ai.pipestream') {
+        if (name.endsWith('-jdbc')) return 'sql'
+        if (name.startsWith('protomolt-kafka-') || name == 'protomolt-config-kafka') return 'kafka'
+        if (name.startsWith('protomolt-server-') || name.endsWith('-service')
+                || ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-serve',
+                    'protomolt-agent-host'].contains(name)) {
+            return 'server-engine'
+        }
     }
     return null
 }
@@ -223,6 +232,23 @@ tasks.register('verifyForbiddenDependencyDetection') {
     inputs.property('metadataMode', metadataMode)
     inputs.property('candidateVersion', candidateVersion)
     doLast {
+        // Every forbidden family, third-party and in-house, must classify.
+        def expectedFamilies = [
+            'org.hibernate.orm:hibernate-core': 'sql', 'org.xerial:sqlite-jdbc': 'sql',
+            'ai.pipestream:protomolt-authz-jdbc': 'sql', 'org.apache.kafka:kafka-clients': 'kafka',
+            'io.confluent:kafka-protobuf-serializer': 'kafka', 'ai.pipestream:protomolt-kafka-serde': 'kafka',
+            'ai.pipestream:protomolt-repo-container': 'server-engine', 'ai.pipestream:protomolt-server-vertx': 'server-engine',
+            'ai.pipestream:protomolt-registry-service': 'server-engine', 'io.vertx:vertx-web': 'server-engine',
+            'software.amazon.awssdk:s3': 'aws-sdk', 'com.azure:azure-storage-blob': 'azure-sdk',
+            'redis.clients:jedis': 'redis-sdk', 'io.grpc:grpc-stub': null, 'ai.pipestream:protomolt-repo-codec': null,
+        ]
+        expectedFamilies.each { coordinate, family ->
+            def (group, name) = coordinate.split(':')
+            if (familyOf(group, name) != family) {
+                throw new GradleException('classifier maps ' + coordinate + ' to ' + familyOf(group, name)
+                        + ', expected ' + family)
+            }
+        }
         def jedis = resolvedModules(configurations.redisOnly)
                 .find { it.group == 'redis.clients' && it.name == 'jedis' }
         if (jedis == null) throw new GradleException('jedis missing from the positive Redis provider graph')

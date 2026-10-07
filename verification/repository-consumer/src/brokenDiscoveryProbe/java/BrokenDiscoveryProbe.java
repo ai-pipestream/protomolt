@@ -38,6 +38,9 @@ public final class BrokenDiscoveryProbe {
             if (!mode.equals("wrong-class")) {
                 throw new AssertionError("unexpected ServiceConfigurationError in missing mode", corrupt);
             }
+            if (corrupt.getMessage() == null || !corrupt.getMessage().contains("DeliberatelyMissingProvider")) {
+                throw new AssertionError("ServiceConfigurationError must name the bogus registration", corrupt);
+            }
             System.out.println("BROKEN-DISCOVERY-PROBE OK: corrupt service registration detected: "
                     + corrupt.getMessage());
         }

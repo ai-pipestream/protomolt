@@ -33,7 +33,8 @@ required to switch modes; same-mode up-to-date reuse remains legitimate.
 ## What `check` gates
 
 - `verifyConsumerBoundaries` classifies every consumer row by group:artifact
-  identity and rejects forbidden dependency families: SQL/ORM/pooling/migration,
+  identity (third-party and in-house `ai.pipestream` modules) and rejects forbidden
+  dependency families: SQL/ORM/pooling/migration,
   Kafka, repository server/engine modules, and AWS, Azure or Redis SDKs. Rows:
   byte SPI alone (additionally pinned JDK-only), repository SPI alone, codec
   alone, SPI+codec, S3 provider alone (AWS SDK allowed), Redis provider alone

@@ -40,7 +40,13 @@ public final class RedisPublishedConsumer {
             Map<String, String> options = Map.of(
                     "uri", uri, "ttl-seconds", "0", "max-object-bytes", "0",
                     "key-prefix", "published-consumer-" + UUID.randomUUID());
-            OpenedBlobStore opened = awaitRedis(providers, options);
+            // Readiness is checked outside the code under test, so no provider
+            // failure is ever caught and retried.
+            awaitRedisReady(container);
+            OpenedBlobStore opened = providers.open("redis", options, Set.of(
+                    BlobCapability.ATOMIC_CONDITIONAL_WRITE, BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
+                    BlobCapability.BOUNDED_READ, BlobCapability.LIST, BlobCapability.PHYSICAL_RECLAMATION,
+                    BlobCapability.NON_EXPIRING_WRITES));
             try {
                 var store = opened.store();
                 var spec = new BlobStore.PutSpec("namespace", "key", "application/octet-stream", Map.of(), null);
@@ -90,28 +96,21 @@ public final class RedisPublishedConsumer {
         System.out.println("REDIS-PUBLISHED-CONSUMER OK: real conditional operations with AWS/Azure SDK absent");
     }
 
-    private static OpenedBlobStore awaitRedis(BlobStores providers, Map<String, String> options) throws Exception {
+    private static void awaitRedisReady(String container) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-        OpenedBlobStore opened = providers.open("redis", options, Set.of(
-                BlobCapability.ATOMIC_CONDITIONAL_WRITE, BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
-                BlobCapability.BOUNDED_READ, BlobCapability.LIST, BlobCapability.PHYSICAL_RECLAMATION,
-                BlobCapability.NON_EXPIRING_WRITES));
-        try {
-            RuntimeException last = null;
-            while (System.nanoTime() < deadline) {
-                try {
-                    opened.store().headBucket("namespace");
-                    return opened;
-                } catch (RuntimeException notReady) {
-                    last = notReady;
-                    Thread.sleep(250);
-                }
+        String last = "";
+        while (System.nanoTime() < deadline) {
+            var process = new ProcessBuilder("docker", "exec", container, "redis-cli", "ping")
+                    .redirectErrorStream(true).start();
+            last = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new AssertionError("redis-cli ping did not exit within 10 seconds");
             }
-            throw new AssertionError("redis container did not become ready", last);
-        } catch (Exception failure) {
-            try { opened.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
-            throw failure;
+            if (process.exitValue() == 0 && last.equals("PONG")) return;
+            Thread.sleep(250);
         }
+        throw new AssertionError("redis container did not answer PONG within 30 seconds; last reply: " + last);
     }
 
     private static void requireAbsent(String className) {
