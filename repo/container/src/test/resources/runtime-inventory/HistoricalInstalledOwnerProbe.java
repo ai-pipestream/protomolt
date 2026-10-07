@@ -1,0 +1,211 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
+import ai.protomolt.proto.repo.spi.*;
+import com.google.protobuf.ByteString;
+import java.time.*;
+import java.util.*;
+
+/** Real provider mixed publication with assessment ownership spanning separate client calls. */
+final class HistoricalInstalledOwnerProbe {
+    enum Check { ORDINARY, REVOKED, EXPIRED }
+    static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationPreparationRecord original, RepositorySuccessorInstall.Plan plan,
+            DocumentHistoricalAssessmentSources sources, DocumentHistoricalAssessmentSources.Work accepted,
+            DocumentSchemaPolicies.Selection policy, Map<Integer, ByteString> fragments,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            DocumentRevisionAssembly.Limits limits, PayloadBudget budget,
+            DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault,
+            javax.sql.DataSource database, Check check) throws Exception {
+        require(!caller.processAuthority(), "installed owner uses scoped execution caller");
+        var command = plan.next().command();
+        long before = budget.reservedBytes();
+        var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
+        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), 1);
+        var runtime = new DocumentPublicationScopeCalls();
+        boolean transferred = false;
+        Throwable primary = null;
+        try {
+            DocumentAssessmentStartJournal.Started started;
+            DocumentOperationUploadAdmission.Admission admitted;
+            try (var call = runtime.enter(); var request = attempts.beginInstalled(caller, plan, original)) {
+                request.attachSources(sources, accepted, RepositoryReadControl.NONE); transferred = true;
+                request.openExecution(coordinator, RepositoryReadControl.NONE);
+                admitted = request.admitUploads(RepositoryReadControl.NONE);
+                started = request.start(check == Check.EXPIRED ? Duration.ofSeconds(20) : Duration.ofMinutes(1), RepositoryReadControl.NONE);
+                request.prepareAssessment(policy, Map.of("a", fragments), container, resolver, limits,
+                        Instant.now(), RepositoryReadControl.NONE);
+            }
+            require(runtime.isIdle(), "first client call releases runtime barrier while assessment stays retained");
+            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "entry survives first call");
+            sources.close(); // Subsequent requests must use the retained Work and assessment.
+            var owner = tx.inTransaction(em -> {
+                var claim = RepositoryExecutionClaimLedger.lockLive(em, plan.next().key(), command.sha256(),
+                        plan.reservation().predecessor().epoch()+1, plan.reservation().successorToken());
+                return RepositoryOperationLedger.lockLiveOwner(em, plan.next().key(), plan.next().predecessorGeneration()+1,
+                        plan.next().seeds().ownerNonce(), Optional.of(claim));
+            });
+            require(admitted.attempts().size() == 1, "mixed owner admits exactly one upload");
+            var upload = admitted.attempts().getFirst();
+            require(upload.id().equals(plan.next().seeds().attempts().get("a"))
+                    && !upload.id().equals(original.seeds().attempts().get("a")), "fresh attempt belongs to successor");
+            require(upload.token().equals(plan.next().seeds().uploadTokens().get("a"))
+                    && !upload.token().equals(original.seeds().uploadTokens().get("a")), "fresh token belongs to successor");
+            var selected = new DocumentSelectedAttemptLedger.Selected("a", 1, upload.id(), upload.token());
+            var selections = Map.of("a", selected);
+            DocumentAssessmentCreation.Created created = null;
+            try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                request.openExecution(coordinator, RepositoryReadControl.NONE);
+                require(request.start(check == Check.EXPIRED ? Duration.ofSeconds(20) : Duration.ofMinutes(1), RepositoryReadControl.NONE).equals(started), "START identity survives call boundary");
+                try {
+                    request.prepareAssessment(policy, Map.of("a", fragments), container, resolver, limits,
+                            Instant.now(), RepositoryReadControl.NONE);
+                    throw new AssertionError("Retained assessment was replaced");
+                } catch (RepositoryException refused) {
+                    require(refused.code() == RepositoryException.Code.CONFLICT, "assessment replacement refused");
+                }
+                var physical = request.withAssessment(assessment -> assessment.preparePhysical(plan.next().placements(),
+                        plan.next().seeds().attempts(), plan.next().lease(), plan.next().seeds().uploadTokens(),
+                        RepositoryReadControl.NONE), RepositoryReadControl.NONE);
+                var member = physical.plan().members().getFirst();
+                var measured = member.attempt().orElseThrow().uploads().stream().map(part -> {
+                    var object = part.object();
+                    var actual = DocumentPartTransfer.upload(provider.store(), member.placement().drive().namespace(), object,
+                            fragments.get(part.revisionOrdinal()).toByteArray(), Map.of(), () -> {}, () -> {});
+                    return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
+                            object.contentType(), actual.version(), actual.etag());
+                }).toList();
+                new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
+                if (fault == null) {
+                    created = request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started,
+                            RepositoryReadControl.NONE);
+                } else {
+                    fault.arm(started.assessment());
+                    try {
+                        request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                        throw new AssertionError("Installed owner CREATE did not lose its reply");
+                    } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                }
+            }
+            require(runtime.isIdle(), "CREATE request releases runtime barrier");
+            if (fault != null) require(count(tx, "document_assessment_owners", command.operationId()) == 1,
+                    "lost CREATE reply leaves exactly one committed assessment");
+            if (check == Check.REVOKED) {
+                require(fault != null, "revocation checks an uncertain committed CREATE");
+                new RepositoryCredentialAuthorities(tx).revoke(coordinator, caller.credentialBinding().orElseThrow(), caller.principalName());
+                try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                    try {
+                        request.reconcileAssessment(selections, observation, RepositoryReadControl.NONE);
+                        throw new AssertionError("Revoked caller adopted an assessment");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                "revoked credential must refuse reconciliation as unauthenticated: " + refused.code());
+                    }
+                }
+                require(count(tx, "document_revision_commits", command.operationId()) == 0, "revoked reconciliation publishes nothing");
+                System.out.println("HISTORICAL_RECONCILIATION_REVOKED_OK");
+                return;
+            }
+            if (check == Check.EXPIRED) {
+                require(fault != null, "expiry checks an uncertain committed CREATE");
+                HistoricalReconciliationExpiryProbe.run(database, started, () -> {
+                    try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                        request.reconcileAssessment(selections, observation, RepositoryReadControl.NONE);
+                    }
+                });
+                require(count(tx, "document_revision_commits", command.operationId()) == 0, "expired reconciliation publishes nothing");
+                System.out.println("HISTORICAL_RECONCILIATION_EXPIRED_OK");
+                require(tx.inTransaction(em -> (Boolean) em.createNativeQuery(
+                        "SELECT release_expired_document_assessment(:account,:principal,:operation,:assessment)")
+                        .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                        .setParameter("operation", command.operationId()).setParameter("assessment", started.assessment())
+                        .getSingleResult()), "real recovery releases the expired assessment");
+                require(count(tx, "document_assessment_owners", command.operationId()) == 0,
+                        "released assessment is no longer retained");
+                try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                    require(request.reconcileAssessment(selections, observation, RepositoryReadControl.NONE).isEmpty(),
+                            "released stage cannot be adopted");
+                    try {
+                        request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                        throw new AssertionError("Released assessment permitted another CREATE");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                && refused.getMessage().contains("requires reconciliation"),
+                                "release must preserve the original sticky CREATE boundary");
+                    }
+                }
+                require(count(tx, "document_assessment_owners", command.operationId()) == 0
+                        && count(tx, "document_revision_commits", command.operationId()) == 0,
+                        "release reconciliation recreates and publishes nothing");
+                System.out.println("HISTORICAL_RECONCILIATION_RELEASED_OK");
+                return;
+            }
+            if (fault != null) {
+                try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                    try {
+                        request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                        throw new AssertionError("Lost CREATE reply permitted another CREATE");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION, "uncertain CREATE stays sticky across calls");
+                    }
+                    try {
+                        request.reconcileAssessment(Map.of(), observation, RepositoryReadControl.NONE);
+                        throw new AssertionError("Reconciliation accepted changed upload selections");
+                    } catch (IllegalArgumentException refused) {
+                        require(refused.getMessage().contains("selections differ"), "exact CREATE selections required");
+                    }
+                    created = request.reconcileAssessment(selections, observation, RepositoryReadControl.NONE).orElseThrow();
+                    require(created.assessment().equals(started.assessment()) && created.retainUntil().equals(started.retainUntil()),
+                            "reconciled stage has original acknowledged START coordinates");
+                }
+                require(runtime.isIdle(), "reconciliation request releases runtime barrier");
+            }
+            var found = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
+            require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
+            ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
+            try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                        new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+            }
+            require(runtime.isIdle(), "publication request releases runtime barrier");
+            HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);
+            try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                try {
+                    request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                            new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                    throw new AssertionError("A later call repeated publication");
+                } catch (RepositoryException refused) {
+                    require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                            && refused.getMessage().contains("reconciliation"), "sticky publication flag survives call boundary");
+                }
+            }
+            require(runtime.isIdle(), "repeat refusal releases runtime barrier");
+            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == 2,
+                    "original and successor START only");
+            require(count(tx, "document_assessment_owners", command.operationId()) == 1, "exactly one CREATE");
+            require(count(tx, "document_revision_commits", command.operationId()) == 1, "exactly one publication");
+        } catch (Exception | Error failure) {
+            primary = failure; throw failure;
+        } finally {
+            try {
+                runtime.close(); attempts.close();
+                require(runtime.awaitIdle(Duration.ofSeconds(1)), "client requests drained before owner shutdown");
+                require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
+                        "retained owner closes assessment and execution then drains its exact capture");
+                if (transferred) require(budget.reservedBytes() == before, "owner returns every retained byte reservation");
+            } catch (Exception | Error cleanup) {
+                if (primary == null) throw cleanup;
+                if (primary != cleanup) primary.addSuppressed(cleanup);
+            }
+        }
+        System.out.println(fault == null ? "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK"
+                : "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK");
+    }
+    private static long count(Tx tx, String table, UUID operation) {
+        return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                .setParameter("op", operation).getSingleResult()).longValue());
+    }
+    private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
+}

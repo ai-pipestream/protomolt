@@ -1053,3 +1053,10 @@ corruption and real claim-lock race tests pass, along with packaged regression.
 See [capture disposal evidence](../evidence/repository/2026-10-07-historical-capture-disposal/README.md).
 Managed historical ownership and its accepted-call drain ordering remain to be wired;
 this primitive does not itself wait for the managed runtime's outer call barrier.
+
+The next owner design is recorded in
+[managed historical attempt ownership](repository-historical-attempt-owner.md).
+It supersedes the earlier suggestion to close/reopen the execution handle on every
+client call: that would lose START permission and sticky CREATE/publication state.
+Use separate client-call and retained-entry lifetimes and retain the prepared
+assessment where continuation requires it. This design does not enable public routing.

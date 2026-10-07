@@ -15,14 +15,23 @@ public final class HistoricalAssessmentCreationProbe {
         ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
-        SCOPED_MIXED_SUCCESSOR
+        SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, opaqueRevision, database, false);
+    }
+    static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
+            boolean reconciliationOnly) throws Exception {
         for (var scenario : Scenario.values()) {
+            if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
             if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
-                    || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK) {
-                try (var fault = new HistoricalCreateCommitFault(database, scenario == Scenario.LOST_ACK || scenario == Scenario.START_LOST_ACK)) {
+                    || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK
+                    || reconciliationOnly) {
+                try (var fault = new HistoricalCreateCommitFault(database, scenario == Scenario.LOST_ACK
+                        || scenario == Scenario.START_LOST_ACK || reconciliationOnly)) {
                     run(fault.tx(), provider, source, revision, database, scenario, fault, null, tx);
                 }
             } else if (scenario == Scenario.STAGE_WINS || scenario == Scenario.CREATE_WINS) {
@@ -44,12 +53,14 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentPublishedRevision revision, javax.sql.DataSource database, Scenario scenario,
             HistoricalCreateCommitFault fault, HistoricalAuthorizationCommitGate gate, Tx independent) throws Exception {
         boolean lostAck = scenario == Scenario.ORDINARY_LOST_ACK;
+        boolean installedOwner = installedOwner(scenario);
         boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
         boolean mixed = scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
                 || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION
-                || scenario == Scenario.SCOPED_MIXED_SUCCESSOR;
+                || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || installedOwner;
         boolean scoped = scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
-                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || gate != null;
+                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                || installedOwner || gate != null;
         var credential = new RepositoryCredentialBinding("historical-create", UUID.randomUUID(), 1);
         var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
                 : new RepositoryCaller("principal", true);
@@ -182,12 +193,14 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault, boolean mixed,
             javax.sql.DataSource contentionDatabase, javax.sql.DataSource database, Scenario scenario) throws Exception {
         boolean startFault = scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK;
+        boolean installedOwner = installedOwner(scenario);
         boolean createFault = fault != null && !startFault;
         var retention = scenario == Scenario.PUBLICATION_EXPIRED ? Duration.ofSeconds(20) : Duration.ofMinutes(2);
         var key = new RepositoryOperationLedger.Key("account", caller.principalName(), command.operationId());
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                 Map.of(placement.drive().id(), placement),
-                scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
+                scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || installedOwner ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
         var scopes = new DocumentPublicationScopeCalls();
         try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
             var registration = DocumentPublicationRegistration.historical(tx, budget, record, sources, UUID.randomUUID(),
@@ -217,16 +230,23 @@ public final class HistoricalAssessmentCreationProbe {
                         "repeated start preserves coordinates and acknowledged permission");
                 if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
                         "lost START acknowledgement recovers identity; rolled back START permits a new identity");
-                if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR) {
+                if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || installedOwner) {
                     HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
-                            policy, fragments, budget, observation, registration.drainIdentity());
+                            policy, fragments, budget, observation, registration.drainIdentity(),
+                            installedOwner, fault, database, switch (scenario) {
+                                case OWNED_SCOPED_RECONCILE_REVOKED -> HistoricalInstalledOwnerProbe.Check.REVOKED;
+                                case OWNED_SCOPED_RECONCILE_EXPIRED -> HistoricalInstalledOwnerProbe.Check.EXPIRED;
+                                default -> HistoricalInstalledOwnerProbe.Check.ORDINARY;
+                            });
                     return;
                 }
                 var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
+                var evaluatedAt = Instant.now();
                 try (var assessment = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
                         mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
                         (selected, occurrence) -> { if (!mixed) throw new AssertionError("Claimed historical CREATE must use retained schemas"); return freshDefinition; },
-                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), RepositoryReadControl.NONE)) {
+                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), evaluatedAt, RepositoryReadControl.NONE)) {
                     Map<String, DocumentSelectedAttemptLedger.Selected> selections = Map.of();
                     if (mixed) {
                         require(admitted.attempts().size() == 1, "mixed CREATE admits one fresh attempt");
@@ -313,6 +333,28 @@ public final class HistoricalAssessmentCreationProbe {
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
                     var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {});
+                    if (createFault) {
+                        if (fault.lostAcknowledgement()) {
+                            try (var changed = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
+                                    mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
+                                    (member, occurrence) -> { if (!mixed) throw new AssertionError("Historical schemas are retained"); return freshDefinition; },
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
+                                    evaluatedAt.plusSeconds(1), RepositoryReadControl.NONE)) {
+                                try {
+                                    execution.reconcileAssessment(caller, changed, selections, observation, RepositoryReadControl.NONE);
+                                    throw new AssertionError("Changed manifest replaced the attempted CREATE evidence");
+                                } catch (IllegalArgumentException refused) {
+                                    require(refused.getMessage().equals("Reconciliation evidence differs from attempted CREATE"),
+                                            "changed manifest must fail the exact original evidence binding");
+                                }
+                            }
+                            System.out.println("HISTORICAL_RECONCILIATION_MANIFEST_REFUSED_OK");
+                        }
+                        var reconciled = execution.reconcileAssessment(caller, assessment, selections, observation, RepositoryReadControl.NONE);
+                        require(reconciled.equals(discovered.map(value -> value.stage())),
+                                "same-handle reconciliation reflects exact committed or rolled-back CREATE");
+                        System.out.println(fault.lostAcknowledgement() ? "HISTORICAL_CREATE_RECONCILED_OK" : "HISTORICAL_CREATE_ROLLBACK_RECONCILED_OK");
+                    }
                     if (createFault && !fault.lostAcknowledgement()) {
                         require(discovered.isEmpty(), "rollback has no discoverable assessment");
                         for (String table : List.of("document_assessment_owners", "document_assessment_objects", "document_assessment_slots",
@@ -551,5 +593,12 @@ public final class HistoricalAssessmentCreationProbe {
                 """).setParameter("node", node).getSingleResult()));
     }
 
+    private static boolean installedOwner(Scenario scenario) {
+        return switch (scenario) {
+            case OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED -> true;
+            default -> false;
+        };
+    }
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
 }
