@@ -129,3 +129,13 @@ A package-private Redis document profile now passes typed Any publication,
 receipt replay and historical validation after the live resolver closes.
 Evidence: `docs/evidence/repository/2026-10-07-bounded-document-startup`.
 The public factory remains unavailable pending the other acceptance cases above.
+
+## Uncertain write acceptance status
+
+A real Redis PUT followed by an injected acknowledgement failure now has a test:
+bytes exist, but the document revision does not advance. Immediate exact retry
+is fenced because the selected attempt is unverified. A separate operation can
+publish; that is not recovery of the failed operation. Before exposing this
+profile, qualify recovery and reclamation of the original attempt, including
+late completion and preservation of committed neighboring objects. Evidence is
+in `docs/evidence/repository/2026-10-07-bounded-lost-ack`.

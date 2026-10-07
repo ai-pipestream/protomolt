@@ -30,6 +30,7 @@ public final class BoundedDocumentHostProbe {
                 .withManagedStorage(new ManagedStoragePolicy(generation,"bounded-document-realm",true));
         var opens=new AtomicInteger(); var closes=new AtomicInteger();
         var real=new RedisBlobStoreProvider();
+        var faults=new BoundedDocumentWriteFault();
         BlobStoreProvider selected=new BlobStoreProvider() {
             public String id() { return "redis"; }
             public BackendIdentity managedIdentity(Map<String,String> options) {
@@ -47,7 +48,7 @@ public final class BoundedDocumentHostProbe {
                     try { actual.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
                     throw failure;
                 }
-                return new OpenedBlobStore(actual.store(),() -> { actual.close(); closes.incrementAndGet(); },
+                return new OpenedBlobStore(faults.wrap(actual.store()),() -> { actual.close(); closes.incrementAndGet(); },
                         actual.capabilities(),actual::ensureNamespace,actual.reclaimer());
             }
         };
@@ -98,6 +99,29 @@ public final class BoundedDocumentHostProbe {
                 require(result.equals(replay),"exact receipt replay");
                 verifyTransport(host,new Tx(database.entityManagerFactory()),caller,fixture.request(),result);
                 updated=replacement(fixture,result.getCommitted().getMembers(0));
+                faults.arm();
+                try {
+                    host.publicationRepository().publishDocument(caller,updated.request(),RepositoryReadControl.NONE);
+                    throw new AssertionError("Lost write acknowledgement produced a success response");
+                } catch (RuntimeException failure) {
+                    require(faults.caused(failure),"original write failure is preserved: "+failure);
+                }
+                faults.verifyStored();
+                require(host.documentLedger().findByReference(result.getCommitted().getMembers(0).getAddress())
+                        .orElseThrow().mutationRevision==result.getCommitted().getMembers(0).getMutationRevision(),
+                        "unacknowledged write did not advance document");
+                try {
+                    host.publicationRepository().publishDocument(caller,updated.request(),RepositoryReadControl.NONE);
+                    throw new AssertionError("Unverified retry was adopted");
+                } catch (DocumentPartAttemptLedger.FenceException expected) {
+                    require(expected.getMessage().equals("Initial upload is not an exact live verified retry"),"unverified retry fence");
+                }
+                require(host.documentLedger().findByReference(result.getCommitted().getMembers(0).getAddress())
+                        .orElseThrow().mutationRevision==result.getCommitted().getMembers(0).getMutationRevision(),
+                        "unverified retry left current revision intact");
+                // A distinct operation qualifies later publication; it is not recovery of the failed operation.
+                updated=new Fixture(updated.request().toBuilder().setIntent(updated.request().getIntent().toBuilder()
+                        .setOperationId(UUID.randomUUID().toString())).build(),updated.document());
                 updateResult=host.publicationRepository().publishDocument(caller,updated.request(),RepositoryReadControl.NONE);
                 require(updateResult.hasCommitted(),"replacement committed");
                 var next=updateResult.getCommitted().getMembers(0);
