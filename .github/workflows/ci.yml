@@ -37,6 +37,8 @@ jobs:
           version: '1.70.0'
 
       - name: Build and test
+        env:
+          PROTOMOLT_APICURIO_TEST_DIAGNOSTIC_PATH: ${{ runner.temp }}/apicurio-test-diagnostics/registry.log
         run: ./gradlew build -x :protomolt-repo-container:admissionStorageTest --console=plain -PtestJdk=${{ matrix.test-jdk }}
 
       # This host starts PostgreSQL, Redis, LocalStack and a separate JVM. Run it
@@ -107,6 +109,18 @@ jobs:
             repo/service/build/test-results/test/*.xml
             repo/service/build/reports/tests/test/
             ${{ runner.temp }}/repository-host-diagnostics/
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Save Apicurio integration diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apicurio-test-diagnostics-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            schema/apicurio/runtime/build/test-results/test/*.xml
+            schema/apicurio/runtime/build/reports/tests/test/
+            ${{ runner.temp }}/apicurio-test-diagnostics/registry.log
           if-no-files-found: warn
           retention-days: 3
 
