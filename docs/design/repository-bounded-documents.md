@@ -193,3 +193,34 @@ The delayed-request transport fixture now passes with the real Redis adapter:
 It binds capture to the physical key and forwards the original frame once after
 the caller disconnects. Repository attempt/tombstone integration remains open;
 direct provider absence is not evidence of durable SQL cleanup state.
+
+## Remaining profile checks before public configuration
+
+After delayed-write recovery, qualify a contract-invalid typed candidate through
+this Redis host. Use valid protobuf bytes and matching upload lengths/digests,
+with a retained descriptor annotation that the candidate violates. Require a
+durable rejection with assessment identity, no current revision, and the same
+receipt on local and authenticated gRPC replay after closing the live resolver.
+A checksum or request-parser error does not establish runtime validation.
+
+Also hold an accepted publication across timed shutdown and qualify authenticated
+gRPC cancellation during actual provider work. The existing read gate only covers
+historical reads. Retain SQL, provider resources and reservations until accepted
+work exits; refuse new work after admission closes. Keep provider-write and schema
+load windows explicit rather than treating one held stage as evidence for both.
+
+Once these cases pass, expose bounded document configuration through the existing
+composition API with explicit object, shared payload and transport limits. Redis
+persistence and eviction remain operator qualifications. Sol reviewed this order;
+the public factory is not available yet.
+
+## Delayed request recovery checkpoint
+
+The production-JAR host now qualifies late delivery of an original Redis request
+after actual lease expiry and durable ABSENT cleanup. Late bytes remain unverified
+and unreferenced; current revision identity is unchanged, a second exact recovery
+removes the bytes, and both committed histories remain readable. Evidence:
+`docs/evidence/repository/2026-10-07-delayed-document-recovery`.
+The parent proxy retains the original frame across Redis restart. The final
+reclaim is direct; scheduled recheck timing and active publication shutdown remain
+open. The public profile is still unavailable pending the checks above.

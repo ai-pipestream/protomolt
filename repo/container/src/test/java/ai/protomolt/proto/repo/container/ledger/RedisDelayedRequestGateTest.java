@@ -13,6 +13,46 @@ import org.testcontainers.containers.GenericContainer;
 import static org.assertj.core.api.Assertions.*;
 
 class RedisDelayedRequestGateTest {
+    @Test void resetDuringPartialRequestRemainsAFailure() throws Exception {
+        try (var redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379)) {
+            redis.start();
+            var gate = new RedisDelayedRequestGate(redis.getHost(), redis.getMappedPort(6379));
+            try {
+                var address = java.net.URI.create(gate.uri());
+                try (var socket = new java.net.Socket(address.getHost(), address.getPort())) {
+                    socket.getOutputStream().write("*1\r\n$4\r\nPI".getBytes(StandardCharsets.US_ASCII));
+                    socket.getOutputStream().flush();
+                    assertThat(gate.awaitRequestStarted(Duration.ofSeconds(5))).isTrue();
+                    socket.setSoLinger(true, 0);
+                }
+                assertThat(gate.awaitFailure(Duration.ofSeconds(5))).isTrue();
+                assertThat(gate.idleClientDisconnects()).isZero();
+            } finally {
+                assertThatThrownBy(gate::close).isInstanceOf(AssertionError.class)
+                        .satisfies(failure -> assertThat(failure.getSuppressed()).anyMatch(java.io.IOException.class::isInstance));
+            }
+        }
+    }
+
+    @Test void idleClientResetIsCountedAfterARealResponse() throws Exception {
+        try (var redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379)) {
+            redis.start();
+            try (var gate = new RedisDelayedRequestGate(redis.getHost(), redis.getMappedPort(6379))) {
+                var address = java.net.URI.create(gate.uri());
+                try (var socket = new java.net.Socket(address.getHost(), address.getPort())) {
+                    socket.setSoTimeout(5000);
+                    socket.getOutputStream().write("*1\r\n$4\r\nPING\r\n".getBytes(StandardCharsets.US_ASCII));
+                    socket.getOutputStream().flush();
+                    assertThat(socket.getInputStream().readNBytes(7)).isEqualTo("+PONG\r\n".getBytes(StandardCharsets.US_ASCII));
+                    socket.setSoLinger(true, 0);
+                }
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (gate.idleClientDisconnects() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
+                assertThat(gate.idleClientDisconnects()).isEqualTo(1);
+            }
+        }
+    }
+
     @Test void originalRequestCanArriveAfterCallerFailureAndConfirmedAbsence() throws Exception {
         try (var redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379)) {
             redis.start();

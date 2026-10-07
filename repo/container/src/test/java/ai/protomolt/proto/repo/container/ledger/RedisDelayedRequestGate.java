@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.*;
 final class RedisDelayedRequestGate implements AutoCloseable {
     private final String host;
     private final int port;
+    private final java.nio.file.Path armFile;
     private final ServerSocket listener;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
@@ -19,13 +20,20 @@ final class RedisDelayedRequestGate implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(), armed = new AtomicBoolean();
     private final AtomicBoolean deliveryStarted = new AtomicBoolean();
     private final AtomicReference<byte[]> captured = new AtomicReference<>();
+    private final AtomicInteger idleClientDisconnects = new AtomicInteger();
     private volatile byte[] expectedKey;
     private final CountDownLatch held = new CountDownLatch(1), clientDisconnected = new CountDownLatch(1);
+    private final CountDownLatch requestStarted = new CountDownLatch(1), failed = new CountDownLatch(1);
     private final Thread acceptor;
 
     RedisDelayedRequestGate(String host, int port) throws IOException {
+        this(host, port, null);
+    }
+
+    RedisDelayedRequestGate(String host, int port, java.nio.file.Path armFile) throws IOException {
         this.host = host;
         this.port = port;
+        this.armFile = armFile;
         listener = new ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"));
         acceptor = Thread.ofVirtual().start(() -> {
             try {
@@ -34,7 +42,9 @@ final class RedisDelayedRequestGate implements AutoCloseable {
                     sockets.add(client);
                     workers.submit(() -> forward(client));
                 }
-            } catch (Throwable failure) { recordFailure(failure); }
+            } catch (Throwable failure) {
+                if (!(closed.get() && failure instanceof SocketException)) recordFailure(failure);
+            }
         });
     }
 
@@ -92,8 +102,9 @@ final class RedisDelayedRequestGate implements AutoCloseable {
             sockets.add(server);
             try {
                 for (;;) {
-                    Frame request = frame(client.getInputStream(), 0);
+                    Frame request = request(client.getInputStream());
                     if (request == null) return;
+                    if (request.conditionalWrite()) observeArmFile();
                     if (!request.children().isEmpty()) {
                         String command = new String(request.children().getFirst().value(), StandardCharsets.US_ASCII);
                         if (Set.of("AUTH", "SELECT", "HELLO").contains(command.toUpperCase(Locale.ROOT)))
@@ -128,7 +139,35 @@ final class RedisDelayedRequestGate implements AutoCloseable {
     }
 
     private void recordFailure(Throwable failure) {
-        if (!(closed.get() && failure instanceof SocketException)) failures.add(failure);
+        failures.add(failure);
+        failed.countDown();
+    }
+
+    private synchronized void observeArmFile() throws IOException {
+        if (armFile != null && !armed.get() && captured.get() == null && java.nio.file.Files.exists(armFile))
+            arm(java.nio.file.Files.readString(armFile));
+    }
+
+    int idleClientDisconnects() { return idleClientDisconnects.get(); }
+    boolean awaitRequestStarted(Duration timeout) throws InterruptedException {
+        return requestStarted.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+    }
+    boolean awaitFailure(Duration timeout) throws InterruptedException {
+        return failed.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+    }
+
+    private Frame request(InputStream input) throws IOException {
+        final int first;
+        try { first = input.read(); }
+        catch (SocketException disconnected) {
+            // No request byte has arrived and the previous response was fully forwarded.
+            // Pool shutdown or read cancellation can reset an idle connection.
+            idleClientDisconnects.incrementAndGet();
+            return null;
+        }
+        if (first == -1) return null;
+        requestStarted.countDown();
+        return frame(input, 0, first);
     }
 
     private record Frame(byte[] wire, byte[] value, List<Frame> children) {
@@ -196,5 +235,6 @@ final class RedisDelayedRequestGate implements AutoCloseable {
             failures.forEach(failure::addSuppressed);
             throw failure;
         }
+        System.out.println("REDIS_PROXY_IDLE_CLIENT_DISCONNECTS=" + idleClientDisconnects.get());
     }
 }

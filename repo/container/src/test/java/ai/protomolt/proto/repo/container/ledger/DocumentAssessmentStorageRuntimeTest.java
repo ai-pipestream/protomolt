@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("BoundedDocumentReadGate", "DocumentCleanupRetryProbe", "DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
+        for (String name : List.of("BoundedDocumentDelayedWrite", "DocumentDelayedWriteRecoveryProbe", "BoundedDocumentReadGate", "DocumentCleanupRetryProbe", "DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -73,6 +73,8 @@ class DocumentAssessmentStorageRuntimeTest {
             storage.start();
             redis.start();
             assertThat(redis.getMappedPort(6379)).isEqualTo(redisPort);
+            var control=Files.createDirectory(directory.resolve("delayed-control"));
+            try (var gate=new RedisDelayedRequestGate(redis.getHost(),redis.getMappedPort(6379),control.resolve("arm"))) {
             var boundedRestart=directory.resolve("bounded-restart");
             var log = directory.resolve("host.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -81,7 +83,8 @@ class DocumentAssessmentStorageRuntimeTest {
                     "ai.protomolt.proto.repo.container.ledger.AssessmentStorageProbe", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_BOUNDED_RESTART_DIR",boundedRestart.toString());
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
-            builder.environment().put("PROTOMOLT_TEST_REDIS_URI","redis://"+redis.getHost()+":"+redis.getMappedPort(6379));
+            builder.environment().put("PROTOMOLT_TEST_REDIS_URI",gate.uri());
+            builder.environment().put("PROTOMOLT_TEST_DELAYED_CONTROL",control.toString());
             builder.environment().put("PROTOMOLT_TEST_RUNTIME_BUNDLE", bundle.toString());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
@@ -99,7 +102,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
-                assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK");
+                assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
                 assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("RECOVERY_OPEN_TERMINAL_DISPOSAL_OK");
@@ -216,16 +219,27 @@ class DocumentAssessmentStorageRuntimeTest {
                     "ai.protomolt.proto.repo.service.BoundedDocumentRestartProbe",bundle.toString(),boundedRestart.toString());
             var boundedProcess=builder.redirectOutput(boundedLog.toFile()).start();
             try {
-                assertThat(boundedProcess.waitFor(480,TimeUnit.SECONDS)).as("Redis restart qualification completed").isTrue();
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(480);
+                boolean delivered=false;
+                while (!boundedProcess.waitFor(100,TimeUnit.MILLISECONDS)) {
+                    if (!delivered && Files.exists(control.resolve("deliver"))) {
+                        gate.deliver();
+                        Files.createFile(control.resolve("delivered"));
+                        delivered=true;
+                    }
+                    assertThat(System.nanoTime()).as("Redis restart qualification deadline").isLessThan(deadline);
+                }
+                assertThat(delivered).as("Original queued request delivered after durable cleanup").isTrue();
                 assertThat(Files.size(boundedLog)).isLessThan(1_048_576);
                 assertThat(boundedProcess.exitValue()).as(Files.readString(boundedLog)).isZero();
-                assertThat(Files.readString(boundedLog)).contains("BOUNDED_DOCUMENT_RESTART_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_ORPHAN_CLEANUP_OK","DOCUMENT_CLEANUP_RETENTION_FILTER_OK","DOCUMENT_CLEANUP_PROVIDER_RETRY_OK");
+                assertThat(Files.readString(boundedLog)).contains("BOUNDED_DOCUMENT_RESTART_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_ORPHAN_CLEANUP_OK","DOCUMENT_CLEANUP_RETENTION_FILTER_OK","DOCUMENT_CLEANUP_PROVIDER_RETRY_OK","DOCUMENT_DELAYED_WRITE_RECOVERY_OK");
                 assertThat(Files.readString(boundedLog)).doesNotContain("Document attempt cleanup failed");
             } finally {
                 if (boundedProcess.isAlive()) {
                     boundedProcess.destroyForcibly();
                     assertThat(boundedProcess.waitFor(10,TimeUnit.SECONDS)).isTrue();
                 }
+            }
             }
         }
     }

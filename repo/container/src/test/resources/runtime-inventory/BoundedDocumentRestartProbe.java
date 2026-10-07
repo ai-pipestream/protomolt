@@ -39,6 +39,9 @@ public final class BoundedDocumentRestartProbe {
             ai.protomolt.proto.repo.container.ledger.DocumentCleanupRetryProbe.run(
                     new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),generation,
                     host.blobStore(),((ai.protomolt.proto.repo.blob.redis.RedisBlobStore)host.blobStore())::reclaim,saved);
+            ai.protomolt.proto.repo.container.ledger.DocumentDelayedWriteRecoveryProbe.run(
+                    new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),generation,
+                    host.blobStore(),((ai.protomolt.proto.repo.blob.redis.RedisBlobStore)host.blobStore())::reclaim,saved);
             ai.protomolt.proto.repo.container.ledger.DocumentCleanupRetentionProbe.run(
                     new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),generation);
             for (String suffix:java.util.List.of("","-next")) {

@@ -32,6 +32,7 @@ public final class BoundedDocumentHostProbe {
         var real=new RedisBlobStoreProvider();
         var faults=new BoundedDocumentWriteFault();
         var readGate=new BoundedDocumentReadGate();
+        var delayed=new BoundedDocumentDelayedWrite();
         BlobStoreProvider selected=new BlobStoreProvider() {
             public String id() { return "redis"; }
             public BackendIdentity managedIdentity(Map<String,String> options) {
@@ -49,7 +50,7 @@ public final class BoundedDocumentHostProbe {
                     try { actual.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
                     throw failure;
                 }
-                return new OpenedBlobStore(readGate.wrap(faults.wrap(actual.store())),() -> { actual.close(); closes.incrementAndGet(); },
+                return new OpenedBlobStore(delayed.wrap(readGate.wrap(faults.wrap(actual.store())),options.get("key-prefix")),() -> { actual.close(); closes.incrementAndGet(); },
                         actual.capabilities(),actual::ensureNamespace,actual.reclaimer());
             }
         };
@@ -132,6 +133,19 @@ public final class BoundedDocumentHostProbe {
                 require(!updated.document().equals(fixture.document()),"replacement changes document bytes");
                 require(host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE)
                         .equals(result),"old receipt survives replacement");
+                var delayedRequest=replacement(updated,next,"late uncommitted payload");
+                delayed.arm();
+                try {
+                    host.publicationRepository().publishDocument(caller,delayedRequest.request(),RepositoryReadControl.NONE);
+                    throw new AssertionError("Undelivered Redis request produced publication success");
+                } catch (RuntimeException failure) {
+                    require(BoundedDocumentDelayedWrite.timedOut(failure),"actual Redis caller timed out: "+failure);
+                }
+                delayed.assertAbsent(host.blobStore());
+                delayed.assertDistinct(fixture.request(),updated.request());
+                require(host.documentLedger().findByReference(next.getAddress()).orElseThrow().mutationRevision==next.getMutationRevision(),
+                        "delayed request did not advance current document");
+                System.out.println("BOUNDED_DOCUMENT_DELAYED_REQUEST_OK");
                 // Historical validation must use retained artifacts after live resolution stops.
                 resolver.close();
                 require(resolver.awaitLoads(Duration.ofSeconds(5)),"schema resolver drained");
@@ -151,6 +165,7 @@ public final class BoundedDocumentHostProbe {
             Path restart=Files.createDirectory(Path.of(System.getenv("PROTOMOLT_TEST_BOUNDED_RESTART_DIR")));
             Files.writeString(restart.resolve("generation"),generation);
             faults.save(restart);
+            delayed.save(restart);
             Files.write(restart.resolve("request.pb"),fixture.request().toByteArray());
             Files.write(restart.resolve("receipt.pb"),result.toByteArray());
             Files.write(restart.resolve("document.pb"),fixture.document().toByteArray());
@@ -259,8 +274,11 @@ public final class BoundedDocumentHostProbe {
         catch (io.grpc.StatusRuntimeException failure) { require(failure.getStatus().getCode()==code,"transport status "+failure); }
     }
     private static Fixture replacement(Fixture original,DocumentPublishedRevision previous) {
+        return replacement(original,previous,"updated registry payload");
+    }
+    private static Fixture replacement(Fixture original,DocumentPublishedRevision previous,String value) {
         var document=original.document().toBuilder()
-                .setStructuredData(Any.pack(StringValue.of("updated registry payload"),"type.test")).build();
+                .setStructuredData(Any.pack(StringValue.of(value),"type.test")).build();
         var member=original.request().getIntent().getMembers(0).toBuilder().clearParts();
         member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(previous.getMutationRevision()));
         var request=original.request().toBuilder().clearPayloads();
