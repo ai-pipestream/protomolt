@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * answer with the existing coordinates, and the Content-Length contract is
  * enforced.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class UploadHttpServerIT {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();

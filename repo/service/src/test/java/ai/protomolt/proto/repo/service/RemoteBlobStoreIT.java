@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * PostgreSQL + LocalStack S3). No mocks: every operation crosses the gRPC
  * boundary and lands in real object storage.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RemoteBlobStoreIT {
 
     private static final String DRIVE = "remote";

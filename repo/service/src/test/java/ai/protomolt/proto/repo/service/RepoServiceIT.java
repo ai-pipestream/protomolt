@@ -92,7 +92,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@link RepoServiceConfig} + {@link RepoServices} over the gRPC in-process
  * transport — proving the same-JVM embedding path, with no mocks anywhere.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RepoServiceIT {
 
     private static final String CONNECTOR = "connector-1";

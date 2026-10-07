@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Phase A, or pre-lifecycle tombstones) get enqueued by {@code sweepOnce} and
  * then drained; rows that already have a PENDING record are left alone.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class PurgeSweeperIT extends AbstractLifecycleIT {
 
     @Test

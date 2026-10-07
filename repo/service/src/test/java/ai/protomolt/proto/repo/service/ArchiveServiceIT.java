@@ -71,7 +71,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * counters, tombstoned rendition deletion, pruning, and both versioning
  * policies.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveServiceIT {
 
     @Container

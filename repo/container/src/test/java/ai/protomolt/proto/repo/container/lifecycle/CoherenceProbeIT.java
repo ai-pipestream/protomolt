@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * read assembles honestly from the remaining parts. Part objects are written
  * by the real {@link PartStorage}, so assembly sees real fragments.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class CoherenceProbeIT extends AbstractLifecycleIT {
 
     @Test void missingManagedPartIsReportedWithoutRewritingItsPublication() {
