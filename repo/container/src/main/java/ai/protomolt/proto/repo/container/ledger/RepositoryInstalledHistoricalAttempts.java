@@ -21,11 +21,16 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     private final DriveLedger drives;
     private final int capacity;
     private final Map<RepositoryOperationLedger.Key, Entry> entries = new HashMap<>();
+    // Selected retry route and all retained generations are separate indexes.
+    private final Map<UUID, Entry> generations = new LinkedHashMap<>();
     private boolean closed;
     private boolean detaching;
     private int active;
 
     private static final class Entry {
+        final UUID id = UUID.randomUUID();
+        UUID predecessorId;
+        volatile boolean supersessionPending;
         final RepositoryCaller caller;
         final RepositoryOperationLedger.Key key;
         final DocumentPublicationCommand command;
@@ -39,8 +44,8 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         final DocumentPublicationScopeCalls scopes = new DocumentPublicationScopeCalls();
         final DocumentPublicationScopeCalls.Call parent = scopes.enter();
         boolean borrowed;
-        RetirementProof retirement = RetirementProof.NONE;
-        DocumentHistoricalAssessmentSources sources;
+        volatile RetirementProof retirement = RetirementProof.NONE;
+        volatile DocumentHistoricalAssessmentSources sources;
         DocumentHistoricalAssessmentSources.Work work;
         List<DocumentReadLedger.PinnedHistory> histories = List.of();
         RepositoryHistoricalSuccessorActivation activation;
@@ -78,6 +83,80 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         this.capacity = capacity;
     }
 
+private void retain(Entry entry) {
+    generations.put(entry.id, entry);
+    entries.put(entry.key, entry);
+}
+private boolean forget(Entry entry) {
+    if (!generations.remove(entry.id, entry)) return false;
+    entries.remove(entry.key, entry);
+    return true;
+}
+
+/** Allocate one successor before SQL; old accepted workers stay owned and are fenced by V97. */
+synchronized Attempt beginSuccessor(RepositoryCaller coordinator, RepositoryCaller caller, UUID predecessorId,
+        DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> modes,
+        RepositoryCoordinatorRecoveryDiscovery.Observation observed, Duration lease, SqlTimeouts timeouts) {
+    if (closed) throw unavailable();
+    Objects.requireNonNull(command); Objects.requireNonNull(predecessorId);
+    var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+    DocumentAdmissionAuthorization.requireCaller(coordinator, key, key.account());
+    if (!coordinator.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+            "Historical generation takeover requires private process authority");
+    var selected = entries.get(key);
+        if (selected != null && predecessorId.equals(selected.predecessorId)) {
+            if (!selected.caller.equals(caller) || !selected.command.canonical().equals(command.canonical()))
+                throw conflict("Historical successor retry identity changed");
+            return beginProposed(caller, selected.retention, modes, observed, lease, timeouts);
+        }
+    var old = generations.get(predecessorId);
+    if (old == null || selected != old || !old.key.equals(key) || !old.caller.equals(caller)
+            || !old.command.canonical().equals(command.canonical()))
+        throw conflict("Historical predecessor differs from retained generation");
+    if (old.sources == null || old.plan == null || old.retirement != RetirementProof.NONE || old.supersessionPending)
+        throw conflict("Historical predecessor is not an attached current generation");
+    if (!old.plan.modes().equals(modes)) throw conflict("Historical generation modes changed");
+    var source = Objects.requireNonNull(observed).candidate().orElseThrow(() ->
+            conflict("Historical generation takeover requires an expired bound predecessor"));
+    var reservation = old.plan.reservation();
+    var expected = new RepositoryCoordinatorDrain.Identity(key, command.sha256(),
+            Math.addExact(reservation.predecessor().epoch(), 1), reservation.successorToken(), reservation.successorIncarnation());
+    var expectedOwner = new RepositoryCoordinatorReservation.OwnerIdentity(
+            Math.addExact(old.plan.next().predecessorGeneration(), 1), old.plan.next().seeds().ownerNonce());
+    if (!expected.equals(source.predecessor()) || !expectedOwner.equals(source.owner()))
+        throw conflict("Historical takeover observation differs from retained predecessor");
+    // Admission is memory-only and exclusive under this monitor. Rollback restores routing on refusal.
+    entries.remove(key, old);
+    try {
+        var successor = beginProposed(caller, old.retention, modes, observed, lease, timeouts);
+        successor.entry.predecessorId = old.id;
+        old.supersessionPending = true;
+        return successor;
+    } catch (RuntimeException | Error failure) {
+        entries.put(key, old);
+        throw failure;
+    }
+}
+
+/** Private cleanup lookup; an old generation is never selected for ordinary retry routing. */
+synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, RepositoryCaller caller,
+        DocumentPublicationCommand command, UUID id) {
+    if (closed) throw unavailable();
+    var entry = generations.get(Objects.requireNonNull(id));
+    var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+    DocumentAdmissionAuthorization.requireCaller(coordinator, key, key.account());
+    if (!coordinator.processAuthority()) throw new RepositoryException(RepositoryException.Code.PERMISSION_DENIED,
+            "Historical generation disposal requires private process authority");
+    if (entry == null) return Optional.empty();
+    if (!entry.key.equals(key) || !entry.caller.equals(caller) || !entry.command.canonical().equals(command.canonical()))
+        throw conflict("Historical disposal generation identity changed");
+    if (entry.borrowed) throw conflict("Historical attempt is in use");
+    if (active >= capacity) throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
+            "Historical call capacity exhausted");
+    entry.borrowed = true; active++;
+    return Optional.of(new Attempt(entry));
+}
+
     /** No SQL; reserves capacity before capture transfer or activation registration. */
     synchronized Attempt beginInstalled(RepositoryCaller caller, RepositorySuccessorInstall.Plan plan,
             DocumentPublicationPreparationRecord retention) {
@@ -90,7 +169,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             throw new IllegalArgumentException("Historical retention differs from installed plan");
         var existing = entries.get(key);
         if (existing != null && existing.borrowed) throw conflict("Historical attempt is in use");
-        if (active >= capacity || existing == null && entries.size() >= capacity)
+        if (active >= capacity || existing == null && generations.size() >= capacity)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
         if (existing != null && existing.caller.equals(caller) && Objects.equals(existing.plan, plan)
                 && existing.retention.equals(retention)) {
@@ -115,7 +194,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 var bytes = budget.reserve((long) previous.size() + next.size() + retained.size() + modes.size());
                 try {
                     existing = new Entry(caller, plan, retention, fingerprint, retentionDigest, bytes);
-                    entries.put(key, existing);
+                    retain(existing);
                 } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
             }
             existing.borrowed = true; active++;
@@ -148,7 +227,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             }
             return resume(caller, command).orElseThrow();
         }
-        if (entries.size() >= capacity || active >= capacity)
+        if (generations.size() >= capacity || active >= capacity)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
         try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
             var retained = DocumentPublicationPreparationCodec.encode(retention);
@@ -175,7 +254,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 var preparation = new RepositoryHistoricalAttemptPreparation(tx, budget, timeouts, proposal, command, requested, lease,
                         retention, DocumentPublicationPreparationJournal.digest(retained));
                 var entry = new Entry(caller, retention, proposal, preparation, bytes, digest(retained));
-                entries.put(key, entry); entry.borrowed = true; active++;
+                retain(entry); entry.borrowed = true; active++;
                 return new Attempt(entry);
             } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
         }
@@ -202,6 +281,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         private final Entry entry;
         private boolean ended;
         private Attempt(Entry entry) { this.entry = entry; }
+        synchronized UUID identity() { requireActive(RepositoryReadControl.NONE); return entry.id; }
         private void requireActive(RepositoryReadControl control) {
             if (ended) throw new IllegalStateException("Historical attempt call is closed");
             Objects.requireNonNull(control).check();
@@ -214,7 +294,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
 
         private void requireMutable(RepositoryReadControl control) {
             requireActive(control);
-            if (entry.retirement != RetirementProof.NONE)
+            if (entry.supersessionPending || entry.retirement != RetirementProof.NONE)
                 throw conflict("Historical attempt is retained for disposal only");
         }
 
@@ -227,6 +307,13 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             var phase = entry.preparation.advance(coordinator, entry.caller, modes, payloads, control);
             if (phase == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED)
                 entry.plan = entry.preparation.installedPlan(); // Same immutable object; preparation owns its byte lease.
+            if (phase != RepositoryHistoricalAttemptPreparation.Phase.PROPOSED && entry.predecessorId != null) {
+                synchronized (RepositoryInstalledHistoricalAttempts.this) {
+                    var predecessor = generations.get(entry.predecessorId);
+                    if (predecessor != null && predecessor.retirement == RetirementProof.NONE)
+                        predecessor.retirement = RetirementProof.FENCED;
+                }
+            }
             return phase;
         }
 
@@ -372,7 +459,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             if (!disposeEntry(entry, coordinator, nanos, start, control)) return Retirement.RETAINED;
             control.check();
             synchronized (RepositoryInstalledHistoricalAttempts.this) {
-                if (!entries.remove(entry.key, entry))
+                if (!forget(entry))
                     throw new IllegalStateException("Historical entry lost exclusive retirement ownership");
                 entry.releaseBytes();
                 ended = true; entry.borrowed = false; active--;
@@ -391,7 +478,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     }
 
     @Override public synchronized void close() { closed = true; }
-    synchronized Drain drain() { return new Drain(active, entries.size()); }
+    synchronized Drain drain() { return new Drain(active, generations.size()); }
     synchronized boolean awaitIdle(Duration timeout) throws InterruptedException {
         if (!closed) throw new IllegalStateException("Close historical admission before waiting");
         long remaining = checkedNanos(timeout), start = System.nanoTime();
@@ -412,19 +499,20 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         final List<Entry> retained;
         synchronized (this) {
             if (detaching) return false;
-            detaching = true; retained = List.copyOf(entries.values());
+            detaching = true; retained = List.copyOf(generations.values());
         }
         try {
+            boolean complete = true;
             for (var entry : retained) {
                 control.check();
                 var coordinator = Objects.requireNonNull(authority.apply(entry.key));
                 RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
-                if (!disposeEntry(entry, coordinator, nanos, start, control)) return false;
+                if (!disposeEntry(entry, coordinator, nanos, start, control)) { complete = false; continue; }
                 control.check();
                 entry.releaseBytes();
-                synchronized (this) { entries.remove(entry.key, entry); }
+                synchronized (this) { forget(entry); }
             }
-            return true;
+            return complete;
         } finally { synchronized (this) { detaching = false; notifyAll(); } }
     }
     /** No owner-map monitor or SQL transaction spans the local drainage waits. */

@@ -471,3 +471,65 @@ Required tests against real SQL, then packaged providers:
 Implement and qualify this owner structure before enabling managed historical
 routing. It does not require redesigning protobuf contracts or relaxing ownership,
 provider checks, retention or JCR capability boundaries.
+
+### Concurrent-generation implementation checkpoint
+
+The private owner now keeps two indexes: the selected operation-key retry route,
+and all retained Entries keyed by stable local UUID. `beginSuccessor` verifies the
+exact attached predecessor, modes and expired bound observation, then reserves a
+new Entry and its byte budget before SQL. A pending successor becomes the selected
+retry route and stops new mutations on the old Entry. Already accepted work stays
+owned; SQL determines the takeover winner. An unchanged retry retains that pending
+Entry even when fresh discovery now sees its committed reservation. Changed caller
+or canonical command cannot adopt it.
+
+After exact V97 confirmation, the predecessor is marked disposal-only. The successor
+can install and capture fresh sources while old Work remains held. Private cleanup
+can address the old Entry by its stable ID. Removing it does not remove the new retry
+route. Capacity counts both generations; refusal restores the old route without a
+reservation write. Shutdown attempts other ready Entries after a held generation
+cannot drain, retaining unfinished Entries and their budgets.
+
+Five new real-PostgreSQL cases and 56 preparation/activation/retirement regressions
+passed together (61 cases, zero failures/errors/skips). They cover overlapping old
+Attempt/Work with new V97/V93/V94 and START, post-installation capture, independent
+shutdown disposal, capacity refusal, V97 rollback and lost commit reply, and a
+changed-command retry. Setup uses synthetic provider observations, so these tests
+alone make no provider-publication claim. The packaged-provider regression also
+passed in 11m14s (one aggregate case, zero failures/errors/skips), covering the
+existing real-provider scenarios. It does not yet qualify publication while an older
+generation's Work remains held. Evidence is recorded in
+`docs/evidence/repository/2026-10-07-historical-generations/README.md`.
+
+The private owner is not yet the managed historical route. The full-call same-key
+host exclusion remains unchanged. Publication while old Work remains held, the
+publication-versus-V97 race, byte-capacity exhaustion, and a pending generation's V98
+expiry in the presence of an older draining Entry remain required acceptance cases.
+No public historical capability is advertised by this checkpoint.
+
+### Publication/takeover race qualification: commit-time liveness
+
+`V79__repository_claim_mutation_fences.sql` replaces
+`require_repository_operation_success_complete`; the deferred success trigger
+created in V52 invokes it at commit. It requires the exact live execution claim and
+an owner whose lease still exceeds `clock_timestamp()`. Holding an old publication's
+claim lock across lease expiry does not grant permission to finish publication.
+
+Qualify three distinct orders without changing these guards:
+
+- Publication commits while its lease is live. Subsequent recovery discovers or
+  replays the terminal result and creates no replacement installation or capture.
+- Hold a real publication transaction after its writes, with its backend PID known.
+  Let database-clock expiry occur, then attempt V97 and prove the contender is
+  blocked on that PID using `pg_blocking_pids`. Releasing the publication gate must
+  expose its deferred liveness refusal; takeover can then proceed. Assert no old
+  revision/result survived and verify the successor's real provider publication.
+- Gate old publication before claim acquisition, let the exact old claim expire and
+  commit V97, then release publication. Require exact fence refusal and verify the
+  successor result. Do not infer ordering from wall-clock sleeps alone.
+
+The existing fixture's connection/origin gates do not cover all these boundaries.
+Add a test-only transaction gate around actual V52/V97 work, retain the original
+SQL exception, and release every barrier in `finally`. Do not fabricate an old
+publication success after expiry or label a premature private reservation attempt
+as an eligible managed takeover. These are outstanding tests, not completed claims.
