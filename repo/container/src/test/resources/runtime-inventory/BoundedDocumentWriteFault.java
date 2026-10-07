@@ -11,6 +11,7 @@ final class BoundedDocumentWriteFault {
     private final RuntimeException failure=new IllegalStateException("Injected lost Redis PUT acknowledgement");
     private volatile BlobStore store;
     private volatile BlobStore.PutSpec written;
+    private byte[] verifiedBytes;
     void arm() { armed.set(true); }
     BlobStore wrap(BlobStore actual) {
         store=actual;
@@ -31,9 +32,12 @@ final class BoundedDocumentWriteFault {
         return false;
     }
     void save(java.nio.file.Path directory) throws java.io.IOException {
-        if (written==null) throw new AssertionError("No failed PUT to persist");
+        if (written==null || verifiedBytes==null) throw new AssertionError("No verified failed PUT bytes to persist");
         var values=new java.util.Properties();
         values.setProperty("namespace",written.bucket()); values.setProperty("key",written.key());
+        values.setProperty("sha256",written.sha256Hex());
+        values.setProperty("contentType",written.contentType());
+        java.nio.file.Files.write(directory.resolve("lost-put-body.bin"),verifiedBytes);
         try (var output=java.nio.file.Files.newOutputStream(directory.resolve("lost-put.properties"))) {
             values.store(output,"Failed Redis PUT coordinates");
         }
@@ -44,5 +48,6 @@ final class BoundedDocumentWriteFault {
         var bytes=store.getBounded(spec.bucket(),spec.key(),null,1024*1024).data();
         if (!DocumentPartCodec.sha256Hex(bytes).equals(spec.sha256Hex()))
             throw new AssertionError("Fault was not injected after matching bytes reached Redis");
+        verifiedBytes=bytes.clone();
     }
 }

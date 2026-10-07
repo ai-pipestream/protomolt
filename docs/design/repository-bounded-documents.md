@@ -148,3 +148,12 @@ objects. All object references now exclude attempts from scan and locked claim;
 the final database guard remains unchanged. Evidence:
 `docs/evidence/repository/2026-10-07-bounded-orphan-cleanup`.
 Late writes, cleanup-provider failure and active-work shutdown remain open.
+
+## Cleanup retry checkpoint
+
+Real Redis reappearance and exact-key cleanup retry now pass. An injected error
+is returned and stored as retry state; a later real reclaim confirms absence.
+Both committed histories remain valid. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-cleanup-retry`.
+This models reappearance with a new PUT and uses direct recovery calls. A delayed
+network PUT race, scheduled recheck timing and active-work shutdown remain open.

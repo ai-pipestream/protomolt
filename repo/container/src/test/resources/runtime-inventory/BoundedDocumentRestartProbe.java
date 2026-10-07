@@ -36,6 +36,9 @@ public final class BoundedDocumentRestartProbe {
                 new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
             host.services();
             awaitCleanup(host,new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),saved);
+            ai.protomolt.proto.repo.container.ledger.DocumentCleanupRetryProbe.run(
+                    new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),generation,
+                    host.blobStore(),((ai.protomolt.proto.repo.blob.redis.RedisBlobStore)host.blobStore())::reclaim,saved);
             ai.protomolt.proto.repo.container.ledger.DocumentCleanupRetentionProbe.run(
                     new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory()),generation);
             for (String suffix:java.util.List.of("","-next")) {
