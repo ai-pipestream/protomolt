@@ -9,6 +9,53 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 class DocumentHistoricalSourceLifetimeTest {
+    @Test void acceptedChildOutlivesParentWithoutReopeningAdmission() throws Exception {
+        var releases = new AtomicInteger();
+        var lifetime = new DocumentHistoricalSourceLifetime(releases::incrementAndGet);
+        var parent = lifetime.enter();
+        lifetime.close();
+        var child = parent.fork();
+        parent.close();
+        assertThatThrownBy(parent::fork).hasMessageContaining("ended");
+        assertThatThrownBy(lifetime::enter).hasMessageContaining("closed");
+        child.requireActive();
+        assertThat(lifetime.awaitDrained(Duration.ZERO)).isFalse();
+        assertThat(releases).hasValue(0);
+        child.close();
+        assertThat(lifetime.awaitDrained(Duration.ZERO)).isTrue();
+        assertThat(releases).hasValue(1);
+    }
+
+    @Test void concurrentParentCloseAndForkCannotLoseAnAcceptedChild() throws Exception {
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int iteration = 0; iteration < 100; iteration++) {
+                var releases = new AtomicInteger();
+                var lifetime = new DocumentHistoricalSourceLifetime(releases::incrementAndGet);
+                var parent = lifetime.enter();
+                lifetime.close();
+                var start = new CountDownLatch(1);
+                var closing = executor.submit(() -> { start.await(); parent.close(); return null; });
+                var forking = executor.submit(() -> {
+                    start.await();
+                    try { return parent.fork(); }
+                    catch (IllegalStateException ended) {
+                        assertThat(ended).hasMessage("Historical source work has ended");
+                        return null;
+                    }
+                });
+                start.countDown();
+                closing.get(5, TimeUnit.SECONDS);
+                var child = forking.get(5, TimeUnit.SECONDS);
+                if (child != null) {
+                    assertThat(releases).hasValue(0);
+                    child.requireActive(); child.close();
+                }
+                assertThat(lifetime.awaitDrained(Duration.ZERO)).isTrue();
+                assertThat(releases).hasValue(1);
+            }
+        }
+    }
+
     @Test void closeRefusesNewWorkAndWaitsForActualWorkerExitDespiteFutureCancellation() throws Exception {
         var releases = new AtomicInteger();
         var lifetime = new DocumentHistoricalSourceLifetime(releases::incrementAndGet);

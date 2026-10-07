@@ -76,15 +76,17 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         var sources = DocumentHistoricalAssessmentSources.open(command, caller, histories, control);
         DocumentPublicationAssessment assessment = null;
         boolean delivered = false;
-        try {
-            assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
-                    evaluatedAt, control::check, sources, control);
-            sources.authorize(control);
-            var result = new Historical(assessment, sources); delivered = true;
-            return result;
-        } catch (RuntimeException | InvalidProtocolBufferException failure) {
-            sources.authorize(control);
-            throw failure;
+        try (var work = sources.work()) {
+            try {
+                assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
+                        evaluatedAt, control::check, work, control);
+                work.authorize(control);
+                var result = new Historical(assessment, sources); delivered = true;
+                return result;
+            } catch (RuntimeException | InvalidProtocolBufferException failure) {
+                work.authorize(control);
+                throw failure;
+            }
         } finally {
             if (!delivered) {
                 if (assessment != null) assessment.close();
@@ -204,6 +206,9 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 RepositorySchemaArtifacts storage, DocumentPublicationCommit publication,
                 ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
             requireOpen();
+            // Refuse before promotion consumes this assessment or stages durable schema claims.
+            if (owner.executionClaim().isPresent())
+                throw new UnsupportedOperationException("Claimed historical publication is not implemented");
             if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
             inspecting = true;
             try {
@@ -240,7 +245,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt, Runnable control,
-            DocumentHistoricalAssessmentSources historical, ai.protomolt.proto.repo.spi.RepositoryReadControl readControl)
+            DocumentHistoricalAssessmentSources.Work historical, ai.protomolt.proto.repo.spi.RepositoryReadControl readControl)
             throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);

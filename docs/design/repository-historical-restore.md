@@ -623,6 +623,125 @@ under its current ownership; it does not install historical ACLs. Keep historica
 restore distinct from optional JCR graph/version restoration. No JCR dependency
 or document-only transaction restriction is introduced.
 
+### Initial claimed assessment execution boundary
+
+Source inspection at `775e2814a1751f2667598095856fd6a99bf668b0` confirms that
+registration, capture retention and terminal root release are separate from
+claimed assessment execution. The latter remains gated in registration start,
+upload admission, assessment CREATE and historical commit. The following is an
+implementation requirement, not a claim that this path is available.
+
+The next implementation introduces one private, closeable execution handle,
+constructed only by the registered historical owner. It carries the exact
+preparation, prepared plan, owner generation/nonce, execution claim/token/epoch,
+fixed modes and registered capture identity. It retains an accepted
+`DocumentHistoricalAssessmentSources.Work` from the registration's existing
+source owner. A decoded V81 preparation, matching selectors or journal access
+alone cannot construct this handle. Construction requires successful durable
+registration or reconciliation of its exact committed identity.
+
+In particular, `historicalCapture` is assigned inside the registration transaction
+and may remain non-null after rollback or a lost acknowledgement. It is not proof
+of durable registration. Before minting the handle, confirm the exact live claim
+and owner, V81 preparation, V82 modes, V103 retention set and V104/V105 capture
+and owner records, including pin digest and the initial capture's registration
+transaction binding. Reject incomplete or rolled-back registration. The first
+implementation accepts only the initial owner generation. V109 successor
+attachment requires a separately qualified fresh capture capability.
+
+Do not reopen the same histories and treat the new Uses as the registered
+capability. `Prepared` references borrow live Uses, and the existing historical
+assessment checks exact reference equality. Share the registration's source
+owner through assessment creation; a fresh capture requires its own qualified
+capture-registration protocol. This initial boundary does not authorize restart
+or successor execution merely because their selectors match.
+
+The handle's acceptance and mutation checks have two distinct responsibilities:
+
+- Before accepting work, validate the caller and exact in-memory identities,
+  acquire a lifetime permit and reserve bounded scratch outside SQL. Reject new
+  work after close begins. An already accepted operation retains its permit
+  through the real provider/assessment worker completion and SQL response
+  unwinding, including cancellation and uncertain acknowledgements.
+- Within each mutation transaction, fence the live claim and owner and verify
+  command, sealed preparation, modes and registered capture/owner bindings.
+  Recheck current credential generation, source READ, destination WRITE or
+  creation authority, placement and physical source witnesses. Follow the
+  existing deterministic lock order; perform no provider or registry calls
+  while SQL locks are held. A prior authorization check is not a transferable
+  grant for a later mutation.
+
+Extend existing shared methods through narrow handle-requiring entry points:
+
+1. **Upload admission.** Keep the existing refusal for claimed historical callers
+   without a handle. The handle-qualified path must additionally call
+   `DocumentHistoricalReferenceAdmission.requireBoundSources` after the required
+   origin/retention locks and before writing attempt or selection rows. Current
+   ordinary reuse checks do not substitute for historical physical witnesses.
+2. **Assessment start.** Add an owned historical start path using the existing V83
+   journal. Repeated start proposals return the committed assessment UUID and
+   deadline for that generation. Require the handle and exact stored modes;
+   never bypass the ordinary method's historical gate globally. Before retrying
+   CREATE, inspect that exact durable assessment identity under current authority.
+3. **Assessment CREATE.** Pass the same source owner and handle through
+   `DocumentPublicationAssessment.Historical` into shared creation. Retain V83
+   identity/deadline enforcement, observed-mode comparison, current policy and
+   historical part/slot binding. CREATE remains create-only. A duplicate is not
+   implicit adoption; reconciliation must establish the exact stored assessment,
+   its manifest and eligible state before reuse. An incompatible or consumed
+   assessment cannot cause another UUID to be minted in the same generation.
+
+Keep claimed historical commit and public session/facade gates closed until the
+subsequent publication and recovery acceptance cases below pass. This staging
+boundary is an intermediate implementation step toward public restore, not a
+replacement for it. No proto change or new public service is needed.
+The CREATE-only handle must not expose the existing historical `publish` path:
+it promotes the assessment and stages schema artifacts before the commit method
+rejects claimed owners. Keep it unreachable or refuse claimed publication at
+method entry, before either effect. The downstream commit guard alone does not
+protect the assessment from consumption on an unsupported call.
+
+Qualification for this boundary must use real SQL and existing storage adapters:
+
+- A registered historical owner admits and creates an assessment for the selected
+  old revision, including a mixed command with fresh uploads. Advancing the source
+  head does not change the selected bytes or retained schema identity.
+- Missing handle, foreign source owner, altered preparation/capture/modes,
+  expired or replaced claim/owner, changed source witness, revoked READ/WRITE,
+  rotated credential and revoked creation grant fail without new attempt,
+  selection or assessment rows and without unauthorized provider writes.
+- Concurrent start proposals and lost start acknowledgements retain one V83 UUID
+  and deadline. Lost CREATE acknowledgement reconciles the existing assessment;
+  it does not run a second CREATE or treat a consumed assessment as reusable.
+- Barriers exercise revocation and owner replacement on both sides of the SQL
+  mutation boundary. Closing during accepted provider work retains resources
+  until that work drains; new work is refused and budgets eventually return to
+  zero. Do not use sleeps or retries to conceal cleanup races.
+- Existing ordinary and unclaimed historical tests remain green; public claimed
+  historical execution still fails at its declared gate. A refused publication
+  must leave the assessment unconsumed and create no schema artifact claims.
+  Subsequent success
+  qualification must exercise real claimed publication before V52 terminal
+  root release can be advertised for that path.
+
+Two implementation constraints avoid unnecessary work and premature resource
+release. Decode and compare bounded preparation/mode data and verify the full
+initial capture when constructing the handle. For later mutations, compare exact
+immutable journal/capture scalar identities under the live claim/owner fence;
+do not repeatedly decode V81 or rehash every capture child. Current authorization,
+placement and physical witness checks still run for each mutation, including
+assessment-start INSERT. Preserve existing journal/owner lock ordering and take
+complete document/source authorization and sorted drive locks before independent
+origin and retention locks. New methods must not introduce an inverse lock path.
+
+Also, retaining `Sources.Work` alone does not make current source convenience
+methods safe after source admission closes: those methods acquire a fresh Work.
+Thread the already accepted Work through assessment preparation, resolver
+construction, caller checks and CREATE instead of reacquiring it. The
+close-during-work tests must hold an actual schema/provider worker across close,
+not merely hold a permit with no assessment work running. A rejected submission
+must release its permit; a started worker releases it only on actual completion.
+
 ### Acceptance before enabling public restore
 
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are

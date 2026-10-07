@@ -137,6 +137,91 @@ final class DocumentPreparationSourcePins {
         control.run();
     }
 
+    /**
+     * Confirms an existing initial capture without repairing or creating one. Caller owns
+     * live source Work and holds the claim before ordered origin/retention locks. This is
+     * capture evidence only: canonical preparation/root verification, current document
+     * authority and operation ownership are separate caller obligations.
+     */
+    static void requireInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control) {
+        requireInitial(em, record, prepared, claim, coordinator, control, true);
+    }
+
+    /** Only for a handle that already confirmed the full immutable batch at construction. */
+    static void requireActiveInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control) {
+        requireInitial(em, record, prepared, claim, coordinator, control, false);
+    }
+
+    private static void requireInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control, boolean full) {
+        control.run();
+        if (record.predecessorGeneration() != 0 || claim.epoch() != 1
+                || !record.key().equals(claim.key()) || !record.command().sha256().equals(claim.commandSha256()))
+            throw new IllegalArgumentException("Initial capture differs from preparation claim");
+        java.util.Objects.requireNonNull(coordinator);
+        RepositoryCoordinatorBinding.requireResume(em, claim, coordinator);
+        boolean closed = (Boolean) em.createNativeQuery("""
+                SELECT EXISTS(SELECT 1 FROM repository_publication_abandonments WHERE account_id=:a AND principal=:p AND operation_id=:o)
+                  OR EXISTS(SELECT 1 FROM repository_operation_success WHERE account_id=:a AND principal=:p AND operation_id=:o)
+                  OR EXISTS(SELECT 1 FROM repository_operation_rejection WHERE account_id=:a AND principal=:p AND operation_id=:o)
+                  OR EXISTS(SELECT 1 FROM repository_coordinator_drains WHERE account_id=:a AND principal=:p AND operation_id=:o AND claim_epoch=:epoch)
+                """).setParameter("a", record.key().account()).setParameter("p", record.key().principal())
+                .setParameter("o", record.key().operationId()).setParameter("epoch", claim.epoch()).getSingleResult();
+        if (closed) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Initial preparation capture admission is closed");
+        var rows = scope(em.createNativeQuery("""
+                SELECT b.expected_count,b.sealed,b.initial_capture,b.creation_xid=h.creation_xid,
+                  own.claim_epoch,own.claim_token,own.incarnation,
+                  CASE WHEN :full THEN (SELECT count(*) FROM repository_preparation_source_pins p
+                    WHERE p.account_id=b.account_id AND p.principal=b.principal AND p.operation_id=b.operation_id
+                      AND p.predecessor_generation=b.predecessor_generation AND p.pins_sha256=b.pins_sha256)
+                    ELSE b.expected_count END,
+                  EXISTS(SELECT 1 FROM repository_preparation_capture_drains d
+                    WHERE d.account_id=b.account_id AND d.principal=b.principal AND d.operation_id=b.operation_id
+                      AND d.predecessor_generation=b.predecessor_generation AND d.pins_sha256=b.pins_sha256),
+                  EXISTS(SELECT 1 FROM repository_preparation_root_releases r
+                    WHERE r.account_id=b.account_id AND r.principal=b.principal AND r.operation_id=b.operation_id
+                      AND r.predecessor_generation=b.predecessor_generation)
+                FROM repository_preparation_pin_batches b
+                JOIN repository_preparation_history_sets h USING(account_id,principal,operation_id,predecessor_generation)
+                JOIN repository_preparation_pin_owners own USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
+                WHERE b.account_id=:a AND b.principal=:p AND b.operation_id=:o AND b.predecessor_generation=:g AND b.pins_sha256=:digest
+                """), record, prepared).setParameter("full", full).getResultList();
+        if (rows.isEmpty()) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Initial preparation capture is absent");
+        Object[] row = (Object[]) rows.getFirst();
+        if (((Number) row[0]).intValue() != prepared.pins().size() || !Boolean.TRUE.equals(row[1])
+                || !Boolean.TRUE.equals(row[2]) || !Boolean.TRUE.equals(row[3])
+                || ((Number) row[7]).longValue() != prepared.pins().size()) throw corrupt();
+        if (((Number) row[4]).longValue() != claim.epoch() || !claim.token().equals(row[5]) || !coordinator.equals(row[6])
+                || Boolean.TRUE.equals(row[8]) || Boolean.TRUE.equals(row[9]))
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Initial preparation capture is no longer executable");
+        if (full) {
+            long matches = ((Number) scope(em.createNativeQuery("""
+                SELECT count(*) FROM repository_preparation_source_pins p
+                JOIN jsonb_to_recordset(CAST(:rows AS jsonb))
+                  q(reader uuid,pin uuid,object uuid,node uuid,revision uuid,publication bigint)
+                  ON p.pin_id=q.pin AND p.reader_incarnation=q.reader AND p.object_id=q.object
+                    AND p.node_id=q.node AND p.revision_id=q.revision AND p.publication_revision=q.publication
+                WHERE p.account_id=:a AND p.principal=:p AND p.operation_id=:o AND p.predecessor_generation=:g AND p.pins_sha256=:digest
+                """), record, prepared).setParameter("rows", prepared.json()).getSingleResult()).longValue();
+            if (matches != prepared.pins().size()) throw corrupt();
+        }
+        var live = scope(em.createNativeQuery("""
+                SELECT p.pin_id FROM document_read_pins p JOIN repository_preparation_source_pins q
+                  ON p.pin_id=q.pin_id AND p.reader_incarnation=q.reader_incarnation AND p.object_id=q.object_id
+                    AND p.source_node=q.node_id AND p.source_revision=q.revision_id AND p.publication_revision=q.publication_revision
+                WHERE q.account_id=:a AND q.principal=:p AND q.operation_id=:o AND q.predecessor_generation=:g
+                  AND q.pins_sha256=:digest AND p.read_scope='HISTORICAL' ORDER BY p.pin_id FOR SHARE OF p
+                """), record, prepared).getResultList();
+        if (live.size() != prepared.pins().size()) throw new DocumentPartAttemptLedger.FenceException(
+                "Initial preparation capture no longer has its live historical pins");
+        control.run();
+    }
+
     private static Query scope(Query query, DocumentPublicationPreparationRecord record, Prepared prepared) {
         return query.setParameter("a", record.key().account()).setParameter("p", record.key().principal())
                 .setParameter("o", record.key().operationId()).setParameter("g", record.predecessorGeneration())

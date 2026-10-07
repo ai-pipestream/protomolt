@@ -213,6 +213,20 @@ final class DocumentPublicationRegistration {
         return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), claimEpoch, claimToken, coordinator);
     }
 
+    DocumentHistoricalExecution historicalExecution(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        if (historical == null || successor != null || historicalCapture == null)
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical execution requires an initial registered capture");
+        var scope = registrations.enter();
+        try {
+            return DocumentHistoricalExecution.open(tx, budget, access, preparation, historical, historicalCapture,
+                    caller, owner, fixedModes, drives, control, scope);
+        } catch (RuntimeException | Error failure) {
+            scope.close(); throw failure;
+        }
+    }
+
     void abandon(RepositoryCaller caller, RepositoryReadControl control) {
         if (successor != null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Installed successor requires owner cancellation");

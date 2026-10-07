@@ -7,7 +7,7 @@ import ai.protomolt.proto.repo.v1.*;
 import java.time.Duration;
 import java.util.*;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -19,14 +19,20 @@ import static org.assertj.core.api.Assertions.*;
 @Testcontainers
 class DocumentHistoricalRegistrationAuthorizationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
-    private static final RepositoryCaller CALLER = new RepositoryCaller("scoped", false, Set.of("account"), Set.of());
     private static final DocumentSecurity POLICY = DocumentSecurity.newBuilder()
             .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ))
             .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_WRITE)).build();
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void capturedHistoryDoesNotPreserveRevokedReadAuthorityForRegistrationOrRetry(boolean beforeRegistration) throws Exception {
+    @ParameterizedTest @CsvSource({"false,false", "true,false", "false,true"})
+    void capturedHistoryDoesNotPreserveRevokedAuthorityForRegistrationOrRetry(boolean beforeRegistration, boolean revokeKey) throws Exception {
+        var binding = new RepositoryCredentialBinding("historical-test", UUID.randomUUID(), 1);
+        var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of(),
+                revokeKey ? Optional.of(binding) : Optional.empty());
+        var denial = revokeKey ? RepositoryException.Code.UNAUTHENTICATED : RepositoryException.Code.NOT_FOUND;
         try (var c = context(POSTGRES)) {
+            var credentials = new RepositoryCredentialAuthorities(c.tx());
+            var administrator = new RepositoryCaller("operator", true);
+            if (revokeKey) credentials.register(administrator, binding, caller.principalName());
             var original = DocumentSchemaRetentionFixture.prepare(c);
             new DocumentSchemaPolicies(c.tx()).activate(original.batch().policy().policy(), 0, () -> {});
             var revision = DocumentSchemaRetentionFixture.publishBound(c, original, (em, candidate) -> {},
@@ -34,7 +40,7 @@ class DocumentHistoricalRegistrationAuthorizationIT {
             var fixture = new Fixture(original, revision);
             setPolicy(c, fixture.address(), POLICY);
             var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
-            var history = reads.captureHistorical(CALLER, fixture.address(), revision);
+            var history = reads.captureHistorical(caller, fixture.address(), revision);
             var budget = new PayloadBudget(64L * 1024 * 1024);
             try {
                 var member = member(fixture, history);
@@ -47,19 +53,35 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                 var placement = original.prepared().members().getFirst().placement();
                 var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                         Map.of(placement.drive().id(), placement), Duration.ofMinutes(5), 0);
-                try (var sources = DocumentHistoricalAssessmentSources.open(command, CALLER, List.of(history), RepositoryReadControl.NONE)) {
+                try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
                     var registration = DocumentPublicationRegistration.historical(c.tx(), budget, record, sources,
                             UUID.randomUUID(), new DocumentPublicationScopeCalls(), new DriveLedger(c.tx()), RepositoryReadControl.NONE);
                     var modes = Map.of("member", DocumentPublicationCandidate.Mode.TYPED);
                     List<?> before = List.of();
+                    RepositoryOperationLedger.Owner registeredOwner = null;
                     if (!beforeRegistration) {
-                        var owner = registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE).orElseThrow();
-                        assertThat(registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE)).contains(owner);
+                        var owner = registration.admitInitial(caller, modes, RepositoryReadControl.NONE).orElseThrow();
+                        registeredOwner = owner;
+                        assertThat(registration.admitInitial(caller, modes, RepositoryReadControl.NONE)).contains(owner);
+                        try (var execution = registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE)) {
+                            assertThat(budget.reservedBytes()).isPositive();
+                        }
                         before = leases(c, key);
                     }
                     var writeOnly = POLICY.toBuilder().clearPermissions().addPermissions(POLICY.getPermissions(1)).build();
-                    setPolicy(c, fixture.address(), writeOnly);
-                    denied(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE));
+                    if (beforeRegistration) setPolicy(c, fixture.address(), writeOnly);
+                    else {
+                        try (var execution = registration.historicalExecution(caller, registeredOwner, modes, RepositoryReadControl.NONE)) {
+                            if (revokeKey) credentials.revoke(administrator, binding, caller.principalName());
+                            else setPolicy(c, fixture.address(), writeOnly);
+                            denied(denial, () -> execution.start(caller, Duration.ofMinutes(5), RepositoryReadControl.NONE));
+                            long starts = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:id")
+                                    .setParameter("id", key.operationId()).getSingleResult()).longValue());
+                            assertThat(starts).isZero();
+                        }
+                    }
+                    denied(denial, () -> registration.admitInitial(caller, modes, RepositoryReadControl.NONE));
                     if (beforeRegistration) for (String table : List.of("repository_execution_claims", "repository_coordinator_bindings",
                             "repository_publication_preparations", "repository_preparation_history_sets",
                             "repository_preparation_history_roots", "repository_publication_modes",
@@ -69,6 +91,8 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                         assertThat(count).as(table).isZero();
                     }
                     if (!beforeRegistration) {
+                        var owner = registeredOwner;
+                        denied(denial, () -> registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE));
                         assertThat(leases(c, key)).isEqualTo(before);
                         assertThat(new RepositoryOperationLedger(c.tx()).find(key)).isPresent();
                     }
@@ -80,9 +104,9 @@ class DocumentHistoricalRegistrationAuthorizationIT {
         }
     }
 
-    private static void denied(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+    private static void denied(RepositoryException.Code code, org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
         assertThatThrownBy(call).isInstanceOfSatisfying(RepositoryException.class,
-                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.NOT_FOUND));
+                failure -> assertThat(failure.code()).isEqualTo(code));
     }
 
     private static void setPolicy(Context c, NodeAddress address, DocumentSecurity policy) throws Exception {

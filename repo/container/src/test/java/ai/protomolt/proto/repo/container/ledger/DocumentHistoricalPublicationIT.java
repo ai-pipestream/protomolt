@@ -23,6 +23,49 @@ class DocumentHistoricalPublicationIT {
     private static final DocumentRevisionAssembly.Limits LIMITS =
             new DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 1_000_000);
 
+    @org.junit.jupiter.api.Test
+    void unsupportedClaimedPublicationDoesNotConsumeAssessmentOrStageSchemas() throws Exception {
+        try (var c = context(POSTGRES);
+             var rig = DocumentCaptureAdmissionClosureIT.historicalInitial(c, Duration.ofMinutes(5))) {
+            var command = rig.record().command();
+            var modes = Map.of("member", DocumentPublicationCandidate.Mode.TYPED);
+            RepositoryOperationLedger.Owner owner;
+            try (var work = rig.sources().work()) {
+                var admission = RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(), command,
+                        rig.record().seeds().ownerNonce(), rig.record().lease(), work);
+                owner = c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                    DocumentPublicationModesJournal.insert(em, rig.claim(), rig.record(),
+                            DocumentPublicationModesJournal.encode(command, modes));
+                    return admission.apply(em, rig.claim()).owner().orElseThrow();
+                });
+            }
+            // Real claimed SQL owner; this is an unsupported call, not claimed execution proof.
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(command,
+                    rig.fixture().original().batch().policy(), modes, Map.of("member", rig.fixture().fragments()),
+                    Optional.empty(), (m, occurrence) -> { throw new AssertionError("Unexpected registry access"); },
+                    rig.budget(), LIMITS, Instant.now(), CALLER, List.of(rig.history()), RepositoryReadControl.NONE)) {
+                var prepared = assessment.preparePhysical(rig.record().placements(), Map.of(),
+                        rig.record().lease(), Map.of(), RepositoryReadControl.NONE);
+                for (int call = 0; call < 2; call++) {
+                    assertThatThrownBy(() -> assessment.publish(CALLER, owner, prepared, Map.of(),
+                            new RepositorySchemaArtifacts(c.tx()),
+                            new DocumentPublicationCommit(c.tx(), new DriveLedger(c.tx()), false, false),
+                            RepositoryReadControl.NONE))
+                            .isInstanceOf(UnsupportedOperationException.class)
+                            .hasMessage("Claimed historical publication is not implemented");
+                    assessment.inspect(view -> assertThat(view.snapshot().command()).isEqualTo(command), RepositoryReadControl.NONE);
+                    long claims = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:operation")
+                            .setParameter("operation", command.operationId()).getSingleResult()).longValue());
+                    assertThat(claims).isZero();
+                    assertThat(new DocumentPublicationReplay(c.tx()).observe(CALLER, command).state())
+                            .isEqualTo(DocumentPublicationReplay.State.PENDING);
+                }
+            }
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void policyChangeOrLateSqlFailureLeavesNoPartialPublication(boolean changePolicy) throws Exception {
         try (var c = context(POSTGRES)) {

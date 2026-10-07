@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-07T10:20:28.468Z" hostname="krick" time="0.013">
+  <properties/>
+  <testcase name="failingComponentCleanupStillAttemptsAllClosersBeforeEndingWork()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.005"/>
+  <testcase name="concurrentParentCloseAndForkCannotLoseAnAcceptedChild()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.007"/>
+  <testcase name="acceptedChildOutlivesParentWithoutReopeningAdmission()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.0"/>
+  <testcase name="cleanupFailureCannotBecomeDrainProofAndCloseCanRetry()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.0"/>
+  <testcase name="admissionMustCloseBeforeDrainCanBeObserved()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.0"/>
+  <testcase name="closeRefusesNewWorkAndWaitsForActualWorkerExitDespiteFutureCancellation()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
