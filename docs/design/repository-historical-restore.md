@@ -807,27 +807,66 @@ UUIDs and unrelated handles on the same reader remain usable. Without this guard
 an absence observation could become false after a drain record commits. This
 protection does not itself record drain or release any history roots.
 
-The next drain implementation must retain a process-local registered-capture
-capability with its exact batch digest, V105 owner tuple, selected pin identities
-and originating source/history handles. Closing that capability must drain Sources
-first, then close/drain and release each captured history. Shared handles can wait
-for their other Uses; unrelated handles on the reader must not be fenced. Persisting
-the marker locks claim, preparation set and batch in that order, checks immutable
-owner/command identity and requires both native pins and their mirrors to be absent.
-Completion may legitimately follow claim expiry or transfer; neither event proves
-drain or invalidates an actual original-owner completion. Crash recovery requires
-each exact batch reader to be durably QUIESCED and its pins recovered. ACTIVE,
-FENCED and expired states remain insufficient. This capability/marker protocol is
-reviewed design, not implemented by V106.
+V107 adds private capture completion. Registration retains a process-local capability
+with its exact batch digest, V105 owner tuple and originating source/history handles;
+the immutable batch retains the selected pin identities. This capability is tentative
+until registration commits. A failed acknowledgement does not discard it, but a
+rolled-back registration cannot mint durable completion evidence.
 
-Normal release still needs a batch-local barrier that closes source admission, drains
-the borrowed Uses and actual schema/provider workers, releases exact native pins,
-and records an immutable drain for that capture and epoch. Registration currently
-leaves source Uses with the caller, so V91's host-local marker is insufficient
-unless those lifetimes are explicitly enrolled in its barrier. Other active
-handles in the same reader incarnation need not block a qualified normal release.
+Completion closes source admission and the captured histories, waits for Sources
+and every captured history to drain, and releases each captured history. Shared
+handles wait for their other Uses; unrelated handles on the reader are not fenced.
+Waits observe local timeout, cancellation and deadline; the local timeout does not
+replace JDBC timeouts. Bounded hosts retain transaction-local SQL timeout settings
+for confirmation as well as insertion. Partial cleanup and uncertain marker replies
+remain retryable. Confirmation returns the exact first committed receipt and never
+turns a cancelled response into success.
+
+The immutable marker locks claim, preparation set and batch in that order, checks
+original owner/command identity and requires both native pins and their mirrors to
+be absent. It neither stamps execution authority nor renews a lease. Completion can
+follow claim expiry or a guarded SQL epoch transfer; neither event proves drain or
+invalidates actual original-owner completion. Public historical takeover remains
+gated. LOCAL attests the owning process's enrolled Work/Use lifetimes; arbitrary
+external tasks still need explicit enrollment before submission.
+
+A new QUIESCED recovery marker requires every exact batch reader permanently
+QUIESCED and its pins already recovered. ACTIVE, FENCED and expired states remain
+insufficient. V46/V47 still own native-pin recovery. Existing valid completion may
+be confirmed through either path without changing its original evidence kind.
+Migration invents no completion for existing batches. See the
+[capture-drain qualification](../evidence/repository/2026-10-07-capture-drains/README.md).
+
+Normal root release must consume this batch-local completion, including all actual
+schema/provider workers enrolled in its lifetimes. V91's host-local marker alone is
+insufficient. Other active handles in the same reader incarnation need not block
+a qualified normal release.
 Under the claim and preparation-set locks, release must also verify terminal or
 qualified initial-abandonment identity, complete canonical coverage, all batches'
 drain evidence, and absence of exact native pins and their DOCUMENT_READER mirrors.
 Prevent new captures once terminal release begins. V85 is initial pre-owner
 abandonment only, not a generic successor cancellation mechanism.
+
+Before implementing root release, add explicit guards on new V104 batches and
+V105 owners for abandonment and release. V85 currently guards preparation/mode/
+operation/owner registration, not those capture tables. Serialize closure with the
+claim row so a late capture cannot pass a stale absence check.
+
+The reviewed next step retains the V103 header and adds a permanent per-preparation
+release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
+batches in digest order. Decode the bounded canonical preparation, match its hashes,
+and compare every batch's distinct source node/revision/object tuples to the complete
+canonical selection. Require the same-creation initial batch, every exact V105 owner
+and every V107 completion. Recompute actual root count/digest before deletion; do
+not rely on a sealed header alone. Missing legacy coverage is UNKNOWN, not an empty
+set. Require matching V52 success or V64 rejection with an applicable owner generation,
+or exact V85 initial abandonment with no admitted owner/start. Expiry, coordinator
+drain and successor installation alone are insufficient.
+
+Insert the release receipt and delete all child roots atomically. The delete guard
+must accept only that transaction's exact receipt, with a deferred zero-root check.
+Coverage must distinguish UNKNOWN, LIVE_EXACT and RELEASED_EXACT while retaining the
+original header as creation evidence. Test capture/release races, incomplete batches,
+an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
+lost acknowledgement before enabling this path. This root-release protocol remains
+unimplemented; V107 does not loosen the existing root-deletion guard.

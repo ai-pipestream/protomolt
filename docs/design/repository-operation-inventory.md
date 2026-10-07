@@ -1,5 +1,28 @@
 # Repository operation inventory
 
+## Durable capture drain (2026-10-07)
+
+- **Extended private registration:** retains a capture capability bound to the
+  exact V104 batch and V105 owner, including when commit acknowledgement is lost.
+  A tentative capability from a rolled-back registration cannot create a marker.
+- **New private completion:** closes source admission and the exact captured
+  history handles, waits for their Work/Use owners, releases native pins, then
+  records V107 evidence. Unrelated handles on the reader remain usable. Local
+  timeout, cancellation and deadline leave incomplete cleanup retryable.
+- **New private recovery confirmation:** requires absent exact pins/mirrors and
+  every original reader permanently QUIESCED before inserting recovery evidence.
+  Fencing, lease expiry and elapsed time do not qualify. Existing V46/V47 pin
+  recovery remains responsible for recovering physical read protection.
+- **Unchanged:** protobuf contracts, public historical execution gates, prepared
+  history roots and retention release. This is capture cleanup, not publication or
+  general successor execution authority.
+
+The marker preserves original ownership after lease expiry or a guarded SQL epoch
+transfer. It neither renews the current claim nor fences the reader incarnation.
+LOCAL is an owning-process attestation for enrolled work; QUIESCED consumes durable
+reader evidence. Exact confirmation preserves the first committed evidence kind.
+See [qualification evidence](../evidence/repository/2026-10-07-capture-drains/README.md).
+
 ## Captured pin identity protection (2026-10-07)
 
 - **Extended native pin insertion:** V106 refuses UUIDs already recorded in

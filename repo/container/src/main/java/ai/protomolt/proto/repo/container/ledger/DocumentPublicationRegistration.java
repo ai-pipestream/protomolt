@@ -26,6 +26,7 @@ final class DocumentPublicationRegistration {
     private final DocumentPublicationModesJournal modes;
     private final DocumentAssessmentStartJournal starts;
     private final DocumentHistoricalAssessmentSources historical;
+    private volatile DocumentPreparationCaptureDrain.Capture historicalCapture;
     private volatile boolean mayHaveCommitted;
 
     DocumentPublicationRegistration(Tx tx, PayloadBudget budget, DocumentPublicationPreparationRecord preparation,
@@ -189,7 +190,8 @@ final class DocumentPublicationRegistration {
                     DocumentPublicationLocks.lockIndependentRetention(em, origins);
                     for (var source : sourceWork.references(preparation.command(), control::check))
                         DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, origins, control);
-                    DocumentPreparationSourcePins.insert(em, preparation, sourcePins, claim, coordinator, control::check);
+                    historicalCapture = DocumentPreparationCaptureDrain.register(tx, em, preparation, sourcePins,
+                            claim, coordinator, historical, sourceWork, control);
                 }
                 DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
                 control.check();
@@ -201,6 +203,11 @@ final class DocumentPublicationRegistration {
     }
 
     boolean mayHaveCommitted() { return mayHaveCommitted; }
+
+    /** Includes uncertain registration; capture completion independently requires durable exact binding. */
+    java.util.Optional<DocumentPreparationCaptureDrain.Capture> historicalCapture() {
+        return java.util.Optional.ofNullable(historicalCapture);
+    }
 
     RepositoryCoordinatorDrain.Identity drainIdentity() {
         return new RepositoryCoordinatorDrain.Identity(preparation.key(), preparation.command().sha256(), claimEpoch, claimToken, coordinator);

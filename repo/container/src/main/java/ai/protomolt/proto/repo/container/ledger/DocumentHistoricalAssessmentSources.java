@@ -42,6 +42,11 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
             return DocumentHistoricalReferenceAdmission.requireComplete(command, references, control);
         }
         void authorize(RepositoryReadControl control) { permit.requireActive(); authorizeAccepted(control); }
+        List<DocumentReadLedger.PinnedHistory> histories(DocumentHistoricalAssessmentSources expected) {
+            permit.requireActive();
+            if (expected != DocumentHistoricalAssessmentSources.this) throw new IllegalArgumentException("Source Work owner differs");
+            return sources.values().stream().map(Source::history).toList();
+        }
         void requireCaller(ai.protomolt.proto.repo.spi.RepositoryCaller caller) {
             permit.requireActive();
             for (var source : sources.values()) source.history().requireCaller(caller);
