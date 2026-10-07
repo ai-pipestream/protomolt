@@ -7091,6 +7091,8 @@ capture or record a drain for its own uncommitted capture. See
 This extends SQL fault coverage, not deployed recovery or public execution.
 
 **Historical recovery bounds:** operations and protobuf contracts are **unchanged**.
+The recovery-limit entries below record successive checkpoints; later qualification
+entries supersede earlier statements that their specific checks remain open.
 Actual guarded recovery qualifies 64 ancestry edges versus refused edge 65, and
 16 durable capture batches versus refused capture 17. Refusal rolls back the
 attempted activation without changing leases or earlier evidence. Terminal handling
@@ -7198,3 +7200,13 @@ retain a valid newest installation while damaging an older edge's command or
 predecessor digest. The actual ancestry walk reports FAILED_PRECONDITION without
 creating a terminal pair or execution. Both cases pass. This does not grant
 source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
+
+**Private preparation-root release:** **new, not yet implemented**. The
+[reviewed release contract](repository-historical-restore.md#release-identity-and-terminal-applicability)
+binds each release to its exact preparation, complete capture/drain evidence and
+an operation-wide success, rejection or exact initial abandonment. Cleanup must
+not inherit the execution ancestry limit: doing so would strand roots after an
+ancestry-limit rejection. Permanent receipt/header identities distinguish released
+retention from missing legacy evidence and allow retry after source pruning. SQL
+atomic deletion, coverage states, migration and failure/race gates remain required
+before this operation is mounted or advertised. Public contracts are unchanged.
