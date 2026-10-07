@@ -1041,18 +1041,23 @@ unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
 
 ### Terminal handling for exhausted historical recovery
 
-This is the next implementation requirement, not an available operation.
+This is a private implementation under qualification, not an available operation.
 The additive receipt reason `RECOVERY_LIMIT_EXCEEDED = 4` now compiles and passes
 runtime generated/dynamic validation and canonical codec tests. V110 now allows
 the reason only with an exact same-transaction recovery-limit sidecar. There is
-no Java decision handler or mounted operation yet. Descriptor compatibility does not mean old runtime validators
+a package-private Java decision handler, but no mounted operation. Descriptor compatibility does not mean old runtime validators
 accept the new value: qualify and upgrade receipt readers before enabling writes.
 See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
 The [SQL foundation evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md)
 qualifies paired decisions at both actual bounds, under-bound refusal, missing
 receipt refusal, and exclusion of a late activation in the same transaction.
-It does not yet qualify the handler, corruption variants, lost replies or concurrent
-decisions. The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
+The [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/README.md)
+now qualifies both actual bounds through `RepositoryHistoricalLimitDecisions`,
+under-bound absence of a decision, rollback before commit, lost acknowledgement
+after commit, exact retry, and current READ-policy and credential checks on scoped
+replay. Retries leave claim/owner leases unchanged. Corrupt-state variants,
+concurrent decisions, explicit cancellation and expired-lease replay still need
+handler qualification. The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
 now covers lease expiry before rejection insertion, expiry before normal deferred
 validation, and early constraint firing followed by an expired-lease commit.
 The first two roll back both rows; the last preserves the already validated
@@ -1066,7 +1071,7 @@ owner mutation. A SQL regression preserves this guard and checks ordinary
 cancellation succeeds after genuine activation. Do not remove the V95 check or
 fabricate V94 activation to terminate an exhausted operation.
 
-Introduce a private limit-decision operation with the following boundary:
+The private limit-decision operation must maintain the following boundary:
 
 1. Require process authority and an exact installed plan, original retention
    preparation and command. Serialize bounded identities before taking locks.

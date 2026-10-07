@@ -24,6 +24,8 @@ class RepositoryHistoricalRecoveryBoundIT {
     @Test void unexhaustedRecoveryAndUnpairedRejectionAreRefused() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
             var plan = installedHistoricalSuccessor(c, rig);
+            assertThat(new RepositoryHistoricalLimitDecisions(c.tx(), rig.budget())
+                    .decide(CALLER, CALLER, plan, rig.record(), NONE)).isEmpty();
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                 insertDecision(em, rig, plan, "CAPTURES", 16);
             })).hasStackTraceContaining("Recovery capture limit is not exhausted");
@@ -156,10 +158,9 @@ class RepositoryHistoricalRecoveryBoundIT {
             RepositorySuccessorExecution.insertBinding(em, plan);
             insertRejection(em, rig, plan);
         })).hasStackTraceContaining("Recovery limit decision cannot accompany activation");
-        c.tx().inTransaction(em -> {
-            insertDecision(em, rig, plan, kind, count);
-            insertRejection(em, rig, plan);
-        });
+        var decisions = new RepositoryHistoricalLimitDecisions(c.tx(), rig.budget());
+        var decided = decisions.decide(CALLER, CALLER, plan, rig.record(), NONE).orElseThrow();
+        assertThat(decisions.decide(CALLER, CALLER, plan, rig.record(), NONE)).contains(decided);
         assertThat(count(c, "repository_recovery_limit_decisions")).isEqualTo(1);
         assertThat(count(c, "repository_operation_rejection")).isEqualTo(1);
         var replay = new DocumentPublicationReplay(c.tx()).observe(CALLER, rig.record().command());
