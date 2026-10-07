@@ -1096,4 +1096,4 @@ reviewed barrier positions and current qualification status.
 The local proposal case passes focused provider checks in both retirement orders,
 including active Work, capture-drain records and preserved receipts. See
 `../evidence/repository/2026-10-07-local-successor-terminal-retirement/README.md`.
-The aggregate rerun remains pending; public historical routing is not enabled.
+The aggregate passed in 13m58s; public historical routing is not enabled.

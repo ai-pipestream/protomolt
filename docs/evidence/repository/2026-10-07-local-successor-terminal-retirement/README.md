@@ -23,6 +23,14 @@ V107 record; the uninstalled proposal adds none. The old generation rejects new
 execution. Provider bytes and receipt identity remain correct, both IDs disappear,
 and retained byte reservations return to baseline.
 
-The full storage gate requires both cases. The aggregate rerun remains pending;
-these focused results do not establish aggregate or hosted CI success. Remaining
-transaction orderings and public historical routing need qualification.
+The full storage gate passed at 5316e95ee6222394978109090f930f70e4c4cafa:
+13m58s, 1 aggregate test, 0 failures/errors/skips, JUnit 835.534s,
+timestamp 2026-10-07T22:30:54.336Z. Command:
+
+```
+./gradlew :protomolt-repo-container:admissionStorageTest --max-workers=2 --console=plain
+```
+
+This result covers both retirement orders and the existing storage hosts.
+Later claim-expiry additions are excluded from this checkpoint. Hosted CI and
+public historical routing remain separate qualifications.

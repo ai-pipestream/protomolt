@@ -608,7 +608,7 @@ uninstalled proposal adds no capture-drain attestation. Final checks require bot
 IDs removed, all retained byte reservations returned and the exact receipt replayable.
 
 Both focused cases passed with 0 failures or skips in 2m07s. Sol reviewed the
-extension. The full storage rerun is pending. Evidence:
+extension. The full storage suite passed in 13m58s with no failures or skips. Evidence:
 `docs/evidence/repository/2026-10-07-local-successor-terminal-retirement/README.md`.
 
 Terminal proof requires the retained caller's current replay authority. Revocation
