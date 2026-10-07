@@ -230,7 +230,7 @@ class DocumentPublicationPreparationCodecIT {
     private static DocumentPublicationPreparationRecord decode(ByteString bytes, DocumentPublicationPreparationRecord value) {
         return DocumentPublicationPreparationCodec.decode(bytes, value.key(), value.command().sha256());
     }
-    private static DocumentPublicationPreparationRecord input(Context c) {
+    static DocumentPublicationPreparationRecord input(Context c) {
         var source = prepare(c, 2, true);
         var command = new DocumentPublicationCommand(source.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).build());
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), "principal", command.operationId());

@@ -78,7 +78,7 @@ final class DocumentPublicationPreparationJournal {
             DocumentPublicationPreparationRecord record, ByteString encoded, byte[] digest) {
         // Exact claim retries must re-establish the current-transaction fence for V81's guard.
         RepositoryExecutionClaimLedger.lockLive(em, claim);
-        bind(em.createNativeQuery("""
+        int inserted = bind(em.createNativeQuery("""
                 INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
                   owner_nonce,command_codec,command_version,command_bytes,command_sha256,preparation_bytes,preparation_sha256)
                 VALUES (:a,:p,:o,:g,:owner,:codec,:version,:command,:commandDigest,:bytes,:digest)
@@ -88,6 +88,8 @@ final class DocumentPublicationPreparationJournal {
                 .setParameter("command", record.command().canonical().toByteArray())
                 .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
                 .setParameter("bytes", encoded.toByteArray()).setParameter("digest", digest).executeUpdate();
+        if (inserted == 1) DocumentPreparationHistoryRoots.insert(em, record, digest, java.util.List.of());
+        else DocumentPreparationHistoryRoots.coverage(em, record, digest); // Legacy absence stays UNKNOWN.
     }
 
     /** Trusted process-only bootstrap before claim acquisition; never returns private seeds or placement. */

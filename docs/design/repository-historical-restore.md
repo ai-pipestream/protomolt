@@ -650,3 +650,30 @@ provider evidence, followed by shared session integration and transport parity.
 Published examples must wait for the public acceptance cases. Pending-source
 retention and safe cleanup are prerequisites for claimed restore activation;
 broader backup qualification and progressive hydration remain required afterward.
+
+### Pending source projection checkpoint (2026-10-07)
+
+V103 adds an indexed set of distinct source `(node_id, revision_id)` pairs for an
+exact preparation and predecessor generation. The header binds the preparation
+and command digests, expected count and ordered source digest. A live execution
+claim fences creation; the header and its children must seal in one transaction.
+Sealed sets cannot be changed or deleted. Revision foreign keys retain the
+existing revision closure, including its physical references and schema bindings,
+under the current immutable revision guards. This is not a new physical owner.
+
+New ordinary registrations atomically record an explicit empty set. Pre-migration
+preparations remain unknown, including on exact retry; absence is never inferred
+to mean no historical sources. SQL validates internal projection consistency but
+does not decode the protobuf command. Java therefore reconciles the sealed set
+against canonical command intent. A future pruning consumer must require that
+reconciliation, not merely trust the sealed flag. A mismatch is data loss.
+
+This checkpoint does not enable historical execution, source pruning or retention
+release. Historical registration still requires complete prepared source proofs;
+ordinary registration supplies none and cannot bypass that check. Release needs
+a separate fenced protocol proving terminal or qualified abandoned state and
+drained readers/owners. Expiry alone is insufficient. Keep lock acquisition in
+claim/preparation-header, sorted revision, then origin/retention order; a future
+pruner must not acquire these in reverse. The current guards already prevent
+revision deletion, so this projection is groundwork for safe future pruning,
+not evidence of a repaired current data-loss path.
