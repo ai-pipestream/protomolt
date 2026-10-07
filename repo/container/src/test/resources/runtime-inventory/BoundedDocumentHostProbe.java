@@ -74,11 +74,13 @@ public final class BoundedDocumentHostProbe {
                     (account,principal,operation) -> caller).withTransport(
                     new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
             try (var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.of(List.of(selected,forbidden)),
-                    null,schemas,null,options.journaled(),new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
+                    new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 require(opens.get()==1,"one Redis provider");
                 require(host.publicationRepository()!=null && host.historicalRepository()!=null,"document repositories mounted");
-                require(host.services().size()==1 && host.services().getFirst() instanceof DocumentPublicationGrpcService,
-                        "publication-only service list");
+                require(host.services().size()==2
+                        && host.services().stream().anyMatch(service -> service instanceof DocumentPublicationGrpcService)
+                        && host.services().stream().anyMatch(service -> service instanceof DocumentHistoryGrpcService),
+                        "publication and history service list");
                 unavailable(host::repository); unavailable(host::archiveRepository); unavailable(host::archiveMutationRepository);
                 unavailable(host::driveRepository); unavailable(host::documentPublication);
                 unavailable(host::seedAccountDrives);
@@ -101,6 +103,7 @@ public final class BoundedDocumentHostProbe {
                     require(read.publicationRevision()==revision.getMutationRevision(),"historical publication identity");
                     read.authorizeDelivery(RepositoryReadControl.NONE);
                 }
+                verifyHistoryTransport(host,caller,fixture.document(),revision);
                 require(closes.get()==0,"Redis remains open during host lifetime");
             } finally { schemas.close(); }
             require(closes.get()==1,"Redis closes once after host drain");
@@ -111,6 +114,49 @@ public final class BoundedDocumentHostProbe {
         }
         System.out.println("BOUNDED_DOCUMENT_HOST_STARTUP_OK");
         System.out.println("BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK");
+    }
+    private static void verifyHistoryTransport(RepoServices host, RepositoryCaller caller, Document expected,
+            DocumentPublishedRevision revision) throws Exception {
+        String name="bounded-history-"+UUID.randomUUID();
+        host.startInProcess(name,"history-fixture-token",null);
+        var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+        try {
+            var request=ReadRevisionRequest.newBuilder().setAddress(revision.getAddress()).setRevisionId(revision.getRevisionId())
+                    .setMode(HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_VALIDATED).build();
+            var base=DocumentHistoryServiceGrpc.newBlockingStub(channel);
+            expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> base.withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS).readRevision(request));
+            var headers=new io.grpc.Metadata();
+            headers.put(io.grpc.Metadata.Key.of("api_token",io.grpc.Metadata.ASCII_STRING_MARSHALLER),"history-fixture-token");
+            var client=base.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+            var response=client.withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS).readRevision(request);
+            require(response.hasValidated() && response.getValidated().getDocument().equals(expected),"remote retained-schema document");
+            require(response.getRevisionId().equals(revision.getRevisionId()) && response.getAddress().equals(revision.getAddress())
+                    && response.getMutationRevision()==revision.getMutationRevision(),"remote history identity");
+            try (var local=host.historicalRepository().readValidated(caller,revision.getAddress(),
+                    UUID.fromString(revision.getRevisionId()),RepositoryReadControl.NONE)) {
+                require(response.getValidated().getCommandSha256().equals(local.commandSha256()),"remote command binding");
+                require(response.getValidated().getPolicySha256().equals(local.policySha256()),"remote policy binding");
+                require(response.getMetadata().equals(local.metadata()) && response.getManifest().equals(local.manifest()),"remote historical metadata");
+            }
+            var raw=client.withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS).readRevision(request.toBuilder()
+                    .setMode(HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_RAW).build());
+            require(raw.hasRaw() && !raw.hasValidated(),"raw delivery is explicit");
+            try (var local=host.historicalRepository().readRaw(caller,revision.getAddress(),
+                    UUID.fromString(revision.getRevisionId()),RepositoryReadControl.NONE)) {
+                require(raw.getRaw().getFragmentsCount()==local.fragments().size(),"raw fragment count");
+                for (int i=0;i<local.fragments().size();i++) {
+                    var fragment=local.fragments().get(i);
+                    require(raw.getRaw().getFragments(i).getRevisionOrdinal()==fragment.revisionOrdinal()
+                            && raw.getRaw().getFragments(i).getContent().equals(ByteString.copyFrom(fragment.bytes())),"raw fragment bytes");
+                }
+            }
+            expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> client.withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS)
+                    .readRevision(request.toBuilder().clearMode().build()));
+        } finally {
+            channel.shutdownNow();
+            require(channel.awaitTermination(10,java.util.concurrent.TimeUnit.SECONDS),"history channel stopped");
+        }
+        System.out.println("BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK");
     }
     /** Real host authentication with a fixture operator credential, not production API-key provisioning. */
     private static void verifyTransport(RepoServices host, Tx tx, RepositoryCaller caller,
