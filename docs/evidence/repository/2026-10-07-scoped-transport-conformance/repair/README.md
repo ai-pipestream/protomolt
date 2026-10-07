@@ -1,16 +1,58 @@
 # Scoped publication parity: 2026-10-07 repair of PR #411
 
-Tested source commit: `c01ca4e117d81c71b7c4de4d5c37c6b10cd8296e`, which merges
+**Current tested source: `ef9fdbecb8895a7137b2ba17127661febf000fc7`.** It is
 target `refactor/repository-composition` at
-`d91db10b4e74713d81e514b36c9aff009a18841b` (identical on Forgejo and GitHub when
-merged). The repair code itself is commit `5b1dd08be`. This evidence directory is
-added by a later evidence-only commit; `git diff c01ca4e11 <final PR head>`
-touches only `docs/evidence/repository/2026-10-07-scoped-transport-conformance/`.
-Earlier results in this directory belong to earlier sources: see
-[../README.md](../README.md) (coordinator integration, `1b9cdd8a8`) and
+`2d60befbdcdb16ef761638e55b293af9a2353be7` (identical on Forgejo and GitHub when
+merged, merge commit `85419e1ac`) plus the BOM repair `ef9fdbecb`. The repair
+code itself is `5b1dd08be`. The evidence for this state is in
+[ef9fdbecb/](ef9fdbecb/) and the section "Requalification at `ef9fdbecb`" below.
+It is added by a later evidence-only commit; `git diff ef9fdbecb <final PR head>`
+changes files under `docs/evidence/repository/2026-10-07-scoped-transport-conformance/` only.
+
+The earlier qualification at `c01ca4e117d81c71b7c4de4d5c37c6b10cd8296e` (target
+`d91db10b4`) is kept below with its archives in this directory; those archives
+are results for `c01ca4e11`, not for the current head. Earlier results in the
+parent directory belong to earlier sources: see [../README.md](../README.md)
+(coordinator integration, `1b9cdd8a8`) and
 [../HISTORICAL-AGENT-RUN.md](../HISTORICAL-AGENT-RUN.md) (original agent run).
 
-## What the repair changes
+## Requalification at `ef9fdbecb`
+
+Hosted `build (25)` on the previous head `5b31ac3cd` failed in
+`:bom:checkBomCompleteness` (`bom/build.gradle:234`) before any tests ran
+(https://github.com/ai-pipestream/protomolt/actions/runs/37594308528/job/112703043363).
+The same failure reproduced locally on the target itself: four published
+repository modules (`protomolt-repo-admission`, `protomolt-repo-history-grpc`,
+`protomolt-repo-publication-grpc`, `protomolt-repo-schema-registry`) were not
+constrained. Commit `ef9fdbecb` adds them to `supportedModules` next to the other
+repository modules, so they appear in both the Maven BOM constraints and the
+consumer catalog. No exemption was added and no check was changed.
+
+| Run | Command | Exit | Wall | Result |
+| --- | --- | --- | --- | --- |
+| parity-1 | `./gradlew :protomolt-repo-container:scopedPublicationTest --max-workers=2 --console=plain --rerun-tasks` | 0 | 78 s | 1 test, 0 fail/err/skip, 66.2 s; 44/44 markers; run `02c61dcd-…`; 174 tasks executed |
+| parity-2 | same | 0 | 78 s | 1 test, 0 fail/err/skip, 66.5 s; 44/44 markers; run `5944ab01-…`; 174 tasks executed |
+| regressions | focused `:protomolt-repo-container:test` (five suites, command as below) | 0 | 63 s | 67 tests (7 + 16 + 7 + 5 + 32), 0 fail/err/skip |
+| admission-storage | `./gradlew :protomolt-repo-container:admissionStorageTest --max-workers=2 --console=plain` | 0 | 7 m 44 s | 1 test, 0 fail/err/skip |
+| bom | `./gradlew :bom:checkBomCompleteness :bom:checkConsumerCatalog --max-workers=2 --console=plain --rerun-tasks` | 0 | 2 s | both tasks executed |
+| consumer-stage | `./gradlew -I gradle/toolkit-consumer.init.gradle -PtoolkitRepository=<tmp> -PpublishVersion=0.1.0-consumer-candidate-SNAPSHOT stageToolkitConsumer` | 0 | 1 s | 48 tasks executed |
+| consumer-run | `./gradlew -p examples/protobuf-toolkit -PtoolkitRepository=<tmp> -PprotomoltVersion=0.1.0-consumer-candidate-SNAPSHOT run --refresh-dependencies` | 0 | 2 s | consumer ran |
+
+Each run was archived before the next started, as `ef9fdbecb/<run>.tar.gz` with
+command, `result.txt` (exit, duration, source SHA), Gradle output, JUnit XML and,
+for parity, the persisted log, plus a `SHA256SUMS` manifest. Probe log SHA-256:
+parity-1 `6d401b910411d9b8073653c1d60aef40facede445981afa2803724fe638aced9`
+(XML `78e04ce03007c48e26fc2139ddba93a89a812a00c513dc22519a4642e3e1c50e`), parity-2
+`dbdc9218e699fd92851ef6e0c7c360e02a336e09bedb81026387a49a889a641c`
+(XML `d3692e694758f98bf235c778c78d196aaeebae64efc9195737ad5a69499b98c3`).
+`ef9fdbecb/source-sha256.txt` fingerprints the four changed files. The
+`DocumentHistoricalTransportProbe.java:287` failure described below did not recur
+in this run. The `c01ca4e11` archives were re-extracted and their `SHA256SUMS`
+and `source-sha256.txt` entries verified unchanged.
+
+## Earlier qualification at `c01ca4e11`
+
+### What the repair changes
 
 All changes are test-side: `ScopedPublicationProbe.java`,
 `ScopedPublicationParityIT.java` and one system property on the
@@ -52,7 +94,7 @@ the JUnit marker printing are unchanged.
    versions", not provider effects. The raw historical content read after READ
    revocation is labelled as a library read on both paths.
 
-## Results at `c01ca4e11` (local host `krick`)
+## Results at `c01ca4e11` (local host `krick`, superseded by the requalification above)
 
 | Run | Command | Exit | Wall | JUnit | Probe |
 | --- | --- | --- | --- | --- | --- |
