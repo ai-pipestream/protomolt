@@ -1,5 +1,20 @@
 # Repository operation inventory
 
+## Actual history-root integrity (2026-10-07)
+
+- **Extended private coverage check:** one SQL snapshot compares the actual root
+  count and ordered digest with both the sealed header and canonical command.
+  Missing, extra or substituted roots produce DATA_LOSS. No locks are added.
+- **Unchanged:** absent legacy headers remain UNKNOWN; genuine sealed empty
+  sets remain EXACT. Wire contracts, root retention and release are unchanged.
+
+The [28-test qualification](../evidence/repository/2026-10-07-root-integrity/README.md)
+includes a failing missing-root baseline, real SQL corruption injection with
+rollback, multi-revision selection, migration, capture closure and capture drain.
+Sol reviewed without a blocker. Future release must call this integrity check
+under its claim/preparation/header locks and separately prove every capture's
+canonical object coverage, ownership and completed drain.
+
 ## Bounded abandonment confirmation and terminal capture refusal (2026-10-07)
 
 - **Extended private confirmation:** abandonment evidence is read inside a SQL

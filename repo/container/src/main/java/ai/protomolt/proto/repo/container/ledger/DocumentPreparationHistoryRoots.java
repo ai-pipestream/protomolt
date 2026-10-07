@@ -20,17 +20,30 @@ final class DocumentPreparationHistoryRoots {
     /** Reconcile the SQL projection against decoded canonical intent before relying on its liveness set. */
     static Coverage coverage(EntityManager em, DocumentPublicationPreparationRecord record, byte[] preparationDigest) {
         var rows = scope(em.createNativeQuery("""
-                SELECT preparation_sha256,command_sha256,expected_count,roots_sha256,sealed
-                FROM repository_preparation_history_sets
-                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
+                SELECT h.preparation_sha256,h.command_sha256,h.expected_count,h.roots_sha256,h.sealed,
+                  actual.root_count,actual.root_digest
+                FROM repository_preparation_history_sets h
+                CROSS JOIN LATERAL (
+                  SELECT count(*) AS root_count,
+                    sha256(convert_to('protomolt/preparation-history/v1' || chr(10) ||
+                      coalesce(string_agg(r.node_id::text || '/' || r.revision_id::text || chr(10),''
+                        ORDER BY r.node_id,r.revision_id),''),'UTF8')) AS root_digest
+                  FROM repository_preparation_history_roots r
+                  WHERE r.account_id=h.account_id AND r.principal=h.principal AND r.operation_id=h.operation_id
+                    AND r.predecessor_generation=h.predecessor_generation
+                ) actual
+                WHERE h.account_id=:a AND h.principal=:p AND h.operation_id=:o AND h.predecessor_generation=:g
                 """), record).getResultList();
         if (rows.isEmpty()) return Coverage.UNKNOWN;
         Object[] row = (Object[]) rows.getFirst();
         var expected = roots(record.command());
+        var expectedDigest = digest(expected);
         if (!MessageDigest.isEqual((byte[]) row[0], preparationDigest)
                 || !MessageDigest.isEqual((byte[]) row[1], HexFormat.of().parseHex(record.command().sha256()))
                 || ((Number) row[2]).intValue() != expected.size()
-                || !MessageDigest.isEqual((byte[]) row[3], digest(expected))
+                || !MessageDigest.isEqual((byte[]) row[3], expectedDigest)
+                || ((Number) row[5]).longValue() != expected.size()
+                || !MessageDigest.isEqual((byte[]) row[6], expectedDigest)
                 || !Boolean.TRUE.equals(row[4])) {
             throw new ai.protomolt.proto.repo.spi.RepositoryException(
                     ai.protomolt.proto.repo.spi.RepositoryException.Code.DATA_LOSS,

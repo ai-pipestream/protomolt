@@ -256,6 +256,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                         .setParameter("id", key.operationId()).getSingleResult()).intValue()).isEqualTo(roots);
                 return null;
             });
+            verifyRootCorruptionRefused(c, record, roots);
             assertThatThrownBy(() -> registration.start(CALLER, owner, Duration.ofMinutes(5), RepositoryReadControl.NONE))
                     .isInstanceOf(UnsupportedOperationException.class);
             assertThatThrownBy(record::prepare).isInstanceOf(UnsupportedOperationException.class);
@@ -264,6 +265,42 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                     .isInstanceOf(IllegalStateException.class);
             assertThat(registrationLeases(c, key)).isEqualTo(leases);
             assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    private static final class RollBackCorruption extends RuntimeException {}
+
+    private static void verifyRootCorruptionRefused(Context c, DocumentPublicationPreparationRecord record, int roots) {
+        var digest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record));
+        for (int variant = 0; variant < (roots == 1 ? 3 : 1); variant++) {
+            int corruption = variant; // Missing child, additional revision, same-count replacement.
+            assertThatThrownBy(() -> c.tx().inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+                // Administrative corruption injection only. DDL and data changes roll back together;
+                // production users cannot mutate sealed roots through the guarded API.
+                em.createNativeQuery("ALTER TABLE repository_preparation_history_roots DISABLE TRIGGER repository_preparation_history_root_guard").executeUpdate();
+                var expected = DocumentPreparationHistoryRoots.roots(record.command()).getFirst();
+                if (corruption != 1) {
+                    assertThat(em.createNativeQuery("DELETE FROM repository_preparation_history_roots WHERE operation_id=:id AND revision_id=:revision")
+                            .setParameter("id", record.key().operationId()).setParameter("revision", UUID.fromString(expected.revision()))
+                            .executeUpdate()).isEqualTo(1);
+                }
+                if (corruption != 0) {
+                    assertThat(em.createNativeQuery("""
+                            INSERT INTO repository_preparation_history_roots(account_id,principal,operation_id,predecessor_generation,node_id,revision_id)
+                            SELECT :a,:p,:o,:g,node_id,revision_id FROM document_revision_publications
+                            WHERE node_id=:node AND revision_id<>:revision
+                            """).setParameter("a", record.key().account()).setParameter("p", record.key().principal())
+                            .setParameter("o", record.key().operationId()).setParameter("g", record.predecessorGeneration())
+                            .setParameter("node", UUID.fromString(expected.node())).setParameter("revision", UUID.fromString(expected.revision()))
+                            .executeUpdate()).isEqualTo(1);
+                }
+                assertThatThrownBy(() -> DocumentPreparationHistoryRoots.coverage(em, record, digest))
+                        .isInstanceOf(RepositoryException.class)
+                        .hasMessageContaining("Preparation history projection differs");
+                throw new RollBackCorruption();
+            })).isInstanceOf(RollBackCorruption.class);
+            var coverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, record, digest));
+            assertThat(coverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
         }
     }
 

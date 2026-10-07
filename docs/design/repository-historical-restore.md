@@ -861,8 +861,9 @@ release receipt. In one transaction, lock claim, V81 preparation, V103 set and V
 batches in digest order. Decode the bounded canonical preparation, match its hashes,
 and compare every batch's distinct source node/revision/object tuples to the complete
 canonical selection. Require the same-creation initial batch, every exact V105 owner
-and every V107 completion. Recompute actual root count/digest before deletion; do
-not rely on a sealed header alone. Missing legacy coverage is UNKNOWN, not an empty
+and every V107 completion. The coverage check now recomputes actual root
+count/digest in the header's SQL snapshot; release must use it under the locks
+above before deletion. Do not rely on a sealed header alone. Missing legacy coverage is UNKNOWN, not an empty
 set. Require matching V52 success or V64 rejection with an applicable owner generation,
 or exact V85 initial abandonment with no admitted owner/start. Expiry, coordinator
 drain and successor installation alone are insufficient.
