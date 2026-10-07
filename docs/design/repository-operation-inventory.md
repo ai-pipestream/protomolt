@@ -7214,9 +7214,13 @@ and confirms exact retries without source-table reads. JDBC commit faults and
 pre/post-commit cancellation are qualified. Two concurrent callers now have
 actual SQL-wait evidence for commit and rollback convergence. Release at the
 16-capture and 65-edge recovery limits waits for the original capture to drain
-and then confirms the same receipt without changing leases. Actual post-pruning
-retry, multi-root cases, capture-versus-release races and remaining terminal
-alternatives remain unfinished. See
+and then confirms the same receipt without changing leases. Multi-root partial
+deletion now rolls back atomically while complete release preserves another
+preparation's shared-source root. A competing capture waits on the release's
+actual SQL lock and is rejected after release commit or rollback. Other race
+orderings, actual post-pruning retry and remaining terminal alternatives remain
+unfinished. See
+[multi-root/race evidence](../evidence/repository/2026-10-07-multi-root-release/README.md),
 [concurrency/bound evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
 [handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and

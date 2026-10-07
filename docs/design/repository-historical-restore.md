@@ -1122,8 +1122,12 @@ or part tables. The existing history-root coverage remains a live-execution proo
 its EXACT value never includes released retention. Concurrent releases now have
 real claim-lock wait evidence for both commit and rollback. The actual 16-capture
 and 65-edge cases prove release after every persisted capture drains, including
-the original epoch. Actual pruning, multi-root/capture races and other terminal
+the original epoch. Multi-root partial deletion now rolls back, and complete
+release leaves other preparations' roots intact. A competing capture waits behind
+the real release lock and remains rejected after commit or rollback; its unrelated
+reader pins survive. Actual pruning, remaining race orderings and other terminal
 release paths remain unfinished; no release API is mounted. See
+[multi-root and capture-race evidence](../evidence/repository/2026-10-07-multi-root-release/README.md),
 [concurrency and limit evidence](../evidence/repository/2026-10-07-root-release-concurrency/README.md),
 [private handler evidence](../evidence/repository/2026-10-07-root-release-handler/README.md),
 [SQL release evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
