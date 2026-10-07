@@ -310,14 +310,48 @@ class DocumentPreparationCaptureDrainIT {
                     Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"));
                  var rig = prepare(c, new Tx(emf), Duration.ofMinutes(5), true)) {
                 assertThat(injected).isTrue();
-                if (beforeCommit) {
-                    assertThat(rig.capture().identity()).isNotNull();
-                    assertThatThrownBy(() -> rig.capture().complete(CALLER, Duration.ZERO, NONE))
-                            .hasStackTraceContaining("original command scope");
-                    assertThat(count(c, "repository_preparation_capture_drains", rig)).isZero();
-                } else {
-                    assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isPresent();
-                    assertThat(count(c, "repository_preparation_capture_drains", rig)).isEqualTo(1);
+                // prepare has joined the failed registration call. No commit can still be
+                // in flight when these assertions distinguish rollback from a lost reply.
+                var unrelated = rig.reads().captureHistorical(CALLER, rig.fixture().address(), rig.fixture().revision());
+                try {
+                    try (var held = rig.sources().work()) {
+                        if (beforeCommit) {
+                            assertThat(rig.capture().releaseLocal(Duration.ZERO, NONE)).isFalse();
+                        } else {
+                            assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isEmpty();
+                        }
+                        assertThat(rig.history().isReleased()).isFalse();
+                        assertThat(held.references(rig.command(), () -> {})).isNotEmpty();
+                        assertThat(count(c, "repository_preparation_capture_drains", rig)).isZero();
+                    }
+                    if (beforeCommit) {
+                        assertThat(rig.capture().identity()).isNotNull();
+                        assertThat(rig.capture().releaseLocal(Duration.ofSeconds(1), NONE)).isTrue();
+                        assertThat(rig.capture().releaseLocal(Duration.ZERO, NONE)).isTrue();
+                        for (var table : List.of("repository_execution_claims", "repository_coordinator_bindings",
+                                "repository_publication_preparations", "repository_preparation_history_sets",
+                                "repository_preparation_pin_batches", "repository_preparation_pin_owners",
+                                "repository_preparation_source_pins")) {
+                            assertThat(count(c, table, rig)).as(table).isZero();
+                        }
+                        assertThatThrownBy(() -> rig.capture().complete(CALLER, Duration.ZERO, NONE))
+                                .hasStackTraceContaining("original command scope");
+                        assertThat(count(c, "repository_preparation_capture_drains", rig)).isZero();
+                        assertThat(DocumentPreparationCaptureDrain.confirm(c.tx(), CALLER, rig.capture().identity(), NONE)).isEmpty();
+                    } else {
+                        var receipt = rig.capture().complete(CALLER, Duration.ZERO, NONE).orElseThrow();
+                        assertThat(receipt.kind()).isEqualTo("LOCAL");
+                        assertThat(DocumentPreparationCaptureDrain.confirm(c.tx(), CALLER, rig.capture().identity(), NONE)).contains(receipt);
+                        assertThat(count(c, "repository_preparation_capture_drains", rig)).isEqualTo(1);
+                    }
+                    assertThat(rig.history().isReleased()).isTrue();
+                    try (var use = unrelated.use()) {
+                        assertThat(use.plan().revision()).isEqualTo(rig.fixture().revision());
+                    }
+                } finally {
+                    unrelated.close();
+                    assertThat(unrelated.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                    unrelated.release();
                 }
             }
         }

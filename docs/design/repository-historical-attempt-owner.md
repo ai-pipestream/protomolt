@@ -789,3 +789,24 @@ and owner binding. Do not bypass terminal
 replay authorization, treat lease expiry as fencing proof, or create a placeholder
 reservation merely to reuse cleanup. Cover initial retirement before registration,
 after uncertain admission, after terminal publication and after successor takeover.
+
+### Initial capture disposal prerequisite
+
+Stop registration admission and join the exact in-flight registration call before
+classifying a tentative capture. A rollback can remove the entire initial claim;
+PostgreSQL cannot lock a row that never committed. An absence query alone cannot
+prove that a still-running registration will not commit later.
+
+Classify the exact tentative capture, including initial claim token, coordinator,
+preparation identity, modes and pins digest. Committed registration must match its
+preparation, initial binding, sealed historical roots and initial capture batch,
+including transaction identity and exact pin ownership. A later takeover changing
+the current claim is not evidence that the original capture rolled back. Partial
+or inconsistent evidence fails explicitly. A root-release receipt must not be
+mistaken for proof that the original registration never happened.
+
+After confirmed rollback, release only the local capture resources and record no
+durable capture-drain receipt. After confirmed commit, complete or confirm the exact
+durable drain receipt. Both paths must wait for actual accepted Work and pin Uses;
+neither may fence unrelated readers. A different initial winner must not cause the
+losing tentative capture to acquire the winner's identity or drain receipt.

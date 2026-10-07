@@ -1,0 +1,3 @@
+6929cca6f1de0eac6b98a439c560c280ce12ab4a9e192b643632aac926b48ee1  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationCaptureDrainIT.java
+7f6892fef44d67c54608c7bbdc28dafe7d56d7c196cb6e1f6668f56ff14e5446  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPreparationCaptureDrain.java
+bb4aceb0a5f9da4c85eed77fd1c3737fd9f06a0b7978af40b931938ff92d0004  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistration.java
