@@ -25,6 +25,60 @@ class RepositoryHistoricalLimitSupersessionIT {
     private static final RepositoryCaller CALLER=new RepositoryCaller("principal",true);
     private static final RepositoryReadControl NONE=RepositoryReadControl.NONE;
 
+    @Test void committedDecisionReplaysAfterExpiryAndPreventsSupersession() throws Exception {
+        try (var c=context(POSTGRES); var rig=historicalInitial(c,Duration.ofSeconds(10))) {
+            for (int i=0;i<15;i++) append(c,rig);
+            var plan=installedHistoricalSuccessor(c,rig,Duration.ofSeconds(5));
+            var key=rig.record().key();
+            var h=plan.reservation();
+            var hashes=c.tx().readOnly(em -> (Object[])em.createNativeQuery("""
+                    SELECT predecessor_preparation_sha256,preparation_sha256,modes_sha256
+                    FROM repository_successor_installs WHERE operation_id=:id AND successor_epoch=:epoch
+                    """).setParameter("id",key.operationId()).setParameter("epoch",h.predecessor().epoch()+1).getSingleResult());
+            var hex=java.util.HexFormat.of();
+            var proposal=new RepositoryCoordinatorReservation.SupersededUnactivated(
+                    new RepositoryCoordinatorDrain.Identity(key,h.predecessor().commandSha256(),h.predecessor().epoch()+1,
+                            h.successorToken(),h.successorIncarnation()),UUID.randomUUID(),UUID.randomUUID(),Duration.ofMinutes(5),
+                    new RepositoryCoordinatorReservation.OwnerIdentity(plan.next().predecessorGeneration()+1,plan.next().seeds().ownerNonce()),
+                    hex.formatHex((byte[])hashes[1]),java.util.Optional.of(new RepositoryCoordinatorReservation.Installation(
+                            hex.formatHex((byte[])hashes[0]),hex.formatHex((byte[])hashes[1]),hex.formatHex((byte[])hashes[2]))));
+            var decisions=new RepositoryHistoricalLimitDecisions(c.tx(),rig.budget());
+            var receipt=decisions.decide(CALLER,CALLER,plan,rig.record(),NONE).orElseThrow();
+            var before=leases(c,rig);
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM
+                          (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:id
+                        """).setParameter("id",key.operationId()).getSingleResult();
+                boolean expired=(Boolean)em.createNativeQuery("""
+                        SELECT clock_timestamp()>GREATEST(c.lease_until,o.lease_until)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:id
+                        """).setParameter("id",key.operationId()).getSingleResult();
+                assertThat(expired).isTrue();
+            });
+            assertThat(decisions.decide(CALLER,CALLER,plan,rig.record(),NONE)).contains(receipt);
+            assertThatThrownBy(() -> RepositoryCoordinatorSupersession.reserve(c.tx(),CALLER,proposal,NONE))
+                    .hasStackTraceContaining("Terminal operation cannot supersede reservation");
+            assertThat(RepositoryCoordinatorReservation.confirm(c.tx(),CALLER,proposal,NONE)).isEmpty();
+            var observed=new RepositoryCoordinatorRecoveryDiscovery(c.tx(),new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(10)))
+                    .inspect(CALLER,key,rig.record().command().sha256(),NONE);
+            assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.TERMINAL);
+            assertThat(observed.unactivated()).isEmpty();
+            assertThat(observed.candidate()).isEmpty();
+            assertThat(count(c,"repository_coordinator_supersessions")).isZero();
+            assertThat(count(c,"repository_recovery_limit_decisions")).isEqualTo(1);
+            assertThat(count(c,"repository_operation_rejection")).isEqualTo(1);
+            assertThat(count(c,"repository_successor_executions")).isZero();
+            assertThat(count(c,"repository_preparation_pin_batches")).isEqualTo(16);
+            assertThat(count(c,"repository_preparation_capture_drains")).isZero();
+            assertThat(leases(c,rig)).containsExactly(before);
+            assertThat(rig.budget().reservedBytes()).isZero();
+        }
+    }
+
     @Test void expiredDecisionRollsBackBeforeSupersessionAndFreshOwnerCanDecide() throws Exception {
         try (var c=context(POSTGRES); var rig=historicalInitial(c,Duration.ofSeconds(10))) {
             for (int i=0;i<15;i++) append(c,rig);

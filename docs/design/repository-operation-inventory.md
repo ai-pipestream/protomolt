@@ -7178,3 +7178,9 @@ back at normal deferred validation. V98 commits; the old plan is stale and a
 genuine fresh installation can decide. No activation or additional capture is
 created. Committed-terminal replay after expiry remains separate qualification.
 See [supersession evidence](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md).
+
+**Recovery-limit replay after expiry:** operations are **unchanged**. A decision
+committed while live remains replayable after both database leases expire. V98
+rejects an exact prospective supersession; discovery reports TERMINAL with no
+candidate. Neither lease is renewed and no activation or drain is created. Both
+supersession-class cases pass. See [expired-replay evidence](../evidence/repository/2026-10-07-recovery-limit-expired-replay/README.md).
