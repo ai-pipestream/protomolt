@@ -131,6 +131,9 @@ class NativeReplicaRuntimeTest {
         int totalReadHandles = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkReadHandles", "0"));
         if (totalReadHandles < 0 || totalReadHandles > 256 || totalReadHandles % 4 != 0)
             throw new IllegalArgumentException("Total read handles must be zero or a multiple of four up to 256");
+        long totalBudget = Long.parseLong(System.getProperty("protomolt.test.nativeBenchmarkBudgetBytes", "0"));
+        if (totalBudget < 0 || totalBudget > 384_000_000 || totalBudget % 4 != 0)
+            throw new IllegalArgumentException("Total payload budget must be zero or a multiple of four up to 384000000");
         Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
         int payloadBytes = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkPayloadBytes", "0"));
         int iterations = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkIterations", "32"));
@@ -148,6 +151,7 @@ class NativeReplicaRuntimeTest {
                 + "\ntotal_read_handles=" + totalReadHandles + "\nzero_read_handles_means=32 per worker"
                 + "\nzero_read_slots_means=8 per worker\nworker_heap_limit=512MiB\npayload_string_bytes=" + payloadBytes
                 + "\nzero_payload_means=original small workload\niterations_per_client=" + iterations
+                + "\ntotal_payload_budget_bytes=" + totalBudget + "\nzero_budget_means=128000000 per worker"
                 + "\njournaled=" + journaled
                 + "\ntrace=" + trace
                 + "\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
@@ -160,6 +164,7 @@ class NativeReplicaRuntimeTest {
                 int pool = config.startsWith("f") ? 8 / replicas : 8;
                 builder.environment().put("PROTOMOLT_NATIVE_POOL", Integer.toString(pool));
                 builder.environment().put("PROTOMOLT_NATIVE_CLIENTS", Integer.toString(clients));
+                builder.environment().put("PROTOMOLT_NATIVE_BUDGET_BYTES", Long.toString(totalBudget == 0 ? 128_000_000 : totalBudget / replicas));
                 builder.environment().put("PROTOMOLT_NATIVE_READ_SLOTS", Integer.toString(totalReadSlots == 0 ? 8 : totalReadSlots / replicas));
                 builder.environment().put("PROTOMOLT_NATIVE_READ_HANDLES", Integer.toString(totalReadHandles == 0 ? 32 : totalReadHandles / replicas));
                 var children = new ArrayList<Process>();
@@ -178,7 +183,8 @@ class NativeReplicaRuntimeTest {
                             Thread.sleep(10);
                         }
                         assertThat(Files.readString(directory.resolve(name + "-" + index + "-config.txt")))
-                                .contains("\njournaled=" + journaled + "\n", "\ntrace=" + trace + "\n");
+                                .contains("\njournaled=" + journaled + "\n", "\ntrace=" + trace + "\n",
+                                        "\npayload_budget_bytes=" + (totalBudget == 0 ? 128_000_000 : totalBudget / replicas) + "\n");
                     }
                     sampler.begin(name);
                     long start = System.nanoTime();
