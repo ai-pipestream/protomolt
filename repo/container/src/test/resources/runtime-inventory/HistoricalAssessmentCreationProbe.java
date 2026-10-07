@@ -13,13 +13,14 @@ import java.util.*;
 public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
         ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
-        STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK
+        STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
         for (var scenario : Scenario.values()) {
-            if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK) {
-                try (var fault = new HistoricalCreateCommitFault(database, scenario == Scenario.LOST_ACK)) {
+            if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
+                    || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK) {
+                try (var fault = new HistoricalCreateCommitFault(database, scenario == Scenario.LOST_ACK || scenario == Scenario.START_LOST_ACK)) {
                     run(fault.tx(), provider, source, revision, database, scenario, fault, null, tx);
                 }
             } else if (scenario == Scenario.STAGE_WINS || scenario == Scenario.CREATE_WINS) {
@@ -90,8 +91,11 @@ public final class HistoricalAssessmentCreationProbe {
                             history, fragments, budget, observation);
                 } else {
                     claimed(tx, provider, caller, command, policy, source.placement(), history, fragments, budget, observation,
-                            fault, mixed, scenario == Scenario.MIXED_CONTENTION ? database : null);
+                            fault, mixed, scenario == Scenario.MIXED_CONTENTION ? database : null, scenario);
                     System.out.println(scenario == Scenario.MIXED_CONTENTION ? "CLAIMED_HISTORICAL_MIXED_ORIGIN_CONTENTION_OK"
+                            : scenario == Scenario.START_CONCURRENT ? "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK"
+                            : scenario == Scenario.START_ROLLBACK ? "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK"
+                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_REFUSED_OK"
                             : fault == null ? (mixed ? "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK")
                             : fault.lostAcknowledgement() ? "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK");
                 }
@@ -167,7 +171,9 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement,
             DocumentReadLedger.PinnedHistory history, Map<Integer, ByteString> fragments, PayloadBudget budget,
             DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault, boolean mixed,
-            javax.sql.DataSource contentionDatabase) throws Exception {
+            javax.sql.DataSource contentionDatabase, Scenario scenario) throws Exception {
+        boolean startFault = scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK;
+        boolean createFault = fault != null && !startFault;
         var key = new RepositoryOperationLedger.Key("account", caller.principalName(), command.operationId());
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                 Map.of(placement.drive().id(), placement), Duration.ofMinutes(5), 0);
@@ -179,7 +185,27 @@ public final class HistoricalAssessmentCreationProbe {
             var owner = registration.admitInitial(caller, modes, RepositoryReadControl.NONE).orElseThrow();
             try (var execution = registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE)) {
                 var admitted = execution.admitUploads(caller, RepositoryReadControl.NONE);
+                if (scenario == Scenario.START_CONCURRENT) {
+                    HistoricalConcurrentStartProbe.run(tx, registration, execution, caller, owner, modes, command,
+                            policy, fragments, observation);
+                    return;
+                }
+                if (startFault) {
+                    fault.armStart(key);
+                    try {
+                        execution.start(caller, Duration.ofMinutes(2), RepositoryReadControl.NONE);
+                        throw new AssertionError("Targeted START commit fault returned success");
+                    } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                    long starts = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:op")
+                            .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                    require(starts == (fault.lostAcknowledgement() ? 1 : 0), "START fault has exact committed row count");
+                }
                 var started = execution.start(caller, Duration.ofMinutes(2), RepositoryReadControl.NONE);
+                require(execution.start(caller, Duration.ofMinutes(2), RepositoryReadControl.NONE).equals(started),
+                        "repeated start preserves coordinates and acknowledged permission");
+                if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
+                        "lost START acknowledgement recovers identity; rolled back START permits a new identity");
                 var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
                 try (var assessment = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
                         mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
@@ -205,7 +231,7 @@ public final class HistoricalAssessmentCreationProbe {
                         new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
                         selections = Map.of("a", selected);
                     }
-                    if (fault == null) {
+                    if (!createFault) {
                         try (var foreign = registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE)) {
                             try {
                                 foreign.createAssessment(caller, assessment, selections, observation, new RepositorySchemaArtifacts(tx),
@@ -214,18 +240,52 @@ public final class HistoricalAssessmentCreationProbe {
                             } catch (IllegalArgumentException expected) {
                                 require(expected.getMessage().equals("Assessment belongs to another historical execution"), "exact handle identity refused");
                             }
+                            require(foreign.start(caller, Duration.ofMinutes(2), RepositoryReadControl.NONE).equals(started),
+                                    "other handle recovers the same durable start coordinates");
+                            try (var ownAssessment = foreign.prepareAssessment(caller, policy, Map.of("a", fragments),
+                                    mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
+                                    (member, occurrence) -> { if (!mixed) throw new AssertionError("Historical schemas are retained"); return freshDefinition; },
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), RepositoryReadControl.NONE)) {
+                                try {
+                                    foreign.createAssessment(caller, ownAssessment, selections, observation, new RepositorySchemaArtifacts(tx),
+                                            started, RepositoryReadControl.NONE);
+                                    throw new AssertionError("Loaded start granted CREATE authority to another handle");
+                                } catch (RepositoryException expected) {
+                                    require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                                    && expected.getMessage().contains("requires reconciliation"),
+                                            "loading start coordinates confers reconciliation-only authority");
+                                }
+                            }
                         }
                         long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
                                 "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
                                 .setParameter("op", command.operationId()).getSingleResult()).longValue());
                         require(claims == 0, "foreign handle staged no schema claims");
                     }
+                    if (scenario == Scenario.START_LOST_ACK) {
+                        try {
+                            execution.createAssessment(caller, assessment, selections, observation,
+                                    new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                            throw new AssertionError("Lost START acknowledgement granted CREATE permission");
+                        } catch (RepositoryException expected) {
+                            require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                    && expected.getMessage().contains("requires reconciliation"),
+                                    "original handle without acknowledged START cannot CREATE");
+                        }
+                        long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(claims == 0, "lost START acknowledgement stages no schema claims on either handle");
+                        require(new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).isEmpty(),
+                                "START coordinates alone do not establish an assessment");
+                        return;
+                    }
                     var authorityBefore = authority(tx, owner.key());
                     DocumentAssessmentCreation.Created created = null;
                     if (contentionDatabase != null) {
                         created = HistoricalMixedOriginContentionProbe.create(tx, contentionDatabase, execution, caller,
                                 command, assessment, selections, observation, started);
-                    } else if (fault == null) {
+                    } else if (!createFault) {
                         created = execution.createAssessment(caller, assessment, selections, observation,
                                 new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
                     } else {
@@ -237,7 +297,7 @@ public final class HistoricalAssessmentCreationProbe {
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
                     var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {});
-                    if (fault != null && !fault.lostAcknowledgement()) {
+                    if (createFault && !fault.lostAcknowledgement()) {
                         require(discovered.isEmpty(), "rollback has no discoverable assessment");
                         for (String table : List.of("document_assessment_owners", "document_assessment_objects", "document_assessment_slots",
                                 "document_assessment_roots", "document_assessment_artifacts", "document_assessment_slot_snapshots")) {

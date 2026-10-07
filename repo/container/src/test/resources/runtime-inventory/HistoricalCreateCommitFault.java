@@ -11,9 +11,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 
-/** Fault only the transaction that really inserted the requested assessment owner. */
+/** Fault only the transaction that inserted the armed assessment owner or scoped start. */
 final class HistoricalCreateCommitFault implements AutoCloseable {
     private final AtomicReference<UUID> assessment = new AtomicReference<>();
+    private final AtomicReference<RepositoryOperationLedger.Key> startKey = new AtomicReference<>();
+    private final AtomicReference<UUID> proposedStart = new AtomicReference<>();
     private final AtomicBoolean fired = new AtomicBoolean();
     private final jakarta.persistence.EntityManagerFactory factory;
     private final Tx tx;
@@ -29,7 +31,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                     return Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},
                             (wrapper, action, arguments) -> {
                                 boolean target = action.getName().equals("commit") && !fired.get()
-                                        && ownsAssessment(connection, assessment.get());
+                                        && (ownsAssessment(connection, assessment.get()) || ownsStart(connection));
                                 if (target && !fired.compareAndSet(false, true))
                                     throw new AssertionError("Assessment commit fault was entered concurrently");
                                 if (target && !lostAcknowledgement)
@@ -47,6 +49,30 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     Tx tx() { return tx; }
     void arm(UUID id) {
         if (!assessment.compareAndSet(null, id)) throw new IllegalStateException("Commit fault already armed");
+    }
+    void armStart(RepositoryOperationLedger.Key key) {
+        if (assessment.get() != null || !startKey.compareAndSet(null, key))
+            throw new IllegalStateException("Commit fault already armed");
+    }
+    UUID proposedStart() { return java.util.Objects.requireNonNull(proposedStart.get()); }
+    private boolean ownsStart(Connection connection) throws SQLException {
+        var key = startKey.get();
+        if (key == null) return false;
+        try (var statement = connection.prepareStatement("""
+                SELECT assessment_id FROM repository_publication_assessment_starts
+                WHERE account_id=? AND principal=? AND operation_id=? AND predecessor_generation=0
+                  AND started_xid=pg_current_xact_id_if_assigned()
+                """)) {
+            statement.setString(1, key.account()); statement.setString(2, key.principal());
+            statement.setObject(3, key.operationId());
+            try (var rows = statement.executeQuery()) {
+                if (!rows.next()) return false;
+                if (!proposedStart.compareAndSet(null, rows.getObject(1, UUID.class)))
+                    throw new AssertionError("Start commit fault selected twice");
+                if (rows.next()) throw new AssertionError("More than one scoped assessment start");
+                return true;
+            }
+        }
     }
     boolean lostAcknowledgement() { return lostAcknowledgement; }
     void requireFailure(RuntimeException failure) {

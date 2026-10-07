@@ -21,6 +21,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final byte[] preparationDigest;
     private final String encodedModes;
     private final Object assessmentIdentity = new Object();
+    private DocumentAssessmentStartJournal.Started acknowledgedStart;
     private boolean assessmentCreateAttempted;
     private boolean closed;
 
@@ -141,8 +142,14 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
-        return mutate(caller, control, em -> DocumentAssessmentStartJournal.startOrLoadHistorical(
+        var result = mutate(caller, control, em -> DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(
                 em, owner, record.command(), retention, control));
+        // Only a positively acknowledged INSERT grants this handle CREATE authority.
+        // Loading coordinates after an uncertain acknowledgement is reconciliation-only.
+        if (result.inserted()) acknowledgedStart = result.started();
+        else if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start changed");
+        return result.started();
     }
 
     /** SQL selection admission only; provider execution must retain its own accepted lifetime. */
@@ -199,6 +206,9 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private DocumentAssessmentCreation.Created createObserved(RepositoryCaller caller,
             Map<String, DocumentSelectedAttemptLedger.Selected> selected, DocumentAssessmentEvidence evidence,
             RepositorySchemaArtifacts storage, DocumentAssessmentStartJournal.Started started, RepositoryReadControl control) {
+        if (!started.equals(acknowledgedStart))
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical assessment start requires reconciliation on this handle");
         evidence.requireOwner(owner, control::check);
         var command = record.command();
         if (!evidence.command(control::check).canonical().equals(command.canonical())

@@ -15,6 +15,8 @@ import java.util.UUID;
 /** Private sticky staging intent. It does not establish a committed assessment or authorize restaging. */
 final class DocumentAssessmentStartJournal {
     record Started(UUID assessment, Instant retainUntil) {}
+    /** The inserted flag is tentative until the owning transaction and delivery checks finish. */
+    record StartOutcome(Started started, boolean inserted) {}
     private final Tx tx;
     private final DocumentPublicationModesJournal modes;
     DocumentAssessmentStartJournal(Tx tx, PayloadBudget budget) {
@@ -90,6 +92,11 @@ final class DocumentAssessmentStartJournal {
     /** Caller holds the historical handle's complete current execution/authority fence. */
     static Started startOrLoadHistorical(EntityManager em, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Duration retention, RepositoryReadControl control) {
+        return startOrLoadHistoricalOwned(em, owner, command, retention, control).started();
+    }
+
+    static StartOutcome startOrLoadHistoricalOwned(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Duration retention, RepositoryReadControl control) {
         Objects.requireNonNull(retention); control.check();
         if (owner.generation() != 1 || owner.executionClaim().orElseThrow().epoch() != 1)
             throw new IllegalArgumentException("Historical start requires the initial execution owner");
@@ -101,14 +108,17 @@ final class DocumentAssessmentStartJournal {
                 WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=0 FOR UPDATE
                 """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
                 .setParameter("o", owner.key().operationId()).getResultList();
-        if (rows.isEmpty()) return insertStarted(em, owner, command, UUID.randomUUID(), retention, control);
-        Object[] row = (Object[]) rows.getFirst();
+        if (rows.isEmpty()) return insertStartedOutcome(em, owner, command, UUID.randomUUID(), retention, control, true);
+        return new StartOutcome(historicalBinding(em, owner, command, retention, (Object[]) rows.getFirst(), control), false);
+    }
+
+    private static Started historicalBinding(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Duration retention, Object[] row, RepositoryReadControl control) {
         if (!owner.token().equals(row[2]) || !command.sha256().equals(HexFormat.of().formatHex((byte[]) row[3])))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start binding differs");
         if (((Number) row[4]).longValue() != retention.toNanos() / 1000)
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Historical assessment retention differs from its start");
-        // Evaluate time only after the row lock has been acquired. A projected
-        // expression in the locking SELECT can be evaluated before its lock wait.
+        // Read time after acquiring the row lock, including an INSERT conflict.
         var now = instant(em.createNativeQuery("SELECT clock_timestamp()").getSingleResult());
         if (!instant(row[1]).isAfter(now))
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Historical assessment start has expired");
@@ -118,7 +128,12 @@ final class DocumentAssessmentStartJournal {
 
     private static Started insertStarted(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
             UUID proposedId, Duration retention, RepositoryReadControl control) {
-        em.createNativeQuery("""
+        return insertStartedOutcome(em, owner, command, proposedId, retention, control, false).started();
+    }
+
+    private static StartOutcome insertStartedOutcome(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, UUID proposedId, Duration retention, RepositoryReadControl control, boolean historical) {
+        int inserted = em.createNativeQuery("""
                     INSERT INTO repository_publication_assessment_starts(account_id,principal,operation_id,predecessor_generation,
                       owner_nonce,command_sha256,assessment_id,retention_micros,retain_until)
                     VALUES (:a,:p,:o,:g,:owner,:digest,:id,:micros,clock_timestamp())
@@ -127,13 +142,20 @@ final class DocumentAssessmentStartJournal {
                     .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1)
                     .setParameter("owner", owner.token()).setParameter("digest", HexFormat.of().parseHex(command.sha256()))
                     .setParameter("id", proposedId).setParameter("micros", retention.toNanos()/1000).executeUpdate();
-            Object[] row = (Object[]) em.createNativeQuery("""
-                    SELECT assessment_id,retain_until FROM repository_publication_assessment_starts
-                    WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
-                    """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
-                    .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult();
-            control.check();
-        return new Started((UUID) row[0], instant(row[1]));
+        if (inserted != 0 && inserted != 1)
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Unexpected assessment start insert count");
+        Object[] row = (Object[]) em.createNativeQuery("""
+                SELECT assessment_id,retain_until,owner_nonce,command_sha256,retention_micros
+                FROM repository_publication_assessment_starts
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g FOR UPDATE
+                """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult();
+        control.check();
+        if (inserted == 1 && !proposedId.equals(row[0]))
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Inserted assessment start identity differs");
+        var started = historical ? historicalBinding(em, owner, command, retention, row, control)
+                : new Started((UUID) row[0], instant(row[1]));
+        return new StartOutcome(started, inserted == 1);
     }
 
     /** Called before the owner lock; SQL repeats this check for direct CREATE callers. */
