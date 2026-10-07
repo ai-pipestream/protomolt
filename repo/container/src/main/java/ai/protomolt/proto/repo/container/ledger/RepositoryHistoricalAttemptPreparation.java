@@ -4,8 +4,7 @@ import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.spi.*;
 import java.time.Duration;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /** Preparation owned by one historical entry; never attaches ordinary publication sessions. */
 final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
@@ -13,7 +12,8 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     private final Tx tx;
     private final PayloadBudget budget;
     private final SqlTimeouts timeouts;
-    private final RepositoryCoordinatorReservation.Proposal proposal;
+    private RepositoryCoordinatorReservation.Proposal proposal;
+    private RepositoryCoordinatorReservation.SupersededUnactivated pending;
     private final DocumentPublicationCommand command;
     private final Map<String, DocumentPublicationCandidate.Mode> modes;
     private final Duration lease;
@@ -35,6 +35,92 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     }
 
     Phase phase() { requireOpen(); return phase; }
+    RepositoryCoordinatorReservation.Proposal proposal() { requireOpen(); return proposal; }
+    void requireSettled() {
+        requireOpen();
+        if (pending != null) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                "Historical supersession must be confirmed first");
+    }
+    List<RepositoryCoordinatorDrain.Identity> retainedClaims() {
+        requireOpen();
+        return pending == null ? List.of(successor(proposal)) : List.of(successor(proposal), successor(pending));
+    }
+    private static RepositoryCoordinatorDrain.Identity successor(RepositoryCoordinatorReservation.Proposal p) {
+        var old = p.predecessor();
+        return new RepositoryCoordinatorDrain.Identity(old.key(), old.commandSha256(), Math.addExact(old.epoch(), 1),
+                p.successorToken(), p.successorIncarnation());
+    }
+
+    /** Replaces only an exact, expired, unactivated claim; pending identity survives an uncertain commit. */
+    boolean reconcileUnactivated(RepositoryCaller coordinator, RepositoryCaller caller,
+            Map<String, DocumentPublicationCandidate.Mode> requested,
+            Map<DocumentUploadPayloads.Key, PartObject> payloads, RepositoryReadControl control) {
+        requireOpen(); Objects.requireNonNull(control).check();
+        RepositoryCoordinatorReservation.require(coordinator, proposal, control);
+        DocumentAdmissionAuthorization.requireCaller(caller, proposal.predecessor().key(), command.intent().getAccountId());
+        if (!modes.equals(requested)) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                "Historical recovery modes changed");
+        try (var snapshot = DocumentRecoveryPayloads.prepare(command, payloads, budget, control)) {
+            tx.inTransaction(em -> {
+                control.check(); DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
+                DocumentHistoricalRetentionBinding.require(em, retention, retentionDigest, false);
+                control.check(); return null;
+            });
+            if (pending == null) {
+                var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
+                        .inspect(coordinator, proposal.predecessor().key(), command.sha256(), control);
+                if (observed.unactivated().isEmpty()) return false;
+                var source = observed.unactivated().orElseThrow();
+                if (phase == Phase.PROPOSED && proposal.predecessor().equals(source.predecessor())) return false;
+                if (!successor(proposal).equals(source.predecessor()))
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                            "Historical successor differs from retained attempt");
+                verifySource(coordinator, source, control);
+                var replacement = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                        UUID.randomUUID(), UUID.randomUUID(), lease, source.owner(), source.preparationSha256(), source.installation());
+                new DocumentPublicationModesJournal(tx, budget)
+                        .requireSupersessionModes(coordinator, caller, command, replacement, modes, control);
+                pending = replacement;
+            } else {
+                new DocumentPublicationModesJournal(tx, budget)
+                        .requireSupersessionModes(coordinator, caller, command, pending, modes, control);
+            }
+            RepositoryCoordinatorSupersession.reserve(tx, coordinator, pending, control);
+            // Only exact commit confirmation lets us discard the old preparation metadata.
+            releasePreparation();
+            proposal = pending; pending = null; phase = Phase.RESERVED;
+            return true;
+        }
+    }
+
+    private void verifySource(RepositoryCaller coordinator,
+            RepositoryCoordinatorRecoveryDiscovery.UnactivatedCandidate source, RepositoryReadControl control) {
+        if (source.installation().isPresent()) {
+            if (plan == null) throw new RepositoryException(RepositoryException.Code.CONFLICT,
+                    "Historical installation has no retained plan");
+            try (var bytes = budget.reserve(2L * DocumentPublicationPreparationCodec.MAX_BYTES + 1024 * 1024)) {
+                var oldSha = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.previous()));
+                var sha = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.next()));
+                if (!source.owner().equals(new RepositoryCoordinatorReservation.OwnerIdentity(
+                        Math.addExact(plan.next().predecessorGeneration(), 1), plan.next().seeds().ownerNonce()))
+                        || !source.preparationSha256().equals(HexFormat.of().formatHex(sha))
+                        || !RepositorySuccessorInstall.confirm(tx, coordinator, plan, oldSha, sha,
+                                RepositorySuccessorInstall.encodeModes(plan), control))
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Historical installation binding differs");
+            }
+        } else {
+            if (phase == Phase.INSTALLED || !source.owner().equals(RepositoryCoordinatorReservation.owner(proposal).orElseThrow()))
+                throw new RepositoryException(RepositoryException.Code.CONFLICT, "Historical reservation owner differs");
+            // Discovery binds the journal SHA to this exact owner. V98 rechecks that tuple atomically.
+            // The ordinary loader requires a live lease and must not be used for expired claims.
+            if (loaded == null) return;
+            try (var bytes = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+                var sha = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(loaded.record()));
+                if (!source.preparationSha256().equals(HexFormat.of().formatHex(sha)))
+                    throw new RepositoryException(RepositoryException.Code.CONFLICT, "Historical preparation binding differs");
+            }
+        }
+    }
     boolean matches(Map<String, DocumentPublicationCandidate.Mode> requested, Duration lease, SqlTimeouts timeouts) {
         requireOpen(); return modes.equals(requested) && this.lease.equals(lease) && this.timeouts.equals(timeouts);
     }
@@ -43,7 +129,7 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     Phase advance(RepositoryCaller coordinator, RepositoryCaller caller,
             Map<String, DocumentPublicationCandidate.Mode> requested,
             Map<DocumentUploadPayloads.Key, PartObject> payloads, RepositoryReadControl control) {
-        requireOpen(); Objects.requireNonNull(control).check();
+        requireSettled(); Objects.requireNonNull(control).check();
         if (!modes.equals(requested)) throw new RepositoryException(RepositoryException.Code.CONFLICT,
                 "Historical recovery modes changed");
         RepositoryCoordinatorReservation.require(coordinator, proposal, control);
@@ -96,7 +182,7 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     }
 
     RepositorySuccessorInstall.Plan installedPlan() {
-        requireOpen();
+        requireSettled();
         if (phase != Phase.INSTALLED) throw new IllegalStateException("Historical installation is not confirmed");
         return plan;
     }
@@ -105,8 +191,12 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     @Override public void close() {
         if (closed) return;
         closed = true;
+        releasePreparation();
+        pending = null;
+    }
+    private void releasePreparation() {
         if (loaded != null) loaded.close();
         if (nextBytes != null) nextBytes.close();
-        loaded = null; plan = null;
+        loaded = null; plan = null; nextBytes = null;
     }
 }

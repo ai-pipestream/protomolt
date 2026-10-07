@@ -328,7 +328,7 @@ revocation boundary before public dispatch. Preparation currently retains the bo
 maximum next-record lease until disposal; lowering this to measured retained bytes is
 a memory-capacity optimization still to assess, not a qualified throughput claim.
 
-## Next: recover this owner's expired unactivated proposal
+## Recover this owner's expired unactivated proposal
 
 Permit a retained V98 transition only when no sources, activation, execution or
 retirement proof have attached to the entry. This covers an uncertain V97 reply,
@@ -352,10 +352,34 @@ retirement followed by a separately qualified successor path.
 
 Test each unactivated phase with real expiry, lost V98 acknowledgment, refusal of a
 foreign successor, retained budgets on refusal, and no new history capture before the
-replacement installation is confirmed. These transitions are not implemented yet.
+replacement installation is confirmed. These transitions are implemented privately; public routing remains disabled.
 
 While a supersession is pending, refuse ordinary advancement, installed-plan delivery
 and source transfer until it is confirmed. Fenced retirement must check both current
 and pending successor identities; fencing the old claim alone must not discard a
 potentially committed replacement. Keep a single authoritative current proposal in
 the preparation helper rather than independently mutating an entry-level copy.
+
+### Private self-supersession qualification (2026-10-07)
+
+`reconcileUnactivated` now performs the transition above on the same exclusively
+borrowed entry. A pending V98 proposal prevents advancement, plan delivery and source
+attachment. Fenced retirement checks both current and pending claims. Exact V98
+confirmation adopts the replacement, releases obsolete preparation metadata and
+clears the old plan. Source attachment and execution still prohibit this transition.
+
+Expired reservations use discovery plus V98's atomic claim/owner/preparation checks;
+the live-lease preparation loader is deliberately not used before supersession.
+An already retained installation is checked against its exact plan and V93 record.
+
+The focused PostgreSQL qualification covers 56 distinct tests: 55 passed together,
+then the 18-case preparation class passed after adding pending-replacement shutdown
+(the other 38 regression cases were unchanged). Actual JDBC post-commit faults cover
+V97, V93 and V98 replies; synthetic provider observations only establish archived
+source fixtures. See [self-supersession evidence](../evidence/repository/2026-10-07-historical-self-supersession/README.md).
+
+This transition has not yet been exercised in the packaged real-provider host.
+Its next qualification must retain one owner through expiry and replacement before
+capture, then publish/read back actual provider bytes and verify the receipt.
+Attached V94 recovery, managed library/gRPC routing, and the earlier authorization
+boundary decision remain outstanding. No new public API is enabled by this change.

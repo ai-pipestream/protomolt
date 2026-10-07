@@ -89,6 +89,8 @@ class RepositoryHistoricalPreparationIT {
                 assertThat(attempt.advancePreparation(CALLER, modes, Map.of(), NONE))
                         .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
                 attempt.attachSources(later.sources(), later.sources().work(), NONE);
+                assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER, modes, Map.of(), NONE))
+                        .hasMessageContaining("Attached historical sources");
                 attempt.openExecution(CALLER, NONE);
                 assertThat(attempt.start(LEASE, NONE)).isNotNull();
                 assertThat(count(c, "repository_coordinator_expirations")).isEqualTo(1);
@@ -225,6 +227,134 @@ class RepositoryHistoricalPreparationIT {
                         .hasMessageContaining("payload keys differ");
                 assertThat(count(c, "repository_coordinator_expirations")).isZero();
                 assertThat(count(c, "repository_successor_installs")).isZero();
+            }
+            owner.close();
+            assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(ints = {0, 1, 2, 3, 4})
+    void sameOwnerSupersedesExpiredClaimAndRetainsUncertainReplacement(int initialPhase) throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var modes = modes(rig); var observed = expired(c, rig, modes);
+            var cancelled = new AtomicBoolean();
+            var loseInitial = new AtomicBoolean(initialPhase == 0 || initialPhase == 3);
+            var loseReplacement = new AtomicBoolean(true);
+            var fault = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                boolean initial = loseInitial.get() && count(c, initialPhase == 0
+                        ? "repository_coordinator_expirations" : "repository_successor_installs") == 1
+                        && loseInitial.compareAndSet(true, false);
+                boolean replacement = count(c, "repository_coordinator_supersessions") == 1
+                        && loseReplacement.compareAndSet(true, false);
+                if (initial || replacement) {
+                    cancelled.set(true);
+                    throw new java.sql.SQLException("Supersession reply lost", "08006");
+                }
+            });
+            var control = new RepositoryReadControl() {
+                public boolean isCancelled() { return cancelled.get(); }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger", Map.of(
+                    "hibernate.connection.datasource", fault, "hibernate.hbm2ddl.auto", "validate"))) {
+                var budget = new PayloadBudget(256L * 1024 * 1024);
+                var owner = new RepositoryInstalledHistoricalAttempts(new Tx(emf), budget, new DriveLedger(c.tx()), 1);
+                try (var attempt = owner.beginProposed(CALLER, rig.record(), modes, observed, Duration.ofSeconds(2), TIMEOUTS)) {
+                    if (initialPhase == 0) {
+                        assertThatThrownBy(() -> attempt.advancePreparation(CALLER, modes, Map.of(), control))
+                                .hasStackTraceContaining("Supersession reply lost");
+                    } else {
+                        attempt.advancePreparation(CALLER, modes, Map.of(), control);
+                        if (initialPhase == 3) assertThatThrownBy(() -> attempt.advancePreparation(CALLER, modes, Map.of(), control))
+                                .hasStackTraceContaining("Supersession reply lost");
+                        else if (initialPhase == 2) attempt.advancePreparation(CALLER, modes, Map.of(), control);
+                    }
+                }
+                cancelled.set(false); waitExpired(c, rig);
+                var oldIdentity = identity(c, rig);
+                try (var attempt = owner.resume(CALLER, rig.record().command()).orElseThrow()) {
+                    assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER,
+                            Map.of(modes.keySet().iterator().next(), DocumentPublicationCandidate.Mode.OPAQUE), Map.of(), NONE))
+                            .hasMessageContaining("modes changed");
+                    var extra = new ai.protomolt.proto.repo.codec.PartObject(
+                            rig.record().command().intent().getMembers(0).getParts(0).getSlot().getPart(), "", new byte[]{1}, "invalid");
+                    assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER, modes,
+                            Map.of(new DocumentUploadPayloads.Key("extra", 0), extra), NONE))
+                            .hasMessageContaining("payload keys differ");
+                    assertThat(count(c, "repository_coordinator_supersessions")).isZero();
+                    assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER, modes, Map.of(), control))
+                            .hasStackTraceContaining("Supersession reply lost");
+                    assertThat(loseReplacement).isFalse();
+                    var replacement = identity(c, rig);
+                    assertThat(replacement[0]).isEqualTo(((Number) oldIdentity[0]).longValue() + 1);
+                    var retainedBytes = budget.reservedBytes();
+                    assertThatThrownBy(() -> attempt.advancePreparation(CALLER, modes, Map.of(), NONE))
+                            .hasMessageContaining("supersession must be confirmed");
+                    assertThatThrownBy(() -> attempt.installedPlan(CALLER, NONE))
+                            .hasMessageContaining("supersession must be confirmed");
+                    try (var later = capture(c, rig); var root = later.sources().work()) {
+                        assertThatThrownBy(() -> attempt.attachSources(later.sources(), root, NONE))
+                                .hasMessageContaining("supersession must be confirmed");
+                        try (var borrowed = root.fork()) { assertThat(later.history().isReleased()).isFalse(); }
+                    }
+                    // Neither expiry nor the old claim being fenced can dispose the pending current claim.
+                    assertThat(attempt.retireFenced(CALLER, Duration.ZERO, NONE))
+                            .isEqualTo(RepositoryInstalledHistoricalAttempts.Retirement.NOT_PROVEN);
+                    assertThat(budget.reservedBytes()).isEqualTo(retainedBytes);
+                    if (initialPhase == 4) {
+                        attempt.close();
+                        owner.close();
+                        assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                        assertThat(budget.reservedBytes()).isZero();
+                        assertThat(identity(c, rig)).containsExactly(replacement);
+                        assertThat(count(c, "repository_coordinator_supersessions")).isEqualTo(1);
+                        assertThat(count(c, "repository_preparation_capture_drains")).isZero();
+                        assertThat(count(c, "repository_historical_activations")).isZero();
+                        assertThat(rig.history().isReleased()).isFalse();
+                        return;
+                    }
+                    cancelled.set(false);
+                    assertThat(attempt.reconcileUnactivated(CALLER, modes, Map.of(), NONE)).isTrue();
+                    assertThat(identity(c, rig)).containsExactly(replacement);
+                    assertThatThrownBy(() -> attempt.installedPlan(CALLER, NONE))
+                            .hasMessageContaining("installation is not confirmed");
+                    assertThat(attempt.advancePreparation(CALLER, modes, Map.of(), NONE))
+                            .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
+                    assertThat(attempt.installedPlan(CALLER, NONE).reservation().successorToken()).isEqualTo(replacement[1]);
+                    assertThat(count(c, "repository_coordinator_supersessions")).isEqualTo(1);
+                    assertThat(count(c, "repository_historical_activations")).isZero();
+                }
+                owner.close();
+                assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void foreignSuccessorCannotReplaceRetainedIdentity(boolean installed) throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var modes = modes(rig); var observed = expired(c, rig, modes);
+            var budget = new PayloadBudget(256L * 1024 * 1024);
+            var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
+            try (var attempt = owner.beginProposed(CALLER, rig.record(), modes, observed, Duration.ofSeconds(2), TIMEOUTS)) {
+                attempt.advancePreparation(CALLER, modes, Map.of(), NONE);
+                if (installed) attempt.advancePreparation(CALLER, modes, Map.of(), NONE);
+                waitExpired(c, rig);
+                var source = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                        .inspect(CALLER, rig.record().key(), rig.record().command().sha256(), NONE).unactivated().orElseThrow();
+                var foreign = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                        java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), Duration.ofSeconds(2),
+                        source.owner(), source.preparationSha256(), source.installation());
+                RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, foreign, NONE);
+                waitExpired(c, rig);
+                var exact = identity(c, rig); var bytes = budget.reservedBytes();
+                assertThatThrownBy(() -> attempt.reconcileUnactivated(CALLER, modes, Map.of(), NONE))
+                        .hasMessageContaining("successor differs from retained attempt");
+                assertThat(identity(c, rig)).containsExactly(exact);
+                assertThat(budget.reservedBytes()).isEqualTo(bytes);
+                assertThat(count(c, "repository_coordinator_supersessions")).isEqualTo(1);
             }
             owner.close();
             assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();

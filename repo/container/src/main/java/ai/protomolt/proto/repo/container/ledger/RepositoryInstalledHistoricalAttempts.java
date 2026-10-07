@@ -61,6 +61,10 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             this.preparation = preparation; this.bytes = bytes;
             key = retention.key(); command = retention.command(); fingerprint = null; this.retentionDigest = retentionDigest;
         }
+        RepositoryCoordinatorReservation.Proposal reservation() {
+            return preparation == null ? reservation : preparation.proposal();
+        }
+        void requireSettled() { if (preparation != null) preparation.requireSettled(); }
         void releaseBytes() {
             if (preparation != null) preparation.close();
             bytes.close();
@@ -226,10 +230,24 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             return phase;
         }
 
+        synchronized boolean reconcileUnactivated(RepositoryCaller coordinator,
+                Map<String, DocumentPublicationCandidate.Mode> modes,
+                Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> payloads,
+                RepositoryReadControl control) {
+            requireMutable(control);
+            if (entry.preparation == null) throw conflict("Historical entry already began installed");
+            if (entry.sources != null || entry.activation != null || entry.execution != null)
+                throw conflict("Attached historical sources require activation reconciliation");
+            boolean changed = entry.preparation.reconcileUnactivated(coordinator, entry.caller, modes, payloads, control);
+            if (changed) entry.plan = null;
+            return changed;
+        }
+
         /** Private coordinator view of a confirmed plan; this grants no execution authority. */
         synchronized RepositorySuccessorInstall.Plan installedPlan(RepositoryCaller coordinator, RepositoryReadControl control) {
             requireMutable(control);
-            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
+            entry.requireSettled();
             if (entry.plan == null) throw conflict("Historical installation is not confirmed");
             return entry.plan;
         }
@@ -238,6 +256,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         synchronized void attachSources(DocumentHistoricalAssessmentSources sources,
                 DocumentHistoricalAssessmentSources.Work work, RepositoryReadControl control) {
             requireMutable(control);
+            entry.requireSettled();
             if (entry.plan == null) throw conflict("Historical installation is not confirmed");
             if (entry.sources != null) throw conflict("Historical sources are already attached");
             Objects.requireNonNull(sources); Objects.requireNonNull(work);
@@ -253,7 +272,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         /** Retains the same handle, including acknowledged START and sticky mutation flags, across calls. */
         synchronized void openExecution(RepositoryCaller coordinator, RepositoryReadControl control) {
             authorize(control);
-            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
             if (entry.execution == null) entry.execution = entry.activation.openAcceptedExecution(coordinator, entry.caller,
                     entry.work, entry.scopes, entry.parent, control);
         }
@@ -329,7 +348,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 RepositoryReadControl control, boolean terminal) throws InterruptedException {
             requireActive(control);
             long nanos = checkedNanos(timeout), start = System.nanoTime();
-            RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
+            RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
             if (entry.retirement == RetirementProof.NONE) {
                 var command = entry.command;
                 if (terminal) {
@@ -342,10 +361,10 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                     }
                     entry.retirement = RetirementProof.TERMINAL;
                 } else {
-                    var reservation = entry.reservation;
+                    var reservation = entry.reservation();
                     var identity = new RepositoryCoordinatorDrain.Identity(entry.key, command.sha256(),
                             reservation.predecessor().epoch() + 1, reservation.successorToken(), reservation.successorIncarnation());
-                    if (!RepositoryClaimRetirement.fenced(tx, command, List.of(identity), control)) return Retirement.NOT_PROVEN;
+                    if (!RepositoryClaimRetirement.fenced(tx, command, entry.preparation == null ? List.of(identity) : entry.preparation.retainedClaims(), control)) return Retirement.NOT_PROVEN;
                     entry.retirement = RetirementProof.FENCED;
                 }
             }
@@ -399,7 +418,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             for (var entry : retained) {
                 control.check();
                 var coordinator = Objects.requireNonNull(authority.apply(entry.key));
-                RepositoryCoordinatorReservation.require(coordinator, entry.reservation, control);
+                RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
                 if (!disposeEntry(entry, coordinator, nanos, start, control)) return false;
                 control.check();
                 entry.releaseBytes();
