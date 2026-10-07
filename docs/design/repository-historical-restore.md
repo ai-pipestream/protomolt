@@ -733,3 +733,22 @@ terminal completion unless a separately qualified atomic transfer protects all
 sources needed by the successor. Current read pins protect their own physical
 objects; they do not replace proof of schema-worker quiescence or historical
 schema retention. No release API or compliance claim follows from this design.
+
+The release proof must identify the exact source pins borrowed by the preparation.
+Waiting for every reader of a source revision, or for all work in a shared reader
+incarnation, would couple unrelated operations. Record only distinct selected
+objects with their reader incarnation, pin UUID, physical object UUID, source node,
+source revision and publication revision. V103 already retains the complete source
+revision and its schemas; recording unselected parts adds no retention guarantee.
+Pin identities must originate from the captured history under a live Use, not from
+caller-supplied identifiers. The internal projection is data, not release authority.
+
+Durable association remains implementation work. It must preserve capture batches
+across retries and recovery: a fresh capture adds its own exact identities instead
+of replacing the pins an earlier attempt borrowed. Validate and lock live pin rows
+only after the ordered origin and retention locks, matching normal pin release.
+Keep associations after pins disappear; do not add a restrictive foreign key to
+live pin rows. Distinguish an exact retry from another capture and legacy missing
+associations. Association alone does not establish drained provider or schema work.
+Existing process-death recovery still requires durable reader quiescence; without
+the required recovery evidence, keep the roots retained.

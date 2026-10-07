@@ -1,5 +1,21 @@
 # Repository operation inventory
 
+## Selected historical source pin projection (2026-10-07)
+
+- **Extended internal preparation:** historical source references expose immutable
+  selected reader/pin/object/source-revision identities while their borrowed Use
+  remains active. Identities come from the actual capture, not caller-provided pins.
+  Duplicate selections share one physical pin; unselected objects are excluded.
+- **Unchanged:** public operations, protobuf contracts, ownership, receipts,
+  idempotency and pin-release behavior. The projection grants no release authority.
+- **Pending:** durable capture-batch association, recovery and terminal/drain checks
+  before V103 retention roots can be released. Roots remain protected.
+
+Eight focused PostgreSQL tests passed; provider observations in those fixtures are
+synthetic. Sol reviewed the change without a blocker. See the
+[test receipts](../evidence/repository/2026-10-07-historical-source-pins/README.md)
+and [release design](repository-historical-restore.md#retention-release-requirements-before-implementation).
+
 ## Scoped library and gRPC parity (2026-10-07)
 
 - **Extended verification:** one shared scenario driver runs publication through

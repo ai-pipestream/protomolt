@@ -53,15 +53,18 @@ final class DocumentHistoricalReferenceAdmission {
         private final List<Batch> batches;
         private final List<PublicationHistoricalReuse> selectors;
         private final List<DocumentHistoricalReadPlan.Entry> entries;
+        private final List<DocumentHistoricalSourcePin> pins;
         private Prepared(DocumentReadLedger.PinnedRead<DocumentHistoricalReadPlan>.Use use,
                 String account, Set<UUID> objects, List<Batch> batches, List<PublicationHistoricalReuse> selectors,
-                List<DocumentHistoricalReadPlan.Entry> entries) {
+                List<DocumentHistoricalReadPlan.Entry> entries, List<DocumentHistoricalSourcePin> pins) {
             this.use = use; this.account = account; this.objects = Set.copyOf(objects); this.batches = List.copyOf(batches);
             this.selectors = List.copyOf(selectors);
             this.entries = List.copyOf(entries);
+            this.pins = List.copyOf(pins);
         }
         List<PublicationHistoricalReuse> selectors() { use.plan(); return selectors; }
         List<DocumentHistoricalReadPlan.Entry> entries() { use.plan(); return entries; }
+        List<DocumentHistoricalSourcePin> pins() { use.plan(); return pins; }
         DocumentHistoricalReadPlan plan() { return use.plan(); }
     }
 
@@ -104,7 +107,8 @@ final class DocumentHistoricalReferenceAdmission {
         }
         control.check(); use.plan();
         return new Prepared(use, plan.address().getAccountId(),
-                entries.stream().map(DocumentHistoricalReadPlan.Entry::objectId).collect(Collectors.toSet()), batches, selectors, entries);
+                entries.stream().map(DocumentHistoricalReadPlan.Entry::objectId).collect(Collectors.toSet()), batches, selectors, entries,
+                history.selectedPins(use, entries, control));
     }
 
     /**

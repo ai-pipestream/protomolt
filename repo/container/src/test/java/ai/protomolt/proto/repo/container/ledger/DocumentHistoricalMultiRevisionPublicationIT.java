@@ -148,6 +148,9 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 currentSecond ? List.of(oldHistory) : List.of(newHistory, oldHistory), RepositoryReadControl.NONE)) {
             borrowed = sources.references(repeated, () -> {});
             assertThat(borrowed).hasSize(roots.size());
+            assertThat(borrowed.stream().flatMap(source -> source.pins().stream()).toList())
+                    .hasSize(roots.size())
+                    .extracting(DocumentHistoricalSourcePin::revision).containsExactlyInAnyOrderElementsOf(revisions);
             assertThat(DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
                     .isEqualTo(borrowed);
             var incomplete = borrowed.subList(1, borrowed.size());
@@ -158,6 +161,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
         // The projection is data; source admission still requires live Uses.
         assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
                 .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> borrowed.getFirst().pins()).isInstanceOf(IllegalStateException.class);
     }
 
     private static void verifyHistoricalRegistration(Context c, DocumentPublicationCommand command,
