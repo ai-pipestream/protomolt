@@ -862,8 +862,9 @@ batch digest/object coverage, original owner/drain equality and absent pins. It
 does not check terminality or release roots. Repeated selectors and internally
 consistent incomplete/duplicate batches now have real SQL qualification. A later
 capture's drain cannot substitute for an earlier capture's missing completion.
-Cross-revision object aliases and multiple owner epochs still require qualification
-before release wiring.
+Cross-revision aliases now have a real historical publication fixture: one physical
+object in two revisions produces two distinct captured tuples. Multiple owner epochs
+and legacy initial-batch gaps still require qualification before release wiring.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104

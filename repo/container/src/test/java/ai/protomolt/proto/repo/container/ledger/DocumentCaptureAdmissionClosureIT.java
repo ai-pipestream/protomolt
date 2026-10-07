@@ -23,6 +23,71 @@ class DocumentCaptureAdmissionClosureIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void onePhysicalObjectInTwoRevisionsRetainsTwoCaptureIdentities() throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c)) {
+            var original = rig.fixture().original();
+            var reuse = new DocumentPublicationCommand(rig.record().command().intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            UUID secondRevision;
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(reuse, original.batch().policy(),
+                    Map.of("member", DocumentPublicationCandidate.Mode.TYPED), Map.of("member", rig.fixture().fragments()),
+                    Optional.empty(), (m, occurrence) -> { throw new AssertionError("Retained reuse must not resolve a live registry"); },
+                    rig.budget(), new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 100, 100, 1_000_000),
+                    java.time.Instant.now(), CALLER, List.of(rig.history()), NONE)) {
+                var prepared = assessment.preparePhysical(rig.record().placements(), Map.of(), LEASE, Map.of(), NONE);
+                var owner = new RepositoryOperationLedger(c.tx()).admitHistorical(CALLER,
+                        new RepositoryOperationLedger.Key("account", "principal", reuse.operationId()), prepared, UUID.randomUUID(), LEASE)
+                        .owner().orElseThrow();
+                new DocumentOperationUploadAdmission(c.tx(), new DriveLedger(c.tx())).admit(CALLER, owner, prepared);
+                var result = assessment.publish(CALLER, owner, prepared, Map.of(), new RepositorySchemaArtifacts(c.tx()),
+                        new DocumentPublicationCommit(c.tx(), new DriveLedger(c.tx()), true, false), NONE);
+                assertThat(result.getMembers(0).getMutationRevision()).isEqualTo(2);
+                secondRevision = UUID.fromString(result.getMembers(0).getRevisionId());
+            }
+            var history = rig.reads().captureHistorical(CALLER, rig.fixture().address(), secondRevision);
+            try {
+                var firstMember = aliasDestination(member(rig.fixture(), rig.history()), "old");
+                var secondMember = aliasDestination(member(new Fixture(original, secondRevision), history), "new");
+                assertThat(firstMember.getParts(0).getHistoricalReuse().getObject().getObjectId())
+                        .isEqualTo(secondMember.getParts(0).getHistoricalReuse().getObject().getObjectId());
+                var command = new DocumentPublicationCommand(reuse.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                        .clearMembers().addMembers(firstMember).addMembers(secondMember).build());
+                var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+                var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
+                        rig.record().placements(), LEASE, 0);
+                try (var sources = DocumentHistoricalAssessmentSources.open(command, CALLER, List.of(rig.history(), history), NONE)) {
+                    DocumentPreparationCaptureDrain.Capture capture;
+                    try (var work = sources.work()) {
+                        var pins = DocumentPreparationSourcePins.prepare(command, work.references(command, () -> {}), () -> {});
+                        assertThat(pins.pins()).hasSize(2);
+                        assertThat(pins.pins().stream().map(DocumentHistoricalSourcePin::object).distinct()).hasSize(1);
+                        assertThat(pins.pins().stream().map(DocumentHistoricalSourcePin::revision).distinct()).hasSize(2);
+                        capture = c.tx().inTransaction(em -> {
+                            var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, key, command, UUID.randomUUID(), LEASE, work);
+                            var coordinator = UUID.randomUUID(); RepositoryCoordinatorBinding.bindInitial(em, acquired, coordinator);
+                            var bytes = DocumentPublicationPreparationCodec.encode(record);
+                            DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
+                                    DocumentPublicationPreparationJournal.digest(bytes), work.references(command, () -> {}));
+                            lockSources(em, rig.fixture(), pins);
+                            return DocumentPreparationCaptureDrain.register(c.tx(), em, record, pins, acquired.claim(), coordinator, sources, work, NONE);
+                        });
+                    }
+                    rig.sources().close();
+                    assertThat(capture.complete(CALLER, Duration.ZERO, NONE)).isPresent();
+                    var coverage = DocumentPreparationCaptureCoverage.prepare(record, NONE);
+                    int qualified = c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); });
+                    assertThat(qualified).isEqualTo(1);
+                }
+            } finally { history.close(); history.release(); }
+        }
+    }
+
+    private static ai.protomolt.proto.repo.v1.DocumentPublicationMember aliasDestination(
+            ai.protomolt.proto.repo.v1.DocumentPublicationMember member, String name) {
+        return member.toBuilder().setMemberId(name).setDestination(ai.protomolt.proto.repo.v1.DocumentRevisionCondition.newBuilder()
+                .setIfAbsent(true).setAddress(member.getDestination().getAddress().toBuilder().setGraphAddressId("alias-" + name))).build();
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void internallyConsistentBatchCannotOmitOrDuplicateSelectedObjects(boolean duplicate) throws Exception {
         try (var c = context(POSTGRES); var rig = prepare(c, false, !duplicate)) {

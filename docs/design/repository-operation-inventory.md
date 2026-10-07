@@ -16,8 +16,10 @@ Sol reviewed the helper and requested duplicate tuple refusal, now implemented.
 The [capture selection follow-up](../evidence/repository/2026-10-07-capture-selection/README.md)
 qualifies repeated selectors, internally consistent incomplete/duplicate batches,
 and two captures where the earlier capture has not drained. Both captures in that
-test share an execution owner. Before release wiring, still qualify same-object
-cross-revision aliases, multiple owner epochs and historical legacy initial-batch gaps.
+test share an execution owner. The [alias follow-up](../evidence/repository/2026-10-07-capture-alias/README.md)
+also qualifies one physical object selected from two real historical revisions;
+each revision retains a separate pin tuple. Multiple owner epochs and historical
+legacy initial-batch gaps remain to be qualified before release wiring.
 The [qualification evidence](../evidence/repository/2026-10-07-capture-coverage/README.md)
 records the original test scope; the remaining cases above are not claimed complete.
 
