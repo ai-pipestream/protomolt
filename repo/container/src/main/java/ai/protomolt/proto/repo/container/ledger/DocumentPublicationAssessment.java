@@ -204,6 +204,9 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 RepositorySchemaArtifacts storage, DocumentPublicationCommit publication,
                 ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
             requireOpen();
+            // Refuse before promotion consumes this assessment or stages durable schema claims.
+            if (owner.executionClaim().isPresent())
+                throw new UnsupportedOperationException("Claimed historical publication is not implemented");
             if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
             inspecting = true;
             try {
