@@ -7094,8 +7094,8 @@ This extends SQL fault coverage, not deployed recovery or public execution.
 Actual guarded recovery qualifies 64 ancestry edges versus refused edge 65, and
 16 durable capture batches versus refused capture 17. Refusal rolls back the
 attempted activation without changing leases or earlier evidence. Terminal handling
-for exhausted bounds is **missing behavior**, not a completed recovery outcome:
-an installed operation remains unable to activate. Track terminal receipt,
+for exhausted bounds is now implemented privately as described below, not mounted:
+an exhausted operation remains unable to activate. Track terminal receipt,
 idempotent rejection/cancellation and retained-source cleanup acceptance cases
 before exposing historical recovery. See the
 [bound evidence](../evidence/repository/2026-10-07-historical-recovery-bounds/README.md).
@@ -7104,7 +7104,7 @@ before exposing historical recovery. See the
 **unchanged** and requires activated successor authority. Actual SQL refuses an
 installed-unactivated owner; the positive control activates, cancels and replays.
 The [13-test evidence](../evidence/repository/2026-10-07-installed-cancellation/README.md)
-does not close exhaustion handling. A **new, not yet implemented** private
+does not close exhaustion handling. A **new, privately implemented**
 recovery-limit decision and additive rejection reason are specified in the
 [terminal design](repository-historical-restore.md#terminal-handling-for-exhausted-historical-recovery).
 
@@ -7112,6 +7112,69 @@ recovery-limit decision and additive rejection reason are specified in the
 additive value 4, `RECOVERY_LIMIT_EXCEEDED`. Existing fields, enum numbers, codecs,
 imports and Any URLs are unchanged. Runtime rules require REJECTED disposition
 and no assessment. Canonical encoding and the JSON Schema projection include the
-new reason. SQL still refuses the new value; the decision operation remains
-unimplemented. Older validators can reject unknown enum values, so qualify readers
+new reason. V110 and the private handler below now support the new value;
+the operation remains unmounted. Older validators can reject unknown enum values, so qualify readers
 before enabling the writer. See [contract checks](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
+
+**Recovery-limit SQL foundation (V110):** **new** immutable decision sidecar and
+**extended** rejection guard permit reason 4 only with matching transaction,
+command and owner evidence. Exact installed identity, live leases, no current
+activation, retained roots and bounded ancestry are checked. Capture exhaustion
+also validates all 16 owned batches and their pin digests. Deferred pairing
+prevents an orphan decision. No generic execution fence changes. Both real-bound
+fixtures initially produced and replayed canonical receipts through test-side SQL;
+the private handler now drives their positive decisions. No public operation
+exists. Guard liveness is checked at guard execution, not an absolute commit-instant
+promise. Timing and handler evidence follow; corruption and concurrency remain open. See
+[SQL evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md).
+
+**Recovery-limit timing qualification:** production operations are **unchanged**.
+Actual PostgreSQL time assertions establish rollback on expiry before rejection
+insertion and before deferred pairing. Early `SET CONSTRAINTS ALL IMMEDIATE`
+followed by lease expiry can commit an already validated pair; no activation,
+lease renewal or capture drain is produced. This records guard-time semantics,
+not a commit-instant liveness guarantee. Corruption and concurrency remain open;
+handler and lost-reply evidence follow. See
+[timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md).
+
+**Private recovery-limit handler:** **new**, package-private and unmounted.
+`RepositoryHistoricalLimitDecisions` confirms the immutable installed plan,
+locks claim then owner, checks current authorization, and pairs the limit evidence
+with its rejection atomically. Both real bounds and the under-bound case exercise
+this implementation. Before-commit SQL failure rolls back both rows; an injected
+lost acknowledgement preserves both and exact retry returns the same receipt.
+Retries do not renew leases. Scoped replay rechecks current source READ and exact
+credential revocation. No activation, provider I/O, capture drain or root release
+is granted. Explicit cancellation, expired-lease replay, corrupt evidence and
+competing decisions still need qualification before mounting this operation.
+See [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/README.md).
+
+**Recovery-limit request cancellation:** production operations are **unchanged**.
+Two additional SQL cases qualify already-cancelled admission, cancellation
+injected before JDBC commit, and a cancellation signal immediately after commit.
+The first rolls back tentative rows; the late signal preserves a replayable
+receipt. This does not prove interruption inside an in-flight JDBC commit, or
+implement explicit terminal cancellation for an unactivated successor. All five
+handler tests pass; see [cancellation evidence](../evidence/repository/2026-10-07-recovery-limit-cancellation/README.md).
+
+**Recovery-limit decision contention:** operations are **unchanged**. Two real
+PostgreSQL cases observe the second decision blocked on the first transaction's
+claim lock. First commit makes both return the same receipt; first rollback
+allows the second to create the sole pair. Leases and retained batches remain
+unchanged, with no activation or drains. Activation and V98 supersession
+contention remain unqualified. See [concurrency evidence](../evidence/repository/2026-10-07-recovery-limit-concurrency/README.md).
+
+**Recovery-limit activation contention:** operations are **unchanged**. The
+activation-first refusal followed by decision at the bound is complemented by a
+decision-first race. PostgreSQL observes V94 waiting on the deciding transaction;
+after its commit, the activation guard sees the rejection and refuses. No durable
+capture or execution survives; the receipt replays and leases do not change.
+All three concurrency cases pass. V98 supersession remains a separate gate.
+See [activation-race evidence](../evidence/repository/2026-10-07-recovery-limit-activation-race/README.md).
+
+**Recovery-limit supersession contention:** operations are **unchanged**. A
+decision held past real lease expiry blocks V98 on its claim lock, then rolls
+back at normal deferred validation. V98 commits; the old plan is stale and a
+genuine fresh installation can decide. No activation or additional capture is
+created. Committed-terminal replay after expiry remains separate qualification.
+See [supersession evidence](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md).

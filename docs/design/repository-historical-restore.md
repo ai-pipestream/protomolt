@@ -1041,20 +1041,59 @@ unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
 
 ### Terminal handling for exhausted historical recovery
 
-This is the next implementation requirement, not an available operation.
+This is a private implementation under qualification, not an available operation.
 The additive receipt reason `RECOVERY_LIMIT_EXCEEDED = 4` now compiles and passes
-runtime generated/dynamic validation and canonical codec tests. Existing SQL
-reason checks deliberately still refuse it until the guarded sidecar transaction
-is implemented. Descriptor compatibility does not mean old runtime validators
+runtime generated/dynamic validation and canonical codec tests. V110 now allows
+the reason only with an exact same-transaction recovery-limit sidecar. There is
+a package-private Java decision handler, but no mounted operation. Descriptor compatibility does not mean old runtime validators
 accept the new value: qualify and upgrade receipt readers before enabling writes.
 See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
+The [SQL foundation evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md)
+qualifies paired decisions at both actual bounds, under-bound refusal, missing
+receipt refusal, and exclusion of a late activation in the same transaction.
+The [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/README.md)
+now qualifies both actual bounds through `RepositoryHistoricalLimitDecisions`,
+under-bound absence of a decision, rollback before commit, lost acknowledgement
+after commit, exact retry, and current READ-policy and credential checks on scoped
+replay. Retries leave claim/owner leases unchanged. Corrupt-state variants,
+explicit cancellation and expired-lease replay still need
+handler qualification. Request cancellation is separate from an explicit terminal
+cancellation operation: a signal observed before commit may abort tentative
+work, but a signal arriving after commit cannot undo a durable limit decision.
+If the host cannot deliver that response, the caller must reconcile through
+authorized exact replay. Neither a cancellation exception nor response loss alone
+establishes whether the transaction committed. Controlled JDBC boundary cases
+qualify these outcomes in the [cancellation evidence](../evidence/repository/2026-10-07-recovery-limit-cancellation/README.md),
+without claiming interruption during an in-flight JDBC commit.
+The [decision concurrency evidence](../evidence/repository/2026-10-07-recovery-limit-concurrency/README.md)
+observes real claim-lock contention between two decisions: first commit returns
+the same receipt to both, while first rollback lets the second create the sole
+pair. Leases and retained captures are unchanged.
+The [activation race](../evidence/repository/2026-10-07-recovery-limit-activation-race/README.md)
+also observes V94 waiting on the deciding transaction: after the decision commits,
+activation sees the terminal row and refuses without partial durable capture or
+execution. An exhausted activation is not an eligible winner.
+The [supersession race](../evidence/repository/2026-10-07-recovery-limit-supersession/README.md)
+holds the decision past actual lease expiry while V98 waits on its claim lock.
+Normal deferred validation rolls the decision back; supersession then succeeds.
+The old plan cannot decide, but a genuine fresh installation can. Committed
+decision replay after expiry and terminal supersession rejection remain separate
+qualification, as does the documented early-constraint timing case.
+The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
+now covers lease expiry before rejection insertion, expiry before normal deferred
+validation, and early constraint firing followed by an expired-lease commit.
+The first two roll back both rows; the last preserves the already validated
+terminal pair without granting execution or renewing leases.
+Liveness is checked when the guards run;
+forcing deferred constraints early can precede later wall-clock lease expiry.
+Do not describe this as an unconditional commit-instant liveness guarantee.
 The ordinary `DocumentPublicationRejections.cancel` path cannot resolve an
 installed but unactivated successor: V95 requires exact activation before its
 owner mutation. A SQL regression preserves this guard and checks ordinary
 cancellation succeeds after genuine activation. Do not remove the V95 check or
 fabricate V94 activation to terminate an exhausted operation.
 
-Introduce a private limit-decision operation with the following boundary:
+The private limit-decision operation must maintain the following boundary:
 
 1. Require process authority and an exact installed plan, original retention
    preparation and command. Serialize bounded identities before taking locks.
