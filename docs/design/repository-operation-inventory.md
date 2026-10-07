@@ -7082,3 +7082,10 @@ then verifies exactly one activation and capture registration, exact winner retr
 and unchanged leases. The loser fails before capture registration. The
 [19-test evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md)
 does not qualify a rolling-back winner or deployed process failure.
+
+**Historical activation rollback race:** operations remain **unchanged**. The
+second contention case aborts the first SQL transaction while a separate capture
+waits on it. The waiter then commits; the first attempt cannot confirm the new
+capture or record a drain for its own uncommitted capture. See
+[rollback qualification](../evidence/repository/2026-10-07-historical-race-rollback/README.md).
+This extends SQL fault coverage, not deployed recovery or public execution.

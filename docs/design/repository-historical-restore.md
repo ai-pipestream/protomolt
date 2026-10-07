@@ -993,9 +993,13 @@ contention regression. The winner is held before commit; `pg_blocking_pids` prov
 the competitor waits on that exact session. Only one V94/V109 activation and new
 capture batch commit; the losing attempt receives a duplicate-key failure before
 registering its capture. The winner's exact retry and completion remain valid,
-with unchanged leases. This checks a committing winner, not a rolling-back winner
-or deployed process failure. See the
+with unchanged leases. A second case aborts the first transaction before commit:
+the waiting attempt commits its distinct capture, and the rolled-back attempt
+cannot confirm that capture or mint a drain receipt for its uncommitted identity.
+Neither case establishes deployed process recovery. See the
 [concurrency evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md).
+The [rollback evidence](../evidence/repository/2026-10-07-historical-race-rollback/README.md)
+records the second case and its explicit drain refusal.
 
 Traversal-limit qualification and deployed restart/session attachment remain open.
 Keep claimed historical execution and root release gated.
