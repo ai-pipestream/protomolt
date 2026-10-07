@@ -38,6 +38,11 @@ class HistoricalRuntimeQualificationTest {
                 "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
     }
 
+    @Test void takeoverBeforeClaim() throws Exception {
+        run("takeover-first", "HISTORICAL_TAKEOVER_FIRST_HOST_OK", "HISTORICAL_TAKEOVER_BEFORE_CLAIM_OK",
+                "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
+    }
+
     private void run(String mode, String... markers) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");

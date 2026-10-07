@@ -531,7 +531,7 @@ Qualify these orders without changing production guards:
   V97 first. Releasing the old call must produce an exact-fence error. Verify the
   successor result and absence of any old publication.
 
-These are outstanding acceptance tests. A lease is not proof that a transaction
+The checkpoints below record qualification of these orders. A lease is not proof that a transaction
 already holding the fencing locks has stopped. Every gate needs bounded waits,
 original SQL errors and unconditional barrier release in `finally`.
 
@@ -657,7 +657,7 @@ The test requires zero committed result/revision rows and confirmation of the
 waiting reservation after rollback. The old private generation retires through
 its exact fence and returns retained bytes. It leaves a durable successor
 reservation. The continuation below qualifies successor publication.
-The before-claim acquisition ordering remains open.
+The before-claim acquisition ordering is qualified by the focused case below.
 
 #### Publication after claim-expiry rollback
 
@@ -674,3 +674,18 @@ installations, 3 STARTs, 2 CREATEs and 1 successful publication. Sol reviewed th
 extension; focused qualification passed in 1m06s with no failures or skips.
 See `docs/evidence/repository/2026-10-07-post-rollback-publication/README.md`.
 The aggregate rerun remains pending.
+
+#### Takeover before publication claim acquisition
+
+`HistoricalPublicationBeforeClaimProbe` pauses the publication-only connection
+before transaction admission. V97 commits after database lease expiry while the
+publisher remains gated. The test confirms the replacement claim and verifies
+that the publisher backend is idle, without a transaction or backend xid. The
+assessment and selected verified upload remain live at release.
+
+The resumed publisher must throw `RepositoryExecutionClaimLedger.Fenced`, leaving
+no result or revision. `HistoricalPostRollbackPublicationProbe` then qualifies
+successor installation, fresh capture and same-command provider publication.
+Final focused qualification passed in 1m07s with no failures or skips. Sol reviewed
+the fixture and aggregate mapping; the expanded full suite remains pending.
+Evidence: `docs/evidence/repository/2026-10-07-takeover-before-claim/README.md`.

@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, RECOVERED_PUBLICATION;
+        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -72,7 +72,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner() || check == Check.CLAIM_EXPIRES) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner() || (check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST)) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -311,8 +311,12 @@ final class HistoricalInstalledOwnerProbe {
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
-                if (check == Check.CLAIM_EXPIRES) {
-                    var reservation = HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
+                if (check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) {
+                    var reservation = check == Check.TAKEOVER_FIRST
+                            ? HistoricalPublicationBeforeClaimProbe.run(database, tx, coordinator, owner, plan, created,
+                                    publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                            new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE))
+                            : HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
                             publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
                                     new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
                     require(request.retireFenced(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
