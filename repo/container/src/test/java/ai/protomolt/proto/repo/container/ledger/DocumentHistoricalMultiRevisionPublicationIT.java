@@ -64,6 +64,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                                 .setSourceSlot(newSelector.getSourceSlot()).setObject(newSelector.getObject()))).build();
                 var command = new DocumentPublicationCommand(first.command().intent().toBuilder().clearMembers()
                         .setOperationId(UUID.randomUUID().toString()).addMembers(oldMember).addMembers(newMember).build());
+                verifyRetentionProjection(c, command, oldMember, oldHistory, newHistory, currentSecond);
                 var resolutions = new java.util.concurrent.atomic.AtomicInteger();
                 try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, first.batch().policy(),
                         Map.of("old", DocumentPublicationCandidate.Mode.TYPED, "new", DocumentPublicationCandidate.Mode.TYPED),
@@ -117,6 +118,40 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 oldHistory.release(); newHistory.release(); reads.fence(); reads.attestLocalQuiescence();
             }
         }
+    }
+
+    private static void verifyRetentionProjection(Context c, DocumentPublicationCommand command,
+            DocumentPublicationMember oldMember, DocumentReadLedger.PinnedHistory oldHistory,
+            DocumentReadLedger.PinnedHistory newHistory, boolean currentSecond) {
+        // Repeated use in a different destination retains one source revision.
+        // A different revision of the same node must remain a distinct root.
+        var repeated = new DocumentPublicationCommand(command.intent().toBuilder()
+                .addMembers(destination(oldMember, "repeat-old")).build());
+        var roots = DocumentPreparationHistoryRoots.roots(command);
+        assertThat(roots).hasSize(currentSecond ? 1 : 2);
+        assertThat(DocumentPreparationHistoryRoots.roots(repeated)).isEqualTo(roots);
+        assertThat(roots.stream().map(DocumentPreparationHistoryRoots.Root::node).distinct()).hasSize(1);
+        var revisions = roots.stream().map(root -> UUID.fromString(root.revision())).toList();
+        byte[] sqlDigest = c.tx().readOnly(em -> (byte[]) em.createNativeQuery("""
+                SELECT sha256(convert_to('protomolt/preparation-history/v1' || chr(10) ||
+                  string_agg(node_id::text || '/' || revision_id::text || chr(10),'' ORDER BY node_id,revision_id),'UTF8'))
+                FROM document_revision_publications WHERE revision_id IN (:revisions)
+                """).setParameter("revisions", revisions).getSingleResult());
+        assertThat(DocumentPreparationHistoryRoots.digest(roots)).isEqualTo(sqlDigest);
+        List<DocumentHistoricalReferenceAdmission.Prepared> borrowed;
+        try (var sources = DocumentHistoricalAssessmentSources.open(repeated, CALLER,
+                currentSecond ? List.of(oldHistory) : List.of(newHistory, oldHistory), RepositoryReadControl.NONE)) {
+            borrowed = sources.references(repeated, () -> {});
+            assertThat(borrowed).hasSize(roots.size());
+            assertThat(DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
+                    .isEqualTo(borrowed);
+            var incomplete = borrowed.subList(1, borrowed.size());
+            assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, incomplete, () -> {}))
+                    .hasMessageContaining("Historical preparations differ from complete command");
+        }
+        // The projection is data; source admission still requires live Uses.
+        assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     private static DocumentPublicationMember destination(DocumentPublicationMember source, String member) {

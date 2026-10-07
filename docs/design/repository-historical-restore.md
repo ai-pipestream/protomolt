@@ -677,3 +677,18 @@ claim/preparation-header, sorted revision, then origin/retention order; a future
 pruner must not acquire these in reverse. The current guards already prevent
 revision deletion, so this projection is groundwork for safe future pruning,
 not evidence of a repaired current data-loss path.
+
+The multi-revision SQL fixture now checks projection deduplication across
+destinations, distinct revisions of one source node, SQL/Java digest agreement,
+complete prepared source coverage and refusal after the source owner closes.
+Its provider observations are synthetic; it does not qualify nonempty claimed
+registration. See `docs/evidence/repository/2026-10-07-history-root-selection`.
+
+The next private registration boundary must accept a preparation and live pinned
+sources together. Pre-encode preparation and modes before SQL locks, then register
+claim/binding, preparation, nonempty retention set, modes and operation owner in
+one transaction with current authorization and exact physical witness checks.
+Reuse existing claim and typed owner admission through narrow historical entry
+points; keep ordinary entry-point guards and the public facade unchanged. Retain
+source Uses through commit or uncertain-outcome reconciliation. Registration
+qualification must precede session execution and recovery activation.
