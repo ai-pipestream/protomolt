@@ -36,23 +36,34 @@ final class NativeTrafficSampler implements AutoCloseable {
             statement.execute("SELECT pg_stat_statements_reset() /* native_benchmark_snapshot */");
         }
         Files.writeString(output.resolve(name + "-locks.csv"), "elapsed_nanos,pid,wait_type,wait_event,blockers\n");
-        Files.writeString(output.resolve(name + "-rss.csv"), "elapsed_nanos,pid,rss_kib,state\n");
+        Files.writeString(output.resolve(name + "-activity.csv"), "elapsed_nanos,pid,state,wait_type,wait_event,blockers\n");
+        Files.writeString(output.resolve(name + "-rss.csv"), "elapsed_nanos,pid,rss_kib,state,cpu_nanos\n");
         start = System.nanoTime();
     }
     void sample(String name, List<Process> children) throws Exception {
         long elapsed = System.nanoTime() - start;
         var locks = new StringBuilder();
+        var activity = new StringBuilder();
         try (var statement = connection.createStatement()) {
             statement.setQueryTimeout(5);
             try (var rows = statement.executeQuery("""
-                    SELECT pid,wait_event_type,wait_event,array_to_string(pg_blocking_pids(pid),'|')
+                    SELECT pid,wait_event_type,wait_event,array_to_string(pg_blocking_pids(pid),'|'),state
                     FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
-                    AND wait_event_type='Lock' ORDER BY pid /* native_benchmark_snapshot */
+                    AND backend_type='client backend' ORDER BY pid /* native_benchmark_snapshot */
                     """)) {
-                while (rows.next()) locks.append(elapsed).append(',').append(rows.getInt(1)).append(',')
-                        .append(rows.getString(2)).append(',').append(rows.getString(3)).append(',').append(rows.getString(4)).append('\n');
+                while (rows.next()) {
+                    String waitType = rows.getString(2);
+                    activity.append(elapsed).append(',').append(rows.getInt(1)).append(',')
+                            .append(csv(rows.getString(5))).append(',').append(csv(waitType)).append(',')
+                            .append(csv(rows.getString(3))).append(',').append(csv(rows.getString(4))).append('\n');
+                    if ("Lock".equals(waitType)) locks.append(elapsed).append(',').append(rows.getInt(1)).append(',')
+                            .append(waitType).append(',').append(csv(rows.getString(3))).append(',')
+                            .append(csv(rows.getString(4))).append('\n');
+                }
             }
         }
+        if (activity.isEmpty()) activity.append(elapsed).append(",,,,,\n");
+        Files.writeString(output.resolve(name + "-activity.csv"), activity, StandardOpenOption.APPEND);
         if (locks.isEmpty()) locks.append(elapsed).append(",,,,\n");
         Files.writeString(output.resolve(name + "-locks.csv"), locks, StandardOpenOption.APPEND);
         var rss = new StringBuilder();
@@ -65,10 +76,13 @@ final class NativeTrafficSampler implements AutoCloseable {
                     bytes = memory.kib(); state = memory.state();
                 } catch (NoSuchFileException gone) { if (child.isAlive()) throw gone; }
             }
-            rss.append(elapsed).append(',').append(child.pid()).append(',').append(bytes).append(',').append(state).append('\n');
+            String cpu = child.info().totalCpuDuration().map(value -> Long.toString(value.toNanos())).orElse("");
+            rss.append(elapsed).append(',').append(child.pid()).append(',').append(bytes).append(',').append(state)
+                    .append(',').append(cpu).append('\n');
         }
         Files.writeString(output.resolve(name + "-rss.csv"), rss, StandardOpenOption.APPEND);
     }
+    private static String csv(String value) { return value == null ? "" : value; }
     record MemoryStatus(String kib, String state) {}
     static MemoryStatus memoryStatus(List<String> lines) {
         String state = lines.stream().filter(line -> line.startsWith("State:")).findFirst()
