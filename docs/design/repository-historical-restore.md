@@ -1036,8 +1036,9 @@ must accept only that transaction's exact receipt, with a deferred zero-root che
 Coverage must distinguish UNKNOWN, LIVE_EXACT and RELEASED_EXACT while retaining the
 original header as creation evidence. Test capture/release races, incomplete batches,
 an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
-lost acknowledgement before enabling this path. This root-release protocol remains
-unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
+lost acknowledgement before enabling this path. V111 now supplies the SQL release
+foundation described below; the callable release protocol remains unavailable.
+Neither V107 nor V108 alone authorizes root deletion.
 
 #### Release identity and terminal applicability
 
@@ -1111,8 +1112,13 @@ immutable terminal alternative under claim/preparation locks. It verifies canoni
 receipt identity and stored projections, including the reason-4 transaction pair,
 or exact initial abandonment. It neither grants release nor changes retention.
 Its success qualification uses normal journaled publication; claimed historical
-publication remains gated. V111 release receipts, root deletion guards and released
-coverage/retry handling are still to be implemented. See
+publication remains gated. V111 now supplies permanent release receipts, SQL
+capture/terminal checks and atomic root-deletion guards. Its PostgreSQL tests
+cover initial abandonment, canonical cancellation, rollback and migration of
+existing retained rows. The callable release handler, released coverage/retry
+handling, other terminal paths and concurrent release qualification remain
+unfinished; no release API is mounted. See
+[SQL release evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal inspection evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
 
 Required qualification before mounting or advertising this behavior:

@@ -7201,12 +7201,16 @@ predecessor digest. The actual ancestry walk reports FAILED_PRECONDITION without
 creating a terminal pair or execution. Both cases pass. This does not grant
 source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
 
-**Private preparation-root release:** **new, not yet implemented**. The
+**Private preparation-root release:** **new, SQL foundation implemented; handler unavailable**. The
 private terminal-evidence inspector is implemented as a prerequisite. It checks
 canonical success/rejection projections or initial abandonment without granting
 root deletion; its real ancestry-limit case does not require a full execution
-ancestry walk. Release receipts, all-capture drainage, guarded deletion and
-post-pruning retry remain separate unfinished work. See
+ancestry walk. V111 adds immutable release receipts, all-batch SQL drainage
+checks and atomic guarded deletion. Eight PostgreSQL cases qualify abandonment,
+canonical cancellation, changed identities, rollback and existing-row migration;
+the capture/drain regressions also pass. The canonical Java release handler,
+released-coverage state and post-pruning retry remain unfinished. See
+[SQL evidence](../evidence/repository/2026-10-07-root-release-sql/README.md) and
 [terminal evidence](../evidence/repository/2026-10-07-preparation-terminal-evidence/README.md).
 The
 [reviewed release contract](repository-historical-restore.md#release-identity-and-terminal-applicability)
@@ -7215,5 +7219,5 @@ an operation-wide success, rejection or exact initial abandonment. Cleanup must
 not inherit the execution ancestry limit: doing so would strand roots after an
 ancestry-limit rejection. Permanent receipt/header identities distinguish released
 retention from missing legacy evidence and allow retry after source pruning. SQL
-atomic deletion, coverage states, migration and failure/race gates remain required
+coverage states and the remaining terminal and failure/race gates remain required
 before this operation is mounted or advertised. Public contracts are unchanged.
