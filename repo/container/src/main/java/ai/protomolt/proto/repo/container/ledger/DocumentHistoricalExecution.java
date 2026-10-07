@@ -20,21 +20,25 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentPreparationCaptureDrain.Identity capture;
     private final byte[] preparationDigest;
     private final String encodedModes;
+    private final DocumentHistoricalSuccessorBinding successor;
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
     private boolean assessmentCreateAttempted;
     private boolean closed;
+    private boolean successorAttachmentVerified;
 
-    private DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
+    DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared,
             Map<String, DocumentPublicationCandidate.Mode> modes, DocumentPreparationSourcePins.Prepared pins,
             DocumentPublicationScopeCalls.Call registration, Tx tx, PayloadBudget budget, DriveLedger drives,
-            DocumentPublicationPreparationRecord record, DocumentPreparationCaptureDrain.Identity capture, byte[] preparationDigest) {
+            DocumentPublicationPreparationRecord record, DocumentPreparationCaptureDrain.Identity capture, byte[] preparationDigest,
+            DocumentHistoricalSuccessorBinding successor) {
         this.work = work; this.retained = retained; this.owner = owner; this.prepared = prepared;
         this.modes = Map.copyOf(modes); this.pins = pins;
         this.registration = registration;
         this.tx = tx; this.budget = budget; this.drives = drives; this.record = record; this.capture = capture;
         this.preparationDigest = preparationDigest.clone();
+        this.successor = successor;
         this.encodedModes = DocumentPublicationModesJournal.encode(record.command(), modes);
     }
 
@@ -129,7 +133,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             }
             work.authorize(control);
             return new DocumentHistoricalExecution(work, retained, owner, prepared, fixed, pins, registration,
-                    tx, budget, drives, record, identity, digest);
+                    tx, budget, drives, record, identity, digest, null);
         } catch (RuntimeException | Error failure) {
             var cleanup = new ArrayList<AutoCloseable>(); cleanup.add(work);
             if (retained != null) cleanup.add(retained);
@@ -142,8 +146,9 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
-        var result = mutate(caller, control, em -> DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(
-                em, owner, record.command(), retention, control));
+        var result = mutate(caller, control, em -> successor == null
+                ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), retention, control)
+                : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), retention, control));
         // Only a positively acknowledged INSERT grants this handle CREATE authority.
         // Loading coordinates after an uncertain acknowledgement is reconciliation-only.
         if (result.inserted()) acknowledgedStart = result.started();
@@ -261,8 +266,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 // One complete origin set: never acquire the historical subset before fresh attempts.
                 var physical = DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, control::check);
                 var slots = DocumentAssessmentSlots.bind(em, slotPlan, physical.physical(), physical.locks(), control::check);
-                DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, owner.executionClaim().orElseThrow(),
-                        capture.owner().incarnation(), control::check);
+                requireCapture(em, control);
                 evidence.check(control::check);
                 return DocumentAssessmentCreationWrites.writeBound(em, owner, writes, evidence,
                         started.assessment(), started.retainUntil(), budget, control::check, slots);
@@ -304,7 +308,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             var origins = DocumentPublicationLocks.lockIndependentOrigins(em, authorization.destinations(), objects, Set.of());
             DocumentPublicationLocks.lockIndependentRetention(em, origins);
             for (var reference : references) DocumentHistoricalReferenceAdmission.requireBoundSources(em, reference, origins, control);
-            DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, claim, capture.owner().incarnation(), control::check);
+            requireCapture(em, control);
             var value = mutation.apply(em);
             control.check(); return value;
         });
@@ -312,7 +316,25 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         return result;
     }
 
+    /** Full successor attachment validation runs through the same physical/current-authority fence as later work. */
+    synchronized void validateAttachment(RepositoryCaller caller, RepositoryReadControl control) {
+        if (successor == null || successorAttachmentVerified)
+            throw new IllegalStateException("Successor attachment is not pending");
+        mutate(caller, control, em -> null);
+        successorAttachmentVerified = true;
+    }
+
+    private void requireCapture(jakarta.persistence.EntityManager em, RepositoryReadControl control) {
+        if (successor != null) {
+            if (successorAttachmentVerified) successor.requireActiveCapture(em, owner, control::check);
+            else successor.requireCapture(em, owner, control::check);
+        }
+        else DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, owner.executionClaim().orElseThrow(),
+                capture.owner().incarnation(), control::check);
+    }
+
     private void lockRegistration(jakarta.persistence.EntityManager em) {
+        if (successor != null) { successor.lockRegistration(em, owner); return; }
         var claim = owner.executionClaim().orElseThrow();
         RepositoryExecutionClaimLedger.lockLive(em, claim);
         var rows = em.createNativeQuery("""

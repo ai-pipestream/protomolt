@@ -51,6 +51,20 @@ final class RepositoryHistoricalSuccessorActivation {
         }
     }
 
+    /** Accepted source ownership and exact local capture are required in addition to durable activation. */
+    synchronized DocumentHistoricalExecution openExecution(RepositoryCaller coordinator, RepositoryCaller caller,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls scopes,
+            RepositoryReadControl control) {
+        var scope = scopes.enter();
+        try {
+            var capture = activateAccepted(coordinator, caller, control, accepted);
+            return DocumentHistoricalSuccessorExecution.open(tx, budget, plan, retention, sources, capture,
+                    accepted, caller, drives, control, scope);
+        } catch (RuntimeException | Error failure) {
+            scope.close(); throw failure;
+        }
+    }
+
     private DocumentPreparationCaptureDrain.Capture activateWithWork(RepositoryCaller coordinator,
             RepositoryCaller executionCaller, RepositoryReadControl control,
             DocumentHistoricalAssessmentSources.Work accepted) {

@@ -1561,3 +1561,68 @@ Accepted-work activation qualification passed 17 real PostgreSQL normal/scoped
 tests with no failures or skips and Sol review. See
 [accepted activation evidence](../evidence/repository/2026-10-07-historical-accepted-activation/README.md).
 This does not qualify successor handle attachment or CREATE.
+
+The successor capture verifier must use the original retention preparation's batch
+scope and a separately verified V109 creation transaction. At attachment it checks
+all immutable child tuples, expected count, sealed non-initial batch, exact claim
+and coordinator ownership, no capture drain/root release, and live historical pins
+in deterministic pin order. It reacquires only the claim lock already held by the
+caller before origins/retention. It does not infer V109 authority from a transaction
+ID alone. Initial-capture validation keeps its same-transaction history-header rule.
+
+The draft private successor handle calls the full capture verifier during
+attachment. After the attachment transaction and post-transaction authorization
+complete, subsequent operations skip immutable root aggregation and child-tuple
+comparison, retaining live claim, ownership, closure and pin checks. Database
+immutability guards are required; privileged trigger-bypass corruption after
+attachment is outside that caching guarantee. Current authorization, physical
+identity and exact activation/preparation/mode verification remain mandatory.
+
+The real-provider driver now qualifies a reuse-only successor CREATE after actual
+lease expiry and rejects old-owner late CREATE. A real PostgreSQL lost-commit-reply
+test qualifies reopening with the exact retained capture without reopening source
+admission or creating duplicate activation/start rows. These are private execution
+checkpoints, not public recovery completion. Mixed-upload successor CREATE,
+preparation/mode corruption coverage, successor publication and managed recovery
+remain open. Fresh attachment rejects privileged corruption of a captured V104
+child tuple and returns its resources; this does not promise detection of
+privileged trigger-bypass corruption after an already-validated attachment.
+
+### Reviewed next seam: claimed historical publication
+
+Sol reviewed this extension after the successor CREATE checkpoint. Keep the
+existing claimed-owner refusals on the generic Historical.publish and
+DocumentPublicationCommit.commitHistorical entry points until a handle-only path
+is qualified. A synchronized DocumentHistoricalExecution publication method must
+bind the exact assessment identity, accepted source Work, command and modes.
+Promotion must retain that Work and the candidate until the synchronous commit
+returns; once ownership transfers, an uncertain result requires authorized durable
+replay rather than another promotion.
+
+Reuse commitInternal and DocumentCommitWriter. Do not surround their transaction
+with a separate mutate transaction and assume its fence survives. A narrow typed
+binding must lock current claim, current preparation/modes and original retention/
+activation before owner, policy and document locks. After bindHistoricalPublication
+locks the complete fresh and historical origin/retention set, check the captured
+native pins and capture closure before admissions or writes. No duplicated revision
+writer or alternate receipt encoding is needed.
+
+Artifact staging is a separate transaction and needs stageAuthorized with the
+ordered claim, START, current policy, ACL and mode checks, as CREATE already uses.
+The commit transaction must also bind the exact CREATE identity (assessment UUID,
+manifest digest, deadline and generation) to sealed, live retained assessment and
+selection evidence. A successful earlier reconciliation does not eliminate a
+subsequent expiry or release race. Read the database clock after row-lock waits.
+Retain existing selected-attempt, provider-version and schema-artifact checks.
+
+Acceptance requires real-provider initial and successor typed/mixed publication;
+stale owner and mismatched/expired/released stage refusal without revisions or a
+success receipt; revocation around both staging and commit; rollback and lost
+commit acknowledgment with exact replay and no duplicate revision; and correct
+resource lifetime through worker shutdown. This proposal does not expose a public
+historical recovery API or claim publication is implemented.
+
+Stage the retained artifact union through withRetainedEvidence before consuming
+promoteAccepted, then require the promoted batch to match that union. This keeps a
+staging failure from consuming the sole in-memory assessment. Set sticky publication
+state after successful promotion and reconcile subsequent uncertainty explicitly.
