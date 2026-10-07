@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * rows cannot cross-talk; a claim that finds a leftover row from another
  * test settles it VOID on the spot (a legitimate settle of seeded state).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaPurgeQueueIT extends AbstractLifecycleIT {
 
     // Same baseline image as the serde lane (testcontainers' own pinned tag).

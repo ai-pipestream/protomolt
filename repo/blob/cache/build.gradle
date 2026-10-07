@@ -3,6 +3,11 @@ dependencies {
     api project(':protomolt-repo-blob-spi')
     implementation libs.slf4j.api
     testImplementation project(':protomolt-repo-blob-redis')
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation libs.awssdk.url.connection.client
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
 }
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
 apply from: rootProject.file('gradle/runtime-boundaries.gradle')

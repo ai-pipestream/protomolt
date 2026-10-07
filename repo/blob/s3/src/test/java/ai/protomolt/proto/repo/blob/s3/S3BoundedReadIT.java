@@ -18,7 +18,7 @@ import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
 import static org.assertj.core.api.Assertions.*;
 
 /** Successful reads use real versioned storage, including exact-boundary and empty objects. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class S3BoundedReadIT {
     @Container static final LocalStackContainer BACKEND = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");

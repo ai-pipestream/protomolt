@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * attempts/retry/DLQ ladder (via a poison-key failing BlobStore wrapper
  * around the real one).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class S3PurgerIT extends AbstractLifecycleIT {
 
     @Test void legacyPurgeRefusesAdmittedPartsAndRecordsTheFailure() {

@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the attempts-to-FAILED ladder. Kafka never enters the picture here - the
  * relay has its own IT.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class DocumentEventOutboxIT {
 
     @Container

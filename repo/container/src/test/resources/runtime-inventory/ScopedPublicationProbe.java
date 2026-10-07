@@ -971,9 +971,18 @@ public final class ScopedPublicationProbe {
             var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                     System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")));
             var tx = new Tx(database.entityManagerFactory());
-            var opened = BlobStores.discover().open("s3", Map.of("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"),
-                    "region", System.getenv("PROTOMOLT_TEST_S3_REGION"), "path-style", "true", "conditional-writes", "false",
-                    "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"), "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+            var opened = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")),
+                Map.entry("region", System.getenv("PROTOMOLT_TEST_S3_REGION")),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS")),
+                Map.entry("secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
             String namespace = "scoped-parity-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
             opened.ensureNamespace(namespace);
             try (var admin = software.amazon.awssdk.services.s3.S3Client.builder()

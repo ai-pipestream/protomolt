@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * projection needs, and the rows it produces are the facts the archive
  * already stored — no second pass over the objects, no second store.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveCatalogIT {
 
     @Container

@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Process-crash evidence only: the Docker host and its storage remain running. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RedisPersistenceIT {
     private static final String PREFIX = "restart:";
     private static final String NAMESPACE = "documents";
@@ -117,7 +117,7 @@ class RedisPersistenceIT {
 
     private static OpenedBlobStore open(String host, int port) {
         return BlobStores.discover().open("redis", Map.of("uri", "redis://" + host + ":" + port,
-                "ttl-seconds", "0", "max-object-bytes", "1048576", "key-prefix", PREFIX));
+                "ttl-seconds", "0", "max-object-bytes", "1048576", "key-prefix", PREFIX, "write-policy", "replace"));
     }
 
     private static int port(GenericContainer<?> container) {

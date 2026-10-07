@@ -76,7 +76,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * deferred rather than silently skipped, and an asset whose classification
  * names no single format is refused.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveBridgeIT {
 
     @Container

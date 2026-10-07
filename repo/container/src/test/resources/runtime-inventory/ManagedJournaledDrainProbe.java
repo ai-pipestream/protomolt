@@ -329,9 +329,18 @@ public final class ManagedJournaledDrainProbe {
         var budget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(64_000_000);
         var timeouts=new SqlTimeouts(Duration.ofSeconds(2),Duration.ofSeconds(5));
         var ledger=new DocumentReadLedger(tx,UUID.randomUUID());
-        var opened=BlobStores.discover().open("s3",Map.of("endpoint",System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"),
-                "region",System.getenv("PROTOMOLT_TEST_S3_REGION"),"path-style","true","conditional-writes","true",
-                "access-key",System.getenv("PROTOMOLT_TEST_S3_ACCESS"),"secret-key",System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+        var opened=BlobStores.discover().open("s3",Map.ofEntries(
+                Map.entry("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")),
+                Map.entry("region", System.getenv("PROTOMOLT_TEST_S3_REGION")),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS")),
+                Map.entry("secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
         var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((original,selected) -> {
             require(original.equals(generation) && selected.equals(profile),"predecessor exact read backend");
             return opened.store();
@@ -687,9 +696,18 @@ public final class ManagedJournaledDrainProbe {
     private static Work prepare(RepoServices host, Tx tx, String generation, boolean typed) throws Exception {
         String account = "account-" + UUID.randomUUID();
         String namespace = "schema-" + UUID.randomUUID();
-        try (var backing = BlobStores.discover().open("s3", Map.of("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"),
-                "region", System.getenv("PROTOMOLT_TEST_S3_REGION"), "path-style", "true", "conditional-writes", "true",
-                "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"), "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")))) { backing.ensureNamespace(namespace); }
+        try (var backing = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")),
+                Map.entry("region", System.getenv("PROTOMOLT_TEST_S3_REGION")),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS")),
+                Map.entry("secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")))) { backing.ensureNamespace(namespace); }
         try (var client=software.amazon.awssdk.services.s3.S3Client.builder()
                 .endpointOverride(java.net.URI.create(System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")))
                 .region(software.amazon.awssdk.regions.Region.of(System.getenv("PROTOMOLT_TEST_S3_REGION")))

@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * backdate objects, so the "old" orphan is aged by a list() wrapper around
  * the real store (deletes still go against real LocalStack).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class StorageReconcilerIT extends AbstractLifecycleIT {
 
     @Test

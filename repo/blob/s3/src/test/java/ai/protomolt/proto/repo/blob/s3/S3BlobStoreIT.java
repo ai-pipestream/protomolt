@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * checksum trailer, NoSuchKey → {@link BlobStore.BlobNotFoundException}, and
  * the 1000-key batching of {@code deleteAll}. Skips cleanly without docker.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class S3BlobStoreIT {
 
     private static final String BUCKET = "claimcheck-it";

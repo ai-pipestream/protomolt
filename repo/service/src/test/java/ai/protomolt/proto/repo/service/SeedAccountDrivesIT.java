@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * built through {@link RepoServiceConfig} + {@link RepoServices} and the
  * seeder invoked by hand — exactly the opt-in contract embedded hosts get.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class SeedAccountDrivesIT {
 
     @Container
