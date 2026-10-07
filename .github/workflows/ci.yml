@@ -37,7 +37,31 @@ jobs:
           version: '1.70.0'
 
       - name: Build and test
-        run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
+        run: ./gradlew build -x :protomolt-repo-container:admissionStorageTest --console=plain -PtestJdk=${{ matrix.test-jdk }}
+
+      # This host starts PostgreSQL, Redis, LocalStack and a separate JVM. Run it
+      # after the broad build's sibling test workers have drained so its fixed
+      # operation deadlines are not measured under unrelated test contention.
+      - name: Repository storage host resources
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/RepositoryHostResources.java" <<'EOF'
+          class RepositoryHostResources {
+              public static void main(String[] args) {
+                  System.out.printf("java=%s availableProcessors=%d maxMemoryBytes=%d%n",
+                      System.getProperty("java.version"), Runtime.getRuntime().availableProcessors(),
+                      Runtime.getRuntime().maxMemory());
+              }
+          }
+          EOF
+          java "$RUNNER_TEMP/RepositoryHostResources.java"
+          printf 'cgroup cpu.max='
+          cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unavailable
+          printf 'cgroup memory.max='
+          cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unavailable
+
+      - name: Repository storage host tests
+        run: ./gradlew :protomolt-repo-container:admissionStorageTest --rerun --console=plain -PtestJdk=${{ matrix.test-jdk }} --max-workers=2
 
       - name: Save failed sample test reports
         if: failure()
