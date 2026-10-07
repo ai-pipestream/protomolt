@@ -85,3 +85,6 @@ See `docs/design/repository-provider-qualification.md` for the full matrix,
 entry points, lifecycle findings and requirement status. Historical evidence
 under `docs/evidence/repository/2026-10-06-publication-consumer/` retains its
 original scope and was superseded by re-execution at this revision.
+
+A later independent review ran these gates again and fixed several workarounds;
+see [`review-followup/`](review-followup/README.md).

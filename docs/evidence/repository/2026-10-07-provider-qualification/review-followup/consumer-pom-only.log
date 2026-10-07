@@ -1,0 +1,72 @@
+
+> Task :inspectPublishedMetadata
+Published metadata inspection passed for 8 modules
+
+> Task :recordConsumerMatrix
+
+> Task :recordStagedArtifactHashes
+Recorded 45 staged artifact hashes
+
+> Task :compileJava
+> Task :processResources NO-SOURCE
+> Task :classes
+> Task :compileTestJava NO-SOURCE
+> Task :processTestResources NO-SOURCE
+> Task :testClasses UP-TO-DATE
+> Task :test NO-SOURCE
+> Task :compileBrokenDiscoveryProbeJava
+> Task :processBrokenDiscoveryProbeResources NO-SOURCE
+> Task :brokenDiscoveryProbeClasses
+
+> Task :verifyBrokenServiceMissing
+BROKEN-DISCOVERY-PROBE OK: missing service registration detected
+
+> Task :verifyBrokenServiceWrongClass
+BROKEN-DISCOVERY-PROBE OK: corrupt service registration detected: ai.protomolt.proto.repo.blob.spi.BlobStoreProvider: Provider ai.protomolt.proto.repo.blob.redis.DeliberatelyMissingProvider not found
+
+> Task :compileGrpcClientJava
+> Task :processGrpcClientResources NO-SOURCE
+> Task :grpcClientClasses
+> Task :compilePublicationClientJava
+> Task :processPublicationClientResources NO-SOURCE
+> Task :publicationClientClasses
+> Task :verifyConsumer
+
+> Task :verifyConsumerBoundaries
+Published publication client runtime (pom-only): [:repository-published-consumer:unspecified, ai.pipestream:protomolt-asset-proto:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-cel:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-descriptors:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-formats:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-protobuf-metadata:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-protobuf-validation:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-repo-proto:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-repo-publication-grpc:0.1.0-provider-qualification-review-fixes, ai.pipestream:protomolt-repo-spi:0.1.0-provider-qualification-review-fixes, com.google.api.grpc:proto-google-common-protos:2.64.1, com.google.auto.value:auto-value-annotations:1.11.1, com.google.code.findbugs:jsr305:3.0.2, com.google.code.gson:gson:2.8.9, com.google.errorprone:error_prone_annotations:2.50.0, com.google.guava:failureaccess:1.0.3, com.google.guava:guava:33.6.0-jre, com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava, com.google.j2objc:j2objc-annotations:3.1, com.google.protobuf:protobuf-java-util:4.36.2, com.google.protobuf:protobuf-java:4.36.2, com.google.re2j:re2j:1.8, dev.cel:cel:0.14.0, dev.cel:common:0.14.0, dev.cel:compiler:0.14.0, dev.cel:protobuf:0.14.0, dev.cel:runtime:0.14.0, dev.cel:v1alpha1:0.14.0, io.grpc:grpc-api:1.84.0, io.grpc:grpc-protobuf-lite:1.84.0, io.grpc:grpc-protobuf:1.84.0, io.grpc:grpc-stub:1.84.0, org.antlr:antlr4-runtime:4.13.2, org.codehaus.mojo:animal-sniffer-annotations:1.27, org.jspecify:jspecify:1.0.0, org.slf4j:slf4j-api:2.0.20, org.threeten:threeten-extra:1.10.0, org.yaml:snakeyaml:2.6]
+
+> Task :verifyForbiddenDependencyDetection
+NEGATIVE-FIXTURE forbidden dependency detected as expected (pom-only): [redis.clients:jedis:8.0.1 [redis-sdk]]
+
+> Task :compileProviderDiscoveryJava
+> Task :processProviderDiscoveryResources NO-SOURCE
+> Task :providerDiscoveryClasses
+
+> Task :verifyProviderDiscovery
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+PROVIDER-DISCOVERY-CONSUMER OK: packaged discovery, identity, capabilities, selection
+
+> Task :compileRedisConsumerJava
+> Task :processRedisConsumerResources NO-SOURCE
+> Task :redisConsumerClasses
+
+> Task :verifyRedisPublishedConsumer
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+REDIS-PUBLISHED-CONSUMER OK: real conditional operations with AWS/Azure SDK absent
+
+> Task :check
+
+[Incubating] Problems report is available at: file:///tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/review-wt/verification/repository-consumer/build-pom-only/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 2s
+16 actionable tasks: 16 executed

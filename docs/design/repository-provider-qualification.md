@@ -20,8 +20,9 @@ directory so one mode's up-to-date outputs can never prove the other
 (`verification/repository-consumer/README.md`). Boundary decisions use
 group:artifact identity. Probes launch from the resolved published classpaths
 against packaged JARs. Real backends: `redis:7-alpine` containers for Redis,
-`localstack/localstack:3.8` for S3 correctness/conditional fixtures, and the
-deployment-pinned RustFS image for S3 matching-write qualification (existing
+`localstack/localstack:4.13` for S3 conditional-write qualification
+(`localstack/localstack:3.8` remains for the unconditional S3 and cache
+suites), and the deployment-pinned RustFS image (existing
 `RustFsConditionalBlobStoreIT`). No performance claim is made or required.
 
 ## Published consumer matrix
@@ -49,11 +50,17 @@ every row.
 
 Families rejected per row, by group:artifact identity: SQL/ORM/pooling/
 migration (`org.postgresql`, `org.hibernate[.orm]`, `com.zaxxer`,
-`org.flywaydb`, and the artifact names `hibernate-core`, `HikariCP`,
-`postgresql`, `flyway-core` regardless of group), Kafka (`org.apache.kafka`),
-repository server/engine (`ai.pipestream:protomolt-repo-container`,
-`protomolt-repo-service`, `protomolt-repo-engine`), AWS
-(`software.amazon.awssdk`), Azure (`com.azure*`), Redis (`redis.clients`).
+`org.flywaydb`, `org.liquibase`, `org.xerial`, `com.h2database`,
+`org.mariadb.jdbc`, `com.mysql`, `org.jooq`, `io.agroal`, and in-house
+`ai.pipestream:*-jdbc`), Kafka (`org.apache.kafka`, `io.confluent`, Kafka
+artifacts of `io.apicurio`, in-house `protomolt-kafka-*` and
+`protomolt-config-kafka`), server/engine (`io.vertx`, `io.micronaut`,
+`io.quarkus`, `org.springframework.boot`, in-house `protomolt-server-*`,
+`*-service`, `protomolt-repo-container`, `protomolt-repo-engine`,
+`protomolt-serve`, `protomolt-agent-host`), AWS (`software.amazon.awssdk`),
+Azure (`com.azure*`), Redis (`redis.clients`). `verifyForbiddenDependencyDetection`
+asserts the classification of a representative coordinate from each family,
+plus two legitimate client coordinates that must stay unclassified.
 Azure has no implementation anywhere in the platform; no row allows it, so its
 absence is a standing guard, not a leak finding. Protobuf, gRPC client stubs
 and CEL/protobuf-validation libraries are legitimate in client rows and are
@@ -136,20 +143,18 @@ resolution paths over the same artifacts.
   mutation epoch: an ABA content cycle is not detectable, pinned honestly in
   `contentEtagIsNotAnEpochAndDoesNotDetectAba`. Redis provides no version
   identity; `get(..., versionId)` is an explicit unsupported operation.
-- S3 on LocalStack 3.8, versioning enabled (`S3LocalStackConditionalIT`):
-  `If-None-Match: *` is enforced — duplicate creates conflict and an
-  eight-way create race has exactly one winner; refused writes never mutate
-  the object; the 9 MiB conditional bound is pinned with a boundary refusal
-  that leaves stored bytes untouched. Measured honestly, **LocalStack 3.8 does
-  not enforce `If-Match`**: a stale precondition succeeds. Matching
-  conditional writes are therefore **not qualified on LocalStack 3.8**; the
-  matching-write qualification remains
-  [`RustFsConditionalBlobStoreIT`](../../repo/blob/s3/src/test/java/ai/protomolt/proto/repo/blob/s3/RustFsConditionalBlobStoreIT.java)
-  against the deployment-pinned RustFS image. A dedicated probe
-  (`localstack38DoesNotEnforceMatchingPreconditions`) pins LocalStack's
-  behavior so a future upgrade that enforces `If-Match` fails the suite and
-  forces requalification. Operators must not treat
-  `conditional-writes=true` against LocalStack 3.8 as If-Match semantics.
+- S3 on LocalStack 4.13, versioning enabled (`S3LocalStackConditionalIT`):
+  `If-None-Match: *` is enforced (duplicate creates conflict and an eight-way
+  create race has exactly one winner) and `If-Match` is enforced (a stale
+  precondition conflicts on every retry without mutating bytes or version,
+  and an eight-way matching race against one snapshot has exactly one
+  winner). Refused writes never mutate the object; the 9 MiB conditional
+  bound is pinned with a boundary refusal that leaves stored bytes untouched.
+  LocalStack 3.8, which the suite first used, ignores `If-Match` (a stale
+  precondition succeeds), so it cannot qualify matching writes; the suite
+  pins 4.13 for that reason. RustFS matching-write qualification
+  ([`RustFsConditionalBlobStoreIT`](../../repo/blob/s3/src/test/java/ai/protomolt/proto/repo/blob/s3/RustFsConditionalBlobStoreIT.java))
+  is unchanged.
 - S3 backend version identity: with versioning enabled, every write returns a
   distinct opaque `versionId` that reads back exact historical bytes. It is a
   provider identity, not a repository document revision number, and is never
@@ -191,8 +196,8 @@ resolution paths over the same artifacts.
 | Strengthen published-artifact verification | **Strengthened.** Per-mode build isolation, POM/module-metadata inspection, packaged-JAR discovery probes, forbidden-dependency and broken-registration negative fixtures, artifact hashes recorded. |
 | Provider selection and lifecycle | **Satisfied and strengthened.** Selection/identity/refusal coverage pre-existed; added startup-failure, close-failure retention, unsupported-capability release for S3, after-close observable failure for Redis, and cache-with-real-provider composition. |
 | Real Redis cases | **Already satisfied**, kept green (testcontainers `redis:7-alpine`, including persistence/crash evidence). |
-| S3 correctness/conditional cases on LocalStack with versioning | **Strengthened.** New versioned-bucket suite; measured and recorded the LocalStack 3.8 If-Match gap instead of imposing the capability. |
-| Concurrent conditional writes | **Satisfied and strengthened.** Redis races pre-existed; added LocalStack create-race, cache-decorator race; matching-write race stays on RustFS where the precondition is real. |
+| S3 correctness/conditional cases on LocalStack with versioning | **Strengthened.** New versioned-bucket suite on LocalStack 4.13 qualifies both `If-None-Match` and `If-Match`; LocalStack 3.8 does not enforce `If-Match` and is not used for conditional qualification. |
+| Concurrent conditional writes | **Satisfied and strengthened.** Redis races pre-existed; added LocalStack create and matching races, and a cache-decorator race; RustFS matching qualification unchanged. |
 | Payload bound and no-retry semantics | **Already satisfied**, re-proven on LocalStack: 9 MiB accepted, +1 refused without mutation; conflicts never become success through retry. |
 | Non-S3 consumer with AWS absent | **Strengthened.** Now an executed probe on the published classpath, not only a metadata assertion. |
 | Fix demonstrated defects | **None demonstrated in production code.** The only main-code change is a test-enabling visibility widen of `S3BlobStoreProvider.close` (private → package) so the real cleanup path can be driven; behavior is unchanged. |
