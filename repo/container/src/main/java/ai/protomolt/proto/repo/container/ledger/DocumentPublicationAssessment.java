@@ -76,7 +76,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, histories, control);
              var work = sources.work()) {
             return prepareHistoricalAccepted(command, policy, modes, supplied, container, resolver, budget,
-                    opaqueLimits, evaluatedAt, work, null, control);
+                    opaqueLimits, evaluatedAt, work, null, null, control);
         }
     }
 
@@ -85,7 +85,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
-            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration, Object executionIdentity,
             ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
         DocumentHistoricalAssessmentSources.Work work = null;
         DocumentPublicationAssessment assessment = null;
@@ -96,7 +96,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
                     evaluatedAt, control::check, work, control);
             work.authorize(control);
-            var result = new Historical(assessment, work, registration);
+            var result = new Historical(assessment, work, registration, executionIdentity);
             delivered = true;
             return result;
         } catch (RuntimeException | InvalidProtocolBufferException | Error failure) {
@@ -153,10 +153,11 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         private DocumentPublicationAssessment assessment;
         private final DocumentHistoricalAssessmentSources.Work work;
         private final DocumentPublicationScopeCalls.Call registration;
+        private final Object executionIdentity;
         private boolean inspecting;
         private Historical(DocumentPublicationAssessment assessment, DocumentHistoricalAssessmentSources.Work work,
-                DocumentPublicationScopeCalls.Call registration) {
-            this.assessment = assessment; this.work = work; this.registration = registration;
+                DocumentPublicationScopeCalls.Call registration, Object executionIdentity) {
+            this.assessment = assessment; this.work = work; this.registration = registration; this.executionIdentity = executionIdentity;
         }
         /** The inspection facade expires at callback exit; its summaries are values authorized at snapshot time. */
         synchronized void inspect(java.util.function.Consumer<Inspection> consumer,
@@ -196,6 +197,30 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 work.authorize(control);
                 return DocumentOperationUploadAdmission.prepareHistorical(assessment.command(), placements, attempts, lease, tokens,
                         work.references(assessment.command(), control::check), control::check);
+            } finally {
+                try { work.authorize(control); }
+                finally { inspecting = false; }
+            }
+        }
+
+        /** Synchronous borrowing for the exact handle that prepared this assessment. */
+        synchronized <T> T withRetainedEvidence(Object expectedIdentity,
+                ai.protomolt.proto.repo.spi.RepositoryCaller caller, DocumentHistoricalAssessmentSources.Work expectedWork,
+                RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+                Map<String, DocumentPublicationCandidate.Mode> modes, DocumentAssessmentRuntimeObserver.Observation observation,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control,
+                java.util.function.Function<DocumentAssessmentEvidence, T> consumer) throws InvalidProtocolBufferException {
+            requireOpen();
+            if (executionIdentity == null || executionIdentity != expectedIdentity)
+                throw new IllegalArgumentException("Assessment belongs to another historical execution");
+            if (!assessment.command().canonical().equals(command.canonical()) || !assessment.modes().equals(modes))
+                throw new IllegalArgumentException("Assessment differs from registered command or modes");
+            work.requireSameOwner(expectedWork); work.requireCaller(caller);
+            if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
+            inspecting = true;
+            try {
+                work.authorize(control);
+                return assessment.withRetentionEvidence(owner, observation, control::check, consumer);
             } finally {
                 try { work.authorize(control); }
                 finally { inspecting = false; }

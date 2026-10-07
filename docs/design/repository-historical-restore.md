@@ -751,8 +751,12 @@ selected upload attempts. Extending that set inside CREATE would acquire further
 origin locks after retention locks. Reentrance of the historical subset does not
 make the expanded ordering safe.
 
-Use one caller-owned transaction, with descriptor resolution, schema staging and
-bounded encoding completed outside SQL. Check the live claim, exact preparation,
+Use one caller-owned CREATE transaction. Resolve descriptors and perform bounded
+encoding before opening it. Persist normalized schema claims in a separate SQL
+transaction that checks and holds the same current authority through its commit;
+external schema resolution must never run while SQL locks are held. Authorized
+schema staging can survive a later CREATE refusal, but cannot confer authority to
+create or publish an assessment. Check the live claim, exact preparation,
 history header, fixed modes and committed assessment start; then owner/command,
 current schema policy, complete caller authorization and sorted drive bindings.
 Observed evidence must match the handle's canonical command and fixed modes.
@@ -771,8 +775,23 @@ cross-operation lock order, and add a real mixed-upload contention test alongsid
 policy-lock contention, rollback and lost-acknowledgement cases. A lost CREATE
 acknowledgement requires exact-stage discovery and retained-evidence reconciliation;
 neither absence nor a duplicate permits a new assessment UUID or implicit adoption.
-This refinement was reviewed by Sol against the existing binder and slot code;
-the claimed implementation and its contention evidence remain outstanding.
+This refinement was reviewed by Sol against the existing binder and slot code.
+The private initial-handle CREATE implementation and mixed-origin contention
+check are recorded in
+`docs/evidence/repository/2026-10-07-claimed-historical-create/README.md`.
+This does not qualify a new handle's retry after an uncertain acknowledgement,
+restart/successor recovery, or public claimed publication.
+
+Credential revocation and commit have distinct outcomes. If staging commits before
+revocation, schema claims may remain while final CREATE is refused. If CREATE
+commits first, the assessment stays durable even if reauthorization denies return
+of its identity. Retained historical handles must recheck a supplied credential's
+live generation as well as current READ policy; public READ cannot bypass a
+revoked key. A revoked caller cannot discover or reconcile the result. An explicitly
+authorized host with the same operation principal may reconcile the original
+coordinates. Principal-only hosts remain a separate authentication model and gain
+no key-specific grant. These are corrections to authorization behavior, not new
+wire fields or a promise of recovery on behalf of a revoked caller.
 
 ### Acceptance before enabling public restore
 

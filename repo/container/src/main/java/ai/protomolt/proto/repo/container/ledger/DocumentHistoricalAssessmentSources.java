@@ -56,6 +56,12 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         }
         /** Accepted continuation from the same source owner; never reacquires source admission. */
         Work fork() { return new Work(permit.fork()); }
+        void requireSameOwner(Work expected) {
+            permit.requireActive(); expected.permit.requireActive();
+            if (expected.sourceOwner() != DocumentHistoricalAssessmentSources.this)
+                throw new IllegalArgumentException("Historical work belongs to another source owner");
+        }
+        private DocumentHistoricalAssessmentSources sourceOwner() { return DocumentHistoricalAssessmentSources.this; }
 
         /** The resolver owns a child permit, even if source admission has closed. */
         MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> container,

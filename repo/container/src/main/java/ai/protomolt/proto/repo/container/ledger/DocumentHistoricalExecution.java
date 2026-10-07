@@ -20,6 +20,8 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentPreparationCaptureDrain.Identity capture;
     private final byte[] preparationDigest;
     private final String encodedModes;
+    private final Object assessmentIdentity = new Object();
+    private boolean assessmentCreateAttempted;
     private boolean closed;
 
     private DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
@@ -165,7 +167,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         mutate(caller, control, em -> null);
         var child = registration.forkAccepted();
         var assessment = DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
-                fragments, container, resolver, budget, limits, evaluatedAt, work, child, control);
+                fragments, container, resolver, budget, limits, evaluatedAt, work, child, assessmentIdentity, control);
         try {
             // Resolution can outlast credential, claim or source changes; authorize findings at delivery.
             mutate(caller, control, em -> null);
@@ -174,6 +176,89 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             try { assessment.close(); }
             catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
+        }
+    }
+
+    /** Private create-only staging; a failed SQL acknowledgement requires reconciliation, never blind retry. */
+    synchronized DocumentAssessmentCreation.Created createAssessment(RepositoryCaller caller,
+            DocumentPublicationAssessment.Historical assessment,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+            DocumentAssessmentRuntimeObserver.Observation observation, RepositorySchemaArtifacts storage,
+            DocumentAssessmentStartJournal.Started started, RepositoryReadControl control)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        mutate(caller, control, em -> null);
+        if (assessmentCreateAttempted)
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical assessment CREATE requires reconciliation before another attempt");
+        Objects.requireNonNull(started);
+        var selected = Map.copyOf(selections);
+        return assessment.withRetainedEvidence(assessmentIdentity, caller, work, owner, record.command(), modes,
+                observation, control, evidence -> createObserved(caller, selected, evidence, storage, started, control));
+    }
+
+    private DocumentAssessmentCreation.Created createObserved(RepositoryCaller caller,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selected, DocumentAssessmentEvidence evidence,
+            RepositorySchemaArtifacts storage, DocumentAssessmentStartJournal.Started started, RepositoryReadControl control) {
+        evidence.requireOwner(owner, control::check);
+        var command = record.command();
+        if (!evidence.command(control::check).canonical().equals(command.canonical())
+                || !evidence.modes(control::check).equals(modes))
+            throw new IllegalArgumentException("Observed assessment differs from registered identity");
+        var references = work.references(command, control::check);
+        var plan = prepared.plan();
+        var authorization = DocumentAdmissionAuthorization.prepare(plan, references);
+        var creation = DocumentCreationAuthorization.prepare(plan, drives, caller);
+        var reuse = DocumentReuseAdmission.prepare(plan);
+        var slotPlan = DocumentAssessmentSlots.prepare(command, references, control::check);
+        var policy = evidence.policy(control::check);
+        var artifacts = evidence.artifacts(control::check);
+        var roots = evidence.roots(control::check);
+        var manifest = evidence.manifestBytes(control::check);
+        var manifestSha = evidence.manifestSha256(control::check);
+        int count = command.intent().getMembersList().stream().mapToInt(member ->
+                (int) member.getPartsList().stream().filter(part -> !part.hasEmpty()).count()).sum();
+        int largestRoot = roots.stream().mapToInt(root -> root.bytes().size()).max().orElse(0);
+        // Hold current authority through the artifact claim transaction, including after evidence preparation.
+        storage.stageAuthorized(owner, command, List.copyOf(artifacts.values()), control::check, em -> {
+            lockRegistration(em);
+            DocumentAssessmentStartJournal.requireCreation(em, owner, command, started.assessment(), started.retainUntil());
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+            DocumentSchemaPolicies.lockCurrent(em, policy, control::check);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
+            DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), command, owner.generation(), encodedModes);
+            evidence.check(control::check);
+        });
+        try (var scratch = budget.reserve(2L * (manifest.size() + largestRoot))) {
+            var writes = new DocumentAssessmentCreationWrites.Prepared(command, plan, selected, reuse, slotPlan,
+                    true, manifest.toByteArray(), manifestSha, count, artifacts, roots);
+            // Sticky before SQL: even a lost acknowledgement cannot lead this handle to CREATE twice.
+            assessmentCreateAttempted = true;
+            var result = tx.inTransaction(em -> {
+                lockRegistration(em);
+                DocumentAssessmentStartJournal.requireCreation(em, owner, command, started.assessment(), started.retainUntil());
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+                DocumentSchemaPolicies.lockCurrent(em, policy, control::check);
+                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
+                DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), command, owner.generation(), encodedModes);
+                for (var placement : record.placements().values().stream()
+                        .sorted(Comparator.comparing(value -> value.drive().id())).toList()) {
+                    placement.drive().lock(em, drives);
+                    if (!ManagedBackendLedger.find(em, placement.generation()).filter(placement.profile()::equals).isPresent())
+                        throw new IllegalArgumentException("Historical execution placement differs from registered backend");
+                }
+                // One complete origin set: never acquire the historical subset before fresh attempts.
+                var physical = DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, control::check);
+                var slots = DocumentAssessmentSlots.bind(em, slotPlan, physical.physical(), physical.locks(), control::check);
+                DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, owner.executionClaim().orElseThrow(),
+                        capture.owner().incarnation(), control::check);
+                evidence.check(control::check);
+                return DocumentAssessmentCreationWrites.writeBound(em, owner, writes, evidence,
+                        started.assessment(), started.retainUntil(), budget, control::check, slots);
+            });
+            work.authorize(control);
+            return result;
         }
     }
 
@@ -194,24 +279,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         var result = tx.inTransaction(em -> {
             var claim = owner.executionClaim().orElseThrow();
-            RepositoryExecutionClaimLedger.lockLive(em, claim);
-            var rows = em.createNativeQuery("""
-                    SELECT p.owner_nonce=:nonce AND p.preparation_sha256=:digest
-                      AND h.preparation_sha256=p.preparation_sha256 AND h.command_sha256=p.command_sha256 AND h.sealed
-                    FROM repository_publication_preparations p JOIN repository_preparation_history_sets h
-                      USING(account_id,principal,operation_id,predecessor_generation)
-                    WHERE p.account_id=:a AND p.principal=:p AND p.operation_id=:o AND p.predecessor_generation=0
-                    FOR UPDATE OF p,h
-                    """).setParameter("nonce", owner.token()).setParameter("digest", preparationDigest)
-                    .setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
-                    .setParameter("o", owner.key().operationId()).getResultList();
-            if (rows.size() != 1 || !Boolean.TRUE.equals(rows.getFirst()))
-                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical execution preparation binding changed");
-            em.createNativeQuery("""
-                    SELECT owner_nonce FROM repository_publication_modes
-                    WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=0 FOR UPDATE
-                    """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
-                    .setParameter("o", owner.key().operationId()).getSingleResult();
+            lockRegistration(em);
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
@@ -232,6 +300,28 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         });
         work.authorize(control);
         return result;
+    }
+
+    private void lockRegistration(jakarta.persistence.EntityManager em) {
+        var claim = owner.executionClaim().orElseThrow();
+        RepositoryExecutionClaimLedger.lockLive(em, claim);
+        var rows = em.createNativeQuery("""
+                SELECT p.owner_nonce=:nonce AND p.preparation_sha256=:digest
+                  AND h.preparation_sha256=p.preparation_sha256 AND h.command_sha256=p.command_sha256 AND h.sealed
+                FROM repository_publication_preparations p JOIN repository_preparation_history_sets h
+                  USING(account_id,principal,operation_id,predecessor_generation)
+                WHERE p.account_id=:a AND p.principal=:p AND p.operation_id=:o AND p.predecessor_generation=0
+                FOR UPDATE OF p,h
+                """).setParameter("nonce", owner.token()).setParameter("digest", preparationDigest)
+                .setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                .setParameter("o", owner.key().operationId()).getResultList();
+        if (rows.size() != 1 || !Boolean.TRUE.equals(rows.getFirst()))
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical execution preparation binding changed");
+        em.createNativeQuery("""
+                SELECT owner_nonce FROM repository_publication_modes
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=0 FOR UPDATE
+                """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                .setParameter("o", owner.key().operationId()).getSingleResult();
     }
 
     @Override public synchronized void close() {

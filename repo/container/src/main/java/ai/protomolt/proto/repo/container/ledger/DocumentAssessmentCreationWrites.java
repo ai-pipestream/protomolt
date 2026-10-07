@@ -45,6 +45,25 @@ final class DocumentAssessmentCreationWrites {
             var physical = DocumentCommitParts.bindHistoricalAssessment(em, owner, plan, selected, reuse, control);
             slots = DocumentAssessmentSlots.bind(em, slotPlan, physical.physical(), physical.locks(), control);
         }
+        return writeRows(em, owner, input, evidence, assessment, retainUntil, scratch, control, slots);
+    }
+
+    /** Claimed callers bind the complete physical set and verify capture pins before the first INSERT. */
+    static DocumentAssessmentCreation.Created writeBound(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Prepared input, DocumentAssessmentEvidence evidence, UUID assessment, Instant retainUntil,
+            PayloadBudget scratch, Runnable control, List<DocumentAssessmentSlots.Slot> slots) {
+        insertOwner(em, owner, input.command(), assessment, retainUntil, input.manifestBytes(), input.manifestSha(),
+                input.count(), input.artifacts().size(), input.roots().size());
+        return writeRows(em, owner, input, evidence, assessment, retainUntil, scratch, control, slots);
+    }
+
+    private static DocumentAssessmentCreation.Created writeRows(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Prepared input, DocumentAssessmentEvidence evidence, UUID assessment, Instant retainUntil,
+            PayloadBudget scratch, Runnable control, List<DocumentAssessmentSlots.Slot> slots) {
+        var command = input.command();
+        var manifestSha = input.manifestSha();
+        var artifacts = input.artifacts();
+        var roots = input.roots();
         em.unwrap(org.hibernate.Session.class).doWork(connection -> {
             try (var statement = connection.prepareStatement("""
                     INSERT INTO document_assessment_slots(assessment_id,member_id,revision_ordinal,selection_revision,

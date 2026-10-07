@@ -187,6 +187,10 @@ final class DocumentAdmissionAuthorization {
         requireIdentity(source, address);
         requireSourceAccess(caller, source);
         if (!DocumentStatus.AVAILABLE.equals(source.status()) || source.pendingPurgeId() != null) throw unavailable();
+        // Public READ grants do not revive a supplied, revoked credential. Hold
+        // its authority after the document locks, as other observation paths do.
+        if (!caller.processAuthority() && caller.credentialBinding().isPresent())
+            RepositoryCredentialAuthorities.requireLive(em, caller);
     }
 
     static Map<UUID, DocumentRecord> lockAndAuthorize(EntityManager em, RepositoryCaller caller,

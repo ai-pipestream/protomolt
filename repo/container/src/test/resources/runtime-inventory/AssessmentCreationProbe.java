@@ -19,7 +19,7 @@ public final class AssessmentCreationProbe {
         var executionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "execution");
         var scopedExecutionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "scoped-execution", true);
         var runtimeSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "runtime");
-        var schemaRevisionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision");
+        var schemaRevisionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision", true);
         var successorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "successor", true);
         var ownedSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "owned-successor", true);
         var openSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "open-successor", true);
