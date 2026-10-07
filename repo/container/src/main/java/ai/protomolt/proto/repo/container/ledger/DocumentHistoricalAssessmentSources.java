@@ -54,6 +54,9 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
         void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
             permit.requireActive(); requireOpaqueAccepted(member, control);
         }
+        /** Accepted continuation from the same source owner; never reacquires source admission. */
+        Work fork() { return new Work(permit.fork()); }
+
         /** The resolver owns a child permit, even if source admission has closed. */
         MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> container,
                 DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,

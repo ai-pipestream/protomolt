@@ -73,24 +73,52 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
             ai.protomolt.proto.repo.spi.RepositoryCaller caller, List<DocumentReadLedger.PinnedHistory> histories,
             ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
-        var sources = DocumentHistoricalAssessmentSources.open(command, caller, histories, control);
+        try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, histories, control);
+             var work = sources.work()) {
+            return prepareHistoricalAccepted(command, policy, modes, supplied, container, resolver, budget,
+                    opaqueLimits, evaluatedAt, work, null, control);
+        }
+    }
+
+    /** Borrows accepted work; owns a child permit and transfers the supplied registration call on entry. */
+    static Historical prepareHistoricalAccepted(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+        DocumentHistoricalAssessmentSources.Work work = null;
         DocumentPublicationAssessment assessment = null;
+        Throwable pending = null;
         boolean delivered = false;
-        try (var work = sources.work()) {
-            try {
-                assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
-                        evaluatedAt, control::check, work, control);
-                work.authorize(control);
-                var result = new Historical(assessment, sources); delivered = true;
-                return result;
-            } catch (RuntimeException | InvalidProtocolBufferException failure) {
-                work.authorize(control);
-                throw failure;
+        try {
+            work = accepted.fork();
+            assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
+                    evaluatedAt, control::check, work, control);
+            work.authorize(control);
+            var result = new Historical(assessment, work, registration);
+            delivered = true;
+            return result;
+        } catch (RuntimeException | InvalidProtocolBufferException | Error failure) {
+            pending = failure;
+            try { accepted.authorize(control); }
+            catch (RuntimeException | Error denial) {
+                if (denial != failure) denial.addSuppressed(failure);
+                pending = denial;
+                throw denial;
             }
+            throw failure;
         } finally {
             if (!delivered) {
-                if (assessment != null) assessment.close();
-                sources.close();
+                var cleanup = new ArrayList<AutoCloseable>();
+                if (assessment != null) cleanup.add(assessment);
+                if (work != null) cleanup.add(work);
+                if (registration != null) cleanup.add(registration);
+                try { DocumentHistoricalAssessmentSources.closeAll(cleanup); }
+                catch (RuntimeException | Error failure) {
+                    if (pending == null) throw failure;
+                    if (pending != failure) pending.addSuppressed(failure);
+                }
             }
         }
     }
@@ -113,7 +141,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             Snapshot snapshot() {
                 synchronized (Historical.this) {
                     if (!active) throw new IllegalStateException("Historical inspection callback has ended");
-                    requireOpen(); sources.authorize(control);
+                    requireOpen(); work.authorize(control);
                     var members = new LinkedHashMap<String, MemberInspection>();
                     assessment.typed().forEach((id, view) -> members.put(id, new MemberInspection(view.request().commandSha256(),
                             view.request().policySha256(), view.evaluatedAt(), view.roots().size(), view.failure())));
@@ -123,10 +151,12 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             }
         }
         private DocumentPublicationAssessment assessment;
-        private final DocumentHistoricalAssessmentSources sources;
+        private final DocumentHistoricalAssessmentSources.Work work;
+        private final DocumentPublicationScopeCalls.Call registration;
         private boolean inspecting;
-        private Historical(DocumentPublicationAssessment assessment, DocumentHistoricalAssessmentSources sources) {
-            this.assessment = assessment; this.sources = sources;
+        private Historical(DocumentPublicationAssessment assessment, DocumentHistoricalAssessmentSources.Work work,
+                DocumentPublicationScopeCalls.Call registration) {
+            this.assessment = assessment; this.work = work; this.registration = registration;
         }
         /** The inspection facade expires at callback exit; its summaries are values authorized at snapshot time. */
         synchronized void inspect(java.util.function.Consumer<Inspection> consumer,
@@ -136,11 +166,11 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             inspecting = true;
             var inspection = new Inspection(control);
             try {
-                sources.authorize(control);
+                work.authorize(control);
                 consumer.accept(inspection);
             } finally {
                 inspection.active = false;
-                try { sources.authorize(control); }
+                try { work.authorize(control); }
                 finally { inspecting = false; }
             }
         }
@@ -148,9 +178,9 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             requireOpen();
             if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
             inspecting = true;
-            try { sources.authorize(control); assessment.verifySchemas(control::check); }
+            try { work.authorize(control); assessment.verifySchemas(control::check); }
             finally {
-                try { sources.authorize(control); }
+                try { work.authorize(control); }
                 finally { inspecting = false; }
             }
         }
@@ -163,11 +193,11 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
             inspecting = true;
             try {
-                sources.authorize(control);
+                work.authorize(control);
                 return DocumentOperationUploadAdmission.prepareHistorical(assessment.command(), placements, attempts, lease, tokens,
-                        sources.references(assessment.command(), control::check), control::check);
+                        work.references(assessment.command(), control::check), control::check);
             } finally {
-                try { sources.authorize(control); }
+                try { work.authorize(control); }
                 finally { inspecting = false; }
             }
         }
@@ -180,11 +210,13 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                 DocumentAssessmentCreation creation, java.util.UUID id, Instant retainUntil,
                 ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
             requireOpen();
+            if (owner.executionClaim().isPresent())
+                throw new UnsupportedOperationException("Claimed historical CREATE is not implemented");
             if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
             inspecting = true;
             try {
-                sources.requireCaller(caller); sources.authorize(control);
-                var references = sources.references(assessment.command(), control::check);
+                work.requireCaller(caller); work.authorize(control);
+                var references = work.references(assessment.command(), control::check);
                 if (!prepared.plan().historical().equals(references))
                     throw new IllegalArgumentException("Historical physical plan belongs to another assessment owner");
                 DocumentAdmissionAuthorization.requireCaller(caller, owner, assessment.command().intent().getAccountId());
@@ -194,7 +226,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
                             assessment.budget, control::check, references);
                 });
             } finally {
-                try { sources.authorize(control); }
+                try { work.authorize(control); }
                 finally { inspecting = false; }
             }
         }
@@ -212,16 +244,16 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
             inspecting = true;
             try {
-                sources.requireCaller(caller); sources.authorize(control);
+                work.requireCaller(caller); work.authorize(control);
                 var command = assessment.command();
-                var references = sources.references(command, control::check);
+                var references = work.references(command, control::check);
                 if (!prepared.plan().historical().equals(references)
                         || !prepared.plan().command().canonical().equals(command.canonical()))
                     throw new IllegalArgumentException("Historical physical plan belongs to another assessment owner");
                 DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
                 try (var candidate = assessment.promoteAccepted(control::check, references)) {
                     candidate.schemas().stage(storage, owner, control::check);
-                    sources.authorize(control);
+                    work.authorize(control);
                     return publication.commitHistorical(caller, owner, prepared, candidate.opaque(), selections,
                             candidate.schemas(), control::check, references);
                 }
@@ -236,8 +268,11 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         @Override public synchronized void close() {
             if (inspecting) throw new IllegalStateException("Historical assessment inspection is active");
             if (assessment == null) return;
-            try { assessment.close(); }
-            finally { assessment = null; sources.close(); }
+            var cleanup = new ArrayList<AutoCloseable>();
+            cleanup.add(assessment); cleanup.add(work);
+            if (registration != null) cleanup.add(registration);
+            assessment = null;
+            DocumentHistoricalAssessmentSources.closeAll(cleanup);
         }
     }
 

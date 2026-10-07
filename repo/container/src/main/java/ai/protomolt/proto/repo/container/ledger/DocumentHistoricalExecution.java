@@ -154,6 +154,29 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         }
     }
 
+    /** Owns a child of this exact source/registration scope through all assessment work and cleanup. */
+    synchronized DocumentPublicationAssessment.Historical prepareAssessment(RepositoryCaller caller,
+            DocumentSchemaPolicies.Selection policy,
+            Map<String, Map<Integer, com.google.protobuf.ByteString>> fragments,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver,
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
+            RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        mutate(caller, control, em -> null);
+        var child = registration.forkAccepted();
+        var assessment = DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
+                fragments, container, resolver, budget, limits, evaluatedAt, work, child, control);
+        try {
+            // Resolution can outlast credential, claim or source changes; authorize findings at delivery.
+            mutate(caller, control, em -> null);
+            return assessment;
+        } catch (RuntimeException | Error failure) {
+            try { assessment.close(); }
+            catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
     private <T> T mutate(RepositoryCaller caller, RepositoryReadControl control,
             java.util.function.Function<jakarta.persistence.EntityManager, T> mutation) {
         if (closed) throw new IllegalStateException("Historical execution is closed");
