@@ -187,3 +187,9 @@ call, verifies SQL remains usable and Redis remains open, then releases the call
 and retries shutdown. Evidence:
 `docs/evidence/repository/2026-10-07-bounded-read-shutdown`.
 Active publication shutdown, gRPC cancellation and delayed requests remain open.
+
+The delayed-request transport fixture now passes with the real Redis adapter:
+`docs/evidence/repository/2026-10-07-delayed-redis-request`.
+It binds capture to the physical key and forwards the original frame once after
+the caller disconnects. Repository attempt/tombstone integration remains open;
+direct provider absence is not evidence of durable SQL cleanup state.
