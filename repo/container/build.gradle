@@ -130,6 +130,28 @@ ext.admissionRuntimeDirectory = 'admission-transport-runtime'
 apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
 def transportAdmissionInventory = layout.buildDirectory.dir('admission-transport-runtime')
 tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
+// The scoped publication parity suite needs the observed admission runtime bundle;
+// run it through the dedicated scopedPublicationTest task below.
+tasks.named('test') { exclude '**/ScopedPublication*IT*' }
+tasks.register('scopedPublicationTest', Test) {
+    group = 'verification'
+    description = 'Run scoped publication authorization parity across library and authenticated gRPC'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.ScopedPublicationParityIT' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+    }
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('scopedPublicationTest') }
+
 tasks.register('admissionStorageTest', Test) {
     group = 'verification'
     description = 'Qualify observed admission and PostgreSQL together in a production JAR host'
