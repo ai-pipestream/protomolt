@@ -23,6 +23,29 @@ class DocumentCaptureAdmissionClosureIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void committedCancellationRejectsAnotherCapture() throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c); var work = rig.sources().work()) {
+            var command = rig.record().command();
+            var modes = DocumentPublicationModesJournal.encode(command,
+                    Map.of(command.intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+            var admission = RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(), command,
+                    rig.record().seeds().ownerNonce(), LEASE, work);
+            var owner = c.tx().inTransaction(em -> {
+                RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                DocumentPublicationModesJournal.insert(em, rig.claim(), rig.record(), modes);
+                return admission.apply(em, rig.claim()).owner().orElseThrow();
+            });
+            var cancelled = new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, command, NONE);
+            assertThat(cancelled.state()).isEqualTo(DocumentPublicationReplay.State.TERMINATED);
+            var receipt = cancelled.rejection().orElseThrow();
+            assertThat(receipt.getCommandSha256()).isEqualTo(command.sha256());
+            assertThat(receipt.getOwnerGeneration()).isEqualTo(owner.generation());
+            assertThat(new DocumentPublicationReplay(c.tx()).observe(CALLER, command).rejection()).contains(receipt);
+            assertThatThrownBy(() -> append(c, rig)).hasStackTraceContaining("Publication capture admission is closed");
+            assertThat(batches(c, rig)).isEqualTo(1);
+        }
+    }
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void abandonedPreparationCannotAddAnotherCaptureButOpenPreparationCan(boolean migrateExisting) throws Exception {
         try (var c = migrateExisting ? context(POSTGRES, "107") : context(POSTGRES); var rig = prepare(c)) {

@@ -22,13 +22,13 @@ final class DocumentPublicationAbandonment {
         try (var reservation = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
             var expected = digest(preparation);
             control.check();
-            var rows = tx.readOnly(em -> em.createNativeQuery("""
+            var rows = tx.inTransaction(em -> { return em.createNativeQuery("""
                     SELECT a.owner_nonce,a.preparation_sha256,a.claim_epoch,a.claim_token,p.command_sha256
                     FROM repository_publication_abandonments a
                     JOIN repository_publication_preparations p USING(account_id,principal,operation_id,predecessor_generation)
                     WHERE a.account_id=:a AND a.principal=:p AND a.operation_id=:o
                     """).setParameter("a", preparation.key().account()).setParameter("p", preparation.key().principal())
-                    .setParameter("o", preparation.key().operationId()).getResultList());
+                    .setParameter("o", preparation.key().operationId()).getResultList(); });
             control.check();
             if (rows.isEmpty()) return false;
             var row = (Object[]) rows.getFirst();

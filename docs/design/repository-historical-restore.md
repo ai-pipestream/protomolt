@@ -851,7 +851,9 @@ V108 now guards new V104 batches and V105 owners against V85 abandonment and
 V52/V64 terminal outcomes. AFTER INSERT preserves confirmation of an existing
 batch discarded by ON CONFLICT. The existing claim fence serializes closure with
 capture insertion; a real lock-wait regression qualifies committed abandonment.
-Success/rejection-specific capture fixtures remain to be added. Root release must
+The follow-up fixture also qualifies closure after real V64 cancellation. V52
+success coverage awaits the currently gated claimed historical commit path; a
+bare success-row fixture is not a substitute for that path. Root release must
 extend this guard to its future release receipt before that protocol is enabled.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation

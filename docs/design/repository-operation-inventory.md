@@ -1,5 +1,21 @@
 # Repository operation inventory
 
+## Bounded abandonment confirmation and terminal capture refusal (2026-10-07)
+
+- **Extended private confirmation:** abandonment evidence is read inside a SQL
+  transaction, allowing timeout-aware `Tx` views. Exact original identity remains
+  required after expiry or transfer; confirmation does not renew the claim.
+- **Qualified existing terminal closure:** a real cancellation of a privately
+  admitted historical operation records V64 evidence and then refuses a fresh
+  V104 capture through V108. Existing capture evidence remains retained.
+- **Unchanged:** protobuf contracts, public historical execution, retention roots
+  and release. Claimed historical success remains gated; V52 capture-refusal
+  qualification must accompany that path rather than bypass its guards.
+
+See [regression evidence](../evidence/repository/2026-10-07-bounded-abandonment/README.md)
+for bounded lost-response recovery, exact confirmation after transfer, and a real
+SQL lock timeout followed by successful retry. Sol reviewed without a blocker.
+
 ## Capture admission closure (2026-10-07)
 
 - **Extended private capture insertion:** V108 rejects new batches and capture
@@ -13,11 +29,12 @@
 The [qualification evidence](../evidence/repository/2026-10-07-capture-closure/README.md)
 includes the original failing abandonment regression, populated V107 migration,
 owner insertion after an interposed marker, and an observed PostgreSQL lock wait.
-The combined 38-test run passes. Sol found no blocker; separate real terminal
-success/rejection capture fixtures remain outstanding. Historical V84 migration
+The combined 38-test run passes. Sol found no blocker; the subsequent checkpoint
+above qualifies terminal cancellation. Success capture coverage remains pending.
+Historical V84 migration
 fixtures use the original V81 preparation columns, not the current journal writer.
-Before bounded recovery is enabled, also qualify and correct abandonment
-confirmation's use of `Tx.readOnly`, which bounded `Tx` views do not support.
+The subsequent checkpoint also corrects abandonment confirmation's use of
+`Tx.readOnly`, which bounded `Tx` views do not support.
 
 ## Durable capture drain (2026-10-07)
 

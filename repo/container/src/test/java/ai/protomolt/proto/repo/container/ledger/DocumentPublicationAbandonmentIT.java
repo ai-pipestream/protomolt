@@ -21,8 +21,8 @@ class DocumentPublicationAbandonmentIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
-    void legacyPartialJournalConfirmsLostAbandonmentCommitAfterExpiry(boolean modesBound) {
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void legacyPartialJournalConfirmsLostAbandonmentCommitAfterExpiry(boolean modesBound, boolean bounded) {
         try(var c=context(POSTGRES)) {
             var original=input(c); var budget=new PayloadBudget(64_000_000);
             var value=new DocumentPublicationPreparationRecord(original.key(),original.command(),original.seeds(),
@@ -36,15 +36,17 @@ class DocumentPublicationAbandonmentIT {
             });
             try(var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     java.util.Map.of("hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
-                assertThatThrownBy(() -> DocumentPublicationAbandonment.abandonRetained(new Tx(emf),budget,CALLER,claim.token(),value,NONE))
+                var faultTx = bounded ? new Tx(emf).withTimeouts(new SqlTimeouts(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(5))) : new Tx(emf);
+                assertThatThrownBy(() -> DocumentPublicationAbandonment.abandonRetained(faultTx,budget,CALLER,claim.token(),value,NONE))
                         .hasStackTraceContaining("Legacy abandonment reply lost");
             }
             assertThat(lost).isTrue();
             assertThat(count(c,"repository_publication_abandonments",value)).isEqualTo(1);
             assertThat(count(c,"repository_operation_owners",value)).isZero();
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(2.1)").getSingleResult());
-            DocumentPublicationAbandonment.abandonRetained(c.tx(),budget,CALLER,claim.token(),value,NONE);
-            assertThat(DocumentPublicationAbandonment.confirm(c.tx(),budget,CALLER,claim.token(),value,NONE)).isTrue();
+            var retryTx = bounded ? c.tx().withTimeouts(new SqlTimeouts(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(5))) : c.tx();
+            DocumentPublicationAbandonment.abandonRetained(retryTx,budget,CALLER,claim.token(),value,NONE);
+            assertThat(DocumentPublicationAbandonment.confirm(retryTx,budget,CALLER,claim.token(),value,NONE)).isTrue();
             assertThat(budget.reservedBytes()).isZero();
         }
     }
@@ -209,30 +211,56 @@ class DocumentPublicationAbandonmentIT {
         }
     }
 
-    @Test void exactConfirmationSurvivesExpiryAndTransferWithoutRenewingClaim() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void exactConfirmationSurvivesExpiryAndTransferWithoutRenewingClaim(boolean bounded) {
         try (var c = context(POSTGRES)) {
+            var confirmationTx = bounded ? c.tx().withTimeouts(new SqlTimeouts(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(5))) : new Tx(c.emf());
             var original = input(c); var budget = new PayloadBudget(64_000_000);
             var value = new DocumentPublicationPreparationRecord(original.key(), original.command(), original.seeds(),
                     original.placements(), java.time.Duration.ofSeconds(1), 0);
             var token = UUID.randomUUID();
-            assertThat(DocumentPublicationAbandonment.confirm(c.tx(), budget, CALLER, token, value, NONE)).isFalse();
+            assertThat(DocumentPublicationAbandonment.confirm(confirmationTx, budget, CALLER, token, value, NONE)).isFalse();
             var claim = new DocumentPublicationPreparationJournal(c.tx(), budget).acquireInitial(CALLER, value, token, NONE);
             DocumentPublicationAbandonment.abandon(c.tx(), budget, CALLER, claim, value, NONE);
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
-            assertThat(DocumentPublicationAbandonment.confirm(new Tx(c.emf()), budget, CALLER, token, value, NONE)).isTrue();
+            assertThat(DocumentPublicationAbandonment.confirm(confirmationTx, budget, CALLER, token, value, NONE)).isTrue();
             var successor = new RepositoryExecutionClaimLedger(c.tx()).takeOver(value.key(), value.command(), 1, UUID.randomUUID(), LEASE);
-            assertThat(DocumentPublicationAbandonment.confirm(new Tx(c.emf()), budget, CALLER, token, value, NONE)).isTrue();
-            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(c.tx(), budget, CALLER, successor.token(), value, NONE))
+            assertThat(DocumentPublicationAbandonment.confirm(confirmationTx, budget, CALLER, token, value, NONE)).isTrue();
+            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(confirmationTx, budget, CALLER, successor.token(), value, NONE))
                     .hasMessageContaining("differs from retained registration");
-            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(c.tx(), budget,
+            assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(confirmationTx, budget,
                     new RepositoryCaller("principal", false, java.util.Set.of("account"), java.util.Set.of()), token, value, NONE))
                     .hasMessageContaining("private process authority");
             var lease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
                     .setParameter("o", value.key().operationId()).getSingleResult());
-            DocumentPublicationAbandonment.abandonRetained(c.tx(), budget, CALLER, token, value, NONE);
+            DocumentPublicationAbandonment.abandonRetained(confirmationTx, budget, CALLER, token, value, NONE);
             Object afterLease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
                     .setParameter("o", value.key().operationId()).getSingleResult());
             assertThat(afterLease).isEqualTo(lease);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void boundedConfirmationTimesOutOnRealTableLockAndCanRetry() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var value = input(c); var budget = new PayloadBudget(64_000_000);
+            var claim = new DocumentPublicationPreparationJournal(c.tx(), budget).acquireInitial(CALLER, value, UUID.randomUUID(), NONE);
+            DocumentPublicationAbandonment.abandon(c.tx(), budget, CALLER, claim, value, NONE);
+            var bounded = c.tx().withTimeouts(new SqlTimeouts(java.time.Duration.ofMillis(100), java.time.Duration.ofSeconds(2)));
+            try (var connection = c.pool().getConnection()) {
+                connection.setAutoCommit(false);
+                try {
+                    try (var statement = connection.createStatement()) {
+                        statement.execute("LOCK TABLE repository_publication_abandonments IN ACCESS EXCLUSIVE MODE");
+                    }
+                    assertThatThrownBy(() -> DocumentPublicationAbandonment.confirm(bounded, budget, CALLER, claim.token(), value, NONE))
+                            .hasStackTraceContaining("canceling statement due to lock timeout");
+                    assertThat(budget.reservedBytes()).isZero();
+                } finally { connection.rollback(); }
+            }
+            assertThat(DocumentPublicationAbandonment.confirm(bounded, budget, CALLER, claim.token(), value, NONE)).isTrue();
+            assertThat(count(c, "repository_publication_abandonments", value)).isEqualTo(1);
             assertThat(budget.reservedBytes()).isZero();
         }
     }
