@@ -1659,3 +1659,12 @@ retained historical objects and a freshly uploaded PARSED part; exact provider
 readback, current projection, receipt replay and selected-attempt origin are
 checked. See [mixed-publication evidence](../evidence/repository/2026-10-07-claimed-mixed-publication/README.md).
 This does not qualify mixed successor execution or automatic upload-payload recovery.
+
+Scoped mixed successor publication now passes the full packaged provider driver.
+The successor rereads retained bytes, requires explicitly resubmitted fresh bytes,
+uses new attempt identities and publishes under the scoped credential. Reservation,
+installation, activation and capture drain use a separate process coordinator.
+The expired predecessor is fenced and its unverified upload object is unchanged.
+See [scoped successor evidence](../evidence/repository/2026-10-07-scoped-mixed-successor/README.md).
+This supersedes the mixed/scoped successor test gap above for this single-source
+private path; managed historical orchestration and public exposure remain open.

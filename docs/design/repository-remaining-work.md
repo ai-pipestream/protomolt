@@ -984,3 +984,35 @@ an accepted call require the runtime monitor held by `shutdownStep`. Use a disti
 explicit recovery authority, not request-supplied process rights or the drain
 authority. Resume local state before exact-key discovery; unsupported recovery
 states must have explicit errors rather than fresh-registration fallback.
+
+### Current managed recovery boundary (2026-10-07)
+
+The earlier managed-retry wiring items above are superseded by the current source:
+`DocumentPublicationRuntime.executeAccepted` calls `RepositoryManagedRecovery.prepare`
+under an accepted call and an operation-key guard. `RecoveryAuthority` is a separate
+host opt-in. Runtime shutdown closes outer admission, waits accepted calls, detaches
+the recovery owner, then closes nested admission and drains session, upload, read
+and external worker resources. `ManagedPublicationOptions` supplies the opt-in;
+`RepoServices` preserves its transport-idle barrier before releasing owned resources.
+
+Historical recovery is still private. The public publication facade deliberately
+calls `DocumentPublicationCommand.requireExecutionSupported`, which refuses historical
+reuse. Do not remove that gate until managed historical lifecycle qualification passes.
+`RepositoryManagedRecovery` owns ordinary session recovery, not historical source Work,
+V109 captures or `DocumentHistoricalExecution` handles.
+
+The next implementation must reuse the existing accepted call and operation-key guard.
+Pass a fork of the accepted call into historical attachment: its current independent
+`scopes.enter()` would refuse an already accepted operation after admission closes.
+Keep coordinator authority separate for reserve/install/activate/capture drain;
+retain the scoped caller for source access, admission, validation, publication and replay.
+Validate complete resubmitted fresh payloads before successor mutations. Retain exact
+proposal/plan identities and live source Work across uncertain acknowledgments; cold
+activation rows do not recreate source access or permit consumed assessments to restage.
+
+A bounded historical owner must close synchronous handles on return and dispose
+unresolved captures after accepted calls finish, before nested resource drains.
+Tests must cover managed scoped mixed successors, missing/corrupt fresh payload refusal
+before reservation, activation/CREATE/publication lost acknowledgments, revocation,
+and shutdown timeout with held schema/provider work followed by successful drain and
+zero retained payload budget. Preserve ordinary recovery's existing shutdown order.
