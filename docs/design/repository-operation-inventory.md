@@ -7184,3 +7184,11 @@ committed while live remains replayable after both database leases expire. V98
 rejects an exact prospective supersession; discovery reports TERMINAL with no
 candidate. Neither lease is renewed and no activation or drain is created. Both
 supersession-class cases pass. See [expired-replay evidence](../evidence/repository/2026-10-07-recovery-limit-expired-replay/README.md).
+
+**Recovery-limit retained-evidence corruption:** operations are **unchanged**.
+Five isolated SQL cases damage root digests, root presence, pin contents, capture
+owner tokens or initial-capture designation. With normal guards restored, each
+handler attempt reports an error and creates no terminal pair or execution.
+Existing source publication remains intact; target success count stays zero.
+All five cases pass. Ancestry corruption remains separate qualification. See
+[corruption evidence](../evidence/repository/2026-10-07-recovery-limit-corruption/README.md).
