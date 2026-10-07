@@ -24,6 +24,10 @@ final class DocumentHistoricalSourceLifetime implements AutoCloseable {
         synchronized void requireActive() {
             if (ended) throw new IllegalStateException("Historical source work has ended");
         }
+        synchronized Work fork() {
+            requireActive();
+            return new Work(call.forkAccepted());
+        }
         @Override public void close() {
             synchronized (this) {
                 if (ended) return;

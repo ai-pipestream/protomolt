@@ -33,6 +33,14 @@ final class DocumentPublicationScopeCalls {
 
     final class Call implements AutoCloseable {
         private boolean ended;
+        /** Continuation of an accepted call; never reopens external admission. */
+        Call forkAccepted() {
+            synchronized (DocumentPublicationScopeCalls.this) {
+                if (ended) throw new IllegalStateException("Publication call has ended");
+                active++;
+                return new Call();
+            }
+        }
         @Override public void close() {
             synchronized (DocumentPublicationScopeCalls.this) {
                 if (ended) return;

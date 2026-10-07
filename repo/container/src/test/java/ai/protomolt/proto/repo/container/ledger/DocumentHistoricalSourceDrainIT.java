@@ -24,6 +24,64 @@ class DocumentHistoricalSourceDrainIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
+    void acceptedResolutionStartsAfterCloseAndOwnsItsDrainPermit(boolean invalidMember) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var fixture = retained(c);
+            var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var history = reads.captureHistorical(CALLER, fixture.address(), fixture.revision());
+            var command = command(fixture, history);
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            try (var sources = DocumentHistoricalAssessmentSources.open(command, CALLER, List.of(history), RepositoryReadControl.NONE);
+                 var work = sources.work()) {
+                var borrowed = work.references(command, () -> {}).getFirst();
+                sources.close(); history.close();
+                assertThatThrownBy(sources::work).hasMessageContaining("closed");
+                var member = command.intent().getMembers(0);
+                var limits = fixture.original().batch().policy().policy().limits();
+                DocumentPublicationCandidate.Resolver ordinary = (m, occurrence) -> {
+                    throw new AssertionError("Historical resolution contacted ordinary registry");
+                };
+                if (invalidMember) {
+                    assertThatThrownBy(() -> work.resolve(member.toBuilder().setMemberId("foreign").build(),
+                            Optional.empty(), ordinary, limits, budget, RepositoryReadControl.NONE))
+                            .hasMessage("Historical assessment member differs");
+                    assertThat(sources.awaitDrained(Duration.ZERO)).isFalse();
+                    work.close();
+                } else {
+                    var ready = new CountDownLatch(1); var finish = new CountDownLatch(1);
+                    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                        var worker = executor.submit(() -> {
+                            try (var resolution = work.resolve(member, Optional.empty(), ordinary, limits, budget, RepositoryReadControl.NONE)) {
+                                work.close();
+                                ready.countDown();
+                                if (!finish.await(5, TimeUnit.SECONDS)) throw new AssertionError("resolver timeout");
+                                assertThat(resolution.resolver().container()).isEqualTo(
+                                        DocumentSchemaRetentionFixture.definition(ai.protomolt.proto.repo.v1.Document.getDescriptor()));
+                                assertThat(borrowed.plan().revision()).isEqualTo(fixture.revision());
+                            }
+                            return null;
+                        });
+                        try {
+                            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                            assertThat(sources.awaitDrained(Duration.ZERO)).isFalse();
+                            assertThat(history.isDrained()).isFalse();
+                            assertThat(budget.reservedBytes()).isPositive();
+                            assertThatThrownBy(() -> work.references(command, () -> {})).hasMessageContaining("ended");
+                        } finally { finish.countDown(); }
+                        worker.get(5, TimeUnit.SECONDS);
+                    }
+                }
+                assertThat(sources.awaitDrained(Duration.ofSeconds(1))).isTrue();
+                assertThat(history.isDrained()).isTrue();
+                assertThatThrownBy(borrowed::plan).isInstanceOf(IllegalStateException.class);
+            } finally {
+                assertThat(budget.reservedBytes()).isZero();
+                release(reads, history);
+            }
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
     void acceptedRegistrationRetainsSourcesThroughCommitAndAcknowledgment(boolean afterCommit) throws Exception {
         try (var c = context(POSTGRES)) {
             var fixture = retained(c);

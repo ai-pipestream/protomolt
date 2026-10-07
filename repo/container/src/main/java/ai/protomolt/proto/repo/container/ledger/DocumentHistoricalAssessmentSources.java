@@ -51,6 +51,15 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
             permit.requireActive();
             for (var source : sources.values()) source.history().requireCaller(caller);
         }
+        void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
+            permit.requireActive(); requireOpaqueAccepted(member, control);
+        }
+        /** The resolver owns a child permit, even if source admission has closed. */
+        MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> container,
+                DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
+                PayloadBudget budget, RepositoryReadControl control) {
+            return resolveOwned(member, container, ordinary, limits, budget, control, new Work(permit.fork()));
+        }
         @Override public void close() { permit.close(); }
     }
 
@@ -145,13 +154,19 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
     MemberResolution resolve(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
             DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
             PayloadBudget budget, RepositoryReadControl control) {
-        var work = work();
-        boolean transferred = false;
+        return resolveOwned(member, ordinaryContainer, ordinary, limits, budget, control, work());
+    }
+
+    private MemberResolution resolveOwned(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
+            DocumentPublicationCandidate.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
+            PayloadBudget budget, RepositoryReadControl control, Work work) {
         try {
-            var result = resolveAccepted(member, ordinaryContainer, ordinary, limits, budget, control, work);
-            transferred = true;
-            return result;
-        } finally { if (!transferred) work.close(); }
+            return resolveAccepted(member, ordinaryContainer, ordinary, limits, budget, control, work);
+        } catch (RuntimeException | Error failure) {
+            try { work.close(); }
+            catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     private MemberResolution resolveAccepted(DocumentPublicationMember member, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
