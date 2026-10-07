@@ -1,0 +1,5 @@
+CHECK_OK new-generation.distinct :: generation=recovery-other-3fece422-f850-4dcc-95e1-609313035857
+CHECK_OK new-generation.host_started :: a new generation binds freely at the recorded endpoint
+CHECK_OK new-generation.history_refused :: readRaw -> IllegalStateException: Original document backend is not configured on this host
+CHECK_OK new-generation.archive_refused :: getEntry -> IllegalStateException: Original archive backend is not configured on this host
+CHECK_OK new-generation.schema.no_live_lookup :: live schema resolution attempts=0
