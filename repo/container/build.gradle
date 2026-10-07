@@ -244,3 +244,23 @@ tasks.register('nativeReplicaBenchmark', Test) {
     }
     useJUnitPlatform()
 }
+
+// Focused iteration only. admissionStorageTest still executes every historical host.
+tasks.named('test') { exclude '**/HistoricalRuntimeQualificationTest*' }
+tasks.register('admissionHistoricalRuntimeTest', Test) {
+    group = 'verification'
+    description = 'Run individual historical production-JAR qualification hosts'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+    }
+    useJUnitPlatform()
+}

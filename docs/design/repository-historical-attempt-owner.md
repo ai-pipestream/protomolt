@@ -613,3 +613,23 @@ Terminal proof requires the retained caller's current replay authority. Revocati
 before proof cannot authorize receipt delivery or mint that proof. Private shutdown
 cleanup exists; coordinator-only targeted terminal retirement after revocation is
 not implemented and must not be inferred from the authorized case.
+
+#### Focused historical runtime checks
+
+For individual development iterations, `admissionHistoricalRuntimeTest` supplies
+explicit JUnit entrypoints using the same production-JAR compiler and historical
+host as `admissionStorageTest`:
+
+```
+./gradlew :protomolt-repo-container:admissionHistoricalRuntimeTest \
+  --tests '*HistoricalRuntimeQualificationTest.commitWinner' \
+  --max-workers=2 --console=plain
+```
+
+Other method names are `reconciliation`, `selfSupersession` and
+`overlappingGenerations`. Each case uses real PostgreSQL and LocalStack in an
+isolated host with the existing deadline and required-marker checks. The focused
+task is optional and excluded from ordinary unit tests. It does not replace the
+full `admissionStorageTest` dependency of `check`; all historical scenarios remain
+mandatory there. The first focused commit-winner run passed in 1m17s. The complete focused run passed: 4 tests, no failures or skips, in 4m17s.
+Evidence: `docs/evidence/repository/2026-10-07-focused-historical-runtime/`.
