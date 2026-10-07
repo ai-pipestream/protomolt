@@ -23,6 +23,67 @@ class RepositoryHistoricalLimitDecisionsIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void cancellationAtCommitBoundaryPreservesDurableDecision(boolean afterCommit) throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(10))) {
+            for (int i=0;i<15;i++) append(c,rig);
+            var plan = installedHistoricalSuccessor(c,rig,Duration.ofMinutes(5));
+            var before = RepositoryHistoricalSuccessorActivationIT.leases(c,rig);
+            var cancelled = new AtomicBoolean(true);
+            var control = new RepositoryReadControl() {
+                @Override public boolean isCancelled() { return cancelled.get(); }
+                @Override public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            var clean = new RepositoryHistoricalLimitDecisions(c.tx(),rig.budget());
+            assertThatThrownBy(() -> clean.decide(CALLER,CALLER,plan,rig.record(),control))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+            assertThat(count(c,"repository_recovery_limit_decisions")).isZero();
+            assertThat(count(c,"repository_operation_rejection")).isZero();
+            cancelled.set(false);
+            var datasource = afterCommit ? DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                if (count(c,"repository_recovery_limit_decisions")==1) cancelled.set(true);
+            }) : DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
+                try (var statement=connection.createStatement(); var rows=statement.executeQuery(
+                        "SELECT count(*) FROM repository_recovery_limit_decisions")) {
+                    rows.next();
+                    if (rows.getInt(1)==1) {
+                        cancelled.set(true);
+                        // Inject cancellation at the actual JDBC commit boundary, while both rows are tentative.
+                        control.check();
+                    }
+                }
+            });
+            try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                    "hibernate.connection.datasource",datasource,"hibernate.hbm2ddl.auto","validate"))) {
+                var gated = new RepositoryHistoricalLimitDecisions(new Tx(emf),rig.budget());
+                if (afterCommit) {
+                    // A late cancellation must not turn a successful commit into an apparent rollback.
+                    var receipt = gated.decide(CALLER,CALLER,plan,rig.record(),control).orElseThrow();
+                    assertThat(clean.decide(CALLER,CALLER,plan,rig.record(),NONE)).contains(receipt);
+                } else {
+                    var failure = catchThrowable(() -> gated.decide(CALLER,CALLER,plan,rig.record(),control));
+                    assertThat(failure).isNotNull();
+                    while (failure != null && !(failure instanceof RepositoryException)) failure = failure.getCause();
+                    assertThat(failure).isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                }
+                assertThat(cancelled).isTrue();
+                assertThat(count(c,"repository_recovery_limit_decisions")).isEqualTo(afterCommit ? 1 : 0);
+                assertThat(count(c,"repository_operation_rejection")).isEqualTo(afterCommit ? 1 : 0);
+                assertThatThrownBy(() -> clean.decide(CALLER,CALLER,plan,rig.record(),control))
+                        .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                var receipt = clean.decide(CALLER,CALLER,plan,rig.record(),NONE).orElseThrow();
+                assertThat(clean.decide(CALLER,CALLER,plan,rig.record(),NONE)).contains(receipt);
+                assertThat(count(c,"repository_recovery_limit_decisions")).isEqualTo(1);
+                assertThat(count(c,"repository_operation_rejection")).isEqualTo(1);
+                assertThat(count(c,"repository_successor_executions")).isZero();
+                assertThat(count(c,"repository_preparation_capture_drains")).isZero();
+                assertThat(RepositoryHistoricalSuccessorActivationIT.leases(c,rig)).containsExactly(before);
+                assertThat(rig.budget().reservedBytes()).isZero();
+            }
+        }
+    }
+
     @Test void scopedReplayRechecksReadPolicyAndCredentialAfterCommit() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(10))) {
             for (int i=0;i<15;i++) append(c, rig);

@@ -1057,7 +1057,15 @@ under-bound absence of a decision, rollback before commit, lost acknowledgement
 after commit, exact retry, and current READ-policy and credential checks on scoped
 replay. Retries leave claim/owner leases unchanged. Corrupt-state variants,
 concurrent decisions, explicit cancellation and expired-lease replay still need
-handler qualification. The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
+handler qualification. Request cancellation is separate from an explicit terminal
+cancellation operation: a signal observed before commit may abort tentative
+work, but a signal arriving after commit cannot undo a durable limit decision.
+If the host cannot deliver that response, the caller must reconcile through
+authorized exact replay. Neither a cancellation exception nor response loss alone
+establishes whether the transaction committed. Controlled JDBC boundary cases
+qualify these outcomes in the [cancellation evidence](../evidence/repository/2026-10-07-recovery-limit-cancellation/README.md),
+without claiming interruption during an in-flight JDBC commit.
+The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
 now covers lease expiry before rejection insertion, expiry before normal deferred
 validation, and early constraint firing followed by an expired-lease commit.
 The first two roll back both rows; the last preserves the already validated

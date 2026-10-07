@@ -7148,3 +7148,11 @@ credential revocation. No activation, provider I/O, capture drain or root releas
 is granted. Explicit cancellation, expired-lease replay, corrupt evidence and
 competing decisions still need qualification before mounting this operation.
 See [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/README.md).
+
+**Recovery-limit request cancellation:** production operations are **unchanged**.
+Two additional SQL cases qualify already-cancelled admission, cancellation
+injected before JDBC commit, and a cancellation signal immediately after commit.
+The first rolls back tentative rows; the late signal preserves a replayable
+receipt. This does not prove interruption inside an in-flight JDBC commit, or
+implement explicit terminal cancellation for an unactivated successor. All five
+handler tests pass; see [cancellation evidence](../evidence/repository/2026-10-07-recovery-limit-cancellation/README.md).
