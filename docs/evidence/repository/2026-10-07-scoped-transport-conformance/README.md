@@ -54,8 +54,9 @@ claimed by this local checkpoint.
 ## 2026-10-07 repair (PR #411)
 
 The conclusions above describe the coordinator integration at `1b9cdd8a8` and
-remain its record. A later repair (code `5b1dd08be`, current tested source `ef9fdbecb` with
-target `2d60befbd` and a BOM repair; earlier tested at `c01ca4e11`) replaces
+remain its record. A later repair (code `5b1dd08be`; current tested source `9f7d5a355`, with
+target `775e2814a`, a BOM repair and document-platform and intake credential
+repairs; earlier tested at `ef9fdbecb` and `c01ca4e11`) replaces
 the presence-only `requireScopedCallersOnly` binding check with an exact
 per-invocation identity assertion (principal, issuer, credential ID, generation,
 no process authority), adds `IDENTITY_SUBSTITUTION` on both paths (44 markers in

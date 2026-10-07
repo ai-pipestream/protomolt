@@ -1,20 +1,81 @@
 # Scoped publication parity: 2026-10-07 repair of PR #411
 
-**Current tested source: `ef9fdbecb8895a7137b2ba17127661febf000fc7`.** It is
+**Current tested source: `9f7d5a3557b6e19d866fe8bf0de374b78ad194c6`.** It is
 target `refactor/repository-composition` at
-`2d60befbdcdb16ef761638e55b293af9a2353be7` (identical on Forgejo and GitHub when
-merged, merge commit `85419e1ac`) plus the BOM repair `ef9fdbecb`. The repair
-code itself is `5b1dd08be`. The evidence for this state is in
-[ef9fdbecb/](ef9fdbecb/) and the section "Requalification at `ef9fdbecb`" below.
-It is added by a later evidence-only commit; `git diff ef9fdbecb <final PR head>`
-changes files under `docs/evidence/repository/2026-10-07-scoped-transport-conformance/` only.
+`775e2814a1751f2667598095856fd6a99bf668b0` (identical on Forgejo and GitHub when
+merged, merge commit `8f215a8a1`) plus the BOM repair `ef9fdbecb`, the
+document-platform fixture repair `e26b6b1f9` and the intake credential repair
+`9f7d5a355`. The scoped publication repair code is `5b1dd08be`. Evidence for this
+state is in [9f7d5a355/](9f7d5a355/) and the next section. It is added by a later
+evidence-only commit; `git diff 9f7d5a355 <final PR head>` changes files under
+`docs/evidence/repository/2026-10-07-scoped-transport-conformance/` only.
 
-The earlier qualification at `c01ca4e117d81c71b7c4de4d5c37c6b10cd8296e` (target
-`d91db10b4`) is kept below with its archives in this directory; those archives
-are results for `c01ca4e11`, not for the current head. Earlier results in the
+Earlier qualifications are kept below with their archives: `ef9fdbecb` in
+[ef9fdbecb/](ef9fdbecb/) and `c01ca4e11` in this directory. Those archives are
+results for those commits, not for the current head. Earlier results in the
 parent directory belong to earlier sources: see [../README.md](../README.md)
 (coordinator integration, `1b9cdd8a8`) and
 [../HISTORICAL-AGENT-RUN.md](../HISTORICAL-AGENT-RUN.md) (original agent run).
+
+## Qualification at `9f7d5a355`
+
+### Document-platform failures and repairs
+
+Hosted `build (25)` on `570025073`
+(https://github.com/ai-pipestream/protomolt/actions/runs/37599544882/job/112720264651)
+passed the BOM check and then failed `:protomolt-document-platform:test`, 58 tests
+with 4 failures. Locally, at merge `8f215a8a1` before any change,
+`./gradlew :protomolt-document-platform:test --max-workers=2 --console=plain --rerun-tasks`
+gave the same result in 48 s (`9f7d5a355/docplat-before.tar.gz`). The four failures
+were DocumentPlatformSmokeIT, PlatformRoleNodeIT and RoleNodeIT at initialization,
+and PlatformSnapshotIT.aFreshIndexDirectoryRestoresFromTheBucketOnBoot. Each one
+failed with `ComposerException: node boot failed: Repository network transport
+requires a nonblank API token (PROTOMOLT_API_TOKEN)` from `RepoServiceModule.wire`,
+which target commit `6bc32d582` made mandatory.
+
+1. **Fixtures (`e26b6b1f9`, test sources only).** Every node that mounts the
+   repository role now gets an explicit synthetic operator token through its node
+   environment, and each client presents it as `api_token`. That covers the smoke
+   node, both snapshot writer boots and the reader, the PlatformRoleNodeIT repo
+   and intake nodes, and the RoleNodeIT composer repo node and intake opener. Once
+   the token is set the smoke node's search console is guarded, so the fixture
+   adds an access-policy principal (search-query, schema-read, service-invoke),
+   logs it in through `POST /session`, and sends the session cookie. No assertion
+   was removed. The token-configuration and access-policy tests are unchanged and
+   pass. With only this change the module ran 69 tests with 2 failures
+   (`9f7d5a355/docplat-after-fixtures.tar.gz`, run on the `e26b6b1f9` tree before
+   it was committed).
+2. **Intake credential (`9f7d5a355`, production; Kristian approved the change).**
+   Both remaining failures were `UNAUTHENTICATED: Missing API token 'api_token'` on
+   cross-node ingest. `IntakeModule` passed only the repo target string, and
+   `IntakeServices` opened its own plaintext channel, so a remote intake node
+   presented no credential. `IntakeModule` now passes
+   `context.channels().to("repo")`, which is opened by the node's remote opener
+   with the node's token. `IntakeServices` borrows that channel and does not close
+   it. The standalone `IntakeServiceMain` path is unchanged.
+
+### Results
+
+| Run | Command | Exit | Wall | Result |
+| --- | --- | --- | --- | --- |
+| parity-1 | `./gradlew :protomolt-repo-container:scopedPublicationTest --max-workers=2 --console=plain --rerun-tasks` | 0 | 80 s | 1 test, 0 fail/err/skip; 44/44 markers; run `dc94528c-…`; 174 tasks executed |
+| parity-2 | same | 0 | 79 s | 1 test, 0 fail/err/skip; 44/44 markers; run `549dd51f-…`; 174 tasks executed |
+| regressions | focused `:protomolt-repo-container:test` (five suites) | 0 | 71 s | 67 tests, 0 fail/err/skip |
+| admission-storage | `./gradlew :protomolt-repo-container:admissionStorageTest --max-workers=2 --console=plain` | 0 | 7 m 49 s | 1 test, 0 fail/err/skip |
+| bom | `./gradlew :bom:checkBomCompleteness :bom:checkConsumerCatalog --max-workers=2 --console=plain --rerun-tasks` | 0 | 2 s | both executed |
+| consumer-stage / consumer-run | candidate toolkit consumer, as in CI | 0 / 0 | 2 s / 1 s | consumer ran |
+| document-platform | `./gradlew :protomolt-document-platform:test --max-workers=2 --console=plain --rerun-tasks` | 0 | 53 s | 69 tests in 17 suites, 0 fail/err/skip; 360 tasks executed |
+| intake-service | `./gradlew :protomolt-intake-service:test --max-workers=2 --console=plain --rerun-tasks` | 0 | 27 s | 61 tests in 8 suites, 0 fail/err/skip |
+
+Each run was archived before the next one started, as `9f7d5a355/<run>.tar.gz`
+with a `SHA256SUMS` manifest. The parity runs include the persisted log: parity-1
+`8b3f9d3634d5c67a644bf91ad3f0c6dfb4674435b44b861214a79819360bd1ed` (XML
+`723f19395eeee45bb09bcfcc4dec76aa1de7e2a157333361898b58c2f8198b79`), parity-2
+`f26df6c92d62ee25b7843d60d590cfdaaf78537afa374fc5564812ed86e6a8b8` (XML
+`78a9d091aac77ff831df87c123959f9ede6601bfbcbfd66ea77fdcd9647d06f3`).
+`9f7d5a355/source-sha256.txt` fingerprints every non-evidence file this PR changes
+relative to the target. The `DocumentHistoricalTransportProbe.java:287` failure
+described below did not recur.
 
 ## Requalification at `ef9fdbecb`
 
