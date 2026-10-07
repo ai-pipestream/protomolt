@@ -689,3 +689,103 @@ successor installation, fresh capture and same-command provider publication.
 Final focused qualification passed in 1m07s with no failures or skips. Sol reviewed
 the fixture and aggregate mapping; the expanded full suite remains pending.
 Evidence: `docs/evidence/repository/2026-10-07-takeover-before-claim/README.md`.
+
+## Managed host integration: remaining requirements
+
+Source checkpoint: `4997247d3458a6496b0de73515470d3d2774bfec`.
+This section specifies work still required; it does not enable public historical
+publication or claim that the private recovery tests cover the managed host.
+
+### Initial generation
+
+`RepositoryInstalledHistoricalAttempts.Entry` currently represents an installed
+successor or a recovery proposal. `beginSuccessor` requires an installed plan.
+Neither state owns the initial `DocumentPublicationRegistration.historical`
+registration across client calls. Add initial registration as an explicit lifecycle
+state in the same owner, with capacity reserved before opening or accepting the
+initial read capture, not only before registration.
+Do not manufacture a successor reservation or V93 plan for this state.
+
+Retain the original preparation, exact caller and modes, registration, capture,
+accepted Work, execution, assessment and CREATE result as they become available.
+A timeout must retain uncertain registration or admission state for reconciliation.
+Retries must preserve acknowledged START and uncertain CREATE/publication state.
+Derive initial predecessor identity from its actual claim and owner; do not derive
+it from a fabricated successor plan. An expired initial generation must support
+selection of a successor while accepted old Work remains owned until drainage.
+Keep selected-key routing separate from stable-ID disposal of every generation.
+
+### Runtime routing and authorization
+
+`DocumentPublicationFacade.publishDocument` currently rejects historical commands
+before `DocumentPublicationRuntime.publishValidated` can replay a terminal result.
+The runtime's accepted path still calls ordinary `recovery.prepare` and
+`sessions.execute`. Retain that public restriction until the managed path passes
+its acceptance tests; removing the restriction alone is not an implementation.
+
+Historical dispatch must share the existing envelope validation, request permits,
+byte accounting and authorized receipt replay. Branch before ordinary recovery and
+session execution. Do not hold the ordinary full-call operation guard across old
+and new historical generations: it would prevent the takeover this owner supports.
+Use bounded per-generation borrowing and short selection operations instead.
+Keep SQL, provider calls and drain waits outside the selection monitor.
+
+Obtain fresh private recovery authority for the exact operation. A request caller
+cannot grant itself coordinator authority. Recheck current source and receipt
+permissions at their existing boundaries. A retained entry's caller binding must
+not silently change when credentials, accounts or ACL identity change. Request-local
+schema resolver handles must not escape their lifetime: resolve with a current
+call scope or explicitly transfer ownership of a retained scope.
+
+### Cold recovery
+
+`DocumentHistoricalRetentionBinding.require` checks a supplied record; it does not
+load the original retained preparation. `DocumentPublicationPreparationJournal.load`
+requires a live claim. `RepositoryReservedPreparation.load` loads the immediate
+predecessor after reservation, which is not necessarily the original retention
+anchor. Add bounded, integrity-checked anchor discovery under explicit process
+authority, with current execution-caller authorization before returning source
+metadata. Follow persisted lineage rather than assuming generation zero.
+
+Persisted START, capture or assessment evidence cannot reconstruct a live execution
+permit. Cold recovery must install a successor and acquire fresh capture ownership
+and provider reads. Preserve the original retained schema and source definitions
+while binding the new execution to its own claim, owner and assessment identity.
+
+### Shutdown and acceptance gates
+
+Integrate the historical owner into `DocumentPublicationRuntime.shutdownStep`:
+close outer admission, wait accepted calls, then dispose every retained generation
+and its accepted Work before closing nested readers and providers. A timeout or
+cleanup error must preserve owner state and allow a later shutdown step to retry.
+A blocked old generation must not prevent disposal of an unrelated ready entry.
+
+Required evidence before enabling the public route:
+
+- Initial registration, retry and uncertain admission retain one exact execution;
+  invalid requests have no registration or provider effects.
+- START acknowledgement and uncertain CREATE/publication survive call boundaries;
+  replay returns the exact durable receipt under current authorization.
+- Initial-to-successor and successor-to-successor takeover allow new work while old
+  accepted Work is held, without reusing claim, capture or assessment identities.
+- Cold restart resolves the original retention anchor across multiple successors;
+  missing, corrupt or unauthorized anchors fail explicitly without partial publish.
+- Cancellation before and after commit, revoked source/read authority, capacity
+  refusal and retryable shutdown preserve resources and receipt semantics.
+- The same cases pass through the library and authenticated in-process gRPC paths
+  against real PostgreSQL and an object provider. Separate assertions cover denied
+  delivery, durable SQL state, provider bytes and eventual release of owned memory.
+
+Implement initial ownership first, then cold anchor discovery and managed routing.
+Keep each change independently reviewable. Public contract names, field tags,
+imports and Any URLs remain unchanged.
+
+Initial retirement and shutdown also need an explicit path. `Attempt.retire` and
+`detachClosed` currently check
+reservation authority and derives fencing identity from the successor reservation.
+For an initial entry, authorize the exact operation through private process authority
+and prove retirement against its actual retained claim, coordinator incarnation
+and owner binding. Do not bypass terminal
+replay authorization, treat lease expiry as fencing proof, or create a placeholder
+reservation merely to reuse cleanup. Cover initial retirement before registration,
+after uncertain admission, after terminal publication and after successor takeover.
