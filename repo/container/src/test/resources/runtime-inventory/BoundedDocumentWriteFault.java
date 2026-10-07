@@ -30,6 +30,14 @@ final class BoundedDocumentWriteFault {
         for (Throwable cause=error;cause!=null;cause=cause.getCause()) if (cause==failure) return true;
         return false;
     }
+    void save(java.nio.file.Path directory) throws java.io.IOException {
+        if (written==null) throw new AssertionError("No failed PUT to persist");
+        var values=new java.util.Properties();
+        values.setProperty("namespace",written.bucket()); values.setProperty("key",written.key());
+        try (var output=java.nio.file.Files.newOutputStream(directory.resolve("lost-put.properties"))) {
+            values.store(output,"Failed Redis PUT coordinates");
+        }
+    }
     void verifyStored() {
         var spec=written;
         if (spec==null || armed.get()) throw new AssertionError("Real PUT did not reach fault");

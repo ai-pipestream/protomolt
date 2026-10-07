@@ -36,7 +36,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
+        for (String name : List.of("DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -136,31 +136,6 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(process.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
             }
-            String previousStart=redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getState().getStartedAt();
-            redis.getDockerClient().restartContainerCmd(redis.getContainerId()).exec();
-            assertThat(redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getState().getStartedAt())
-                    .isNotEqualTo(previousStart);
-            assertThat(redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getNetworkSettings()
-                    .getPorts().getBindings().get(com.github.dockerjava.api.model.ExposedPort.tcp(6379))[0].getHostPortSpec())
-                    .isEqualTo(Integer.toString(redisPort));
-            assertThat(redis.execInContainer("redis-cli","PING").getStdout().trim()).isEqualTo("PONG");
-            var boundedLog=directory.resolve("bounded-restart.log");
-            builder.command(Path.of(System.getProperty("java.home"),"bin","java").toString(),
-                    "-XX:+DisableAttachMechanism","-XX:-EnableDynamicAgentLoading","-cp",
-                    classpath+java.io.File.pathSeparator+probe,
-                    "ai.protomolt.proto.repo.service.BoundedDocumentRestartProbe",bundle.toString(),boundedRestart.toString());
-            var boundedProcess=builder.redirectOutput(boundedLog.toFile()).start();
-            try {
-                assertThat(boundedProcess.waitFor(45,TimeUnit.SECONDS)).as("Redis restart qualification completed").isTrue();
-                assertThat(Files.size(boundedLog)).isLessThan(1_048_576);
-                assertThat(boundedProcess.exitValue()).as(Files.readString(boundedLog)).isZero();
-                assertThat(Files.readString(boundedLog)).contains("BOUNDED_DOCUMENT_RESTART_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK");
-            } finally {
-                if (boundedProcess.isAlive()) {
-                    boundedProcess.destroyForcibly();
-                    assertThat(boundedProcess.waitFor(10,TimeUnit.SECONDS)).isTrue();
-                }
-            }
             assertThat(Files.isRegularFile(request)).as("Writer persisted restart identities").isTrue();
             var restartLog = directory.resolve("restart.log");
             builder.command(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -225,6 +200,32 @@ class DocumentAssessmentStorageRuntimeTest {
                     }
                 }
                 // The loop cannot start the reader until the writer's expected halt is confirmed and reaped.
+            }
+            String previousStart=redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getState().getStartedAt();
+            redis.getDockerClient().restartContainerCmd(redis.getContainerId()).exec();
+            assertThat(redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getState().getStartedAt())
+                    .isNotEqualTo(previousStart);
+            assertThat(redis.getDockerClient().inspectContainerCmd(redis.getContainerId()).exec().getNetworkSettings()
+                    .getPorts().getBindings().get(com.github.dockerjava.api.model.ExposedPort.tcp(6379))[0].getHostPortSpec())
+                    .isEqualTo(Integer.toString(redisPort));
+            assertThat(redis.execInContainer("redis-cli","PING").getStdout().trim()).isEqualTo("PONG");
+            var boundedLog=directory.resolve("bounded-restart.log");
+            builder.command(Path.of(System.getProperty("java.home"),"bin","java").toString(),
+                    "-XX:+DisableAttachMechanism","-XX:-EnableDynamicAgentLoading","-cp",
+                    classpath+java.io.File.pathSeparator+probe,
+                    "ai.protomolt.proto.repo.service.BoundedDocumentRestartProbe",bundle.toString(),boundedRestart.toString());
+            var boundedProcess=builder.redirectOutput(boundedLog.toFile()).start();
+            try {
+                assertThat(boundedProcess.waitFor(480,TimeUnit.SECONDS)).as("Redis restart qualification completed").isTrue();
+                assertThat(Files.size(boundedLog)).isLessThan(1_048_576);
+                assertThat(boundedProcess.exitValue()).as(Files.readString(boundedLog)).isZero();
+                assertThat(Files.readString(boundedLog)).contains("BOUNDED_DOCUMENT_RESTART_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_ORPHAN_CLEANUP_OK","DOCUMENT_CLEANUP_RETENTION_FILTER_OK");
+                assertThat(Files.readString(boundedLog)).doesNotContain("Document attempt cleanup failed");
+            } finally {
+                if (boundedProcess.isAlive()) {
+                    boundedProcess.destroyForcibly();
+                    assertThat(boundedProcess.waitFor(10,TimeUnit.SECONDS)).isTrue();
+                }
             }
         }
     }

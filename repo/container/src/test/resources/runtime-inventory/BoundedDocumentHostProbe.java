@@ -148,6 +148,7 @@ public final class BoundedDocumentHostProbe {
             require(closes.get()==1,"Redis closes once after host drain");
             Path restart=Files.createDirectory(Path.of(System.getenv("PROTOMOLT_TEST_BOUNDED_RESTART_DIR")));
             Files.writeString(restart.resolve("generation"),generation);
+            faults.save(restart);
             Files.write(restart.resolve("request.pb"),fixture.request().toByteArray());
             Files.write(restart.resolve("receipt.pb"),result.toByteArray());
             Files.write(restart.resolve("document.pb"),fixture.document().toByteArray());

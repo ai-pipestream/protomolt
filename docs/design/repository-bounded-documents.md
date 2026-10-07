@@ -139,3 +139,12 @@ publish; that is not recovery of the failed operation. Before exposing this
 profile, qualify recovery and reclamation of the original attempt, including
 late completion and preservation of committed neighboring objects. Evidence is
 in `docs/evidence/repository/2026-10-07-bounded-lost-ack`.
+
+## Orphan cleanup checkpoint
+
+Real-expiry Redis cleanup now passes in a fresh JVM and preserves both committed
+histories. The test exposed and fixed repeated selection of retained native
+objects. All object references now exclude attempts from scan and locked claim;
+the final database guard remains unchanged. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-orphan-cleanup`.
+Late writes, cleanup-provider failure and active-work shutdown remain open.
