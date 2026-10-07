@@ -39,6 +39,23 @@ final class RepositorySchemaArtifacts {
 
     private List<String> stage(RepositoryOperationLedger.Owner owner, List<ByteString> artifacts, Runnable control,
             java.util.function.Consumer<jakarta.persistence.EntityManager> commandCheck) {
+        return stage(owner, artifacts, control, commandCheck, em -> {});
+    }
+
+    /** Internal composition: the ordered authority fence runs in the same transaction as artifact claims. */
+    List<String> stageAuthorized(RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            List<ByteString> artifacts, Runnable control,
+            java.util.function.Consumer<jakarta.persistence.EntityManager> authorityFence) {
+        Objects.requireNonNull(command); Objects.requireNonNull(authorityFence);
+        if (!owner.key().account().equals(command.intent().getAccountId()) || !owner.key().operationId().equals(command.operationId()))
+            throw new IllegalArgumentException("Schema staging command differs from owner scope");
+        return stage(owner, artifacts, control,
+                em -> RepositoryOperationLedger.requireCommand(em, owner.key(), command), authorityFence);
+    }
+
+    private List<String> stage(RepositoryOperationLedger.Owner owner, List<ByteString> artifacts, Runnable control,
+            java.util.function.Consumer<jakarta.persistence.EntityManager> commandCheck,
+            java.util.function.Consumer<jakarta.persistence.EntityManager> authorityFence) {
         Objects.requireNonNull(owner); Objects.requireNonNull(artifacts); Objects.requireNonNull(control);
         active(control);
         if (artifacts.isEmpty() || artifacts.size() > MAX_ARTIFACTS) {
@@ -63,6 +80,7 @@ final class RepositorySchemaArtifacts {
         }
         var identities = List.copyOf(sorted.keySet());
         tx.inTransaction(em -> {
+            authorityFence.accept(em);
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             commandCheck.accept(em);
             for (var entry : sorted.entrySet()) {

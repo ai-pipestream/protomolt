@@ -17,6 +17,52 @@ class DocumentHistoricalReadCaptureIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private static final RepositoryCaller ADMIN = new RepositoryCaller("historical-reader", true);
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"revoke", "rotate"})
+    void unchangedPublicReadPolicyDoesNotPreserveExpiredCredentialAuthority(String change) {
+        try (var c = context(POSTGRES)) {
+            var prepared = prepare(c, 1);
+            var published = publish(c, prepared, Fault.NONE, em -> {});
+            var revision = UUID.fromString(published.getMembers(0).getRevisionId());
+            var address = prepared.command().intent().getMembers(0).getDestination().getAddress();
+            // Change current READ policy deliberately; the archived snapshot remains unchanged.
+            c.tx().inTransaction(em -> { em.createNativeQuery(
+                    "UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
+                    .setParameter("node", prepared.sources().getFirst().row().nodeId)
+                    .setParameter("policy", "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_READ\"}]}")
+                    .executeUpdate(); });
+            var key = new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding("history-read", UUID.randomUUID(), 1);
+            var caller = new RepositoryCaller("scoped-reader", false, java.util.Set.of("account"), java.util.Set.of(), java.util.Optional.of(key));
+            var credentials = new RepositoryCredentialAuthorities(c.tx());
+            credentials.register(ADMIN, key, caller.principalName());
+            var ledger = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var captured = ledger.captureHistorical(caller, address, revision);
+            try {
+                captured.authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                long pins = count(c, "document_read_pins");
+                if (change.equals("rotate")) credentials.rotate(ADMIN, key, caller.principalName());
+                else credentials.revoke(ADMIN, key, caller.principalName());
+                assertThatThrownBy(() -> captured.authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAUTHENTICATED));
+                assertThatThrownBy(() -> ledger.captureHistorical(caller, address, revision))
+                        .isInstanceOfSatisfying(RepositoryException.class,
+                                failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAUTHENTICATED));
+                assertThat(count(c, "document_read_pins")).isEqualTo(pins);
+                // Principal-only hosts remain a separate supported authentication model.
+                for (var control : java.util.List.of(ADMIN, new RepositoryCaller("external-reader", false,
+                        java.util.Set.of("account"), java.util.Set.of()))) {
+                    var allowed = ledger.captureHistorical(control, address, revision);
+                    try { allowed.authorizeDelivery(ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE); }
+                    finally { allowed.close(); allowed.release(); }
+                }
+            } finally {
+                captured.close(); captured.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            }
+            assertThat(count(c, "document_read_pins")).isZero();
+        }
+    }
+
     @Test void capturesExactNativeBindingsAndDrainsTransferredUseBeforeRelease() throws Exception {
         try (var c = context(POSTGRES)) {
             var prepared = prepare(c, 1);
