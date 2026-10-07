@@ -26,6 +26,30 @@ class DocumentCaptureAdmissionClosureIT {
     @Test void historicalSuccessorInstallDoesNotGrantActivationOrInventCaptureCoverage() throws Exception {
         try (var c = context(POSTGRES); var rig = prepare(c, false, false, true, Duration.ofSeconds(1))) {
             var command = rig.record().command();
+            var plan = installedHistoricalSuccessor(c, rig);
+            assertThatThrownBy(() -> RepositorySuccessorExecution.activate(c.tx(), rig.budget(), CALLER, CALLER, plan, NONE))
+                    .isInstanceOf(UnsupportedOperationException.class).hasMessage("Historical reuse execution is not implemented");
+            long grants = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_successor_executions WHERE operation_id=:o")
+                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
+            long bindings = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_coordinator_bindings WHERE operation_id=:o AND claim_epoch=2")
+                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
+            assertThat(grants).isZero(); assertThat(bindings).isZero();
+            assertThat(batches(c, rig)).isEqualTo(1);
+            var oldCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, rig.record(),
+                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(rig.record()))));
+            var nextCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, plan.next(),
+                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.next()))));
+            assertThat(oldCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+            assertThat(nextCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.UNKNOWN);
+        }
+    }
+
+    static Rig historicalInitial(Context c) throws Exception { return prepare(c, false, false, true, Duration.ofSeconds(1)); }
+
+    static RepositorySuccessorInstall.Plan installedHistoricalSuccessor(Context c, Rig rig) {
+            var command = rig.record().command();
             var modes = Map.of(command.intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
             try (var work = rig.sources().work()) {
                 var admission = RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(), command,
@@ -46,23 +70,7 @@ class DocumentCaptureAdmissionClosureIT {
             RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER, reservation, NONE);
             var plan = RepositorySuccessorInstall.prepare(reservation, rig.record(), LEASE, modes);
             RepositorySuccessorInstall.install(c.tx(), rig.budget(), CALLER, plan, NONE);
-            assertThatThrownBy(() -> RepositorySuccessorExecution.activate(c.tx(), rig.budget(), CALLER, CALLER, plan, NONE))
-                    .isInstanceOf(UnsupportedOperationException.class).hasMessage("Historical reuse execution is not implemented");
-            long grants = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
-                    "SELECT count(*) FROM repository_successor_executions WHERE operation_id=:o")
-                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
-            long bindings = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
-                    "SELECT count(*) FROM repository_coordinator_bindings WHERE operation_id=:o AND claim_epoch=2")
-                    .setParameter("o", command.operationId()).getSingleResult()).longValue());
-            assertThat(grants).isZero(); assertThat(bindings).isZero();
-            assertThat(batches(c, rig)).isEqualTo(1);
-            var oldCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, rig.record(),
-                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(rig.record()))));
-            var nextCoverage = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, plan.next(),
-                    DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(plan.next()))));
-            assertThat(oldCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
-            assertThat(nextCoverage).isEqualTo(DocumentPreparationHistoryRoots.Coverage.UNKNOWN);
-        }
+            return plan;
     }
 
     @Test void migrationCannotInventInitialCaptureForRetainedLegacyHistory() throws Exception {
@@ -370,7 +378,7 @@ class DocumentCaptureAdmissionClosureIT {
         }
     }
 
-    private record Rig(Fixture fixture, DocumentReadLedger reads, DocumentReadLedger.PinnedHistory history,
+    record Rig(Fixture fixture, DocumentReadLedger reads, DocumentReadLedger.PinnedHistory history,
             DocumentHistoricalAssessmentSources sources, DocumentPublicationPreparationRecord record,
             RepositoryExecutionClaimLedger.Claim claim, UUID coordinator, PayloadBudget budget) implements AutoCloseable {
         @Override public void close() throws Exception {

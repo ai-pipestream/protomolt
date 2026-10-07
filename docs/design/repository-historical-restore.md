@@ -868,20 +868,22 @@ V103 migration now qualifies the legacy initial-batch gap: retained roots remain
 exact, and a legitimate later capture with a completed quiescence receipt still
 cannot substitute for the missing creation-time batch. See the
 [migration evidence](../evidence/repository/2026-10-07-legacy-capture/README.md).
-Multiple owner epochs still require qualification before release wiring.
+V109 now qualifies separate completion of two capture-owner epochs through the
+private historical activation path described below. Release wiring remains gated.
 
 ### Historical successor activation and shared retention
 
-Source review found a sequencing gap, not evidence that historical successor
-execution is available. `RepositorySuccessorInstall.install` can persist the next
+Source review found a sequencing gap in ordinary activation.
+`RepositorySuccessorInstall.install` can persist the next
 historical preparation, fixed modes and owner. It does not create a V103 source
 set or any capture evidence. `RepositorySuccessorExecution.activate` calls
 `next.prepare()`, which refuses historical inputs. V105 requires the exact new
 coordinator binding; V94 creates that binding only during activation. Advancing
 the claim with SQL or fabricating a binding is not a valid multi-owner fixture.
 
-The next private implementation should use the following sequence. It does not
-change the public protocol or enable historical staging and commit by itself.
+The private implementation follows the activation/capture portion of this sequence.
+It does not change the public protocol or enable historical staging and commit.
+Fresh-process attachment and broader recovery qualification remain follow-up work.
 
 1. Keep the original, canonically checked V103 retention set through operation
    terminality. Reserve the successor through V92/V97/V98 and install V93 using
@@ -945,10 +947,28 @@ mismatched sidecar, a broken or exhausted ancestry chain, cold confirmation afte
 a lost reply, and a fresh process registering a distinct capture. Use actual SQL guards
 and captured handles, never fabricated successor grants.
 
-Until that implementation passes, keep claimed historical execution and root
-release gated. The existing ordinary successor path remains unchanged. Success
-publication and multi-generation recovery still require their own qualification;
-activation and capture registration alone do not prove them.
+V109 and `RepositoryHistoricalSuccessorActivation` implement the private atomic
+activation boundary. The attempt retains its tentative capture before sidecar
+insertion, including when the transaction rolls back or its reply is lost. Exact
+retry confirms this capture's immutable binding without renewing leases. The
+ancestry walk is bounded at 64 immutable V93 links, using the existing unique
+operation/generation index. No remote provider or registry call runs inside these
+SQL locks. The sidecar and capture use the same activation transaction; a deferred
+constraint refuses a required binding that is missing at commit.
+
+The new required-capture flag defaults to false for existing V94 rows. SQL does
+not infer historical selectors from protobuf bytes. Future historical attachment,
+execution and root release must therefore require the V109 sidecar explicitly;
+a bare V94 execution row is not historical activation evidence. The ordinary
+activation path still refuses a fresh historical command.
+
+Qualification covers actual two-owner captures, separate drain receipts, omitted
+or altered sidecar identities, rollback, lost reply and cancellation around commit.
+Fresh-process confirmation/attachment, concurrent activation, scoped revocation,
+multi-hop ancestry and traversal-limit qualification remain open. Keep claimed
+historical execution and root release gated. Success publication and broader
+multi-generation recovery require their own qualification; activation and capture
+registration alone do not prove them.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104

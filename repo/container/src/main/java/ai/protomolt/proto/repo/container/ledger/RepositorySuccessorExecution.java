@@ -51,27 +51,10 @@ final class RepositorySuccessorExecution {
                     control.check();
                     // The guard locks the exact current claim, then its installed owner.
                     // Plain INSERT: a concurrent exact winner is confirmed after rollback.
-                    scope(em.createNativeQuery("""
-                            INSERT INTO repository_successor_executions(account_id,principal,operation_id,
-                             claim_epoch,claim_token,incarnation,owner_generation,owner_nonce,
-                             command_sha256,preparation_sha256,modes_sha256,activation_xid)
-                            VALUES(:a,:p,:o,:epoch,:token,:incarnation,:generation,:owner,:command,:sha,
-                             sha256(convert_to(CAST(:modes AS jsonb)::text,'UTF8')),pg_current_xact_id())
-                            """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
-                            .setParameter("token", plan.reservation().successorToken())
-                            .setParameter("incarnation", plan.reservation().successorIncarnation())
-                            .setParameter("generation", next.predecessorGeneration()+1)
-                            .setParameter("owner", next.seeds().ownerNonce())
-                            .setParameter("command", HexFormat.of().parseHex(next.command().sha256()))
-                            .setParameter("sha", sha).setParameter("modes", modes).executeUpdate();
+                    insertExecution(em, plan, sha, modes);
                     DocumentAdmissionAuthorization.lockAndAuthorize(em, executionCaller, prepared, authorization, creation);
                     control.check();
-                    scope(em.createNativeQuery("""
-                            INSERT INTO repository_coordinator_bindings(account_id,principal,operation_id,claim_epoch,claim_token,incarnation)
-                            VALUES(:a,:p,:o,:epoch,:token,:incarnation)
-                            """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
-                            .setParameter("token", plan.reservation().successorToken())
-                            .setParameter("incarnation", plan.reservation().successorIncarnation()).executeUpdate();
+                    insertBinding(em, plan);
                     control.check();
                 });
                 control.check();
@@ -81,6 +64,38 @@ final class RepositorySuccessorExecution {
                 throw failure;
             }
         }
+    }
+
+    /** Caller owns one activation transaction; SQL establishes claim then owner lock order. */
+    static void insertExecution(EntityManager em, RepositorySuccessorInstall.Plan plan, byte[] sha, String modes) {
+        insertExecution(em, plan, sha, modes, false);
+    }
+
+    static void insertExecution(EntityManager em, RepositorySuccessorInstall.Plan plan, byte[] sha, String modes, boolean historical) {
+        var next = plan.next();
+        scope(em.createNativeQuery("""
+                            INSERT INTO repository_successor_executions(account_id,principal,operation_id,
+                             claim_epoch,claim_token,incarnation,owner_generation,owner_nonce,
+                             command_sha256,preparation_sha256,modes_sha256,activation_xid
+                            """ + (historical ? ",historical_capture_required)" : ")") + """
+                            VALUES(:a,:p,:o,:epoch,:token,:incarnation,:generation,:owner,:command,:sha,
+                             sha256(convert_to(CAST(:modes AS jsonb)::text,'UTF8')),pg_current_xact_id()
+                            """ + (historical ? ",true)" : ")")), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
+                            .setParameter("token", plan.reservation().successorToken())
+                            .setParameter("incarnation", plan.reservation().successorIncarnation())
+                            .setParameter("generation", next.predecessorGeneration()+1)
+                            .setParameter("owner", next.seeds().ownerNonce())
+                            .setParameter("command", HexFormat.of().parseHex(next.command().sha256()))
+                            .setParameter("sha", sha).setParameter("modes", modes).executeUpdate();
+    }
+
+    static void insertBinding(EntityManager em, RepositorySuccessorInstall.Plan plan) {
+        scope(em.createNativeQuery("""
+                            INSERT INTO repository_coordinator_bindings(account_id,principal,operation_id,claim_epoch,claim_token,incarnation)
+                            VALUES(:a,:p,:o,:epoch,:token,:incarnation)
+                            """), plan).setParameter("epoch", plan.reservation().predecessor().epoch()+1)
+                            .setParameter("token", plan.reservation().successorToken())
+                            .setParameter("incarnation", plan.reservation().successorIncarnation()).executeUpdate();
     }
 
     record Attached(RepositoryOperationLedger.Owner owner, boolean assessmentStarted) {}
@@ -130,7 +145,7 @@ final class RepositorySuccessorExecution {
         control.check(); return found;
     }
 
-    private static boolean read(EntityManager em, RepositorySuccessorInstall.Plan plan, byte[] sha, String modes) {
+    static boolean read(EntityManager em, RepositorySuccessorInstall.Plan plan, byte[] sha, String modes) {
         if (RepositoryCoordinatorReservation.read(em, plan.reservation()).isEmpty()) return false;
         var rows = scope(em.createNativeQuery("""
                 SELECT e.claim_token,e.incarnation,e.owner_generation,e.owner_nonce,e.command_sha256,e.preparation_sha256,

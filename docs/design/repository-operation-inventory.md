@@ -7046,3 +7046,20 @@ Kafka and provider dependency exclusions. See
 [consumer evidence](../evidence/repository/2026-10-06-publication-consumer/README.md).
 No remote artifact release occurred. Non-S3 complete-document qualification,
 throughput/scaling and the remaining recovery/history/hydration work stay open.
+
+**Historical successor activation checkpoint (V109):** ordinary successor
+activation and installation remain unchanged in behavior. A **new private**
+historical activation helper commits V94 execution identity, coordinator binding,
+V104/V105 reader capture and an immutable V109 retention/capture association in
+one transaction. This extends internal recovery preparation, not public execution.
+The association binds the original retained preparation digest through immutable
+V93 ancestry, the command, successor epoch/token/incarnation and exact capture
+digest. Exact retry confirms this attempt without renewing leases. Existing
+protobuf names, tags, imports, Any URLs and public receipt encodings are unchanged.
+
+Real SQL qualification now covers two independently drained capture-owner epochs,
+rollback, omitted/altered bindings, lost acknowledgement and cancellation around
+commit. Source provider observations remain synthetic. See the
+[activation evidence](../evidence/repository/2026-10-07-historical-activation/README.md).
+Cold attachment, scoped revocation, concurrent fresh attempts and broader ancestry
+qualification remain open. Public historical execution and root release stay gated.
