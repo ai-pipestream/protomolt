@@ -58,7 +58,6 @@ final class DocumentUploadCoordinator implements AutoCloseable {
 
     private final DocumentOperationUploadAdmission admission;
     private final DocumentSelectedAttemptLedger selected;
-    private final RepositoryOperationLedger operations;
     private final PayloadBudget budget;
     private final Resolver resolver;
     private final int parallelism;
@@ -85,7 +84,6 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         var bounded = tx.withTimeouts(timeouts);
         this.admission = new DocumentOperationUploadAdmission(bounded, drives);
         this.selected = new DocumentSelectedAttemptLedger(bounded);
-        this.operations = new RepositoryOperationLedger(bounded);
         this.budget = Objects.requireNonNull(budget);
         this.resolver = Objects.requireNonNull(resolver);
         this.parallelism = parallelism;
@@ -167,9 +165,8 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                 var bindings = bind(prepared, admitted.attempts(), replacements, backends, admitted.reusedVerified());
                 var selections = bindings.values().stream().map(Bound::selection).toList();
                 check(control);
-                operations.renew(owner, prepared.lease());
+                selected.renewOwnerAndSelections(owner, selections, prepared.lease());
                 check(control);
-                if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
                 var failure = new AtomicReference<Throwable>();
                 Runnable active = () -> {
                     rethrow(failure.get());
@@ -186,8 +183,8 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                             try {
                                 while (!stopHeartbeat.await(Math.max(1, prepared.lease().toMillis() / 3), TimeUnit.MILLISECONDS)) {
                                     active.run();
-                                    operations.renew(owner, prepared.lease());
-                                    if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
+                                    selected.renewOwnerAndSelections(owner, selections, prepared.lease());
+                                    active.run();
                                 }
                             } catch (InterruptedException interrupted) {
                                 failure.compareAndSet(null, interrupted);
@@ -236,9 +233,8 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                             active.run();
                             admission.recheckInitialSelections(owner, prepared);
                             active.run();
-                            operations.renew(owner, prepared.lease());
+                            selected.renewOwnerAndSelections(owner, selections, prepared.lease());
                             active.run();
-                            if (!selections.isEmpty()) selected.renew(owner, selections, prepared.lease());
                         }
                         active.run();
                     } catch (RuntimeException | Error cause) {

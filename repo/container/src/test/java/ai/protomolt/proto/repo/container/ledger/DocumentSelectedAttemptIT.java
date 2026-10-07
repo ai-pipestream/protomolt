@@ -40,6 +40,99 @@ class DocumentSelectedAttemptIT {
             Map<UUID, DocumentUploadPlan.Placement> placements, DocumentSelectedAttemptLedger.Selected selection,
             List<DocumentSelectedAttemptLedger.Observation> observations) {}
 
+    @Test void pairedRenewalCommitsOnceAndExactRetryPreservesSelection() {
+        var f=fixture(1);
+        var commits=new java.util.concurrent.atomic.AtomicInteger();
+        var source=DocumentJdbcFaults.afterCommit(database.dataSource(),commits::incrementAndGet);
+        try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                "hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
+            var ledger=new DocumentSelectedAttemptLedger(new Tx(emf));
+            commits.set(0);
+            ledger.renewOwnerAndSelections(f.owner,List.of(f.selection),LEASE);
+            assertThat(commits.get()).as("owner and selected renewal share one commit").isEqualTo(1);
+            commits.set(0);
+            ledger.renewOwnerAndSelections(f.owner,List.of(f.selection),LEASE);
+            assertThat(commits.get()).isEqualTo(1);
+            assertThat(selected.renew(f.owner,List.of(f.selection),LEASE)).hasSize(1);
+            Object attemptBefore=attemptLease(f);
+            commits.set(0);
+            ledger.renewOwnerAndSelections(f.owner,List.of(),LEASE);
+            assertThat(commits.get()).as("empty selections renew only the owner").isEqualTo(1);
+            assertThat(attemptLease(f)).isEqualTo(attemptBefore);
+        }
+    }
+
+    @Test void rejectedSelectedRenewalDoesNotAdvanceOwnerLease() {
+        var f=fixture(1,LEASE,true);
+        Object claimBefore=claimLease(f);
+        Object before=ownerLease(f);
+        Object attemptBefore=attemptLease(f);
+        var wrong=new DocumentSelectedAttemptLedger.Selected(f.selection.member(),f.selection.revision(),f.selection.attempt(),UUID.randomUUID());
+        assertThatThrownBy(() -> selected.renewOwnerAndSelections(f.owner,List.of(wrong),LEASE)).isInstanceOf(RuntimeException.class);
+        assertThat(ownerLease(f)).as("failed selected renewal rolls back owner extension").isEqualTo(before);
+        assertThat(claimLease(f)).isEqualTo(claimBefore);
+        assertThat(attemptLease(f)).isEqualTo(attemptBefore);
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void pairedRenewalHandlesCommitFailureAndLostAcknowledgement(boolean afterCommit) {
+        var f=fixture(1,LEASE,true);
+        Object ownerBefore=ownerLease(f), claimBefore=claimLease(f), attemptBefore=attemptLease(f);
+        var armed=new java.util.concurrent.atomic.AtomicBoolean();
+        DocumentJdbcFaults.CommitResponse fault=() -> {
+            if (armed.compareAndSet(true,false)) throw new java.sql.SQLException("renewal commit fault","08006");
+        };
+        var source=afterCommit ? DocumentJdbcFaults.afterCommit(database.dataSource(),fault)
+                : DocumentJdbcFaults.beforeCommit(database.dataSource(),connection -> fault.run());
+        try (var emf=jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",Map.of(
+                "hibernate.connection.datasource",source,"hibernate.hbm2ddl.auto","validate"))) {
+            var ledger=new DocumentSelectedAttemptLedger(new Tx(emf));
+            armed.set(true);
+            assertThatThrownBy(() -> ledger.renewOwnerAndSelections(f.owner,List.of(f.selection),Duration.ofHours(1)))
+                    .hasStackTraceContaining("renewal commit fault");
+            if (afterCommit) {
+                assertThat(ownerLease(f)).isNotEqualTo(ownerBefore);
+                assertThat(claimLease(f)).isNotEqualTo(claimBefore);
+                assertThat(attemptLease(f)).isNotEqualTo(attemptBefore);
+            } else {
+                assertThat(ownerLease(f)).isEqualTo(ownerBefore);
+                assertThat(claimLease(f)).isEqualTo(claimBefore);
+                assertThat(attemptLease(f)).isEqualTo(attemptBefore);
+            }
+            ledger.renewOwnerAndSelections(f.owner,List.of(f.selection),LEASE);
+            assertThat(selected.renew(f.owner,List.of(f.selection),LEASE)).hasSize(1);
+        }
+    }
+
+    @Test void transferredClaimCannotRenewOriginalOwnerOrAttempt() {
+        var f=fixture(1,LEASE,true,Duration.ofSeconds(1));
+        Object ownerBefore=ownerLease(f), attemptBefore=attemptLease(f);
+        tx.readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+        var successor=new RepositoryExecutionClaimLedger(tx).takeOver(f.owner.key(),f.command,1,UUID.randomUUID(),LEASE);
+        Object claimBefore=claimLease(f);
+        assertThatThrownBy(() -> selected.renewOwnerAndSelections(f.owner,List.of(f.selection),LEASE))
+                .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+        assertThat(ownerLease(f)).isEqualTo(ownerBefore);
+        assertThat(attemptLease(f)).isEqualTo(attemptBefore);
+        assertThat(claimLease(f)).isEqualTo(claimBefore);
+        assertThat(successor.epoch()).isEqualTo(2);
+    }
+
+    private static Object claimLease(Fixture f) {
+        return tx.readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:id")
+                .setParameter("id",f.command.operationId()).getSingleResult());
+    }
+
+    private static Object attemptLease(Fixture f) {
+        return tx.readOnly(em -> em.createNativeQuery("SELECT lease_until FROM document_part_attempts WHERE attempt_id=:id")
+                .setParameter("id",f.selection.attempt()).getSingleResult());
+    }
+
+    private static Object ownerLease(Fixture f) {
+        return tx.readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_operation_owners WHERE operation_id=:id")
+                .setParameter("id",f.command.operationId()).getSingleResult());
+    }
+
     @ParameterizedTest @ValueSource(ints={1,256})
     void boundedBatchVerifiesAllPartsWithConstantClientStatementCount(int parts) {
         var f = fixture(parts);
@@ -98,6 +191,12 @@ class DocumentSelectedAttemptIT {
                 field.equals("token") ? UUID.randomUUID() : s.token());
         assertThatThrownBy(() -> selected.verifyBatch(f.owner,wrong,f.observations)).hasMessageContaining("exact live selection");
         assertThatThrownBy(() -> selected.renew(f.owner,List.of(wrong),LEASE)).hasMessageContaining("exact live selection");
+        Object ownerBefore=ownerLease(f);
+        Object attemptBefore=attemptLease(f);
+        assertThatThrownBy(() -> selected.renewOwnerAndSelections(f.owner,List.of(wrong),LEASE))
+                .hasMessageContaining("exact live selection");
+        assertThat(ownerLease(f)).isEqualTo(ownerBefore);
+        assertThat(attemptLease(f)).isEqualTo(attemptBefore);
         assertThat(verified(f)).isZero();
     }
 
@@ -105,6 +204,10 @@ class DocumentSelectedAttemptIT {
         var f = fixture(1); UUID replacement = UUID.randomUUID();
         admission.retry(ADMIN,f.owner,DocumentOperationUploadAdmission.prepare(f.command,f.placements,
                 Map.of("member",replacement),LEASE),Map.of("member",new DocumentOperationSelection.Expected(1,f.selection.attempt())));
+        Object ownerBefore=ownerLease(f);
+        assertThatThrownBy(() -> selected.renewOwnerAndSelections(f.owner,List.of(f.selection),LEASE))
+                .hasMessageContaining("exact live selection");
+        assertThat(ownerLease(f)).isEqualTo(ownerBefore);
         assertThatThrownBy(() -> selected.renew(f.owner,List.of(f.selection),LEASE)).hasMessageContaining("exact live selection");
         assertThatThrownBy(() -> selected.verifyBatch(f.owner,f.selection,f.observations)).hasMessageContaining("exact live selection");
         for (String sql : List.of(
@@ -162,10 +265,14 @@ class DocumentSelectedAttemptIT {
             assertThat(statistics.getTransactionCount()).isEqualTo(1);
             assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(9);
         } finally { statistics.setStatisticsEnabled(false); }
+        selected.renewOwnerAndSelections(owner,bindings.reversed(),LEASE);
+        renewed=selected.renew(owner,bindings,LEASE);
         var invalid=new java.util.ArrayList<>(bindings);
         var last=invalid.getLast();
         invalid.set(invalid.size()-1,new DocumentSelectedAttemptLedger.Selected(last.member(),last.revision(),last.attempt(),UUID.randomUUID()));
         assertThatThrownBy(() -> selected.renew(owner,invalid,Duration.ofHours(1))).hasMessageContaining("exact live selection");
+        assertThatThrownBy(() -> selected.renewOwnerAndSelections(owner,invalid,Duration.ofHours(1)))
+                .hasMessageContaining("exact live selection");
         var after=tx.inTransaction(em -> { return DocumentPartAttemptLedger.lockAll(em,bindings.stream().map(DocumentSelectedAttemptLedger.Selected::attempt).toList()); });
         assertThat(after).containsExactlyElementsOf(renewed);
     }
@@ -238,6 +345,14 @@ class DocumentSelectedAttemptIT {
     }
 
     private static Fixture fixture(int parts, Duration attemptLease) {
+        return fixture(parts,attemptLease,false);
+    }
+
+    private static Fixture fixture(int parts, Duration attemptLease, boolean withClaim) {
+        return fixture(parts,attemptLease,withClaim,LEASE);
+    }
+
+    private static Fixture fixture(int parts, Duration attemptLease, boolean withClaim, Duration claimLease) {
         var drive = new DriveRecord(); drive.driveId=UUID.randomUUID(); drive.accountId="account";
         drive.name="selected-"+drive.driveId; drive.driveType="CUSTOM"; drive.provider="test-location"; drive.bucket="namespace";
         new DriveLedger(tx).insert(drive);
@@ -256,8 +371,9 @@ class DocumentSelectedAttemptIT {
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(1).setSha256(SHA).setContentType("application/protobuf")));
         var command=new DocumentPublicationCommand(DocumentPublicationIntent.newBuilder().setEncodingVersion(1).setAccountId("account")
                 .setOperationId(UUID.randomUUID().toString()).addMembers(member).build());
-        var owner=new RepositoryOperationLedger(tx).admit(new RepositoryOperationLedger.Key("account","principal",command.operationId()),
-                command,UUID.randomUUID(),LEASE).owner().orElseThrow();
+        var key=new RepositoryOperationLedger.Key("account","principal",command.operationId());
+        var claim=withClaim ? new RepositoryExecutionClaimLedger(tx).acquire(key,command,UUID.randomUUID(),claimLease) : null;
+        var owner=new RepositoryOperationLedger(tx).admit(key,command,UUID.randomUUID(),LEASE,claim).owner().orElseThrow();
         UUID id=UUID.randomUUID();
         var attempt=admission.admit(ADMIN,owner,DocumentOperationUploadAdmission.prepare(command,placements,Map.of("member",id),attemptLease)).getFirst();
         var plan=DocumentUploadPlan.prepare(command,placements,Map.of("member",id));

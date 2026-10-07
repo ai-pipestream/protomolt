@@ -43,8 +43,31 @@ final class DocumentSelectedAttemptLedger {
     }
 
     /** One owner fence for at most 64 attempts, locked in deterministic UUID order. */
+    void renewOwnerAndSelections(RepositoryOperationLedger.Owner owner, List<Selected> selected, Duration lease) {
+        Objects.requireNonNull(owner);
+        var snapshot = List.copyOf(selected);
+        var renewal = snapshot.isEmpty() ? null : prepareRenewal(snapshot, lease);
+        tx.inTransaction(em -> {
+            RepositoryOperationLedger.renewLive(em, owner, lease);
+            if (renewal != null) renewSelections(em, owner, renewal);
+            return null;
+        });
+    }
+
+    /** One owner fence for at most 64 attempts, locked in deterministic UUID order. */
     List<DocumentPartAttemptLedger.Attempt> renew(RepositoryOperationLedger.Owner owner, List<Selected> selected, Duration lease) {
-        Objects.requireNonNull(owner); Objects.requireNonNull(lease);
+        Objects.requireNonNull(owner);
+        var renewal = prepareRenewal(selected, lease);
+        return tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            return renewSelections(em, owner, renewal);
+        });
+    }
+
+    private record Renewal(List<UUID> ids, String encoded, long millis) {}
+
+    private static Renewal prepareRenewal(List<Selected> selected, Duration lease) {
+        Objects.requireNonNull(lease);
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Lease must be between one second and one day");
         if (selected.isEmpty() || selected.size() > 64)
@@ -56,21 +79,25 @@ final class DocumentSelectedAttemptLedger {
             throw new IllegalArgumentException("Renewal requires one to 64 distinct selected attempts");
         var ids = ordered.stream().map(Selected::attempt).toList();
         String encoded = encodeSelections(ordered);
-        return tx.inTransaction(em -> {
-            RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            if (DocumentPartAttemptLedger.lockAll(em, ids).size() != ids.size()) throw conflict();
-            requireSelections(em, owner, encoded, ids.size());
-            int changed = em.createNativeQuery("""
-                    UPDATE document_part_attempts SET lease_until=GREATEST(lease_until,clock_timestamp()+(:millis * interval '1 millisecond'))
-                    WHERE attempt_id IN (:ids)
-                    """).setParameter("millis", lease.toMillis())
-                    .setParameter("ids", ids).executeUpdate();
-            if (changed != ordered.size()) throw conflict();
-            var result = DocumentPartAttemptLedger.lockAll(em, ids);
-            requireSelections(em, owner, encoded, ids.size());
-            requireOwner(em, owner);
-            return result;
-        });
+        return new Renewal(ids, encoded, lease.toMillis());
+    }
+
+    private static List<DocumentPartAttemptLedger.Attempt> renewSelections(EntityManager em,
+            RepositoryOperationLedger.Owner owner, Renewal renewal) {
+        var ids = renewal.ids();
+        String encoded = renewal.encoded();
+        if (DocumentPartAttemptLedger.lockAll(em, ids).size() != ids.size()) throw conflict();
+        requireSelections(em, owner, encoded, ids.size());
+        int changed = em.createNativeQuery("""
+                UPDATE document_part_attempts SET lease_until=GREATEST(lease_until,clock_timestamp()+(:millis * interval '1 millisecond'))
+                WHERE attempt_id IN (:ids)
+                """).setParameter("millis", renewal.millis())
+                .setParameter("ids", ids).executeUpdate();
+        if (changed != ids.size()) throw conflict();
+        var result = DocumentPartAttemptLedger.lockAll(em, ids);
+        requireSelections(em, owner, encoded, ids.size());
+        requireOwner(em, owner);
+        return result;
     }
 
     /** Any missing key or identity mismatch rolls back the entire bounded batch. */

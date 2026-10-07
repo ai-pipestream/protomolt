@@ -30,6 +30,13 @@ class RepositoryCoordinatorLocalDrainIT {
             new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
             var operations = new RepositoryOperationLedger(c.tx());
             var owner = operations.admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim).owner().orElseThrow();
+            var attempts = new DocumentOperationUploadAdmission(c.tx(),new DriveLedger(c.tx())).admit(CALLER,owner,
+                    DocumentOperationUploadAdmission.prepare(value.command(),value.placements(),
+                            java.util.Map.of("member-0",UUID.randomUUID()),LEASE));
+            var attempt = attempts.getFirst();
+            var selections = java.util.List.of(new DocumentSelectedAttemptLedger.Selected("member-0",1,attempt.id(),attempt.token()));
+            var selected = new DocumentSelectedAttemptLedger(c.tx());
+            selected.renewOwnerAndSelections(owner,selections,LEASE);
             var descriptor = ai.protomolt.proto.descriptors.DescriptorFingerprints.closure(com.google.protobuf.StringValue.getDescriptor()).toByteString();
             new RepositorySchemaArtifacts(c.tx()).stage(owner, value.command(), java.util.List.of(descriptor), () -> {});
             RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
@@ -37,6 +44,16 @@ class RepositoryCoordinatorLocalDrainIT {
             var identity = identity(claim, incarnation);
             var stamp = RepositoryCoordinatorLocalDrain.record(c.tx(), CALLER, identity, NONE);
             assertThat(RepositoryCoordinatorLocalDrain.record(c.tx(), CALLER, identity, NONE)).isEqualTo(stamp);
+            var leaseQuery = "SELECT c.lease_until,o.lease_until,a.lease_until FROM repository_execution_claims c "
+                    + "JOIN repository_operation_owners o USING(account_id,principal,operation_id) "
+                    + "JOIN document_part_attempts a ON a.operation_id=o.operation_id WHERE a.attempt_id=:id";
+            Object[] before = c.tx().readOnly(em -> (Object[]) em.createNativeQuery(leaseQuery)
+                    .setParameter("id",attempt.id()).getSingleResult());
+            assertThatThrownBy(() -> selected.renewOwnerAndSelections(owner,selections,LEASE))
+                    .hasStackTraceContaining("locally drained");
+            Object[] after = c.tx().readOnly(em -> (Object[]) em.createNativeQuery(leaseQuery)
+                    .setParameter("id",attempt.id()).getSingleResult());
+            assertThat(after).containsExactly(before);
             assertThatThrownBy(() -> operations.renew(owner, LEASE)).hasStackTraceContaining("locally drained");
             assertThatThrownBy(() -> new RepositoryExecutionClaimLedger(c.tx()).renew(claim, LEASE)).hasStackTraceContaining("locally drained");
             assertThatThrownBy(() -> new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, value.command(), NONE))

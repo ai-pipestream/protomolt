@@ -2296,3 +2296,19 @@ empty selections and lost commit acknowledgement followed by exact retry.
 The expected normal-path saving is two commits, not three. Locks last longer in
 the combined transaction; recheck contention and RustFS timing before claiming a
 latency or scaling improvement.
+
+### Combined renewal implementation and evidence
+
+The paired initial, heartbeat and post-preparation renewals now use one
+transaction. The state-returning VERIFIED renewal remains separate. Claim and
+owner renewal precede sorted attempt locking; exact selection checks and the
+final transaction write fence remain in place.
+
+Real PostgreSQL tests cover rollback of claim, owner and attempt leases, lost
+commit acknowledgement followed by retry, transferred claims, local drain,
+empty selections and reversed 64-member batches. Coordinator provider tests and
+the production-JAR storage runtime pass. The matching RustFS trace reports 16
+foreground commits per publication versus 18 in the baseline across 144
+publications. This proves fewer commits, not improved latency or horizontal
+throughput. Evidence is in
+`docs/evidence/repository/2026-10-06-paired-renewal/`.

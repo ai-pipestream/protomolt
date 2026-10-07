@@ -267,21 +267,26 @@ final class RepositoryOperationLedger {
 
     Owner renew(Owner owner, Duration lease) {
         Objects.requireNonNull(owner);
+        leaseMillis(lease);
+        return tx.inTransaction(em -> { return renewLive(em, owner, lease); });
+    }
+
+    /** Caller owns the transaction; claim and owner renewals roll back with subsequent work. */
+    static Owner renewLive(EntityManager em, Owner owner, Duration lease) {
+        Objects.requireNonNull(owner);
         long millis = leaseMillis(lease);
-        return tx.inTransaction(em -> {
-            lockLiveOwner(em, owner);
-            // Both leases advance or neither does. Claim locking remains before owner locking.
-            var claim = owner.executionClaim.map(value -> RepositoryExecutionClaimLedger.renewLive(em, value, lease));
-            int changed = bind(em.createNativeQuery("""
-                    UPDATE repository_operation_owners SET lease_until=GREATEST(lease_until,
-                        clock_timestamp()+(:millis * interval '1 millisecond'))
-                    WHERE account_id=:account AND principal=:principal AND operation_id=:id
-                      AND lease_until > clock_timestamp()
-                    """), owner.key).setParameter("millis", millis).executeUpdate();
-            if (changed != 1) throw new OwnerFencedException();
-            var renewed = readOwner(em, owner.key, false).orElseThrow();
-            return new Owner(renewed.key, renewed.generation, renewed.token, renewed.leaseUntil, claim);
-        });
+        lockLiveOwner(em, owner);
+        // Both leases advance or neither does. Claim locking remains before owner locking.
+        var claim = owner.executionClaim.map(value -> RepositoryExecutionClaimLedger.renewLive(em, value, lease));
+        int changed = bind(em.createNativeQuery("""
+                UPDATE repository_operation_owners SET lease_until=GREATEST(lease_until,
+                    clock_timestamp()+(:millis * interval '1 millisecond'))
+                WHERE account_id=:account AND principal=:principal AND operation_id=:id
+                  AND lease_until > clock_timestamp()
+                """), owner.key).setParameter("millis", millis).executeUpdate();
+        if (changed != 1) throw new OwnerFencedException();
+        var renewed = readOwner(em, owner.key, false).orElseThrow();
+        return new Owner(renewed.key, renewed.generation, renewed.token, renewed.leaseUntil, claim);
     }
 
     /** CAS takeover; the same nonce can reconcile a lost takeover acknowledgement. */
