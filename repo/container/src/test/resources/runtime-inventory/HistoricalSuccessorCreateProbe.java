@@ -79,6 +79,23 @@ final class HistoricalSuccessorCreateProbe {
                         });
                         var found = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
                         require(found.stage().equals(created), "successor stage has exact discovered identity");
+                        tx.inTransaction(em -> {
+                            require(DocumentAssessmentReconciliation.verifyRetainedInTransaction(em, caller, owner,
+                                    command, found.selections(), created, budget, () -> {}).orElseThrow().equals(created),
+                                    "same-transaction retained verification matches CREATE");
+                            try {
+                                tx.inTransaction(contender -> {
+                                    contender.createNativeQuery("SELECT assessment_id FROM document_assessment_owners WHERE assessment_id=:id FOR UPDATE NOWAIT")
+                                            .setParameter("id", created.assessment()).getSingleResult();
+                                });
+                                throw new AssertionError("Retained assessment lock escaped the caller transaction");
+                            } catch (RuntimeException locked) {
+                                Throwable cause = locked;
+                                while (cause != null && !(cause instanceof java.sql.SQLException)) cause = cause.getCause();
+                                require(cause instanceof java.sql.SQLException sql && "55P03".equals(sql.getSQLState()),
+                                        "independent transaction observes exact PostgreSQL lock refusal");
+                            }
+                        });
                         require(new DocumentAssessmentReconciliation(tx).observeRetained(caller, owner, command, found.selections(),
                                 created.assessment(), created.manifestSha256(), created.retainUntil(), budget, () -> {})
                                 .orElseThrow().equals(created), "successor retained evidence reconciles exactly");
