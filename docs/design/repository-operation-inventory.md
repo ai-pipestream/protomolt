@@ -7163,3 +7163,11 @@ claim lock. First commit makes both return the same receipt; first rollback
 allows the second to create the sole pair. Leases and retained batches remain
 unchanged, with no activation or drains. Activation and V98 supersession
 contention remain unqualified. See [concurrency evidence](../evidence/repository/2026-10-07-recovery-limit-concurrency/README.md).
+
+**Recovery-limit activation contention:** operations are **unchanged**. The
+activation-first refusal followed by decision at the bound is complemented by a
+decision-first race. PostgreSQL observes V94 waiting on the deciding transaction;
+after its commit, the activation guard sees the rejection and refuses. No durable
+capture or execution survives; the receipt replays and leases do not change.
+All three concurrency cases pass. V98 supersession remains a separate gate.
+See [activation-race evidence](../evidence/repository/2026-10-07-recovery-limit-activation-race/README.md).
