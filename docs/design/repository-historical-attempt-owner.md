@@ -824,3 +824,31 @@ inspectors to check the permanent receipt and capture fingerprint, including dra
 records, rather than requiring deleted root rows. Classification neither records a
 drain nor grants an execution handle. The initial owner must still enforce stop/join
 before invoking it; that owner and managed routing remain unimplemented.
+
+### Retained initial generation checkpoint
+
+`beginInitial` now reserves an entry and byte capacity before capture admission.
+It retains the exact preparation, caller, modes and coordinator incarnation, with
+encoded-digest comparison for reconstructed retries. Initial entries occupy the
+same capacity and selected-route/all-generation maps as successors.
+
+`RepositoryInitialHistoricalAttempt` owns the registration within that entry.
+Accepted source Work survives closure of new source admission. A returned uncertain
+registration is classified before retry: committed registration loads only the
+exact live initial claim and owner; rollback retries the retained proposal. The
+entry retains one execution object, so subsequent calls retain acknowledged START
+and the existing CREATE/publication flags. Cold persisted START alone still cannot
+recreate that execution object.
+
+Initial retirement and shutdown use operation-scoped process authority and the
+actual initial claim, without a fabricated reservation. Disposal joins accepted
+calls, closes execution, releases root Work and classifies the exact capture. Held
+Work keeps the entry retained. Initial-to-successor takeover uses the existing V97
+and V93 path; retiring the old entry preserves the selected successor route.
+
+The new SQL tests cover retained START, source closure, before-commit rollback,
+lost commit reply, reconstructed retry, capacity before capture, unused-slot
+shutdown and initial-to-successor overlap. These fixtures supply historical source
+provider observations; they do not qualify new initial-owner publication against a
+real object provider. Packaged-provider coverage, cold retention-anchor discovery,
+managed host routing and library/gRPC parity remain required before public enablement.

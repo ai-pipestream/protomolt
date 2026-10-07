@@ -36,6 +36,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         final DocumentPublicationCommand command;
         final RepositoryCoordinatorReservation.Proposal reservation;
         final RepositoryHistoricalAttemptPreparation preparation;
+        final Initial initial;
         RepositorySuccessorInstall.Plan plan;
         final DocumentPublicationPreparationRecord retention;
         final DocumentSuccessorFingerprint fingerprint;
@@ -49,6 +50,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         DocumentHistoricalAssessmentSources.Work work;
         List<DocumentReadLedger.PinnedHistory> histories = List.of();
         RepositoryHistoricalSuccessorActivation activation;
+        RepositoryInitialHistoricalAttempt initialAttempt;
         DocumentHistoricalExecution execution;
         DocumentPublicationAssessment.Historical assessment;
         DocumentAssessmentCreation.Created stage;
@@ -57,14 +59,20 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 ByteString retentionDigest, PayloadBudget.Lease bytes) {
             this.caller = caller; this.plan = plan; this.retention = retention;
             this.fingerprint = fingerprint; this.retentionDigest = retentionDigest; this.bytes = bytes;
-            key = plan.next().key(); command = plan.next().command(); reservation = plan.reservation(); preparation = null;
+            key = plan.next().key(); command = plan.next().command(); reservation = plan.reservation(); preparation = null; initial = null;
         }
         Entry(RepositoryCaller caller, DocumentPublicationPreparationRecord retention,
                 RepositoryCoordinatorReservation.Proposal reservation, RepositoryHistoricalAttemptPreparation preparation,
                 PayloadBudget.Lease bytes, ByteString retentionDigest) {
             this.caller = caller; this.retention = retention; this.reservation = reservation;
-            this.preparation = preparation; this.bytes = bytes;
+            this.preparation = preparation; this.bytes = bytes; initial = null;
             key = retention.key(); command = retention.command(); fingerprint = null; this.retentionDigest = retentionDigest;
+        }
+        Entry(RepositoryCaller caller, DocumentPublicationPreparationRecord record, Initial initial,
+                PayloadBudget.Lease bytes, ByteString digest) {
+            this.caller = caller; retention = record; this.initial = initial; this.bytes = bytes;
+            key = record.key(); command = record.command(); retentionDigest = digest;
+            reservation = null; preparation = null; fingerprint = null;
         }
         RepositoryCoordinatorReservation.Proposal reservation() {
             return preparation == null ? reservation : preparation.proposal();
@@ -76,11 +84,49 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         }
     }
 
+    private record Initial(Map<String, DocumentPublicationCandidate.Mode> modes, UUID incarnation) {
+        Initial { modes = Map.copyOf(modes); Objects.requireNonNull(incarnation); }
+    }
+
     RepositoryInstalledHistoricalAttempts(Tx tx, PayloadBudget budget, DriveLedger drives, int capacity) {
         this.tx = Objects.requireNonNull(tx); this.budget = Objects.requireNonNull(budget);
         this.drives = Objects.requireNonNull(drives);
         if (capacity < 1) throw new IllegalArgumentException("Historical attempt capacity must be positive");
         this.capacity = capacity;
+    }
+
+    /** Reserve the generation slot before opening or accepting its initial capture. No SQL. */
+    synchronized Attempt beginInitial(RepositoryCaller caller, DocumentPublicationPreparationRecord record,
+            Map<String, DocumentPublicationCandidate.Mode> modes, UUID incarnation) {
+        if (closed) throw unavailable();
+        DocumentAdmissionAuthorization.requireCaller(caller, record.key(), record.key().account());
+        if (record.predecessorGeneration() != 0 || DocumentPreparationHistoryRoots.roots(record.command()).isEmpty())
+            throw new IllegalArgumentException("Initial historical ownership requires an initial historical command");
+        var initial = new Initial(modes, incarnation);
+        var encodedModes = DocumentPublicationModesJournal.encode(record.command(), initial.modes());
+        var existing = entries.get(record.key());
+        if (existing != null) {
+            if (!existing.caller.equals(caller) || !initial.equals(existing.initial))
+                throw conflict("Initial historical retry identity changed");
+            if (!existing.retention.equals(record)) {
+                try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+                    if (!existing.retentionDigest.equals(digest(DocumentPublicationPreparationCodec.encode(record))))
+                        throw conflict("Initial historical retry preparation changed");
+                }
+            }
+            return resume(caller, record.command()).orElseThrow();
+        }
+        if (generations.size() >= capacity || active >= capacity)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
+        try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+            var encoded = DocumentPublicationPreparationCodec.encode(record);
+            var bytes = budget.reserve((long) encoded.size() + encodedModes.length() * 2L);
+            try {
+                var entry = new Entry(caller, record, initial, bytes, digest(encoded));
+                retain(entry); entry.borrowed = true; active++;
+                return new Attempt(entry);
+            } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
+        }
     }
 
 private void retain(Entry entry) {
@@ -113,16 +159,16 @@ synchronized Attempt beginSuccessor(RepositoryCaller coordinator, RepositoryCall
     if (old == null || selected != old || !old.key.equals(key) || !old.caller.equals(caller)
             || !old.command.canonical().equals(command.canonical()))
         throw conflict("Historical predecessor differs from retained generation");
-    if (old.sources == null || old.plan == null || old.retirement != RetirementProof.NONE || old.supersessionPending)
+    if (old.sources == null || old.plan == null && old.initialAttempt == null
+            || old.retirement != RetirementProof.NONE || old.supersessionPending)
         throw conflict("Historical predecessor is not an attached current generation");
-    if (!old.plan.modes().equals(modes)) throw conflict("Historical generation modes changed");
+    if (!(old.initial == null ? old.plan.modes() : old.initial.modes()).equals(modes)) throw conflict("Historical generation modes changed");
     var source = Objects.requireNonNull(observed).candidate().orElseThrow(() ->
             conflict("Historical generation takeover requires an expired bound predecessor"));
-    var reservation = old.plan.reservation();
-    var expected = new RepositoryCoordinatorDrain.Identity(key, command.sha256(),
-            Math.addExact(reservation.predecessor().epoch(), 1), reservation.successorToken(), reservation.successorIncarnation());
+    var expected = claimIdentity(old);
+    var previous = old.initial == null ? old.plan.next() : old.retention;
     var expectedOwner = new RepositoryCoordinatorReservation.OwnerIdentity(
-            Math.addExact(old.plan.next().predecessorGeneration(), 1), old.plan.next().seeds().ownerNonce());
+            Math.addExact(previous.predecessorGeneration(), 1), previous.seeds().ownerNonce());
     if (!expected.equals(source.predecessor()) || !expectedOwner.equals(source.owner()))
         throw conflict("Historical takeover observation differs from retained predecessor");
     // Admission is memory-only and exclusive under this monitor. Rollback restores routing on refusal.
@@ -176,7 +222,7 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             existing.borrowed = true; active++;
             return new Attempt(existing);
         }
-        if (existing != null && existing.preparation != null) throw conflict("Historical retry must resume retained preparation");
+        if (existing != null && (existing.preparation != null || existing.initial != null)) throw conflict("Historical retry must resume retained preparation");
         // Scratch is temporary; retained accounting uses the actual bounded encoded sizes.
         try (var scratch = budget.reserve(3L * DocumentPublicationPreparationCodec.MAX_BYTES
                 + DocumentPublicationModesJournal.MAX_BYTES)) {
@@ -333,6 +379,7 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         /** Private coordinator view of a confirmed plan; this grants no execution authority. */
         synchronized RepositorySuccessorInstall.Plan installedPlan(RepositoryCaller coordinator, RepositoryReadControl control) {
             requireMutable(control);
+            if (entry.initial != null) throw conflict("Initial historical entry has no successor installation");
             RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
             entry.requireSettled();
             if (entry.plan == null) throw conflict("Historical installation is not confirmed");
@@ -344,24 +391,29 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
                 DocumentHistoricalAssessmentSources.Work work, RepositoryReadControl control) {
             requireMutable(control);
             entry.requireSettled();
-            if (entry.plan == null) throw conflict("Historical installation is not confirmed");
+            if (entry.plan == null && entry.initial == null) throw conflict("Historical installation is not confirmed");
             if (entry.sources != null) throw conflict("Historical sources are already attached");
             Objects.requireNonNull(sources); Objects.requireNonNull(work);
             var histories = work.histories(sources);
             work.requireCaller(entry.caller);
-            work.references(entry.plan.next().command(), control::check);
+            work.references(entry.command, control::check);
             work.authorize(control);
-            var activation = new RepositoryHistoricalSuccessorActivation(tx, budget, entry.plan, entry.retention, sources, drives);
+            var activation = entry.initial == null
+                    ? new RepositoryHistoricalSuccessorActivation(tx, budget, entry.plan, entry.retention, sources, drives) : null;
+            var initial = entry.initial == null ? null : new RepositoryInitialHistoricalAttempt(tx, budget, entry.retention,
+                    entry.initial.modes(), entry.initial.incarnation(), sources, work, entry.scopes, drives, control);
             control.check();
-            entry.sources = sources; entry.work = work; entry.histories = histories; entry.activation = activation;
+            entry.work = work; entry.histories = histories; entry.activation = activation; entry.initialAttempt = initial;
+            entry.sources = sources;
         }
 
         /** Retains the same handle, including acknowledged START and sticky mutation flags, across calls. */
         synchronized void openExecution(RepositoryCaller coordinator, RepositoryReadControl control) {
             authorize(control);
-            RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
-            if (entry.execution == null) entry.execution = entry.activation.openAcceptedExecution(coordinator, entry.caller,
-                    entry.work, entry.scopes, entry.parent, control);
+            requireCoordinator(entry, coordinator, control);
+            if (entry.execution == null) entry.execution = entry.initial == null
+                    ? entry.activation.openAcceptedExecution(coordinator, entry.caller, entry.work, entry.scopes, entry.parent, control)
+                    : entry.initialAttempt.open(coordinator, entry.caller, control);
         }
         private DocumentHistoricalExecution execution(RepositoryReadControl control) {
             authorize(control);
@@ -435,7 +487,7 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
                 RepositoryReadControl control, boolean terminal) throws InterruptedException {
             requireActive(control);
             long nanos = checkedNanos(timeout), start = System.nanoTime();
-            RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
+            requireCoordinator(entry, coordinator, control);
             if (entry.retirement == RetirementProof.NONE) {
                 var command = entry.command;
                 if (terminal) {
@@ -448,9 +500,8 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
                     }
                     entry.retirement = RetirementProof.TERMINAL;
                 } else {
-                    var reservation = entry.reservation();
-                    var identity = new RepositoryCoordinatorDrain.Identity(entry.key, command.sha256(),
-                            reservation.predecessor().epoch() + 1, reservation.successorToken(), reservation.successorIncarnation());
+                    if (entry.initial != null && entry.initialAttempt == null) return Retirement.NOT_PROVEN;
+                    var identity = claimIdentity(entry);
                     if (!RepositoryClaimRetirement.fenced(tx, command, entry.preparation == null ? List.of(identity) : entry.preparation.retainedClaims(), control)) return Retirement.NOT_PROVEN;
                     entry.retirement = RetirementProof.FENCED;
                 }
@@ -506,7 +557,7 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             for (var entry : retained) {
                 control.check();
                 var coordinator = Objects.requireNonNull(authority.apply(entry.key));
-                RepositoryCoordinatorReservation.require(coordinator, entry.reservation(), control);
+                requireCoordinator(entry, coordinator, control);
                 if (!disposeEntry(entry, coordinator, nanos, start, control)) { complete = false; continue; }
                 control.check();
                 entry.releaseBytes();
@@ -529,8 +580,23 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             if (disposed.isEmpty()) return false;
             if (disposed.orElseThrow() == RepositoryHistoricalSuccessorActivation.Disposal.NO_CAPTURE
                     && !releaseUnregistered(entry, nanos, start, control)) return false;
+        } else if (entry.initialAttempt != null) {
+            var disposed = entry.initialAttempt.dispose(coordinator, remaining(nanos, start), control);
+            if (disposed.isEmpty()) return false;
+            if (disposed.orElseThrow() == RepositoryHistoricalSuccessorActivation.Disposal.NO_CAPTURE
+                    && !releaseUnregistered(entry, nanos, start, control)) return false;
         }
         return true;
+    }
+    private static void requireCoordinator(Entry entry, RepositoryCaller caller, RepositoryReadControl control) {
+        if (entry.initial != null) RepositoryInitialHistoricalAttempt.requireCoordinator(caller, entry.key, control);
+        else RepositoryCoordinatorReservation.require(caller, entry.reservation(), control);
+    }
+    private static RepositoryCoordinatorDrain.Identity claimIdentity(Entry entry) {
+        if (entry.initial != null) return entry.initialAttempt.identity();
+        var reservation = entry.reservation();
+        return new RepositoryCoordinatorDrain.Identity(entry.key, entry.command.sha256(),
+                Math.addExact(reservation.predecessor().epoch(), 1), reservation.successorToken(), reservation.successorIncarnation());
     }
     private static boolean releaseUnregistered(Entry entry, long nanos, long start, RepositoryReadControl control)
             throws InterruptedException {

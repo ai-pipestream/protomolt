@@ -56,6 +56,15 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             Map<String, DocumentPublicationCandidate.Mode> modes, DriveLedger drives, RepositoryReadControl control,
             DocumentPublicationScopeCalls.Call registration) {
+        return open(tx, budget, access, record, sources, capture, caller, owner, modes, drives, control, registration, null);
+    }
+
+    static DocumentHistoricalExecution open(Tx tx, PayloadBudget budget,
+            DocumentPublicationRegistration.JournalAccess access, DocumentPublicationPreparationRecord record,
+            DocumentHistoricalAssessmentSources sources, DocumentPreparationCaptureDrain.Capture capture,
+            RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Map<String, DocumentPublicationCandidate.Mode> modes, DriveLedger drives, RepositoryReadControl control,
+            DocumentPublicationScopeCalls.Call registration, DocumentHistoricalAssessmentSources.Work accepted) {
         Objects.requireNonNull(capture); Objects.requireNonNull(control).check();
         access.requireOwner(caller, owner, record.command(), control);
         if (record.predecessorGeneration() != 0 || owner.generation() != 1)
@@ -66,9 +75,10 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 || !identity.owner().commandSha256().equals(record.command().sha256())
                 || identity.owner().epoch() != claim.epoch() || !identity.owner().token().equals(claim.token()))
             throw new IllegalArgumentException("Historical execution capture differs from registered owner");
-        var work = sources.work();
+        var work = accepted == null ? sources.work() : accepted.fork();
         PayloadBudget.Lease retained = null;
         try {
+            work.histories(sources);
             work.requireCaller(caller); work.authorize(control);
             retained = budget.reserve(DocumentPreparationSourcePins.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES);
             var references = work.references(record.command(), control::check);
