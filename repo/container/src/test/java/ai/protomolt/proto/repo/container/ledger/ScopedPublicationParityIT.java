@@ -63,7 +63,9 @@ class ScopedPublicationParityIT {
                 var storage = new AssessmentStorageBackend("localstack")) {
             postgres.start();
             storage.start();
-            var log = directory.resolve("scoped-publication.log");
+            var results = Path.of("build/test-results/scopedPublicationTest");
+            Files.createDirectories(results);
+            var log = results.resolve("scoped-publication.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                     classpath + java.io.File.pathSeparator + probe,
