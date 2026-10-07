@@ -267,7 +267,31 @@ This is not scoped-key authorization qualification.
 Both cases passed in the complete production-JAR storage regression. Evidence:
 `docs/evidence/repository/2026-10-07-publication-cancellation`.
 
-The remaining lifecycle case is shutdown during a real schema load through this
-bounded host. Existing managed journaled schema-drain evidence does not substitute
-for that composition check. Public configuration remains unavailable until the
-required profile checks and their full regression evidence are complete.
+The separate bounded schema-load case now passes too. It holds actual Git-fetched
+descriptor bytes while the resolver worker remains active after caller cancellation.
+SQL and Redis stay open until worker drain; the closed resolver discards the late
+result. Evidence: `docs/evidence/repository/2026-10-07-schema-worker-shutdown`.
+Public configuration remains unavailable pending public factory and consumer tests.
+
+## Public composition design
+
+Expose bounded document limits through `BoundedDocumentOptions`, following the
+existing bounded archive options convention. A `RepoServices.buildBoundedDocuments`
+factory should use the existing assembly path and provider discovery. Validate
+required schema/publication options and the Redis configuration before discovery
+or resource acquisition. Preserve library-only use: historical transport and
+publication transport remain explicit, independent options with their existing
+byte and concurrency limits. Do not duplicate those limits in document options.
+
+Before documenting that factory as available, test a consumer using the public
+entry point with discovered Redis, typed publication and historical decoding.
+Test invalid providers, lifecycle/retention settings, TTL and object limits against
+an unreachable database to prove configuration fails before resource acquisition.
+Keep legacy document, archive and HTTP APIs unavailable in this composition.
+
+Redis persistence and eviction policy remain operator qualifications. The existing
+lifecycle invokes the recovery scan and revisits eligible ABSENT tombstones; the
+late-request evidence exercises direct recovery, not the elapsed background
+recheck interval. Do not advertise an observed automatic cleanup deadline. This
+embedded factory is not a new standalone deployment entry point. Sol reviewed
+this design; implementation and consumer qualification remain open.

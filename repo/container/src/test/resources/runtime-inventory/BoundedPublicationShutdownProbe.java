@@ -17,13 +17,13 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-/** Cancellation and timed shutdown with a successful real Redis PUT still inside its provider call. */
+/** Separate bounded hosts qualify provider and schema worker lifetime during cancellation. */
 public final class BoundedPublicationShutdownProbe {
+    private enum Mode { LIBRARY, RPC, SCHEMA }
     public static void run(Path bundle) throws Exception {
-        run(bundle,false);
-        run(bundle,true);
+        for (var mode:Mode.values()) run(bundle,mode);
     }
-    private static void run(Path bundle,boolean rpc) throws Exception {
+    private static void run(Path bundle,Mode mode) throws Exception {
         var gate=new PutGate();
         var closes=new AtomicInteger();
         var real=new RedisBlobStoreProvider();
@@ -46,7 +46,9 @@ public final class BoundedPublicationShutdownProbe {
         try (var git=GitSchemaRegistryStore.builder().repositoryDir(directory).build();
                 var database=new LedgerDatabase(config.ledger())) {
             git.putDescriptorSet(definition.metadata().getArtifactSha256(),definition.descriptors());
-            var resolver=new RegistrySchemaResolver(git,new DocumentSchemaArtifactCache.Limits(8_000_000,16,4_000_000),4,16);
+            var schemaGate=new BoundedPublicationSchemaShutdownProbe(definition.descriptors());
+            var resolver=new RegistrySchemaResolver(mode==Mode.SCHEMA ? schemaGate.wrap(git) : git,
+                    new DocumentSchemaArtifactCache.Limits(8_000_000,16,4_000_000),4,16);
             ManagedSchemaAccess schemas=new ManagedSchemaAccess() {
                 public DocumentSchemaAdmission.Resolution open(RepositoryCaller caller,DocumentPublicationMember member,RepositoryReadControl control) {
                     return resolver.open(occurrence -> new RegistrySchemaResolver.Selected(definition.metadata(),definition.source()),control::check);
@@ -59,7 +61,7 @@ public final class BoundedPublicationShutdownProbe {
                     (account,principal,operation) -> caller);
             var serverCancelled=new CountDownLatch(1);
             var observeFirst=new AtomicBoolean(true);
-            if (rpc) options=options.withTransport(new ManagedPublicationOptions.Transport(auth -> {
+            if (mode==Mode.RPC) options=options.withTransport(new ManagedPublicationOptions.Transport(auth -> {
                 if (observeFirst.compareAndSet(true,false))
                     io.grpc.Context.current().addListener(context -> serverCancelled.countDown(),Runnable::run);
                 return caller;
@@ -68,8 +70,12 @@ public final class BoundedPublicationShutdownProbe {
                     new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),
                     new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 var tx=new Tx(database.entityManagerFactory());
-                if (rpc) {
+                if (mode==Mode.RPC) {
                     BoundedPublicationRpcCancellationProbe.run(host,tx,gate,closes,serverCancelled);
+                    return;
+                }
+                if (mode==Mode.SCHEMA) {
+                    schemaGate.run(host,tx,caller,resolver,gate,closes);
                     return;
                 }
                 var fixture=BoundedDocumentHostProbe.prepare(host,tx);
@@ -122,7 +128,7 @@ public final class BoundedPublicationShutdownProbe {
         System.out.println("BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK");
     }
 
-    private static boolean hasCancellation(Throwable failure) {
+    static boolean hasCancellation(Throwable failure) {
         for (var cause=failure;cause!=null;cause=cause.getCause())
             if (cause instanceof CancellationException || cause instanceof RepositoryException r && r.code()==RepositoryException.Code.CANCELLED)
                 return true;
@@ -137,6 +143,7 @@ public final class BoundedPublicationShutdownProbe {
     }
     static final class PutGate {
         final AtomicBoolean armed=new AtomicBoolean();
+        final AtomicInteger puts=new AtomicInteger(),reads=new AtomicInteger();
         final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),exited=new CountDownLatch(1);
         private BlobStore actual;
         private volatile BlobStore.PutSpec written;
@@ -146,6 +153,8 @@ public final class BoundedPublicationShutdownProbe {
                 boolean held=method.getName().equals("put") && armed.compareAndSet(true,false);
                 try {
                     var value=method.invoke(store,args);
+                    if (method.getName().equals("put")) puts.incrementAndGet();
+                    if (method.getName().equals("getBounded")) reads.incrementAndGet();
                     if (held) { written=(BlobStore.PutSpec)args[0]; entered.countDown(); awaitRelease(); }
                     return value;
                 } catch (InvocationTargetException failure) { throw failure.getCause(); }
