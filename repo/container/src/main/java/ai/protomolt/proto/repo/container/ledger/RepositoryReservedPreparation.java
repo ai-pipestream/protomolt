@@ -90,7 +90,7 @@ final class RepositoryReservedPreparation {
     }
 
     /** Claim then owner locks protect observation only; deliberately no write-fence stamp or lease renewal. */
-    private static void requireState(EntityManager em, RepositoryCoordinatorReservation.Proposal reservation,
+    static void requireState(EntityManager em, RepositoryCoordinatorReservation.Proposal reservation,
                                      RepositoryCoordinatorReservation.OwnerIdentity owner) {
         var p = reservation.predecessor(); var key = p.key();
         var claims = scope(em.createNativeQuery("""

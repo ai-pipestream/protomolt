@@ -939,3 +939,21 @@ This is a design requirement, not an available API. Implement and review the
 loader and these tests before composing it into managed historical routing.
 Sol reviewed the design; the pre-install restriction and planned-edge count
 are required parts of that review.
+
+### Restart lookup implementation checkpoint
+
+`RepositoryHistoricalRetentionLoader` now reads the original preparation through
+verified install ancestry under an exact, uninstalled successor reservation. It
+checks initial capture identity, pin count/digest and current source authority in
+two database phases around decoding. Its closeable result owns only preparation
+metadata and a byte lease. It cannot restore execution or provider handles.
+
+SQL evidence covers two successors, damaged ancestry and captures, identity and
+memory rejection, and access revocation, cancellation or installation between
+read and delivery. Corruption tests first exposed missing capture and epoch checks;
+the corrected cases pass. The evidence directory is
+`docs/evidence/repository/2026-10-07-retention-loader/`.
+
+This is a private checkpoint. Initial-anchor, unactivated-predecessor, ancestry
+limit and released-root cases remain, along with managed routing and transport
+qualification. Do not remove the public historical restriction at this checkpoint.
