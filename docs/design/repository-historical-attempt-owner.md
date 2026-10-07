@@ -656,5 +656,21 @@ The aggregate rerun for this extension remains pending.
 The test requires zero committed result/revision rows and confirmation of the
 waiting reservation after rollback. The old private generation retires through
 its exact fence and returns retained bytes. It leaves a durable successor
-reservation; successor installation and provider publication after this specific
-race remain unqualified. The before-claim acquisition ordering also remains open.
+reservation. The continuation below qualifies successor publication.
+The before-claim acquisition ordering remains open.
+
+#### Publication after claim-expiry rollback
+
+`HistoricalPostRollbackPublicationProbe` uses the confirmed reservation and failed
+plan as the immediate installation predecessor. The original preparation remains
+the retention reference. Local capacity is reserved before installation; fresh
+reader/capture ownership and provider reads follow installation. Upload bytes are
+explicitly supplied again.
+
+The normal private-owner path publishes the same command, checks provider bytes,
+replays the exact receipt and returns retained memory. Assertions require new
+claim/process/owner/upload identities, disjoint capture pins, 2 reservations and
+installations, 3 STARTs, 2 CREATEs and 1 successful publication. Sol reviewed the
+extension; focused qualification passed in 1m06s with no failures or skips.
+See `docs/evidence/repository/2026-10-07-post-rollback-publication/README.md`.
+The aggregate rerun remains pending.

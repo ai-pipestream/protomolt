@@ -35,7 +35,7 @@ class HistoricalRuntimeQualificationTest {
 
     @Test void claimExpiresBeforeFinalization() throws Exception {
         run("claim-expires", "HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK",
-                "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK");
+                "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
     }
 
     private void run(String mode, String... markers) throws Exception {

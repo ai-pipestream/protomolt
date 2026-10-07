@@ -284,7 +284,7 @@ class DocumentAssessmentStorageRuntimeTest {
                     String result = Files.readString(reconciliationLog);
                     assertThat(reconciliation.exitValue()).as(result).isZero();
                     if (claimExpiry) {
-                        assertThat(result).contains("HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK");
+                        assertThat(result).contains("HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
                     } else if (commitWins) {
                         assertThat(result).contains("HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK",
                                 "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK");

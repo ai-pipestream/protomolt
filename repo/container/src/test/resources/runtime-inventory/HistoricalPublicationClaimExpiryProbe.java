@@ -19,7 +19,7 @@ import javax.sql.DataSource;
 final class HistoricalPublicationClaimExpiryProbe {
     @FunctionalInterface interface Publication { void run(Tx publication) throws Exception; }
 
-    static void run(DataSource database, DocumentPublicationCommand command,
+    static RepositoryCoordinatorReservation.ExpiredUnquiesced run(DataSource database, DocumentPublicationCommand command,
             DocumentAssessmentCreation.Created stage, Tx independent, RepositoryCaller coordinator, RepositoryOperationLedger.Owner owner, RepositorySuccessorInstall.Plan plan, Publication publication) throws Exception {
         var armed = new AtomicBoolean();
         var acquired = new CountDownLatch(1);
@@ -139,6 +139,7 @@ final class HistoricalPublicationClaimExpiryProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     if (successes != 0 || revisions != 0) throw new AssertionError("Expired publication left durable results");
                     System.out.println("HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK");
+                    return proposal;
                 } finally { proceed.countDown(); }
             }
         }

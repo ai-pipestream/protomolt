@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES;
+        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, RECOVERED_PUBLICATION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -312,13 +312,15 @@ final class HistoricalInstalledOwnerProbe {
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 if (check == Check.CLAIM_EXPIRES) {
-                    HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
+                    var reservation = HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
                             publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
                                     new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
                     require(request.retireFenced(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
                             == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "expired publisher retires after confirmed takeover");
                     require(budget.reservedBytes() == before, "expired publisher returns retained bytes");
                     System.out.println("SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK");
+                    HistoricalPostRollbackPublicationProbe.run(tx, provider, caller, coordinator, original, plan, reservation,
+                            policy, fragments, container, resolver, limits, budget, observation, database);
                     return;
                 } else if (check.commitWinner()) {
                     losing = new HistoricalPublicationLosingSuccessorProbe(tx, attempts, caller, coordinator, command,
@@ -353,9 +355,9 @@ final class HistoricalInstalledOwnerProbe {
                 }
             }
             require(runtime.isIdle(), "repeat refusal releases runtime barrier");
-            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == 2,
-                    "original and successor START only");
-            require(count(tx, "document_assessment_owners", command.operationId()) == 1, "exactly one CREATE");
+            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == (check == Check.RECOVERED_PUBLICATION ? 3 : 2),
+                    "exact START count for completed generations");
+            require(count(tx, "document_assessment_owners", command.operationId()) == (check == Check.RECOVERED_PUBLICATION ? 2 : 1), "exact CREATE count for publication attempts");
             require(count(tx, "document_revision_commits", command.operationId()) == 1, "exactly one publication");
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 require(request.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
