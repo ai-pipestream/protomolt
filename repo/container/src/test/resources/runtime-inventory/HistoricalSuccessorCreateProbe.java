@@ -99,6 +99,24 @@ final class HistoricalSuccessorCreateProbe {
                         require(new DocumentAssessmentReconciliation(tx).observeRetained(caller, owner, command, found.selections(),
                                 created.assessment(), created.manifestSha256(), created.retainUntil(), budget, () -> {})
                                 .orElseThrow().equals(created), "successor retained evidence reconciles exactly");
+                        var publication = new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false);
+                        var result = execution.publishAssessment(caller, assessment, Map.of(), observation,
+                                new RepositorySchemaArtifacts(tx), publication, created, RepositoryReadControl.NONE);
+                        require(result.getOwnerGeneration() == owner.generation() && result.getMembersCount() == 1,
+                                "successor publishes one member under its exact generation");
+                        require(result.getCommandSha256().equals(command.sha256()), "publication binds canonical command");
+                        require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                                "authorized durable replay returns exact successor receipt");
+                        try {
+                            execution.publishAssessment(caller, assessment, Map.of(), observation,
+                                    new RepositorySchemaArtifacts(tx), publication, created, RepositoryReadControl.NONE);
+                            throw new AssertionError("Publication attempt was reused");
+                        } catch (RepositoryException refused) {
+                            require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                    && refused.getMessage().contains("reconciliation"), "repeat publication requires reconciliation");
+                        }
+                        System.out.println("CLAIMED_HISTORICAL_SUCCESSOR_PUBLICATION_OK");
+
                     }
                     long starts = tx.readOnly(em -> ((Number) em.createNativeQuery(
                             "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:op")
@@ -115,7 +133,7 @@ final class HistoricalSuccessorCreateProbe {
                     long published = tx.readOnly(em -> ((Number) em.createNativeQuery(
                             "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
-                    require(published == 0, "successor CREATE is not publication");
+                    require(published == 1, "exactly one successor publication, no duplicate revision");
                 }
                 accepted.close();
                 require(activation.tentativeCapture().orElseThrow().complete(caller, Duration.ZERO, RepositoryReadControl.NONE).isPresent(),

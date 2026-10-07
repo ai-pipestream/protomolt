@@ -24,6 +24,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
     private boolean assessmentCreateAttempted;
+    private boolean publicationAttempted;
     private boolean closed;
     private boolean successorAttachmentVerified;
 
@@ -208,6 +209,111 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 observation, control, evidence -> createObserved(caller, selected, evidence, storage, started, control));
     }
 
+    /** Private publication of this handle's exact retained assessment; uncertain commit requires replay. */
+    synchronized ai.protomolt.proto.repo.v1.DocumentPublicationResult publishAssessment(RepositoryCaller caller,
+            DocumentPublicationAssessment.Historical assessment,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+            DocumentAssessmentRuntimeObserver.Observation observation, RepositorySchemaArtifacts storage,
+            DocumentPublicationCommit publication, DocumentAssessmentCreation.Created stage, RepositoryReadControl control)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        if (publicationAttempted)
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Historical publication requires reconciliation before another attempt");
+        mutate(caller, control, em -> null);
+        Objects.requireNonNull(stage);
+        if (!assessmentCreateAttempted || acknowledgedStart == null
+                || !stage.assessment().equals(acknowledgedStart.assessment())
+                || !stage.retainUntil().equals(acknowledgedStart.retainUntil()))
+            throw new IllegalArgumentException("Publication stage differs from this handle's assessment start");
+        var selected = Map.copyOf(selections);
+        var references = work.references(record.command(), control::check);
+        var authorization = DocumentAdmissionAuthorization.prepare(prepared.plan(), references);
+        var creation = DocumentCreationAuthorization.prepare(prepared.plan(), drives, caller);
+        var fence = new PublicationFence(caller, selected, stage, control);
+        assessment.withRetainedEvidence(assessmentIdentity, caller, work, owner, record.command(), modes,
+                observation, control, evidence -> {
+                    evidence.requireOwner(owner, control::check);
+                    if (!stage.manifestSha256().equals(evidence.manifestSha256(control::check)))
+                        throw new IllegalArgumentException("Publication assessment differs from retained manifest");
+                    stageArtifacts(storage, List.copyOf(evidence.artifacts(control::check).values()),
+                            control, em -> {
+                                fence.lockRegistration(em);
+                                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                                RepositoryOperationLedger.requireCommand(em, owner.key(), record.command());
+                                DocumentSchemaPolicies.lockCurrent(em, evidence.policy(control::check), control::check);
+                                DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, prepared.plan(), authorization, creation);
+                                DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), record.command(), owner.generation(), encodedModes);
+                                fence.verifyStage(em);
+                                evidence.check(control::check);
+                            });
+                    return null;
+                });
+        return assessment.withPromotedCandidate(assessmentIdentity, caller, work, record.command(), modes, control, candidate -> {
+            publicationAttempted = true;
+            Runnable observedControl = () -> { control.check(); observation.identity(control::check); };
+            observedControl.run();
+            return publication.commitHistoricalOwned(caller, owner, prepared, candidate.opaque(), selected,
+                    candidate.schemas(), observedControl, references, fence);
+        });
+    }
+
+    /** Constructed only by a synchronized operation on its live execution handle. */
+    final class PublicationFence implements DocumentPublicationCommit.HistoricalFence {
+        private final RepositoryCaller caller;
+        private final Map<String, DocumentAssessmentRetainedSlots.UploadSelection> selections;
+        private final DocumentAssessmentCreation.Created stage;
+        private final RepositoryReadControl control;
+
+        private PublicationFence(RepositoryCaller caller, Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                DocumentAssessmentCreation.Created stage, RepositoryReadControl control) {
+            this.caller = caller; this.selections = DocumentAssessmentRetainedSlots.uploadSelections(selections);
+            this.stage = stage; this.control = control;
+        }
+
+        @Override public void lockRegistration(jakarta.persistence.EntityManager em) {
+            DocumentHistoricalExecution.this.lockRegistration(em);
+            DocumentAssessmentStartJournal.requireCreation(em, owner, record.command(), stage.assessment(), stage.retainUntil());
+        }
+        @Override public void verifyStage(jakarta.persistence.EntityManager em) {
+            if (DocumentAssessmentReconciliation.verifyRetainedInTransaction(em, caller, owner, record.command(),
+                    selections, stage, budget, control::check).isEmpty())
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication assessment is absent");
+        }
+        @Override public void verifyCapture(jakarta.persistence.EntityManager em) {
+            DocumentHistoricalExecution.this.requireCapture(em, control);
+        }
+        @Override public void requireLiveStage(jakarta.persistence.EntityManager em) {
+            control.check();
+            var rows = em.createNativeQuery("""
+                    SELECT sealed AND release_xid IS NULL AND retain_until>clock_timestamp()
+                      AND retain_until=:deadline AND encode(manifest_sha256,'hex')=:manifest
+                    FROM document_assessment_owners WHERE assessment_id=:id AND account_id=:a AND principal=:p
+                      AND operation_id=:o AND owner_generation=:g
+                    """).setParameter("deadline", java.time.OffsetDateTime.ofInstant(stage.retainUntil(), java.time.ZoneOffset.UTC))
+                    .setParameter("manifest", stage.manifestSha256()).setParameter("id", stage.assessment())
+                    .setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                    .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()).getResultList();
+            if (rows.size() != 1 || !Boolean.TRUE.equals(rows.getFirst()))
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Publication assessment is no longer live");
+        }
+    }
+
+    /** Opaque assessments have no artifacts but still require the same current-authority transaction. */
+    private void stageArtifacts(RepositorySchemaArtifacts storage, List<com.google.protobuf.ByteString> artifacts,
+            RepositoryReadControl control, java.util.function.Consumer<jakarta.persistence.EntityManager> authority) {
+        Objects.requireNonNull(storage); control.check();
+        if (!artifacts.isEmpty()) {
+            storage.stageAuthorized(owner, record.command(), artifacts, control::check, authority);
+            return;
+        }
+        tx.inTransaction(em -> {
+            authority.accept(em);
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), record.command());
+            control.check();
+        });
+    }
+
     private DocumentAssessmentCreation.Created createObserved(RepositoryCaller caller,
             Map<String, DocumentSelectedAttemptLedger.Selected> selected, DocumentAssessmentEvidence evidence,
             RepositorySchemaArtifacts storage, DocumentAssessmentStartJournal.Started started, RepositoryReadControl control) {
@@ -234,7 +340,7 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 (int) member.getPartsList().stream().filter(part -> !part.hasEmpty()).count()).sum();
         int largestRoot = roots.stream().mapToInt(root -> root.bytes().size()).max().orElse(0);
         // Hold current authority through the artifact claim transaction, including after evidence preparation.
-        storage.stageAuthorized(owner, command, List.copyOf(artifacts.values()), control::check, em -> {
+        stageArtifacts(storage, List.copyOf(artifacts.values()), control, em -> {
             lockRegistration(em);
             DocumentAssessmentStartJournal.requireCreation(em, owner, command, started.assessment(), started.retainUntil());
             RepositoryOperationLedger.fenceLiveOwner(em, owner);

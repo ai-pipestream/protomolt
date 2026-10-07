@@ -13,7 +13,16 @@ import java.util.stream.Collectors;
 
 /** Internal native commit. The embedding host owns authentication, byte reservations and provider qualification. */
 final class DocumentPublicationCommit {
+    /** Only a live historical execution handle can supply these ordered transaction checks. */
+    sealed interface HistoricalFence permits DocumentHistoricalExecution.PublicationFence {
+        void lockRegistration(jakarta.persistence.EntityManager em);
+        void verifyStage(jakarta.persistence.EntityManager em);
+        void verifyCapture(jakarta.persistence.EntityManager em);
+        void requireLiveStage(jakarta.persistence.EntityManager em);
+    }
+
     private final Tx tx;
+
     private final DriveLedger drives;
     private final boolean requireTypedSchema;
     private final boolean deliverEvents;
@@ -35,7 +44,7 @@ final class DocumentPublicationCommit {
             DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
             Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable callerControl) {
         prepared.plan().command().requireExecutionSupported();
-        return commitInternal(caller, owner, prepared, content, selections, schemas, callerControl, null);
+        return commitInternal(caller, owner, prepared, content, selections, schemas, callerControl, null, null);
     }
 
     /** Internal only: caller owns the exact live source preparations through transaction completion. */
@@ -50,13 +59,27 @@ final class DocumentPublicationCommit {
         if (references.isEmpty() || !references.equals(prepared.plan().historical()))
             throw new IllegalArgumentException("Historical publication differs from physical plan sources");
         var historical = DocumentHistoricalManifestEntries.prepare(prepared.plan().command(), references, control);
-        return commitInternal(caller, owner, prepared, content, selections, schemas, control, historical);
+        return commitInternal(caller, owner, prepared, content, selections, schemas, control, historical, null);
+    }
+
+    /** Private handle path; generic historical callers still cannot publish a claimed operation. */
+    DocumentPublicationResult commitHistoricalOwned(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
+            Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable control,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> sources, HistoricalFence fence) {
+        Objects.requireNonNull(fence); Objects.requireNonNull(schemas);
+        if (owner.executionClaim().isEmpty()) throw new IllegalArgumentException("Historical execution requires a claim");
+        var references = DocumentHistoricalReferenceAdmission.requireComplete(prepared.plan().command(), sources, control);
+        if (references.isEmpty() || !references.equals(prepared.plan().historical()))
+            throw new IllegalArgumentException("Historical publication differs from physical plan sources");
+        var historical = DocumentHistoricalManifestEntries.prepare(prepared.plan().command(), references, control);
+        return commitInternal(caller, owner, prepared, content, selections, schemas, control, historical, fence);
     }
 
     private DocumentPublicationResult commitInternal(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<String,DocumentCommandContent> content,
             Map<String,DocumentSelectedAttemptLedger.Selected> selections, DocumentSchemaBatch schemas, Runnable callerControl,
-            DocumentHistoricalManifestEntries historical) {
+            DocumentHistoricalManifestEntries historical, HistoricalFence historicalFence) {
         Objects.requireNonNull(owner); Objects.requireNonNull(prepared); Objects.requireNonNull(callerControl);
         Runnable control=() -> {
             if (Thread.currentThread().isInterrupted())
@@ -107,6 +130,7 @@ final class DocumentPublicationCommit {
         var placements=plan.members().stream().map(DocumentUploadPlan.Member::placement).distinct()
                 .sorted(Comparator.comparing(p -> p.drive().id())).toList();
         return tx.inTransaction(em -> {
+            if (historicalFence != null) historicalFence.lockRegistration(em);
             RepositoryOperationLedger.fenceLiveOwner(em,owner);
             RepositoryOperationLedger.requireCommand(em,owner.key(),command);
             // Before document locks; the SQL projection trigger also protects legacy paths.
@@ -114,6 +138,7 @@ final class DocumentPublicationCommit {
             else schemas.lockPolicy(em, owner, control);
             var locked=DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization,creation);
             DocumentPublicationModeBinding.require(em, owner, command, schemas == null ? Set.of() : schemas.proofs().keySet(), control);
+            if (historicalFence != null) historicalFence.verifyStage(em);
             // Scoped creation already checked these placements before taking authority locks.
             for (var placement : creation == null ? placements : java.util.List.<DocumentUploadPlan.Placement>of()) {
                 placement.drive().lock(em,drives);
@@ -123,6 +148,7 @@ final class DocumentPublicationCommit {
             }
             var parts=historical == null ? DocumentCommitParts.bind(em,owner,plan,selected,reuse,control)
                     : DocumentCommitParts.bindHistoricalPublication(em,owner,plan,selected,reuse,control);
+            if (historicalFence != null) historicalFence.verifyCapture(em);
             if (schemas != null) schemas.lockArtifacts(em, owner, control);
             control.run();
             // Snapshot all sources and candidates before any destination changes; a
@@ -172,6 +198,7 @@ final class DocumentPublicationCommit {
             control.run();
             if (historical != null) DocumentHistoricalReferenceAdmission.requireComplete(command, plan.historical(), control);
             em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
+            if (historicalFence != null) historicalFence.requireLiveStage(em);
             // No cancellation check after commit: a returned success is the durable outcome.
             return success;
         });
