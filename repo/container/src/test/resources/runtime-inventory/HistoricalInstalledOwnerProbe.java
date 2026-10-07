@@ -186,6 +186,17 @@ final class HistoricalInstalledOwnerProbe {
                     "original and successor START only");
             require(count(tx, "document_assessment_owners", command.operationId()) == 1, "exactly one CREATE");
             require(count(tx, "document_revision_commits", command.operationId()) == 1, "exactly one publication");
+            try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
+                require(request.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                        == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED,
+                        "committed publication retires its exact retained owner during normal operation");
+            }
+            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 0)),
+                    "retirement removes entry and decrements the borrowed call once");
+            require(budget.reservedBytes() == before, "normal retirement releases owned byte reservations before shutdown");
+            require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                    "authorized committed receipt remains replayable after local resource retirement");
+            System.out.println("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
         } catch (Exception | Error failure) {
             primary = failure; throw failure;
         } finally {
