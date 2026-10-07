@@ -7156,3 +7156,10 @@ The first rolls back tentative rows; the late signal preserves a replayable
 receipt. This does not prove interruption inside an in-flight JDBC commit, or
 implement explicit terminal cancellation for an unactivated successor. All five
 handler tests pass; see [cancellation evidence](../evidence/repository/2026-10-07-recovery-limit-cancellation/README.md).
+
+**Recovery-limit decision contention:** operations are **unchanged**. Two real
+PostgreSQL cases observe the second decision blocked on the first transaction's
+claim lock. First commit makes both return the same receipt; first rollback
+allows the second to create the sole pair. Leases and retained batches remain
+unchanged, with no activation or drains. Activation and V98 supersession
+contention remain unqualified. See [concurrency evidence](../evidence/repository/2026-10-07-recovery-limit-concurrency/README.md).
