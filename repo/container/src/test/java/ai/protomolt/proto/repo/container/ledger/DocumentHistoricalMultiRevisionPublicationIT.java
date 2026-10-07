@@ -196,7 +196,8 @@ class DocumentHistoricalMultiRevisionPublicationIT {
             var tables = List.of("repository_execution_claims", "repository_coordinator_bindings",
                     "repository_publication_preparations", "repository_preparation_history_sets",
                     "repository_preparation_history_roots", "repository_publication_modes", "repository_operations",
-                    "repository_operation_owners", "repository_preparation_pin_batches", "repository_preparation_source_pins");
+                    "repository_operation_owners", "repository_preparation_pin_batches", "repository_preparation_source_pins",
+                    "repository_preparation_pin_owners");
             c.tx().inTransaction(em -> {
                 em.createNativeQuery("""
                         CREATE FUNCTION test_require_initial_pins_early() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -212,6 +213,21 @@ class DocumentHistoricalMultiRevisionPublicationIT {
             c.tx().inTransaction(em -> {
                 em.createNativeQuery("DROP TRIGGER test_require_initial_pins_early ON repository_preparation_history_sets").executeUpdate();
                 em.createNativeQuery("DROP FUNCTION test_require_initial_pins_early()").executeUpdate();
+            });
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION test_require_capture_owner_early() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN SET CONSTRAINTS repository_preparation_pin_owner_complete IMMEDIATE; RETURN NEW; END; $$
+                        """).executeUpdate();
+                em.createNativeQuery("CREATE TRIGGER test_require_capture_owner_early AFTER INSERT ON repository_preparation_pin_batches "
+                        + "FOR EACH ROW EXECUTE FUNCTION test_require_capture_owner_early()").executeUpdate();
+            });
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("requires its exact coordinator owner");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table).isZero();
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER test_require_capture_owner_early ON repository_preparation_pin_batches").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION test_require_capture_owner_early()").executeUpdate();
             });
             assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
                     .hasStackTraceContaining("Historical registration commit refused");
@@ -230,7 +246,8 @@ class DocumentHistoricalMultiRevisionPublicationIT {
             assertThat(registrationRows(c, "repository_preparation_pin_batches", key)).isEqualTo(1);
             var pinBatch = DocumentPreparationSourcePins.prepare(command, sources.references(command, () -> {}), () -> {});
             verifyPinBatchGuards(c, record, owner, pinBatch);
-            if (roots == 1) verifyNewPinBatches(c, record, owner, sources);
+            verifyCaptureOwner(c, record, owner, pinBatch, registration.drainIdentity().incarnation());
+            if (roots == 1) verifyNewPinBatches(c, record, owner, sources, registration.drainIdentity().incarnation());
             c.tx().readOnly(em -> {
                 assertThat(DocumentPreparationHistoryRoots.coverage(em, record,
                         DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record))))
@@ -300,7 +317,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
     }
 
     private static void verifyNewPinBatches(Context c, DocumentPublicationPreparationRecord record,
-            RepositoryOperationLedger.Owner owner, DocumentHistoricalAssessmentSources original) {
+            RepositoryOperationLedger.Owner owner, DocumentHistoricalAssessmentSources original, UUID coordinator) {
         var plans = original.references(record.command(), () -> {}).stream().map(source -> source.plan()).toList();
         var leases = registrationLeases(c, record.key());
         for (int batch = 1; batch <= 16; batch++) {
@@ -317,7 +334,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                             .collect(java.util.stream.Collectors.toSet());
                     var locks = DocumentPublicationLocks.lockIndependentOrigins(em, destinations, objects, java.util.Set.of());
                     DocumentPublicationLocks.lockIndependentRetention(em, locks);
-                    DocumentPreparationSourcePins.insert(em, record, pins, () -> {});
+                    DocumentPreparationSourcePins.insert(em, record, pins, owner.executionClaim().orElseThrow(), coordinator, () -> {});
                 });
                 if (batch < 16) insert.run();
                 else assertThatThrownBy(insert::run).hasStackTraceContaining("capture batch limit exceeded");
@@ -329,7 +346,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 // Confirmation of an immutable exact batch does not require its released live pins.
                 c.tx().inTransaction(em -> {
                     RepositoryExecutionClaimLedger.lockLive(em, owner.executionClaim().orElseThrow());
-                    DocumentPreparationSourcePins.insert(em, record, pins, () -> {});
+                    DocumentPreparationSourcePins.insert(em, record, pins, owner.executionClaim().orElseThrow(), coordinator, () -> {});
                 });
             }
             assertThat(registrationRows(c, "repository_preparation_pin_batches", record.key())).isEqualTo(Math.min(batch + 1, 16));
@@ -340,6 +357,34 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 "SELECT count(*) FROM repository_preparation_pin_batches WHERE operation_id=:id AND initial_capture")
                 .setParameter("id", record.key().operationId()).getSingleResult()).longValue());
         assertThat(initial).isEqualTo(1);
+    }
+
+    private static void verifyCaptureOwner(Context c, DocumentPublicationPreparationRecord record,
+            RepositoryOperationLedger.Owner owner, DocumentPreparationSourcePins.Prepared pins, UUID coordinator) {
+        var claim = owner.executionClaim().orElseThrow();
+        Object[] stored = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT claim_epoch,claim_token,incarnation FROM repository_preparation_pin_owners WHERE operation_id=:id
+                """).setParameter("id", record.key().operationId()).getSingleResult());
+        assertThat(((Number) stored[0]).longValue()).isEqualTo(claim.epoch());
+        assertThat(stored[1]).isEqualTo(claim.token());
+        assertThat(stored[2]).isEqualTo(coordinator);
+        var wrongToken = new RepositoryExecutionClaimLedger.Claim(claim.key(), claim.commandSha256(), claim.epoch(), UUID.randomUUID(), claim.leaseUntil());
+        var wrongEpoch = new RepositoryExecutionClaimLedger.Claim(claim.key(), claim.commandSha256(), claim.epoch() + 1, claim.token(), claim.leaseUntil());
+        for (var wrong : List.of(wrongToken, wrongEpoch))
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentPreparationSourcePins.insert(em, record, pins, wrong, coordinator, () -> {}); }))
+                    .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                DocumentPreparationSourcePins.insert(em, record, pins, claim, UUID.randomUUID(), () -> {}); }))
+                .hasMessageContaining("binding differs");
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(
+                "UPDATE repository_preparation_pin_owners SET incarnation=gen_random_uuid() WHERE operation_id=:id")
+                .setParameter("id", record.key().operationId()).executeUpdate(); }))
+                .hasStackTraceContaining("capture owner is immutable");
+        assertThatThrownBy(() -> c.tx().inTransaction(em -> { em.createNativeQuery(
+                "DELETE FROM repository_preparation_pin_owners WHERE operation_id=:id")
+                .setParameter("id", record.key().operationId()).executeUpdate(); }))
+                .hasStackTraceContaining("capture owner is immutable");
     }
 
     private static long registrationRows(Context c, String table, RepositoryOperationLedger.Key key) {

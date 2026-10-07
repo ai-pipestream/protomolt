@@ -186,7 +186,7 @@ final class DocumentPublicationRegistration {
                     DocumentPublicationLocks.lockIndependentRetention(em, origins);
                     for (var source : historical.references(preparation.command(), control::check))
                         DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, origins, control);
-                    DocumentPreparationSourcePins.insert(em, preparation, sourcePins, control::check);
+                    DocumentPreparationSourcePins.insert(em, preparation, sourcePins, claim, coordinator, control::check);
                 }
                 DocumentPublicationModesJournal.insert(em,claim,preparation,encodedModes);
                 control.check();

@@ -156,8 +156,7 @@ class RepositoryCoordinatorLocalDrainIT {
     @Test void upgradePreservesExistingDrainingOperationUntilExplicitAttestation() {
         try (var c = context(POSTGRES, "90")) {
             var value = input(c); var incarnation = UUID.randomUUID();
-            var claim = new DocumentPublicationPreparationJournal(c.tx(), new PayloadBudget(64_000_000))
-                    .acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            var claim = LegacyPublicationPreparationFixture.acquire(c.tx(), value, UUID.randomUUID(), incarnation);
             var draining = RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
             String schema = c.pool().getSchema();
             org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())

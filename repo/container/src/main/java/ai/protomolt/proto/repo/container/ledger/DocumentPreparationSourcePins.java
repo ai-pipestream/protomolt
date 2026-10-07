@@ -60,9 +60,17 @@ final class DocumentPreparationSourcePins {
         } catch (NoSuchAlgorithmException failure) { throw new IllegalStateException("SHA-256 unavailable", failure); }
     }
 
-    /** Caller already owns the live claim, complete origin and retention locks, and source Uses. */
-    static void insert(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared, Runnable control) {
+    /**
+     * Caller already holds the claim row before complete origin/retention locks and source Uses.
+     * Resume validation rechecks that existing lock; it must not acquire a new claim lock after pins.
+     */
+    static void insert(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control) {
         control.run();
+        if (!record.key().equals(claim.key()) || !record.command().sha256().equals(claim.commandSha256()))
+            throw new IllegalArgumentException("Capture owner differs from preparation");
+        java.util.Objects.requireNonNull(coordinator);
+        RepositoryCoordinatorBinding.requireResume(em, claim, coordinator);
         var existing = scope(em.createNativeQuery("""
                 SELECT expected_count,sealed FROM repository_preparation_pin_batches
                 WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g AND pins_sha256=:digest
@@ -70,6 +78,17 @@ final class DocumentPreparationSourcePins {
         if (!existing.isEmpty()) {
             Object[] header = (Object[]) existing.getFirst();
             if (((Number) header[0]).intValue() != prepared.pins().size() || !Boolean.TRUE.equals(header[1])) throw corrupt();
+            var owners = scope(em.createNativeQuery("""
+                    SELECT claim_epoch,claim_token,incarnation FROM repository_preparation_pin_owners
+                    WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g AND pins_sha256=:digest
+                    """), record, prepared).getResultList();
+            if (owners.isEmpty()) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Preparation capture ownership is unknown");
+            Object[] owner = (Object[]) owners.getFirst();
+            if (((Number) owner[0]).longValue() != claim.epoch() || !claim.token().equals(owner[1])
+                    || !coordinator.equals(owner[2]))
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Preparation capture belongs to another execution; a fresh capture is required");
             // Confirmation does not depend on pins that may already have been released.
             long matches = ((Number) scope(em.createNativeQuery("""
                     SELECT count(*) FROM repository_preparation_source_pins p JOIN jsonb_to_recordset(CAST(:rows AS jsonb))
@@ -97,6 +116,12 @@ final class DocumentPreparationSourcePins {
                 FROM repository_preparation_history_sets
                 WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g
                 """), record, prepared).setParameter("count", prepared.pins().size()).executeUpdate();
+        scope(em.createNativeQuery("""
+                INSERT INTO repository_preparation_pin_owners(account_id,principal,operation_id,predecessor_generation,
+                 pins_sha256,claim_epoch,claim_token,incarnation)
+                VALUES(:a,:p,:o,:g,:digest,:epoch,:token,:incarnation)
+                """), record, prepared).setParameter("epoch", claim.epoch()).setParameter("token", claim.token())
+                .setParameter("incarnation", coordinator).executeUpdate();
         control.run();
         scope(em.createNativeQuery("""
                 INSERT INTO repository_preparation_source_pins(account_id,principal,operation_id,predecessor_generation,

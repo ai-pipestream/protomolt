@@ -1,5 +1,23 @@
 # Repository operation inventory
 
+## Historical capture ownership (2026-10-07)
+
+- **Extended private registration:** V105 requires an immutable owner for each new
+  pin batch, recording its exact claim epoch/token and coordinator incarnation in
+  the batch's creation transaction. The guard matches the preparation's command
+  digest and live coordinator binding.
+- **Extended retry checks:** missing legacy ownership is unknown and refused;
+  another execution must obtain a fresh capture. Ownership cannot be rewritten.
+- **Unchanged:** public protobuf contracts, history access policy, schema identity,
+  execution gates and retention release. Owner association is not drain evidence.
+
+Existing V104 batches are deliberately not assigned an assumed owner. Batch-local
+source/worker drainage, successor capture qualification and canonical coverage
+remain required before history roots can be released.
+The [36-test qualification](../evidence/repository/2026-10-07-capture-owners/README.md)
+includes fresh registration, populated-database migration, coordinator drainage
+and corrected pre-V103 fixtures; Sol reviewed the changes without a blocker.
+
 ## Durable historical source pin batches (2026-10-07)
 
 - **Extended private registration:** V104 records the selected capture pins in

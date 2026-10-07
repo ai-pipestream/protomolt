@@ -769,12 +769,19 @@ is not a release proof. Association also does not establish drained provider or
 schema work. Existing process-death recovery still requires durable reader
 quiescence; without the required recovery evidence, keep the roots retained.
 
-Before release is implemented, bind each capture batch to its exact execution
-claim epoch/token and coordinator incarnation, verified against the live claim
-and durable coordinator binding. V104 does not yet record that association.
-A later claim may append another capture; the latest coordinator's local drain
-cannot certify work from every earlier epoch. Do not backfill missing identity
-by assuming that an operation's current coordinator owned its older captures.
+V105 binds new capture batches to their exact execution claim epoch/token and
+coordinator incarnation. Its immutable owner row must be inserted while the batch
+is unsealed in its creation transaction. The database verifies the live claim
+write fence, the command digest in V103, and the exact durable coordinator binding.
+A deferred check prevents committing a new batch without its owner. Closed current
+coordinators and terminal operations cannot own fresh batches. Existing V104 batches
+remain unowned; neither migration nor exact retry retroactively assigns them.
+
+A batch belongs permanently to its original execution. A later claim must obtain
+a fresh capture instead of reassigning that batch. The latest coordinator's local
+drain cannot certify work from every earlier epoch. This association grants no
+execution, release or quiescence authority; historical successor capture and the
+batch-local drain protocol still need end-to-end qualification.
 
 Normal release needs a batch-local barrier that closes source admission, drains
 the borrowed Uses and actual schema/provider workers, releases exact native pins,
