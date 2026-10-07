@@ -40,7 +40,7 @@ class DocumentAssessmentStorageRuntimeTest {
         String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
         var classes = Files.createDirectory(directory.resolve("classes"));
         var sources = new ArrayList<String>();
-        for (String name : List.of("BoundedDocumentPublicConsumer", "BoundedDocumentPublicFactoryProbe", "BoundedPublicationSchemaShutdownProbe", "BoundedPublicationRpcCancellationProbe", "BoundedPublicationShutdownProbe", "BoundedDocumentRejectionProbe", "BoundedDocumentDelayedWrite", "DocumentDelayedWriteRecoveryProbe", "BoundedDocumentReadGate", "DocumentCleanupRetryProbe", "DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentOperationReplayHost", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalCreateCommitFault", "HistoricalPublicationExpiryProbe", "HistoricalPublicationRevocationProbe", "HistoricalClaimedMixedPublicationProbe", "HistoricalConcurrentStartProbe", "HistoricalSuccessorCreateProbe", "HistoricalInstalledOwnerProbe", "HistoricalOwnerReconciliationHost", "HistoricalReconciliationExpiryProbe", "HistoricalCreateAuthorizationProbe", "HistoricalAuthorizationCommitGate", "HistoricalCreateWinnerProbe", "HistoricalMixedOriginContentionProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
+        for (String name : List.of("BoundedDocumentPublicConsumer", "BoundedDocumentPublicFactoryProbe", "BoundedPublicationSchemaShutdownProbe", "BoundedPublicationRpcCancellationProbe", "BoundedPublicationShutdownProbe", "BoundedDocumentRejectionProbe", "BoundedDocumentDelayedWrite", "DocumentDelayedWriteRecoveryProbe", "BoundedDocumentReadGate", "DocumentCleanupRetryProbe", "DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentOperationReplayHost", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalCreateCommitFault", "HistoricalPublicationExpiryProbe", "HistoricalPublicationRevocationProbe", "HistoricalClaimedMixedPublicationProbe", "HistoricalConcurrentStartProbe", "HistoricalSuccessorCreateProbe", "HistoricalInstalledOwnerProbe", "HistoricalGenerationOverlapProbe", "HistoricalOwnerReconciliationHost", "HistoricalReconciliationExpiryProbe", "HistoricalCreateAuthorizationProbe", "HistoricalAuthorizationCommitGate", "HistoricalCreateWinnerProbe", "HistoricalMixedOriginContentionProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
             var source = directory.resolve(name + ".java");
             try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
                 assertThat(input).isNotNull(); Files.copy(input, source);
@@ -292,7 +292,8 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession")) {
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap")) {
+                boolean overlap = databaseName.equals("historical_generation_overlap");
                 boolean selfSupersession = databaseName.equals("historical_self_supersession");
                 try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
                      var statement = connection.createStatement()) {
@@ -303,6 +304,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                         classpath + java.io.File.pathSeparator + probe,
                         "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
+                if (overlap) reconciliationBuilder.command().add("overlap");
                 if (selfSupersession) reconciliationBuilder.command().add("self-supersession");
                 reconciliationBuilder.environment().putAll(builder.environment());
                 String reconciliationJdbc = postgres.getJdbcUrl().replaceFirst(
@@ -316,7 +318,10 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
                     String result = Files.readString(reconciliationLog);
                     assertThat(reconciliation.exitValue()).as(result).isZero();
-                    if (selfSupersession) {
+                    if (overlap) {
+                        assertThat(result).contains("HISTORICAL_GENERATION_OVERLAP_HOST_OK",
+                                "SCOPED_HISTORICAL_GENERATION_OVERLAP_PUBLICATION_OK");
+                    } else if (selfSupersession) {
                         assertThat(result).contains("HISTORICAL_SELF_SUPERSESSION_HOST_OK",
                                 "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK",
                                 "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");

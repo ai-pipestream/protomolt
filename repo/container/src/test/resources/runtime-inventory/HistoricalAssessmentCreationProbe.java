@@ -16,7 +16,7 @@ public final class HistoricalAssessmentCreationProbe {
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
         SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
-        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION
+        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
@@ -26,7 +26,7 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
             boolean reconciliationOnly) throws Exception {
         for (var scenario : Scenario.values()) {
-            if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION) continue;
+            if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION || scenario == Scenario.OWNED_SCOPED_OVERLAP) continue;
             if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
             if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
                     || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK
@@ -53,6 +53,11 @@ public final class HistoricalAssessmentCreationProbe {
     static void selfSupersession(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
         run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_SELF_SUPERSESSION, null, null, tx);
+    }
+
+    static void overlappingGenerations(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_OVERLAP, null, null, tx);
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
@@ -244,6 +249,7 @@ public final class HistoricalAssessmentCreationProbe {
                                 case OWNED_SCOPED_RECONCILE_REVOKED -> HistoricalInstalledOwnerProbe.Check.REVOKED;
                                 case OWNED_SCOPED_RECONCILE_EXPIRED -> HistoricalInstalledOwnerProbe.Check.EXPIRED;
                                 case OWNED_SCOPED_SELF_SUPERSESSION -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
+                                case OWNED_SCOPED_OVERLAP -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
                                 default -> HistoricalInstalledOwnerProbe.Check.ORDINARY;
                             });
                     return;
@@ -603,7 +609,7 @@ public final class HistoricalAssessmentCreationProbe {
     private static boolean installedOwner(Scenario scenario) {
         return switch (scenario) {
             case OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
-                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION -> true;
+                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP -> true;
             default -> false;
         };
     }

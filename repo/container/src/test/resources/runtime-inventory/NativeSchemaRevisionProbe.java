@@ -27,6 +27,10 @@ public final class NativeSchemaRevisionProbe {
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             javax.sql.DataSource database, boolean reconciliationOnly, boolean selfSupersession) throws Exception {
+        run(tx, provider, source, database, reconciliationOnly, selfSupersession, false);
+    }
+    static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            javax.sql.DataSource database, boolean reconciliationOnly, boolean selfSupersession, boolean overlap) throws Exception {
         var caller = new RepositoryCaller("principal", true);
         var budget = new PayloadBudget(128_000_000);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
@@ -86,7 +90,8 @@ public final class NativeSchemaRevisionProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(attempts == 0, "no empty upload attempt for unchanged bytes");
                 }
-                if (selfSupersession) HistoricalAssessmentCreationProbe.selfSupersession(tx, provider, source, published.getFirst(), database);
+                if (overlap) HistoricalAssessmentCreationProbe.overlappingGenerations(tx, provider, source, published.getFirst(), database);
+                else if (selfSupersession) HistoricalAssessmentCreationProbe.selfSupersession(tx, provider, source, published.getFirst(), database);
                 else HistoricalAssessmentCreationProbe.run(tx, provider, source, published.getFirst(), opaqueRevision, database, reconciliationOnly);
                 NativeHistoricalMaterializationProbe.run(tx, provider, published.getFirst());
                 require(registryCalls.get() == 3, "one explicit contract selection for each revision");

@@ -73,6 +73,8 @@ This is private ownership infrastructure, not enabled managed historical routing
 The full-call same-key runtime guard is unchanged. Actual provider publication with
 old Work held, publication/takeover transaction races, byte-capacity refusal, and
 pending V98 expiry while an older generation drains remain qualification work.
-The deferred finalization guard rechecks live claim/owner leases: publication held
-past expiry must roll back; it must never be presented as a valid old-generation win.
+Correction from source review: publication explicitly finalizes constraints before
+JDBC commit. Expiry before finalization must reject the write; expiry after successful
+finalization can still permit commit under the existing locks. The transaction race
+tests must distinguish those positions. This checkpoint did not test either race.
 No scalability, pruning, JCR, hydration or complete-goal claim follows from this gate.

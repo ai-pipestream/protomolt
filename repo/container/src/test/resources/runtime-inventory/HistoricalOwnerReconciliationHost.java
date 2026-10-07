@@ -10,6 +10,7 @@ public final class HistoricalOwnerReconciliationHost {
             throw new AssertionError("Ambient test framework leaked into reconciliation host");
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
         boolean selfSupersession = args.length == 2 && args[1].equals("self-supersession");
+        boolean overlap = args.length == 2 && args[1].equals("overlap");
         var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(args[0]), () -> {});
         try (var provider = new AssessmentProviderProbe();
              var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
@@ -17,9 +18,9 @@ public final class HistoricalOwnerReconciliationHost {
             var tx = new Tx(database.entityManagerFactory());
             var source = AssessmentMixedReuseProbe.publishSource(tx, provider, "reconciliation", true);
             new DocumentSchemaPolicies(tx).activate(AssessmentCreationProbe.initialPolicy(), 0, () -> {});
-            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true, selfSupersession);
+            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true, selfSupersession, overlap);
             observation.identity(() -> {});
         }
-        System.out.println(selfSupersession ? "HISTORICAL_SELF_SUPERSESSION_HOST_OK" : "HISTORICAL_RECONCILIATION_HOST_OK");
+        System.out.println(overlap ? "HISTORICAL_GENERATION_OVERLAP_HOST_OK" : selfSupersession ? "HISTORICAL_SELF_SUPERSESSION_HOST_OK" : "HISTORICAL_RECONCILIATION_HOST_OK");
     }
 }

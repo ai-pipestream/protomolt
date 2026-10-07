@@ -10,15 +10,37 @@ import java.util.*;
 
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
-    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION }
+    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
-            PayloadBudget budget, long before, RepositoryCaller coordinator) implements AutoCloseable {
+            PayloadBudget budget, long before, RepositoryCaller coordinator, HistoricalGenerationOverlapProbe overlap) implements AutoCloseable {
         @Override public void close() throws Exception {
+            closeOwned(attempts, coordinator, overlap, budget, before);
+        }
+    }
+
+    private static void closeOwned(RepositoryInstalledHistoricalAttempts attempts, RepositoryCaller coordinator,
+            HistoricalGenerationOverlapProbe overlap, PayloadBudget budget, long before) throws Exception {
+        Throwable primary = null;
+        try {
+            if (overlap != null) overlap.releaseWorker();
             attempts.close();
             require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
                     "proposed owner drains on every exit path");
-            require(budget.reservedBytes() == before, "proposed owner returns retained preparation bytes");
+        } catch (Exception | Error failure) { primary = failure; }
+        try {
+            if (overlap != null) overlap.close();
+        } catch (Exception | Error cleanup) {
+            if (primary == null) primary = cleanup;
+            else if (cleanup != primary) primary.addSuppressed(cleanup);
         }
+        try {
+            require(budget.reservedBytes() == before, "proposed owner returns retained preparation bytes");
+        } catch (Exception | Error cleanup) {
+            if (primary == null) primary = cleanup;
+            else if (cleanup != primary) primary.addSuppressed(cleanup);
+        }
+        if (primary instanceof Exception failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
     }
 
     /** One owner is installed before the caller captures fresh historical sources. */
@@ -27,7 +49,8 @@ final class HistoricalInstalledOwnerProbe {
             PayloadBudget budget, Check check) throws Exception {
         long before = budget.reservedBytes();
         var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
-        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), 1);
+        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), check == Check.OVERLAP ? 2 : 1);
+        HistoricalGenerationOverlapProbe overlap = null;
         try {
             var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
             var command = original.command();
@@ -46,7 +69,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, check == Check.SELF_SUPERSESSION ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -114,14 +137,16 @@ final class HistoricalInstalledOwnerProbe {
                         "one replacement and two installs precede fresh capture or activation");
                 System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK");
             }
+            if (check == Check.OVERLAP) {
+                overlap = new HistoricalGenerationOverlapProbe(tx, caller, coordinator, attempts, command);
+                plan = overlap.takeOver(plan, modes, bodies, timeouts);
+            }
             System.out.println("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-            return new Prepared(attempts, plan, budget, before, coordinator);
+
+            return new Prepared(attempts, plan, budget, before, coordinator, overlap);
         } catch (Exception | Error failure) {
-            attempts.close();
             try {
-                require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
-                        "failed preparation releases its local owner");
-                require(budget.reservedBytes() == before, "failed preparation returns retained bytes");
+                closeOwned(attempts, coordinator, overlap, budget, before);
             } catch (Exception | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
@@ -155,7 +180,7 @@ final class HistoricalInstalledOwnerProbe {
                         Instant.now(), RepositoryReadControl.NONE);
             }
             require(runtime.isIdle(), "first client call releases runtime barrier while assessment stays retained");
-            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "entry survives first call");
+            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, check == Check.OVERLAP ? 2 : 1)), "entry survives first call");
             sources.close(); // Subsequent requests must use the retained Work and assessment.
             var owner = tx.inTransaction(em -> {
                 var claim = RepositoryExecutionClaimLedger.lockLive(em, plan.next().key(), command.sha256(),
@@ -287,6 +312,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(runtime.isIdle(), "publication request releases runtime barrier");
             HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);
+            if (prepared.overlap() != null) prepared.overlap().verifyAndRetire();
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 try {
                     request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
@@ -317,6 +343,7 @@ final class HistoricalInstalledOwnerProbe {
             primary = failure; throw failure;
         } finally {
             try {
+                if (prepared.overlap() != null) prepared.overlap().releaseWorker();
                 runtime.close(); attempts.close();
                 require(runtime.awaitIdle(Duration.ofSeconds(1)), "client requests drained before owner shutdown");
                 require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),

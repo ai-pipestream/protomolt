@@ -507,29 +507,67 @@ publication-versus-V97 race, byte-capacity exhaustion, and a pending generation'
 expiry in the presence of an older draining Entry remain required acceptance cases.
 No public historical capability is advertised by this checkpoint.
 
-### Publication/takeover race qualification: commit-time liveness
+### Publication/takeover race qualification: finalization and commit
 
-`V79__repository_claim_mutation_fences.sql` replaces
-`require_repository_operation_success_complete`; the deferred success trigger
-created in V52 invokes it at commit. It requires the exact live execution claim and
-an owner whose lease still exceeds `clock_timestamp()`. Holding an old publication's
-claim lock across lease expiry does not grant permission to finish publication.
+The barrier position determines the expected winner. `DocumentPublicationCommit`
+executes `SET CONSTRAINTS ALL IMMEDIATE`, then checks the historical stage, before
+returning to `Tx.inTransaction` for JDBC commit. V79 checks live claim and owner
+leases during that explicit finalization. It does not automatically repeat those
+checks at JDBC commit after they have already fired. The previous description of
+all post-expiry publication commits as invalid was incorrect.
 
-Qualify three distinct orders without changing these guards:
+Qualify these orders without changing production guards:
 
-- Publication commits while its lease is live. Subsequent recovery discovers or
-  replays the terminal result and creates no replacement installation or capture.
-- Hold a real publication transaction after its writes, with its backend PID known.
-  Let database-clock expiry occur, then attempt V97 and prove the contender is
-  blocked on that PID using `pg_blocking_pids`. Releasing the publication gate must
-  expose its deferred liveness refusal; takeover can then proceed. Assert no old
-  revision/result survived and verify the successor's real provider publication.
-- Gate old publication before claim acquisition, let the exact old claim expire and
-  commit V97, then release publication. Require exact fence refusal and verify the
-  successor result. Do not infer ordering from wall-clock sleeps alone.
+- Block publication before finalization on a real historical-origin row. Observe
+  the publisher PID and claim/owner locks, wait for database-clock expiry, and prove
+  V97 waits on that publisher via `pg_blocking_pids`. Release the origin; publication
+  must fail its liveness checks and roll back. V97 may then proceed. Verify no old
+  result remains and qualify the successor's provider publication separately.
+- Gate publication at JDBC `beforeCommit`, after successful finalization and stage
+  checks. Allow lease expiry, submit V97, and prove its exact lock wait. Releasing
+  the publisher can commit a valid result; V97 must then reject the terminal
+  operation without a replacement reservation. Verify the original receipt/revision.
+- Gate publication before claim acquisition, expire the predecessor and commit
+  V97 first. Releasing the old call must produce an exact-fence error. Verify the
+  successor result and absence of any old publication.
 
-The existing fixture's connection/origin gates do not cover all these boundaries.
-Add a test-only transaction gate around actual V52/V97 work, retain the original
-SQL exception, and release every barrier in `finally`. Do not fabricate an old
-publication success after expiry or label a premature private reservation attempt
-as an eligible managed takeover. These are outstanding tests, not completed claims.
+These are outstanding acceptance tests. A lease is not proof that a transaction
+already holding the fencing locks has stopped. Every gate needs bounded waits,
+original SQL errors and unconditional barrier release in `finally`.
+
+### Provider-overlap qualification
+
+The next fixture uses an independent production-JAR JVM/database with the existing
+90-second host cap. It retains a real historical capture and forked Work in an old
+private generation, waits for actual SQL lease expiry, then reserves and installs a
+new generation across separate calls. Only afterward does the existing provider
+publication path capture fresh sources, upload, create evidence, publish and verify
+provider bytes and the exact receipt. The old Work stays held throughout. Cleanup
+must first refuse fenced retirement while Work is held, then release it and retire
+only that generation, preserving the successor retry identity and full budget return.
+
+The initial full packaged-provider run passed in 12m08s (one aggregate case, zero
+failures/errors/skips; 725.485 seconds). It verified all overlap publication, old
+generation retirement and terminal host markers. Sol's failure-cleanup refinement
+has since been applied: owner detachment failure no longer skips local reader
+cleanup, secondary cleanup failures are suppressed, and actual drainage remains
+mandatory before pin release or reader quiescence. The revised source also passed
+the full gate in 12m08s (725.843 seconds, zero failures/errors/skips). Source hashes
+and reports are archived in
+`docs/evidence/repository/2026-10-07-historical-generation-overlap/`. Transaction
+winner races and managed public routing remain separate work.
+
+#### Reviewed transaction-gate implementation plan
+
+Reuse the real origin-row blocker in `HistoricalPublicationExpiryProbe` for the
+pre-finalization case. Keep the assessment deadline beyond the short claim lease
+so the test identifies claim expiry rather than an unrelated stage timeout. Observe
+both blocker edges: publisher to origin holder, and V97 contender to publisher.
+
+For the post-finalization case, adapt `DocumentJdbcFaults.beforeCommit` and the
+latch/PID handling in `HistoricalAuthorizationCommitGate`. Match exact operation,
+owner and the success row's `creation_xid=pg_current_xact_id_if_assigned()`. Pass the
+gated Tx only to `DocumentPublicationCommit`, keeping schema staging outside the
+gate. Observe locks using an unwrapped connection. The before-claim case uses a
+publication-only connection gate. No production timeout, lease or SQL guard change
+is implied by these fixtures.
