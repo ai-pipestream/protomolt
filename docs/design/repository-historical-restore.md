@@ -988,8 +988,17 @@ still leaves coverage incomplete until epoch 1 releases its actual pins and gain
 a QUIESCED receipt. All three batches then qualify without changing the current
 leases. See the [confirmation and recovery evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
 
-Concurrent activation, traversal-limit qualification and deployed restart/session
-attachment remain open. Keep claimed historical execution and root release gated.
+Two fresh activation attempts with distinct captures now have a real PostgreSQL
+contention regression. The winner is held before commit; `pg_blocking_pids` proves
+the competitor waits on that exact session. Only one V94/V109 activation and new
+capture batch commit; the losing attempt receives a duplicate-key failure before
+registering its capture. The winner's exact retry and completion remain valid,
+with unchanged leases. This checks a committing winner, not a rolling-back winner
+or deployed process failure. See the
+[concurrency evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md).
+
+Traversal-limit qualification and deployed restart/session attachment remain open.
+Keep claimed historical execution and root release gated.
 Success publication and broader multi-generation recovery require their own
 qualification; activation and capture registration alone do not prove them.
 

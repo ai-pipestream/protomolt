@@ -7074,3 +7074,11 @@ and public execution remain **unchanged**. The 56 passing SQL tests and their
 limits are recorded in the
 [confirmation evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
 Separate connections in one JVM do not establish deployed restart recovery.
+
+**Historical concurrent activation regression:** production operations and wire
+contracts are **unchanged**. Two independent captures compete for one installed
+successor. The SQL test observes the winning backend as the competitor's blocker,
+then verifies exactly one activation and capture registration, exact winner retry
+and unchanged leases. The loser fails before capture registration. The
+[19-test evidence](../evidence/repository/2026-10-07-historical-concurrency/README.md)
+does not qualify a rolling-back winner or deployed process failure.
