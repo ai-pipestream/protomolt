@@ -14,7 +14,7 @@ public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
         ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
-        PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED
+        PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
@@ -44,8 +44,10 @@ public final class HistoricalAssessmentCreationProbe {
             HistoricalCreateCommitFault fault, HistoricalAuthorizationCommitGate gate, Tx independent) throws Exception {
         boolean lostAck = scenario == Scenario.ORDINARY_LOST_ACK;
         boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
-        boolean mixed = scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION;
-        boolean scoped = scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED || gate != null;
+        boolean mixed = scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
+                || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION;
+        boolean scoped = scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
+                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || gate != null;
         var credential = new RepositoryCredentialBinding("historical-create", UUID.randomUUID(), 1);
         var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
                 : new RepositoryCaller("principal", true);
@@ -90,7 +92,7 @@ public final class HistoricalAssessmentCreationProbe {
                 if (gate != null) {
                     HistoricalCreateWinnerProbe.run(tx, independent, gate, scenario == Scenario.CREATE_WINS, caller,
                             command, policy, source.placement(), history, fragments, budget, observation);
-                } else if (scoped && scenario != Scenario.PUBLICATION_REVOKED) {
+                } else if (scenario == Scenario.REVOKED_BEFORE_STAGE) {
                     HistoricalCreateAuthorizationProbe.run(tx, database, caller, command, policy, source.placement(),
                             history, fragments, budget, observation);
                 } else {
@@ -354,6 +356,10 @@ public final class HistoricalAssessmentCreationProbe {
                             "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(published == 0, "claimed CREATE does not publish");
+                    if (scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION) {
+                        HistoricalClaimedMixedPublicationProbe.run(tx, provider, caller, command, owner, execution,
+                                assessment, selections, observation, Objects.requireNonNull(created), fragments);
+                    }
                     if (scenario == Scenario.PUBLICATION_REVOKED) {
                         var address = command.intent().getMembers(0).getDestination().getAddress();
                         var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);

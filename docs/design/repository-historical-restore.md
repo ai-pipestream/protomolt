@@ -1649,6 +1649,13 @@ See [source-bound publication evidence](../evidence/repository/2026-10-07-claime
 
 This supersedes the earlier statement that no private claimed publication path
 exists; it does not satisfy every acceptance case in the reviewed seam. Mixed
-claimed publication, scoped successor publication, publication-wins revocation
+successor publication, scoped successor publication, publication-wins revocation
 races, broader recovery discovery and public integration remain open. Wire
 contracts, names, tags, imports and Any URLs are unchanged by this checkpoint.
+
+Initial mixed publication now also passes the full real-provider driver for both
+process authority and a registered scoped credential. One revision combines
+retained historical objects and a freshly uploaded PARSED part; exact provider
+readback, current projection, receipt replay and selected-attempt origin are
+checked. See [mixed-publication evidence](../evidence/repository/2026-10-07-claimed-mixed-publication/README.md).
+This does not qualify mixed successor execution or automatic upload-payload recovery.
