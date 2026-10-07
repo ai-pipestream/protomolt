@@ -124,13 +124,21 @@ class ArchiveDeletionFailureIT {
         uploads.verify(admission.upload().objectId(), admission.upload().leaseToken(), stored.data().length,
                 ai.protomolt.proto.repo.container.archive.ArchiveManifests.sha256Hex(stored.data()), stored.versionId(), stored.eTag());
         var version = ledger.findVersion(entry.entryUuid, 1).orElseThrow();
+        var firstSnapshot = saved.getManifest().getMetadataSnapshot();
+        assertThat(firstSnapshot.getCurrentVersion()).isEqualTo(1);
         version.version = 2;
+        // Version 2 carries a metadata snapshot that identifies version 2, as V102 freezes it at capture.
         version.manifest = ai.protomolt.proto.repo.container.archive.ArchiveManifests.toJson(saved.getManifest().toBuilder()
                 .setVersion(2).setRenditions(0, item.toBuilder().setObjectKey(managedKey)
-                        .setStorageObjectId(admission.upload().objectId().toString())).build());
+                        .setStorageObjectId(admission.upload().objectId().toString()))
+                .setMetadataSnapshot(firstSnapshot.toBuilder().setCurrentVersion(2)).build());
         entry.currentVersion = 2;
         ledger.commitSave(entry, 1, version, 0, ArchiveLedger.StatsDelta.none(),
                 Map.of(admission.upload().objectId(), admission.upload().leaseToken()));
+        var secondSnapshot = ai.protomolt.proto.repo.container.archive.ArchiveManifests.fromJson(
+                ledger.findVersion(entry.entryUuid, 2).orElseThrow().manifest).getMetadataSnapshot();
+        assertThat(secondSnapshot.getCurrentVersion()).isEqualTo(2);
+        assertThat(secondSnapshot.toBuilder().setCurrentVersion(1).build()).isEqualTo(firstSnapshot);
         opened.store().put(new BlobStore.PutSpec(originalBucket, managedKey, "text/plain", Map.of(), null),
                 ByteString.copyFromUtf8("a later provider revision").toByteArray());
         var reader = new ai.protomolt.proto.repo.engine.ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (identity, realm) -> {
