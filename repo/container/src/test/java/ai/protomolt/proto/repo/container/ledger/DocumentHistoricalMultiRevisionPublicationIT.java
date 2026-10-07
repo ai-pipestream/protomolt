@@ -64,7 +64,10 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                                 .setSourceSlot(newSelector.getSourceSlot()).setObject(newSelector.getObject()))).build();
                 var command = new DocumentPublicationCommand(first.command().intent().toBuilder().clearMembers()
                         .setOperationId(UUID.randomUUID().toString()).addMembers(oldMember).addMembers(newMember).build());
-                verifyRetentionProjection(c, command, oldMember, oldHistory, newHistory, currentSecond);
+                var placements = Map.of(first.prepared().members().getFirst().placement().drive().id(),
+                        first.prepared().members().getFirst().placement(), second.prepared().members().getFirst().placement().drive().id(),
+                        second.prepared().members().getFirst().placement());
+                verifyRetentionProjection(c, command, oldMember, oldHistory, newHistory, currentSecond, placements);
                 var resolutions = new java.util.concurrent.atomic.AtomicInteger();
                 try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, first.batch().policy(),
                         Map.of("old", DocumentPublicationCandidate.Mode.TYPED, "new", DocumentPublicationCandidate.Mode.TYPED),
@@ -122,10 +125,12 @@ class DocumentHistoricalMultiRevisionPublicationIT {
 
     private static void verifyRetentionProjection(Context c, DocumentPublicationCommand command,
             DocumentPublicationMember oldMember, DocumentReadLedger.PinnedHistory oldHistory,
-            DocumentReadLedger.PinnedHistory newHistory, boolean currentSecond) {
+            DocumentReadLedger.PinnedHistory newHistory, boolean currentSecond,
+            Map<UUID, DocumentUploadPlan.Placement> placements) {
         // Repeated use in a different destination retains one source revision.
         // A different revision of the same node must remain a distinct root.
         var repeated = new DocumentPublicationCommand(command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString())
                 .addMembers(destination(oldMember, "repeat-old")).build());
         var roots = DocumentPreparationHistoryRoots.roots(command);
         assertThat(roots).hasSize(currentSecond ? 1 : 2);
@@ -148,10 +153,88 @@ class DocumentHistoricalMultiRevisionPublicationIT {
             var incomplete = borrowed.subList(1, borrowed.size());
             assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, incomplete, () -> {}))
                     .hasMessageContaining("Historical preparations differ from complete command");
+            verifyHistoricalRegistration(c, repeated, sources, placements, roots.size());
         }
         // The projection is data; source admission still requires live Uses.
         assertThatThrownBy(() -> DocumentHistoricalReferenceAdmission.requireComplete(repeated, borrowed, () -> {}))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    private static void verifyHistoricalRegistration(Context c, DocumentPublicationCommand command,
+            DocumentHistoricalAssessmentSources sources, Map<UUID, DocumentUploadPlan.Placement> placements, int roots) {
+        var key = new RepositoryOperationLedger.Key("account", "principal", command.operationId());
+        var seeds = DocumentPublicationSeeds.mint(key, command);
+        var record = new DocumentPublicationPreparationRecord(key, command, seeds, placements, Duration.ofMinutes(5), 0);
+        var budget = new PayloadBudget(64L * 1024 * 1024);
+        var fault = new java.util.concurrent.atomic.AtomicInteger();
+        var acknowledged = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+            if (fault.get() == 1 && registrationRows(c, "repository_operation_owners", key) == 1
+                    && fault.compareAndSet(1, 2))
+                throw new java.sql.SQLException("Historical registration acknowledgment lost", "08006");
+        });
+        var datasource = DocumentJdbcFaults.beforeCommit(acknowledged, connection -> {
+            if (fault.get() != 0) return;
+            try (var statement = connection.prepareStatement("SELECT count(*) FROM repository_operation_owners WHERE operation_id=?")) {
+                statement.setObject(1, key.operationId());
+                try (var rows = statement.executeQuery()) {
+                    rows.next();
+                    if (rows.getInt(1) == 1 && fault.compareAndSet(0, 1))
+                        throw new java.sql.SQLException("Historical registration commit refused", "08006");
+                }
+            }
+        });
+        try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"))) {
+            var registration = DocumentPublicationRegistration.historical(new Tx(emf), budget, record, sources,
+                    UUID.randomUUID(), new DocumentPublicationScopeCalls(), new DriveLedger(c.tx()), RepositoryReadControl.NONE);
+            var modes = command.intent().getMembersList().stream().collect(java.util.stream.Collectors.toMap(
+                    DocumentPublicationMember::getMemberId, ignored -> DocumentPublicationCandidate.Mode.TYPED));
+            var tables = List.of("repository_execution_claims", "repository_coordinator_bindings",
+                    "repository_publication_preparations", "repository_preparation_history_sets",
+                    "repository_preparation_history_roots", "repository_publication_modes", "repository_operations",
+                    "repository_operation_owners");
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("Historical registration commit refused");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table).isZero();
+            assertThat(registration.mayHaveCommitted()).isTrue();
+            assertThat(budget.reservedBytes()).isZero();
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .hasStackTraceContaining("Historical registration acknowledgment lost");
+            for (var table : tables) assertThat(registrationRows(c, table, key)).as(table)
+                    .isEqualTo(table.equals("repository_preparation_history_roots") ? roots : 1);
+            var leases = registrationLeases(c, key);
+            var owner = registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE).orElseThrow();
+            assertThat(owner.executionClaim()).isPresent();
+            assertThat(registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE)).contains(owner);
+            c.tx().readOnly(em -> {
+                assertThat(DocumentPreparationHistoryRoots.coverage(em, record,
+                        DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record))))
+                        .isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+                assertThat(((Number) em.createNativeQuery("SELECT count(*) FROM repository_preparation_history_roots WHERE operation_id=:id")
+                        .setParameter("id", key.operationId()).getSingleResult()).intValue()).isEqualTo(roots);
+                return null;
+            });
+            assertThatThrownBy(() -> registration.start(CALLER, owner, Duration.ofMinutes(5), RepositoryReadControl.NONE))
+                    .isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(record::prepare).isInstanceOf(UnsupportedOperationException.class);
+            sources.close();
+            assertThatThrownBy(() -> registration.admitInitial(CALLER, modes, RepositoryReadControl.NONE))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(registrationLeases(c, key)).isEqualTo(leases);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    private static long registrationRows(Context c, String table, RepositoryOperationLedger.Key key) {
+        return c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                .setParameter("id", key.operationId()).getSingleResult()).longValue());
+    }
+
+    private static List<?> registrationLeases(Context c, RepositoryOperationLedger.Key key) {
+        return c.tx().readOnly(em -> Arrays.asList((Object[]) em.createNativeQuery("""
+                SELECT c.lease_until,o.lease_until FROM repository_execution_claims c
+                JOIN repository_operation_owners o USING(account_id,principal,operation_id) WHERE c.operation_id=:id
+                """).setParameter("id", key.operationId()).getSingleResult()));
     }
 
     private static DocumentPublicationMember destination(DocumentPublicationMember source, String member) {

@@ -692,3 +692,44 @@ Reuse existing claim and typed owner admission through narrow historical entry
 points; keep ordinary entry-point guards and the public facade unchanged. Retain
 source Uses through commit or uncertain-outcome reconciliation. Registration
 qualification must precede session execution and recovery activation.
+
+### Private historical registration checkpoint
+
+`DocumentPublicationRegistration.historical` now prepares an initial registration
+from the exact journal seeds and a live `DocumentHistoricalAssessmentSources`
+owner. This remains package-private. The caller must retain that owner and the
+registration object across uncertain responses; recreating the registration
+would mint a different claim token. Closing the source owner makes retries fail.
+
+Registration checks current source/destination authorization, selected drives
+and backend profiles, then writes the preparation and retention roots before
+locking physical origins and retention. Exact physical witnesses must pass before
+modes and the operation owner commit. The entire transaction rolls back together.
+Historical retries require canonical coverage; a legacy unknown source set cannot
+be adopted. Ordinary claim acquisition and preparation retain their historical
+guards. Assessment start and claimed historical execution remain refused.
+
+This private boundary is not yet wired into the runtime or public transport.
+Qualification still needs source authorization races, full physical-failure
+coverage, recovery/successor attachment and a fenced retention-release protocol.
+The registration itself neither executes provider work nor creates a successful
+publication receipt. Selecting TYPED mode records intent, not successful validation.
+
+### Retention release requirements before implementation
+
+The V103 count and digest describe the original sealed set. They cannot prove
+live retention after roots have been released. A future release migration must
+introduce an immutable per-preparation release record and update canonical
+coverage to distinguish live retention, released retention and legacy unknown
+coverage. Creation identity remains available for audit. A release record and
+removal of all child roots must commit together; guarded deletion and a deferred
+zero-child check must reject incomplete release. Until then, deletion stays refused.
+
+Require exact terminal success or rejection plus drained accepted work, source
+Uses and schema workers, or the existing pre-owner abandonment proof. A claim
+lease expiring, coordinator DRAINING state, local drain record or successor
+installation alone is insufficient. Keep predecessor-generation roots until
+terminal completion unless a separately qualified atomic transfer protects all
+sources needed by the successor. Current read pins protect their own physical
+objects; they do not replace proof of schema-worker quiescence or historical
+schema retention. No release API or compliance claim follows from this design.

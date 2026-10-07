@@ -2,7 +2,8 @@
 
 ## Archive snapshots and restore activation inventory (2026-10-07)
 
-Current source baseline: `50e01d7e2aea365ec298df8bca9ce00488a160db`.
+Committed source baseline: `1dd49f259f73a072b2bd29166fa7c9c9c9de16c7`, with
+private historical registration added in this checkpoint.
 Earlier dated checkpoints below describe their original state, not current
 availability. This inventory does not mark the full repository goal complete.
 
@@ -29,9 +30,19 @@ availability. This inventory does not mark the full repository goal complete.
   round-trip inert historical intents, using the existing codec and shared
   placement/attempt checks. It creates no pin, claim, journal row or executable
   plan. Ordinary preparation, claim acquisition and facade execution remain gated.
-- **Extended, designed next:** claimed registration, durable pending-source
-  retention, resumed source capture, assessment ownership and commit fencing
-  for historical commands. Reuse the existing journal and claim epochs; do not
+- **New internal storage, implemented:** V103 indexes exact source revision roots
+  by sealed preparation. Legacy missing projections remain unknown. Java checks
+  canonical coverage; SQL sealing alone does not decode the command. Release and
+  pruning remain unavailable.
+- **Extended, implemented privately:** historical initial registration
+  binds claim/coordinator, preparation/source roots, modes and operation owner in
+  one transaction. Current authorization and retained physical witnesses must pass.
+  JDBC fault tests cover rollback and committed lost acknowledgments. Current READ
+  revocation refuses initial registration and retry. Execution
+  and assessment-start guards remain active; this is not a new public API.
+- **Extended, designed next:** resumed source capture, assessment ownership,
+  retention release and commit fencing for historical commands. Reuse the existing
+  journal and claim epochs; do not
   invent another operation ledger. See
   [claimed historical execution](repository-historical-restore.md#claimed-historical-execution-plan).
 - **Unchanged until qualified:** `PublishDocument` continues refusing historical
