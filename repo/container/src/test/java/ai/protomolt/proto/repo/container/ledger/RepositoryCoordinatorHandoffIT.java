@@ -36,6 +36,7 @@ class RepositoryCoordinatorHandoffIT {
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             var stamp = RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
             var legacyState = retainedState(c, value.key().operationId());
+            assertThat(((Number) legacyState[6]).longValue()).isEqualTo(1);
             if (migrateExisting) {
                 assertThat(LegacyPublicationPreparationFixture.schemaVersion(c.tx())).isEqualTo(95);
                 var schema = c.pool().getSchema();
@@ -49,6 +50,7 @@ class RepositoryCoordinatorHandoffIT {
             // Migration keeps the stored claim/owner identity, leases and preparation row intact.
             Object[] migratedState = retainedState(c, value.key().operationId());
             assertThat(migratedState).containsExactly(legacyState);
+            assertThat(((Number) migratedState[6]).longValue()).isEqualTo(1);
             var reservation = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                     SELECT kind,predecessor_remote_state,successor_token,successor_incarnation,recorded_at
                     FROM repository_coordinator_reservations WHERE operation_id=:o
@@ -304,12 +306,17 @@ class RepositoryCoordinatorHandoffIT {
         }
     }
 
-    /** Claim identity, lease, any owner binding and preparation count: what migration must leave untouched. */
+    /** Stable scalar/hex snapshot of the claim, owner lease and exact preparation bytes across migration. */
     private static Object[] retainedState(Context c, UUID operation) {
         return c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                 SELECT c.claim_epoch,c.claim_token,c.lease_until,o.owner_generation,o.owner_token,o.lease_until,
-                 (SELECT count(*) FROM repository_publication_preparations p WHERE p.operation_id=c.operation_id)
-                FROM repository_execution_claims c LEFT JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                 (SELECT count(*) FROM repository_publication_preparations p WHERE p.operation_id=c.operation_id),
+                 p.account_id::text,p.principal,p.operation_id::text,p.predecessor_generation,p.owner_nonce::text,
+                 p.command_codec,p.command_version,encode(p.command_bytes,'hex'),encode(p.command_sha256,'hex'),
+                 encode(p.preparation_bytes,'hex'),encode(p.preparation_sha256,'hex')
+                FROM repository_execution_claims c
+                LEFT JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                JOIN repository_publication_preparations p USING(account_id,principal,operation_id)
                 WHERE c.operation_id=:o
                 """).setParameter("o", operation).getSingleResult());
     }
