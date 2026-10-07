@@ -14,6 +14,8 @@ import java.util.function.Function;
 /** Private ownership after installation. Does not own reservation/install or enable public recovery. */
 final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     record Drain(int active, int unresolved) {}
+    enum Retirement { NOT_PROVEN, RETAINED, RETIRED }
+    private enum RetirementProof { NONE, TERMINAL, FENCED }
     private final Tx tx;
     private final PayloadBudget budget;
     private final DriveLedger drives;
@@ -33,6 +35,7 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
         final DocumentPublicationScopeCalls scopes = new DocumentPublicationScopeCalls();
         final DocumentPublicationScopeCalls.Call parent = scopes.enter();
         boolean borrowed;
+        RetirementProof retirement = RetirementProof.NONE;
         DocumentHistoricalAssessmentSources sources;
         DocumentHistoricalAssessmentSources.Work work;
         List<DocumentReadLedger.PinnedHistory> histories = List.of();
@@ -125,15 +128,21 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             Objects.requireNonNull(control).check();
         }
         private void authorize(RepositoryReadControl control) {
-            requireActive(control);
+            requireMutable(control);
             if (entry.work == null) throw new IllegalStateException("Historical sources are not attached");
             entry.work.requireCaller(entry.caller); entry.work.authorize(control);
+        }
+
+        private void requireMutable(RepositoryReadControl control) {
+            requireActive(control);
+            if (entry.retirement != RetirementProof.NONE)
+                throw conflict("Historical attempt is retained for disposal only");
         }
 
         /** Success transfers sources, root Work and exact histories. Failure transfers nothing. */
         synchronized void attachSources(DocumentHistoricalAssessmentSources sources,
                 DocumentHistoricalAssessmentSources.Work work, RepositoryReadControl control) {
-            requireActive(control);
+            requireMutable(control);
             if (entry.sources != null) throw conflict("Historical sources are already attached");
             Objects.requireNonNull(sources); Objects.requireNonNull(work);
             var histories = work.histories(sources);
@@ -208,6 +217,55 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             return execution.publishAssessment(entry.caller, entry.assessment, selections, observation,
                     storage, publication, entry.stage, control);
         }
+        /** Terminal replay authorizes cleanup only, never receipt delivery or replacement execution. */
+        synchronized Retirement retireTerminal(RepositoryCaller coordinator, Duration timeout,
+                RepositoryReadControl control) throws InterruptedException {
+            return retire(coordinator, timeout, control, true);
+        }
+
+        /** A lease expiring is not proof that the retained claim can never execute again. */
+        synchronized Retirement retireFenced(RepositoryCaller coordinator, Duration timeout,
+                RepositoryReadControl control) throws InterruptedException {
+            return retire(coordinator, timeout, control, false);
+        }
+
+        private Retirement retire(RepositoryCaller coordinator, Duration timeout,
+                RepositoryReadControl control, boolean terminal) throws InterruptedException {
+            requireActive(control);
+            long nanos = checkedNanos(timeout), start = System.nanoTime();
+            RepositoryCoordinatorReservation.require(coordinator, entry.plan.reservation(), control);
+            if (entry.retirement == RetirementProof.NONE) {
+                var command = entry.plan.next().command();
+                if (terminal) {
+                    // Observe the global terminal outcome, which may belong to a later generation.
+                    var observed = new DocumentPublicationReplay(tx).observe(entry.caller, command);
+                    if (observed.state() != DocumentPublicationReplay.State.COMMITTED
+                            && observed.state() != DocumentPublicationReplay.State.TERMINATED) {
+                        control.check();
+                        return Retirement.NOT_PROVEN;
+                    }
+                    entry.retirement = RetirementProof.TERMINAL;
+                } else {
+                    var reservation = entry.plan.reservation();
+                    var identity = new RepositoryCoordinatorDrain.Identity(entry.plan.next().key(), command.sha256(),
+                            reservation.predecessor().epoch() + 1, reservation.successorToken(), reservation.successorIncarnation());
+                    if (!RepositoryClaimRetirement.fenced(tx, command, List.of(identity), control)) return Retirement.NOT_PROVEN;
+                    entry.retirement = RetirementProof.FENCED;
+                }
+            }
+            control.check();
+            if (!disposeEntry(entry, coordinator, nanos, start, control)) return Retirement.RETAINED;
+            control.check();
+            synchronized (RepositoryInstalledHistoricalAttempts.this) {
+                if (!entries.remove(entry.plan.next().key(), entry))
+                    throw new IllegalStateException("Historical entry lost exclusive retirement ownership");
+                entry.bytes.close();
+                ended = true; entry.borrowed = false; active--;
+                RepositoryInstalledHistoricalAttempts.this.notifyAll();
+            }
+            return Retirement.RETIRED;
+        }
+
         @Override public synchronized void close() {
             if (ended) return;
             ended = true;
@@ -246,24 +304,30 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
                 control.check();
                 var coordinator = Objects.requireNonNull(authority.apply(entry.plan.next().key()));
                 RepositoryCoordinatorReservation.require(coordinator, entry.plan.reservation(), control);
-                entry.scopes.close();
-                if (entry.assessment != null) entry.assessment.close();
-                if (entry.execution != null) entry.execution.close();
-                entry.parent.close();
-                if (!await(entry.scopes::awaitIdle, nanos, start, control)) return false;
-                if (entry.work != null) entry.work.close();
-                if (entry.activation != null) {
-                    var disposed = entry.activation.disposeCapture(coordinator, remaining(nanos, start), control);
-                    if (disposed.isEmpty()) return false;
-                    if (disposed.orElseThrow() == RepositoryHistoricalSuccessorActivation.Disposal.NO_CAPTURE
-                            && !releaseUnregistered(entry, nanos, start, control)) return false;
-                }
+                if (!disposeEntry(entry, coordinator, nanos, start, control)) return false;
                 control.check();
                 entry.bytes.close();
                 synchronized (this) { entries.remove(entry.plan.next().key(), entry); }
             }
             return true;
         } finally { synchronized (this) { detaching = false; notifyAll(); } }
+    }
+    /** No owner-map monitor or SQL transaction spans the local drainage waits. */
+    private boolean disposeEntry(Entry entry, RepositoryCaller coordinator, long nanos, long start,
+            RepositoryReadControl control) throws InterruptedException {
+        entry.scopes.close();
+        if (entry.assessment != null) entry.assessment.close();
+        if (entry.execution != null) entry.execution.close();
+        entry.parent.close();
+        if (!await(entry.scopes::awaitIdle, nanos, start, control)) return false;
+        if (entry.work != null) entry.work.close();
+        if (entry.activation != null) {
+            var disposed = entry.activation.disposeCapture(coordinator, remaining(nanos, start), control);
+            if (disposed.isEmpty()) return false;
+            if (disposed.orElseThrow() == RepositoryHistoricalSuccessorActivation.Disposal.NO_CAPTURE
+                    && !releaseUnregistered(entry, nanos, start, control)) return false;
+        }
+        return true;
     }
     private static boolean releaseUnregistered(Entry entry, long nanos, long start, RepositoryReadControl control)
             throws InterruptedException {

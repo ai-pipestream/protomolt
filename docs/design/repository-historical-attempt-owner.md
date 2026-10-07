@@ -167,10 +167,9 @@ upload/readback, exact receipt replay and final ownership drainage. Its standalo
 request barrier exercises the private owner; it does not establish managed runtime
 routing. See [multi-call publication evidence](../evidence/repository/2026-10-07-installed-historical-publication/README.md).
 
-Still required before managed use: retire authenticated terminal/fenced
-entries during normal service operation; own proposal/install uncertainty; and wire and
-qualify both library and transport entry points. Currently entries remain until shutdown,
-so capacity can fill over a long-running service. The facade gate remains unchanged.
+Still required before managed use: own proposal/install uncertainty, then wire and
+qualify both library and transport entry points. The private owner now supports
+authenticated terminal/fenced retirement, as qualified below. The facade gate remains unchanged.
 
 ## Implemented: reconcile an uncertain CREATE
 
@@ -204,10 +203,10 @@ the existing SQL recovery function after real expiry, then requires empty
 reconciliation and refusal of another CREATE. Neither case bypasses SQL guards.
 See [CREATE reconciliation evidence](../evidence/repository/2026-10-07-historical-create-reconciliation/README.md).
 
-## Next: retire completed or permanently fenced entries
+## Implemented: retire completed or permanently fenced entries
 
 Normal service operation must release completed entries without waiting for host
-shutdown. Implement this after CREATE reconciliation, using the existing replay,
+shutdown. The private owner implements this after CREATE reconciliation, using the existing replay,
 claim-fencing and capture-disposal primitives. A lease expiring or discovery returning
 no result is not proof that an attempt can be discarded.
 
@@ -221,11 +220,11 @@ with `RepositoryClaimRetirement`; do not infer fencing from a timeout.
 The fenced-retirement entry point must first verify private process authority for
 the entry's exact reservation; the claim-fencing helper does not authorize a caller.
 
-The terminal outcome may belong to a later generation with different valid modes.
-Do not compare that generation's mode journal against this entry's original modes:
-the global terminal fact suffices for local retirement and grants no publication
-authority. If checking own-generation mode integrity, do it separately and only
-when the terminal generation is the entry's generation.
+The terminal outcome may belong to a later generation. Current SQL guards require
+successors to preserve predecessor modes; an attempted changed-mode install must
+refuse. Exact-command terminal replay establishes the global terminal fact for local
+retirement and grants no publication authority. This does not permit changing modes
+or bypassing their journal checks in publication.
 
 After either proof, close the assessment and execution, drain their owner scopes,
 close source Work and classify/dispose the exact activation capture. Reuse the
@@ -250,6 +249,47 @@ Acceptance tests must cover pending-state refusal, committed and rejected outcom
 later-generation terminal outcomes, lost replies, held worker permits, timeout and
 retry, revocation after proof, and two independent operation keys. Assert retained
 budgets while blocked and released budgets only after actual drainage. This is a
-design requirement, not a claim that normal retirement is implemented.
-The later-generation case must use different valid modes where the protocol allows
-them, so a misplaced cross-generation mode check cannot strand completed entries.
+requirement now covered for the private installed owner, not public runtime routing.
+The later-generation case must first prove that SQL rejects changed successor modes,
+then use a valid mode-preserving successor to establish the terminal outcome.
+
+Ten retirement cases and 28 existing owner/activation/disposal cases pass against
+real PostgreSQL. Source setup in these SQL fixtures uses synthetic provider observations.
+The packaged provider gate separately proves committed publication, normal retirement,
+and exact authorized receipt replay after local resources are released, including an
+uncertain CREATE that was reconciled before publication. A cancellation test waits
+for post-proof root Work closure with an actual child still held; cancellation retains
+the entry and its budget until a later call completes drainage. See
+[retirement evidence](../evidence/repository/2026-10-07-historical-retirement/README.md).
+
+## Next: retain ownership before reservation and installation
+
+Extend this same per-key owner backward through proposed, reserved and installed
+phases. Do not transfer a completed ordinary recovery entry into a second map: its
+session attachment cannot own historical Work, and a second map would introduce a
+gap in exclusion and retained execution identity.
+
+Reserve entry capacity and bounded bytes before minting and submitting a reservation.
+Retain exact caller/command, original retention identity, requested modes, proposal,
+token and incarnation. Local resume precedes discovery. Reuse coordinator recovery
+discovery, expiration/supersession reservations, reserved preparation and successor
+installation; preserve their current SQL guards and authorization checks.
+
+Retain loaded immutable preparation and the exact generated installation plan before
+submitting V93. `RepositoryReservedPreparation.load` rejects an already installed
+successor, so a lost installation reply must confirm the retained plan rather than
+reconstruct it through discovery. Only confirmed installation permits capture
+transfer into the same entry. Continue using its original execution, START, assessment
+and sticky CREATE/publication state across later calls.
+
+An unactivated successor requires a retained pending V98 proposal and exact predecessor
+mode checks, including across lost replies. Any intermediate implementation lacking
+that phase must explicitly refuse it; fresh discovery cannot silently replace a
+retained proposal. Validate complete resubmitted payloads before reservation mutations
+using the existing recovery payload checks; request payload snapshots stay request-scoped.
+
+Qualification must cover lost reservation and installation replies with unchanged
+identities, capacity refusal before reservation, exact-plan confirmation after install,
+failed capture transfer without leaked ownership, unchanged execution across activation,
+terminal/fenced disposal before installation, and shutdown with actual workers held.
+These are the next implementation requirements, not available public behavior.
