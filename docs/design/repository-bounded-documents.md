@@ -246,3 +246,28 @@ schema-load windows in separate hosts. In the confirmed held-PUT window, native
 publication waits for the provider worker to exit, so a cancelled RPC must retain
 its call slot until that producer exits. Check actual byte persistence separately
 from committed document visibility. Sol reviewed these acceptance conditions.
+
+## Publication cancellation qualification
+
+`BoundedPublicationShutdownProbe` holds a completed real Redis PUT inside the
+provider call. Library cancellation and a short host close leave the accepted
+worker active, SQL usable and the provider open. New publication is refused after
+admission closes. After release, the publisher reports cancellation, no success
+or revision commit exists, and the physical upload remains available for recovery.
+Final host shutdown releases the provider. This does not prove remote quiescence
+or immediate cleanup of the cancelled upload.
+
+A separate host runs `BoundedPublicationRpcCancellationProbe` with authenticated
+operator-token RPCs and a one-call transport limit. The fixture waits for actual
+server-context cancellation before checking that the held producer still occupies
+the call slot. A second RPC receives RESOURCE_EXHAUSTED. After the PUT exits and
+the transport drains, a distinct operation publishes and replays successfully.
+This is not scoped-key authorization qualification.
+
+Both cases passed in the complete production-JAR storage regression. Evidence:
+`docs/evidence/repository/2026-10-07-publication-cancellation`.
+
+The remaining lifecycle case is shutdown during a real schema load through this
+bounded host. Existing managed journaled schema-drain evidence does not substitute
+for that composition check. Public configuration remains unavailable until the
+required profile checks and their full regression evidence are complete.

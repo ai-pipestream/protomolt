@@ -303,8 +303,8 @@ public final class BoundedDocumentHostProbe {
         request.setIntent(original.request().getIntent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0,member));
         return new Fixture(request.build(),document);
     }
-    private record Fixture(PublishDocumentRequest request, Document document) {}
-    private static Fixture prepare(RepoServices host, Tx tx) throws Exception {
+    record Fixture(PublishDocumentRequest request, Document document) {}
+    static Fixture prepare(RepoServices host, Tx tx) throws Exception {
         String account = "account-" + UUID.randomUUID();
         String namespace = "schema-" + UUID.randomUUID();
         var drive = new DriveRecord();
@@ -357,7 +357,7 @@ public final class BoundedDocumentHostProbe {
         return new Fixture(request.build(), document);
     }
 
-    private static DocumentSchemaAdmission.Definition definition(Descriptors.Descriptor type) {
+    static DocumentSchemaAdmission.Definition definition(Descriptors.Descriptor type) {
         var closure = DescriptorFingerprints.closure(type); var bytes = closure.toByteString();
         var metadata = RepositorySchemaAsset.newBuilder().setTypeUrl("type.test/" + type.getFullName())
                 .setArtifactSha256(DocumentPartCodec.sha256Hex(bytes.toByteArray()))
