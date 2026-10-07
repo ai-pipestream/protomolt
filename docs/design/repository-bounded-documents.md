@@ -224,3 +224,25 @@ removes the bytes, and both committed histories remain readable. Evidence:
 The parent proxy retains the original frame across Redis restart. The final
 reclaim is direct; scheduled recheck timing and active publication shutdown remain
 open. The public profile is still unavailable pending the checks above.
+
+## Typed rejection checkpoint
+
+The bounded Redis host now rejects a valid protobuf payload that violates a
+retained CEL annotation. The assessment identifies the intended rule and CORE
+root; the operation has one durable rejection, no success receipt and no committed
+revision. Local and authenticated gRPC retries return the same rejection after
+the live schema resolver closes, without another provider upload or read.
+
+This exposed a production bug: loading retained assessment inputs used read-only
+SQL calls that bounded transaction views prohibit. The loader now reads its
+manifest, policy, roots and descriptor artifacts in one bounded transaction.
+Provider reads and CEL evaluation remain outside that transaction. Tests cover
+both transaction modes for successful loading, capacity exhaustion, cancellation,
+source revocation, corrupted retained data and interruption. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-typed-rejection`.
+
+Publication shutdown and gRPC cancellation remain open. Test provider-write and
+schema-load windows in separate hosts. In the confirmed held-PUT window, native
+publication waits for the provider worker to exit, so a cancelled RPC must retain
+its call slot until that producer exits. Check actual byte persistence separately
+from committed document visibility. Sol reviewed these acceptance conditions.

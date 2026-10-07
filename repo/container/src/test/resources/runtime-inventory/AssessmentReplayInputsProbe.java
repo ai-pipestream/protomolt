@@ -13,8 +13,10 @@ public final class AssessmentReplayInputsProbe {
             Map<String,DocumentAssessmentRetainedSlots.UploadSelection> selections,
             DocumentAssessmentCreation.Created stage, UUID source, String policySha) throws Exception {
         var caller = new RepositoryCaller("principal", false, Set.of("account"), Set.of());
+        for (boolean bounded : new boolean[]{false,true}) {
+        var readTx=bounded ? tx.withTimeouts(new SqlTimeouts(java.time.Duration.ofSeconds(2),java.time.Duration.ofSeconds(10))) : tx;
         for (int scenario = 0; scenario < 6; scenario++) {
-            var reads = new DocumentReadLedger(tx, UUID.randomUUID(), 1);
+            var reads = new DocumentReadLedger(readTx, UUID.randomUUID(), 1);
             var budget = new PayloadBudget(scenario == 1 ? 1 : 128_000_000);
             var triggered = new AtomicBoolean();
             final int mode = scenario;
@@ -71,7 +73,9 @@ public final class AssessmentReplayInputsProbe {
                 if (mode == 3) policy(tx, source, "ACCESS_READ");
             }
         }
+        }
         System.out.println("ASSESSMENT_REPLAY_INPUTS_OK");
+        System.out.println("ASSESSMENT_REPLAY_INPUTS_BOUNDED_TX_OK");
     }
     private static AutoCloseable corruptLocator(Tx tx, UUID assessment) {
         Object[] original = tx.readOnly(em -> (Object[]) em.createNativeQuery("""

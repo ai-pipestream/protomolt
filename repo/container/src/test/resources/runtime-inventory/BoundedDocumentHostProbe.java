@@ -33,6 +33,7 @@ public final class BoundedDocumentHostProbe {
         var faults=new BoundedDocumentWriteFault();
         var readGate=new BoundedDocumentReadGate();
         var delayed=new BoundedDocumentDelayedWrite();
+        var rejectionProbe=new BoundedDocumentRejectionProbe();
         BlobStoreProvider selected=new BlobStoreProvider() {
             public String id() { return "redis"; }
             public BackendIdentity managedIdentity(Map<String,String> options) {
@@ -50,7 +51,7 @@ public final class BoundedDocumentHostProbe {
                     try { actual.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
                     throw failure;
                 }
-                return new OpenedBlobStore(delayed.wrap(readGate.wrap(faults.wrap(actual.store())),options.get("key-prefix")),() -> { actual.close(); closes.incrementAndGet(); },
+                return new OpenedBlobStore(rejectionProbe.wrap(delayed.wrap(readGate.wrap(faults.wrap(actual.store())),options.get("key-prefix"))),() -> { actual.close(); closes.incrementAndGet(); },
                         actual.capabilities(),actual::ensureNamespace,actual.reclaimer());
             }
         };
@@ -60,7 +61,7 @@ public final class BoundedDocumentHostProbe {
             public BackendIdentity managedIdentity(Map<String,String> options) { throw new AssertionError("S3 identity selected"); }
         };
         Path directory=Files.createTempDirectory("bounded-document-git");
-        var definition=definition(StringValue.getDescriptor());
+        var definition=definition(BoundedDocumentRejectionProbe.constrainedType());
         try (var git=GitSchemaRegistryStore.builder().repositoryDir(directory).build();
              var database=new LedgerDatabase(config.ledger())) {
             git.putDescriptorSet(definition.metadata().getArtifactSha256(),definition.descriptors());
@@ -100,6 +101,8 @@ public final class BoundedDocumentHostProbe {
                 var replay=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
                 require(result.equals(replay),"exact receipt replay");
                 verifyTransport(host,new Tx(database.entityManagerFactory()),caller,fixture.request(),result);
+                var invalid=withValue(prepare(host,new Tx(database.entityManagerFactory())),"contract-invalid");
+                var rejected=rejectionProbe.reject(host,new Tx(database.entityManagerFactory()),caller,invalid.request());
                 updated=replacement(fixture,result.getCommitted().getMembers(0));
                 faults.arm();
                 try {
@@ -149,6 +152,7 @@ public final class BoundedDocumentHostProbe {
                 // Historical validation must use retained artifacts after live resolution stops.
                 resolver.close();
                 require(resolver.awaitLoads(Duration.ofSeconds(5)),"schema resolver drained");
+                rejectionProbe.replay(host,new Tx(database.entityManagerFactory()),caller,invalid.request(),rejected);
                 var revision=result.getCommitted().getMembers(0);
                 try (var read=host.historicalRepository().readValidated(caller,revision.getAddress(),
                         UUID.fromString(revision.getRevisionId()),RepositoryReadControl.NONE)) {
@@ -277,10 +281,15 @@ public final class BoundedDocumentHostProbe {
         return replacement(original,previous,"updated registry payload");
     }
     private static Fixture replacement(Fixture original,DocumentPublishedRevision previous,String value) {
+        var changed=withValue(original,value);
+        var member=changed.request().getIntent().getMembers(0).toBuilder();
+        member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(previous.getMutationRevision()));
+        return new Fixture(changed.request().toBuilder().setIntent(changed.request().getIntent().toBuilder().setMembers(0,member)).build(),changed.document());
+    }
+    private static Fixture withValue(Fixture original,String value) {
         var document=original.document().toBuilder()
                 .setStructuredData(Any.pack(StringValue.of(value),"type.test")).build();
         var member=original.request().getIntent().getMembers(0).toBuilder().clearParts();
-        member.setDestination(member.getDestination().toBuilder().setExpectedMutationRevision(previous.getMutationRevision()));
         var request=original.request().toBuilder().clearPayloads();
         for (var part:DocumentPartCodec.split(document,PartLayouts.document())) {
             int ordinal=member.getPartsCount();

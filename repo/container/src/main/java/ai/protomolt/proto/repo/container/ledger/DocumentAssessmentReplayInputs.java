@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentPublicationAssessmentManifest;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,7 +52,9 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
         boolean delivered = false;
         try {
             capture.authorizeDelivery(result.use, active);
-            result.snapshot = result.read(tx, command, budget, active);
+            // Bounded views apply SQL limits transaction-locally. Load the retained
+            // inputs in one unit; provider reads and CEL evaluation occur after it ends.
+            result.snapshot = tx.inTransaction(em -> { return result.read(em, command, budget, active); });
             capture.authorizeDelivery(result.use, active);
             delivered = true;
             return result;
@@ -85,16 +88,16 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
         use.close();
     }
 
-    private Snapshot read(Tx tx, DocumentPublicationCommand command, PayloadBudget budget, RepositoryReadControl control) {
+    private Snapshot read(EntityManager em, DocumentPublicationCommand command, PayloadBudget budget, RepositoryReadControl control) {
         var stage = use.plan().stage(); UUID id = stage.assessment();
-        long manifestSize = tx.readOnly(em -> ((Number) em.createNativeQuery(
+        long manifestSize = ((Number) em.createNativeQuery(
                 "SELECT octet_length(manifest_bytes) FROM document_assessment_owners WHERE assessment_id=:id")
-                .setParameter("id", id).getSingleResult()).longValue());
+                .setParameter("id", id).getSingleResult()).longValue();
         bounded(manifestSize, 4_194_304); reserve(budget, 2 * manifestSize); control.check();
-        byte[] manifestBytes = tx.readOnly(em -> (byte[]) em.createNativeQuery("""
+        byte[] manifestBytes = (byte[]) em.createNativeQuery("""
                 SELECT CASE WHEN octet_length(manifest_bytes)=:size THEN manifest_bytes END
                 FROM document_assessment_owners WHERE assessment_id=:id
-                """).setParameter("id", id).setParameter("size", manifestSize).getSingleResult());
+                """).setParameter("id", id).setParameter("size", manifestSize).getSingleResult();
         var encoded = checked(manifestBytes, manifestSize, stage.manifestSha256());
         final DocumentPublicationAssessmentManifest manifest;
         try {
@@ -108,9 +111,9 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
                 || !manifest.getOperationId().equals(command.operationId().toString()))
             throw invalid("Assessment manifest differs from captured command");
         control.check();
-        var policy = policy(tx, command.intent().getAccountId(), manifest.getPolicySha256(), budget, control);
-        var roots = roots(tx, id, budget, control);
-        var artifacts = artifacts(tx, id, command.intent().getAccountId(), budget, control);
+        var policy = policy(em, command.intent().getAccountId(), manifest.getPolicySha256(), budget, control);
+        var roots = roots(em, id, budget, control);
+        var artifacts = artifacts(em, id, command.intent().getAccountId(), budget, control);
         verifySet(command, manifest, roots, artifacts, budget, control);
         return new Snapshot(command, manifest, policy, roots, artifacts);
     }
@@ -169,16 +172,16 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
         if (!expectedRoots.isEmpty()) throw invalid("Assessment retained root is missing");
     }
 
-    private DocumentAdmissionPolicy policy(Tx tx, String account, String digest, PayloadBudget budget, RepositoryReadControl control) {
-        Object[] header = tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+    private DocumentAdmissionPolicy policy(EntityManager em, String account, String digest, PayloadBudget budget, RepositoryReadControl control) {
+        Object[] header = (Object[]) em.createNativeQuery("""
                 SELECT policy_codec,policy_version,octet_length(policy_bytes) FROM document_schema_policies
                 WHERE account_id=:account AND encode(policy_sha256,'hex')=:sha
-                """).setParameter("account", account).setParameter("sha", digest).getSingleResult());
+                """).setParameter("account", account).setParameter("sha", digest).getSingleResult();
         long size = ((Number) header[2]).longValue(); bounded(size, 524_288); reserve(budget, 2 * size); control.check();
-        byte[] bytes = tx.readOnly(em -> (byte[]) em.createNativeQuery("""
+        byte[] bytes = (byte[]) em.createNativeQuery("""
                 SELECT CASE WHEN octet_length(policy_bytes)=:size THEN policy_bytes END FROM document_schema_policies
                 WHERE account_id=:account AND encode(policy_sha256,'hex')=:sha
-                """).setParameter("account", account).setParameter("sha", digest).setParameter("size", size).getSingleResult());
+                """).setParameter("account", account).setParameter("sha", digest).setParameter("size", size).getSingleResult();
         try {
             var policy = DocumentAdmissionPolicy.decode((String) header[0], ((Number) header[1]).intValue(),
                     checked(bytes, size, digest), digest, control::check);
@@ -187,19 +190,19 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
         } catch (InvalidProtocolBufferException invalid) { throw invalid("Assessment policy cannot be decoded", invalid); }
     }
 
-    private List<Root> roots(Tx tx, UUID id, PayloadBudget budget, RepositoryReadControl control) {
-        var sizes = tx.readOnly(em -> em.createNativeQuery("""
+    private List<Root> roots(EntityManager em, UUID id, PayloadBudget budget, RepositoryReadControl control) {
+        var sizes = em.createNativeQuery("""
                 SELECT evidence_size FROM document_assessment_roots WHERE assessment_id=:id LIMIT 4097
-                """).setParameter("id", id).getResultList());
+                """).setParameter("id", id).getResultList();
         long total = total(sizes, 4096, 4_194_304); reserve(budget, 2 * total); control.check();
-        var rows = tx.readOnly(em -> em.createNativeQuery("""
+        var rows = em.createNativeQuery("""
                 SELECT member_id,revision_ordinal,encode(root_locator_sha256,'hex'),encode(fragment_sha256,'hex'),
                     fragment_size,evidence_codec,evidence_version,encode(evidence_sha256,'hex'),evidence_size,
                     CASE WHEN evidence_size BETWEEN 1 AND 4194304 THEN evidence_bytes END
                 FROM document_assessment_roots WHERE assessment_id=:id
                   AND (SELECT COALESCE(sum(evidence_size),0) FROM document_assessment_roots WHERE assessment_id=:id)=:total
                 ORDER BY member_id COLLATE "C",revision_ordinal,root_locator_sha256 LIMIT 4097
-                """).setParameter("id", id).setParameter("total", total).getResultList());
+                """).setParameter("id", id).setParameter("total", total).getResultList();
         if (rows.size() != sizes.size()) throw invalid("Retained root set changed");
         var result = new ArrayList<Root>();
         for (Object value : rows) {
@@ -211,13 +214,13 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
         return result;
     }
 
-    private Map<String, ByteString> artifacts(Tx tx, UUID id, String account, PayloadBudget budget, RepositoryReadControl control) {
-        var sizes = tx.readOnly(em -> em.createNativeQuery("""
+    private Map<String, ByteString> artifacts(EntityManager em, UUID id, String account, PayloadBudget budget, RepositoryReadControl control) {
+        var sizes = em.createNativeQuery("""
                 SELECT a.size_bytes FROM document_assessment_artifacts r JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
                 WHERE r.assessment_id=:id AND r.account_id=:account LIMIT 65
-                """).setParameter("id", id).setParameter("account", account).getResultList());
+                """).setParameter("id", id).setParameter("account", account).getResultList();
         long total = total(sizes, 64, 16_777_216); reserve(budget, 2 * total); control.check();
-        var rows = tx.readOnly(em -> em.createNativeQuery("""
+        var rows = em.createNativeQuery("""
                 SELECT encode(a.artifact_sha256,'hex'),a.size_bytes,
                     CASE WHEN a.size_bytes BETWEEN 1 AND 16777216 THEN a.artifact_bytes END
                 FROM document_assessment_artifacts r JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
@@ -226,7 +229,7 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
                        JOIN repository_schema_artifacts a2 USING(account_id,artifact_sha256)
                        WHERE r2.assessment_id=:id AND r2.account_id=:account)=:total
                 ORDER BY a.artifact_sha256 LIMIT 65
-                """).setParameter("id", id).setParameter("account", account).setParameter("total", total).getResultList());
+                """).setParameter("id", id).setParameter("account", account).setParameter("total", total).getResultList();
         if (rows.size() != sizes.size()) throw invalid("Retained artifact set changed");
         var result = new HashMap<String,ByteString>();
         for (Object value : rows) {
