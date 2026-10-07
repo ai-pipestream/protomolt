@@ -13,6 +13,11 @@ belong to this historical run. Their tested source was `5d92bd4cc` plus the
 log-path change later committed in `4aa6c2c9e` (the archived probe log exists only
 because of that change). They are not results from any later head.
 
+Its statement that scoped calls were "asserted at the repository boundary to carry
+the provisioned key" overstated the check: `requireScopedCallersOnly` then tested
+only that a binding was present. The repair replaces it with exact identity
+equality.
+
 ---
 
 # Scoped publication authorization parity: library and authenticated gRPC

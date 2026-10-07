@@ -50,3 +50,13 @@ The runtime is closed by each host after its scenarios. The observer borrows the
 real store; environment teardown owns it. No runtime API or protobuf contract is
 changed by these test additions. Hosted CI, main merge and deployment are not
 claimed by this local checkpoint.
+
+## 2026-10-07 repair (PR #411)
+
+The conclusions above describe the coordinator integration at `1b9cdd8a8` and
+remain its record. A later repair, tested at merge commit `c01ca4e11`, replaces
+the presence-only `requireScopedCallersOnly` binding check with an exact
+per-invocation identity assertion (principal, issuer, credential ID, generation,
+no process authority), adds `IDENTITY_SUBSTITUTION` on both paths (44 markers in
+total), and persists the probe log under the task's results directory. Its
+commands, results, fingerprints and limits are in [repair/README.md](repair/README.md).
