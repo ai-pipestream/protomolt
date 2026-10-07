@@ -23,6 +23,38 @@ class DocumentCaptureAdmissionClosureIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void migrationCannotInventInitialCaptureForRetainedLegacyHistory() throws Exception {
+        try (var c = context(POSTGRES, "103"); var rig = prepare(c, false, false, false)) {
+            org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
+                    .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load().migrate();
+            var bytes = DocumentPublicationPreparationCodec.encode(rig.record());
+            var before = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, rig.record(),
+                    DocumentPublicationPreparationJournal.digest(bytes)));
+            assertThat(before).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+            assertThat(batches(c, rig)).isZero();
+            var coverage = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); }))
+                    .hasMessageContaining("capture coverage is unknown");
+            // A later capture is valid evidence of that reader, not of the creation transaction's readers.
+            append(c, rig);
+            assertThat(batches(c, rig)).isEqualTo(1);
+            rig.sources().close(); rig.history().close(); rig.history().release();
+            rig.reads().fence(); rig.reads().attestLocalQuiescence();
+            var digest = c.tx().readOnly(em -> (byte[]) em.createNativeQuery(
+                    "SELECT pins_sha256 FROM repository_preparation_pin_batches WHERE operation_id=:o")
+                    .setParameter("o", rig.record().key().operationId()).getSingleResult());
+            var identity = new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(
+                    rig.record().key(), rig.record().command().sha256(), rig.claim().epoch(), rig.claim().token(),
+                    rig.coordinator()), 0, HexFormat.of().formatHex(digest));
+            assertThat(DocumentPreparationCaptureDrain.recover(c.tx(), CALLER, identity, NONE).kind()).isEqualTo("QUIESCED");
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); }))
+                    .hasMessageContaining("initial capture coverage is unknown");
+            var after = c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em, rig.record(),
+                    DocumentPublicationPreparationJournal.digest(bytes)));
+            assertThat(after).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
+        }
+    }
+
     @Test void onePhysicalObjectInTwoRevisionsRetainsTwoCaptureIdentities() throws Exception {
         try (var c = context(POSTGRES); var rig = prepare(c)) {
             var original = rig.fixture().original();
@@ -313,6 +345,10 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts) throws Exception {
+        return prepare(c, repeatedSelector, twoParts, true);
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture) throws Exception {
         var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("capture-coverage")
                 .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                         .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
@@ -351,7 +387,7 @@ class DocumentCaptureAdmissionClosureIT {
                 DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
                         DocumentPublicationPreparationJournal.digest(bytes), sources.references(command, () -> {}));
                 lockSources(em, fixture, pins);
-                DocumentPreparationSourcePins.insert(em, record, pins, acquired.claim(), coordinator, () -> {});
+                if (capture) DocumentPreparationSourcePins.insert(em, record, pins, acquired.claim(), coordinator, () -> {});
                 return acquired.claim();
             });
             delivered = true; return new Rig(fixture, reads, history, sources, record, claim, coordinator, budget);

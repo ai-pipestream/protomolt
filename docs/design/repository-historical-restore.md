@@ -863,8 +863,12 @@ does not check terminality or release roots. Repeated selectors and internally
 consistent incomplete/duplicate batches now have real SQL qualification. A later
 capture's drain cannot substitute for an earlier capture's missing completion.
 Cross-revision aliases now have a real historical publication fixture: one physical
-object in two revisions produces two distinct captured tuples. Multiple owner epochs
-and legacy initial-batch gaps still require qualification before release wiring.
+object in two revisions produces two distinct captured tuples. A real populated
+V103 migration now qualifies the legacy initial-batch gap: retained roots remain
+exact, and a legitimate later capture with a completed quiescence receipt still
+cannot substitute for the missing creation-time batch. See the
+[migration evidence](../evidence/repository/2026-10-07-legacy-capture/README.md).
+Multiple owner epochs still require qualification before release wiring.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
