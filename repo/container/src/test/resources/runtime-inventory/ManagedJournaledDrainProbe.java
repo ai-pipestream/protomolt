@@ -99,6 +99,31 @@ public final class ManagedJournaledDrainProbe {
                 var terminal = prepare(host, tx, generation, false);
                 var completed = executeTransport(host, tx, terminal);
                 require(completed.getMembersCount() == 1, "terminal control published");
+                int largest=request(terminal).getPayloadsList().stream().mapToInt(payload -> payload.getContent().size()).max().orElseThrow();
+                require(largest>1,"fixture has a nonempty bounded upload");
+                var boundedReceipt=host.documentPublication().repository((caller,command,control) -> {
+                    throw new AssertionError("Object-bound refusal or terminal replay selected storage");
+                },largest);
+                require(boundedReceipt.publishDocument(ADMIN,request(terminal),RepositoryReadControl.NONE)
+                        .getCommitted().equals(completed),"exact object boundary preserves terminal replay");
+                var tooSmall=host.documentPublication().repository((caller,command,control) -> {
+                    throw new AssertionError("Oversized upload reached storage selection");
+                },largest-1);
+                for (boolean replay:List.of(false,true)) {
+                    var oversized=request(terminal).toBuilder();
+                    if (!replay) oversized.getIntentBuilder().setOperationId(UUID.randomUUID().toString());
+                    try {
+                        tooSmall.publishDocument(ADMIN,oversized.build(),RepositoryReadControl.NONE);
+                        throw new AssertionError("Configured object bound accepted oversized upload");
+                    } catch (IllegalArgumentException expected) {
+                        require(expected.getMessage().contains("configured object limit"),"object-bound refusal");
+                    }
+                    if (!replay) {
+                        UUID operation=UUID.fromString(oversized.getIntent().getOperationId());
+                        require(count(tx,"repository_operation_owners",operation)==0,"object cap precedes owner admission");
+                        require(count(tx,"repository_execution_claims",operation)==0,"object cap precedes claim admission");
+                    }
+                }
                 var receiptOnly=host.documentPublication().repository((caller,command,control) -> {
                     throw new AssertionError("Terminal receipt selected host storage or schemas");
                 });

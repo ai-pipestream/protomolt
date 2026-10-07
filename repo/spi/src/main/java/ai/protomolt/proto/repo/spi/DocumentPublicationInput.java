@@ -28,6 +28,14 @@ public final class DocumentPublicationInput {
      * obligations of the authenticated execution facade.
      */
     public static DocumentPublicationInput validate(PublishDocumentRequest request, RepositoryReadControl control) {
+        return validate(request,control,(int)MAX_UPLOAD_BYTES);
+    }
+
+    /** A host may impose a smaller upload-object limit; protocol-wide bounds still apply. */
+    public static DocumentPublicationInput validate(PublishDocumentRequest request, RepositoryReadControl control,
+            int maxObjectBytes) {
+        if (maxObjectBytes < 1 || maxObjectBytes > MAX_UPLOAD_BYTES)
+            throw invalid("Upload object limit must be positive and at most 8 MiB");
         Objects.requireNonNull(request,"request"); Objects.requireNonNull(control,"control").check();
         if (!request.hasIntent() || request.getModesCount()>64 || request.getPayloadsCount()>DocumentPublicationCommand.MAX_PARTS)
             throw invalid("Publication input counts or intent are invalid");
@@ -58,6 +66,7 @@ public final class DocumentPublicationInput {
             var part=member.getParts(ordinal);
             if (!part.hasUpload()) throw invalid("Publication payload does not name an upload");
             var content=payload.getContent();
+            if (content.size()>maxObjectBytes) throw invalid("Publication upload exceeds configured object limit");
             if (part.getUpload().getSizeBytes()!=content.size()) throw invalid("Publication upload length differs from intent");
             total=Math.addExact(total,content.size());
             if (total>MAX_UPLOAD_BYTES) throw invalid("Publication uploads exceed 8 MiB");

@@ -294,10 +294,15 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
 
     /** Creates a shared library/transport boundary; it borrows this runtime and closes with it. */
     public DocumentPublicationRepository repository(PublicationSelector selector) {
+        return repository(selector,(int)DocumentPublicationInput.MAX_UPLOAD_BYTES);
+    }
+
+    /** Enforces a host upload-object bound before replay, selection or durable admission. */
+    public DocumentPublicationRepository repository(PublicationSelector selector, int maxObjectBytes) {
         Objects.requireNonNull(selector);
         if (!journaledPublication) throw new IllegalStateException("Managed publication requires durable mode journals");
         return new DocumentPublicationFacade(scopeCalls,publicationBudget,publicationPermits,
-                (caller,input,control) -> publishValidated(caller,input,selector,control));
+                (caller,input,control) -> publishValidated(caller,input,selector,control),maxObjectBytes);
     }
 
     private PublishDocumentResponse publishValidated(RepositoryCaller caller, DocumentPublicationInput input,

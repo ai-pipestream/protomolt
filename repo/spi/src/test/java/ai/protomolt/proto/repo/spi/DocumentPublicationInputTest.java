@@ -14,6 +14,20 @@ class DocumentPublicationInputTest {
     private static final ByteString BODY=ByteString.copyFromUtf8("abc");
     private static final String SHA="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
+    @Test void hostObjectLimitPrecedesChecksumAndPreservesProtocolBounds() {
+        var request=request(BODY,SHA);
+        assertThat(DocumentPublicationInput.validate(request,NONE,3).payloads()
+                .get(new DocumentPublicationInput.PayloadKey("member",0))).isSameAs(BODY);
+        assertThatThrownBy(() -> DocumentPublicationInput.validate(request(BODY,"0".repeat(64)),NONE,2))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("configured object limit");
+        assertThatThrownBy(() -> DocumentPublicationInput.validate(request,NONE,0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Upload object limit");
+        assertThatThrownBy(() -> DocumentPublicationInput.validate(request,NONE,8*1024*1024+1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Upload object limit");
+        var empty=request(ByteString.EMPTY,"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assertThat(DocumentPublicationInput.validate(empty,NONE,1).uploadBytes()).isZero();
+    }
+
     @Test void retainsImmutableBytesAndExactCommand() {
         var request=request(BODY,SHA);
         var input=DocumentPublicationInput.validate(request,NONE);

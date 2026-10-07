@@ -16,8 +16,17 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
     private final PayloadBudget budget;
     private final Semaphore permits;
     private final Execution execution;
+    private final int maxObjectBytes;
 
     DocumentPublicationFacade(DocumentPublicationScopeCalls calls, PayloadBudget budget, Semaphore permits, Execution execution) {
+        this(calls,budget,permits,execution,(int)DocumentPublicationInput.MAX_UPLOAD_BYTES);
+    }
+
+    DocumentPublicationFacade(DocumentPublicationScopeCalls calls, PayloadBudget budget, Semaphore permits,
+            Execution execution, int maxObjectBytes) {
+        if (maxObjectBytes < 1 || maxObjectBytes > DocumentPublicationInput.MAX_UPLOAD_BYTES)
+            throw new IllegalArgumentException("Upload object limit must be positive and at most 8 MiB");
+        this.maxObjectBytes=maxObjectBytes;
         this.calls=Objects.requireNonNull(calls); this.budget=Objects.requireNonNull(budget);
         this.permits=Objects.requireNonNull(permits); this.execution=Objects.requireNonNull(execution);
     }
@@ -34,7 +43,7 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
                     throw new IllegalArgumentException("Publication envelope exceeds 10 MiB");
                 // Account for retained input and bounded canonical command copies. Parser memory is host-owned.
                 try (var inputLease=budget.reserve((long)size+2L*DocumentPublicationCommand.MAX_COMMAND_BYTES)) {
-                    var input=DocumentPublicationInput.validate(request,control);
+                    var input=DocumentPublicationInput.validate(request,control,maxObjectBytes);
                     input.command().requireExecutionSupported();
                     // Reserve before materializing ByteString uploads as the runtime's private byte arrays.
                     try (var copyLease=budget.reserve(input.uploadBytes())) {

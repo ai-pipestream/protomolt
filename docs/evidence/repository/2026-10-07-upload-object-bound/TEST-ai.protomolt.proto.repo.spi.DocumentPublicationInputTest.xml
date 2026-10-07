@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-07T00:19:18.102Z" hostname="krick" time="0.493">
+  <properties/>
+  <testcase name="rejectsEnvelopeAndIntentLimitsBeforeBodyHashing()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.165"/>
+  <testcase name="retainsImmutableBytesAndExactCommand()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.238"/>
+  <testcase name="allowsZeroBytesButDoesNotConfuseEmptySlotsWithUploads()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.012"/>
+  <testcase name="checksCoverageEvenWhenAnnotationsAcceptIt()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.01"/>
+  <testcase name="requiresExactMemberModesAndKnownFields()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.008"/>
+  <testcase name="indexesMixedMembersByFullOrdinalRatherThanUploadOrder()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.016"/>
+  <testcase name="checksAggregateUploadLimitBeforeHashingAndHonorsCancellation()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.024"/>
+  <testcase name="hostObjectLimitPrecedesChecksumAndPreservesProtocolBounds()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>
