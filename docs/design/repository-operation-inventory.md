@@ -7099,3 +7099,11 @@ an installed operation remains unable to activate. Track terminal receipt,
 idempotent rejection/cancellation and retained-source cleanup acceptance cases
 before exposing historical recovery. See the
 [bound evidence](../evidence/repository/2026-10-07-historical-recovery-bounds/README.md).
+
+**Installed cancellation boundary:** the existing cancellation operation is
+**unchanged** and requires activated successor authority. Actual SQL refuses an
+installed-unactivated owner; the positive control activates, cancels and replays.
+The [13-test evidence](../evidence/repository/2026-10-07-installed-cancellation/README.md)
+does not close exhaustion handling. A **new, not yet implemented** private
+recovery-limit decision and additive rejection reason are specified in the
+[terminal design](repository-historical-restore.md#terminal-handling-for-exhausted-historical-recovery).
