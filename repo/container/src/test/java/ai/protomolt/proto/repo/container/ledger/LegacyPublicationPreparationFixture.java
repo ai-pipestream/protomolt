@@ -9,7 +9,6 @@ final class LegacyPublicationPreparationFixture {
 
     static RepositoryExecutionClaimLedger.Claim acquire(Tx tx, DocumentPublicationPreparationRecord record,
             UUID token, UUID coordinator) {
-        var bytes = DocumentPublicationPreparationCodec.encode(record);
         return tx.inTransaction(em -> {
             var version = ((Number) em.createNativeQuery(
                     "SELECT max(CAST(version AS integer)) FROM flyway_schema_history WHERE success AND version IS NOT NULL")
@@ -18,7 +17,27 @@ final class LegacyPublicationPreparationFixture {
             var acquired = RepositoryExecutionClaimLedger.acquireInitialInTransaction(
                     em, record.key(), record.command(), token, record.lease());
             RepositoryCoordinatorBinding.bindInitial(em, acquired, coordinator);
-            em.createNativeQuery("""
+            insert(em, record);
+            return acquired.claim();
+        });
+    }
+
+    static void save(Tx tx, RepositoryExecutionClaimLedger.Claim claim, DocumentPublicationPreparationRecord record) {
+        tx.inTransaction(em -> {
+            var version = ((Number) em.createNativeQuery(
+                    "SELECT max(CAST(version AS integer)) FROM flyway_schema_history WHERE success AND version IS NOT NULL")
+                    .getSingleResult()).intValue();
+            if (version < 81 || version >= 103) throw new IllegalArgumentException("Legacy fixture requires schema V81 through V102");
+            if (!claim.key().equals(record.key()) || !claim.commandSha256().equals(record.command().sha256()))
+                throw new IllegalArgumentException("Preparation differs from execution claim");
+            RepositoryExecutionClaimLedger.lockLive(em, claim);
+            insert(em, record);
+        });
+    }
+
+    private static void insert(jakarta.persistence.EntityManager em, DocumentPublicationPreparationRecord record) {
+        var bytes = DocumentPublicationPreparationCodec.encode(record);
+        em.createNativeQuery("""
                     INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
                      owner_nonce,command_codec,command_version,command_bytes,command_sha256,preparation_bytes,preparation_sha256)
                     VALUES(:a,:p,:o,:g,:owner,:codec,:version,:command,:commandDigest,:bytes,:digest)
@@ -31,7 +50,5 @@ final class LegacyPublicationPreparationFixture {
                     .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
                     .setParameter("bytes", bytes.toByteArray())
                     .setParameter("digest", DocumentPublicationPreparationJournal.digest(bytes)).executeUpdate();
-            return acquired.claim();
-        });
     }
 }

@@ -1,5 +1,24 @@
 # Repository operation inventory
 
+## Capture admission closure (2026-10-07)
+
+- **Extended private capture insertion:** V108 rejects new batches and capture
+  owners after initial abandonment or a terminal result. It uses the existing
+  execution-claim fence, without another lock order or a provider call.
+- **Unchanged confirmation:** an existing batch remains confirmable; an SQL
+  duplicate discarded by ON CONFLICT does not reopen admission or create a row.
+- **Unchanged:** wire contracts, public historical execution gates, root retention
+  and root deletion. A future release receipt still needs its own closure guard.
+
+The [qualification evidence](../evidence/repository/2026-10-07-capture-closure/README.md)
+includes the original failing abandonment regression, populated V107 migration,
+owner insertion after an interposed marker, and an observed PostgreSQL lock wait.
+The combined 38-test run passes. Sol found no blocker; separate real terminal
+success/rejection capture fixtures remain outstanding. Historical V84 migration
+fixtures use the original V81 preparation columns, not the current journal writer.
+Before bounded recovery is enabled, also qualify and correct abandonment
+confirmation's use of `Tx.readOnly`, which bounded `Tx` views do not support.
+
 ## Durable capture drain (2026-10-07)
 
 - **Extended private registration:** retains a capture capability bound to the

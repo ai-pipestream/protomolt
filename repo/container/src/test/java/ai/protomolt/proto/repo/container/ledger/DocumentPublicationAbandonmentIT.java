@@ -58,7 +58,7 @@ class DocumentPublicationAbandonmentIT {
             // Seed the historical schema through its original claim/preparation primitives.
             // Current registration requires the later coordinator-binding migration.
             var claim = new RepositoryExecutionClaimLedger(c.tx()).acquire(value.key(), value.command(), UUID.randomUUID(), LEASE);
-            journal.save(CALLER, claim, value, NONE);
+            LegacyPublicationPreparationFixture.save(c.tx(), claim, value);
             new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
             if (admitted) new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim);
             String schema = c.tx().readOnly(em -> (String) em.createNativeQuery("SELECT current_schema()").getSingleResult());

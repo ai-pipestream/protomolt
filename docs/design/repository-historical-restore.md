@@ -847,10 +847,12 @@ drain evidence, and absence of exact native pins and their DOCUMENT_READER mirro
 Prevent new captures once terminal release begins. V85 is initial pre-owner
 abandonment only, not a generic successor cancellation mechanism.
 
-Before implementing root release, add explicit guards on new V104 batches and
-V105 owners for abandonment and release. V85 currently guards preparation/mode/
-operation/owner registration, not those capture tables. Serialize closure with the
-claim row so a late capture cannot pass a stale absence check.
+V108 now guards new V104 batches and V105 owners against V85 abandonment and
+V52/V64 terminal outcomes. AFTER INSERT preserves confirmation of an existing
+batch discarded by ON CONFLICT. The existing claim fence serializes closure with
+capture insertion; a real lock-wait regression qualifies committed abandonment.
+Success/rejection-specific capture fixtures remain to be added. Root release must
+extend this guard to its future release receipt before that protocol is enabled.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
@@ -869,4 +871,4 @@ Coverage must distinguish UNKNOWN, LIVE_EXACT and RELEASED_EXACT while retaining
 original header as creation evidence. Test capture/release races, incomplete batches,
 an undrained earlier epoch, legacy missing ownership, corrupt root rows, rollback and
 lost acknowledgement before enabling this path. This root-release protocol remains
-unimplemented; V107 does not loosen the existing root-deletion guard.
+unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
