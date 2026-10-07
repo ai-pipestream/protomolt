@@ -1055,8 +1055,8 @@ The [handler evidence](../evidence/repository/2026-10-07-recovery-limit-handler/
 now qualifies both actual bounds through `RepositoryHistoricalLimitDecisions`,
 under-bound absence of a decision, rollback before commit, lost acknowledgement
 after commit, exact retry, and current READ-policy and credential checks on scoped
-replay. Retries leave claim/owner leases unchanged. Ancestry corruption and
-explicit terminal cancellation still need handler qualification. Request cancellation is separate from an explicit terminal
+replay. Retries leave claim/owner leases unchanged. Explicit terminal cancellation
+of a non-exhausted unactivated successor remains unimplemented. Request cancellation is separate from an explicit terminal
 cancellation operation: a signal observed before commit may abort tentative
 work, but a signal arriving after commit cannot undo a durable limit decision.
 If the host cannot deliver that response, the caller must reconcile through
@@ -1086,6 +1086,11 @@ checks altered root digests, missing roots, changed pin contents, changed owner
 tokens and missing initial-capture evidence. The handler reports each error and
 leaves no terminal pair or execution. Runtime guards are restored before each
 attempt; this is isolated administrative fault injection, not a supported mutation.
+The [ancestry-corruption evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md)
+keeps the newest install valid while damaging the older edge's command or
+predecessor digest. Both produce an error before any terminal pair is recorded.
+These checks do not authorize retained-source release; that remains the separate
+atomic protocol above.
 The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
 now covers lease expiry before rejection insertion, expiry before normal deferred
 validation, and early constraint firing followed by an expired-lease commit.

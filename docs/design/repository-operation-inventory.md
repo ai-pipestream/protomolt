@@ -7192,3 +7192,9 @@ handler attempt reports an error and creates no terminal pair or execution.
 Existing source publication remains intact; target success count stays zero.
 All five cases pass. Ancestry corruption remains separate qualification. See
 [corruption evidence](../evidence/repository/2026-10-07-recovery-limit-corruption/README.md).
+
+**Recovery-limit ancestry corruption:** operations are **unchanged**. Two cases
+retain a valid newest installation while damaging an older edge's command or
+predecessor digest. The actual ancestry walk reports FAILED_PRECONDITION without
+creating a terminal pair or execution. Both cases pass. This does not grant
+source-root release authority. See [ancestry evidence](../evidence/repository/2026-10-07-recovery-limit-ancestry/README.md).
