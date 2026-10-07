@@ -1,5 +1,24 @@
 # Repository operation inventory
 
+## Private capture qualification for retention release (2026-10-07)
+
+- **New private helper:** `DocumentPreparationCaptureCoverage` pre-encodes
+  canonical historical selectors, then locks the claim, preparation, root header
+  and digest-ordered batches. It checks actual roots, exact selected revision
+  slots/objects, every batch's count/digest, original owner/drain binding, and
+  absence of native pins and mirrors. It requires READ COMMITTED and does not
+  renew the claim. Missing legacy evidence is incomplete, not an empty proof.
+- **Unchanged:** public and wire APIs, capture insertion, root retention and
+  deletion. The helper is not wired to a release path and its returned count is
+  transaction-local evidence only, not authority to delete roots.
+
+Sol reviewed the helper and requested duplicate tuple refusal, now implemented.
+Before release wiring, qualify same-object cross-revision aliases, repeated
+selectors, incomplete selection within an internally consistent batch, multiple
+batches with an earlier undrained owner, and historical legacy initial-batch gaps.
+The [qualification evidence](../evidence/repository/2026-10-07-capture-coverage/README.md)
+records the current test scope; those remaining cases are not claimed complete.
+
 ## Actual history-root integrity (2026-10-07)
 
 - **Extended private coverage check:** one SQL snapshot compares the actual root

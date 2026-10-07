@@ -856,6 +856,13 @@ success coverage awaits the currently gated claimed historical commit path; a
 bare success-row fixture is not a substitute for that path. Root release must
 extend this guard to its future release receipt before that protocol is enabled.
 
+The private `DocumentPreparationCaptureCoverage` helper now implements the
+transaction-local inspection below: canonical selector matching, root integrity,
+batch digest/object coverage, original owner/drain equality and absent pins. It
+does not check terminality or release roots. Cross-revision object aliases,
+repeated selectors and internally consistent incomplete batches still require
+qualification before release wiring.
+
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104
 batches in digest order. Decode the bounded canonical preparation, match its hashes,

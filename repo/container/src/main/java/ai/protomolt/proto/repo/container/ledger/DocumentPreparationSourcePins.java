@@ -47,7 +47,7 @@ final class DocumentPreparationSourcePins {
         return new Prepared(pins, digest(pins, control), json);
     }
 
-    private static byte[] digest(List<DocumentHistoricalSourcePin> pins, Runnable control) {
+    static byte[] digest(List<DocumentHistoricalSourcePin> pins, Runnable control) {
         try {
             var hash = MessageDigest.getInstance("SHA-256");
             hash.update("protomolt/preparation-pins/v1\n".getBytes(StandardCharsets.UTF_8));

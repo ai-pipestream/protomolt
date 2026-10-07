@@ -22,6 +22,73 @@ class DocumentPreparationCaptureDrainIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @Test void captureCoverageRequiresCompletionAndDoesNotReleaseRootsOrRenewClaim() throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c, c.tx(), Duration.ofMinutes(5))) {
+            var check = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+            Object lease = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
+                    .setParameter("o", rig.command().operationId()).getSingleResult());
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> { return check.lockAndRequireDrained(em, NONE); }))
+                    .hasMessageContaining("has not drained");
+            assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            int batches = c.tx().inTransaction(em -> { return check.lockAndRequireDrained(em, NONE); });
+            assertThat(batches).isEqualTo(1);
+            assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                em.createNativeQuery("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").executeUpdate();
+                return check.lockAndRequireDrained(em, NONE);
+            })).hasStackTraceContaining("requires READ COMMITTED isolation");
+            Object after = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
+                    .setParameter("o", rig.command().operationId()).getSingleResult());
+            assertThat(after).isEqualTo(lease);
+            assertThat(count(c, "repository_preparation_history_roots", rig)).isEqualTo(1);
+        }
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({
+            "pin,Preparation capture coverage differs", "publication,Preparation capture coverage differs",
+            "owner,Preparation capture coverage differs", "drain,Preparation capture has not drained",
+            "initial,Preparation capture coverage differs", "missing_owner,Preparation capture ownership is unknown",
+            "missing_batch,Preparation capture coverage is unknown"})
+    void captureCoverageRejectsCorruptOrIncompleteEvidence(String kind, String expected) throws Exception {
+        try (var c = context(POSTGRES); var rig = prepare(c, c.tx(), Duration.ofMinutes(5))) {
+            assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            var check = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+            var mutation = switch (kind) {
+                case "pin" -> "UPDATE repository_preparation_source_pins SET pin_id=gen_random_uuid() WHERE operation_id=:o";
+                case "publication" -> "UPDATE repository_preparation_source_pins SET publication_revision=publication_revision+1 WHERE operation_id=:o";
+                case "owner" -> "UPDATE repository_preparation_capture_drains SET claim_token=gen_random_uuid() WHERE operation_id=:o";
+                case "drain" -> "DELETE FROM repository_preparation_capture_drains WHERE operation_id=:o";
+                case "initial" -> "UPDATE repository_preparation_pin_batches SET initial_capture=false WHERE operation_id=:o";
+                case "missing_owner" -> "DELETE FROM repository_preparation_pin_owners WHERE operation_id=:o";
+                case "missing_batch" -> "DELETE FROM repository_preparation_pin_batches WHERE operation_id=:o";
+                default -> throw new IllegalArgumentException(kind);
+            };
+            assertThatThrownBy(() -> c.tx().inTransaction((java.util.function.Consumer<jakarta.persistence.EntityManager>) em -> {
+                // Administrative corruption confined to this rolled-back test transaction.
+                for (var entry : Map.of("repository_preparation_source_pins", "repository_preparation_source_pin_guard",
+                        "repository_preparation_capture_drains", "repository_preparation_capture_drain_guard",
+                        "repository_preparation_pin_owners", "repository_preparation_pin_owner_guard",
+                        "repository_preparation_pin_batches", "repository_preparation_pin_batch_guard").entrySet())
+                    em.createNativeQuery("ALTER TABLE " + entry.getKey() + " DISABLE TRIGGER " + entry.getValue()).executeUpdate();
+                if (kind.startsWith("missing_"))
+                    em.createNativeQuery("DELETE FROM repository_preparation_capture_drains WHERE operation_id=:o")
+                            .setParameter("o", rig.command().operationId()).executeUpdate();
+                if (kind.equals("missing_batch")) {
+                    em.createNativeQuery("DELETE FROM repository_preparation_pin_owners WHERE operation_id=:o")
+                            .setParameter("o", rig.command().operationId()).executeUpdate();
+                    em.createNativeQuery("DELETE FROM repository_preparation_source_pins WHERE operation_id=:o")
+                            .setParameter("o", rig.command().operationId()).executeUpdate();
+                }
+                assertThat(em.createNativeQuery(mutation).setParameter("o", rig.command().operationId()).executeUpdate()).isEqualTo(1);
+                assertThatThrownBy(() -> check.lockAndRequireDrained(em, NONE)).hasMessageContaining(expected);
+                throw new CoverageRollback();
+            })).isInstanceOf(CoverageRollback.class);
+            int batches = c.tx().inTransaction(em -> { return check.lockAndRequireDrained(em, NONE); });
+            assertThat(batches).isEqualTo(1);
+        }
+    }
+
+    private static final class CoverageRollback extends RuntimeException {}
+
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void localCompletionWaitsForActualWorkOrAliasedUseWithoutFencingOtherHandles(boolean alias) throws Exception {
         try (var c = context(POSTGRES); var rig = prepare(c, c.tx(), Duration.ofMinutes(5))) {
@@ -72,6 +139,9 @@ class DocumentPreparationCaptureDrainIT {
             Object before = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
                     .setParameter("o", rig.command().operationId()).getSingleResult());
             assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            var coverage = DocumentPreparationCaptureCoverage.prepare(rig.record(), NONE);
+            int qualified = c.tx().inTransaction(em -> { return coverage.lockAndRequireDrained(em, NONE); });
+            assertThat(qualified).isEqualTo(1);
             Object after = c.tx().readOnly(em -> em.createNativeQuery("SELECT lease_until FROM repository_execution_claims WHERE operation_id=:o")
                     .setParameter("o", rig.command().operationId()).getSingleResult());
             assertThat(after).isEqualTo(before);
@@ -300,7 +370,7 @@ class DocumentPreparationCaptureDrainIT {
         }
     }
 
-    private record Rig(Fixture fixture, DocumentPublicationCommand command, DocumentReadLedger reads,
+    private record Rig(Fixture fixture, DocumentPublicationCommand command, DocumentPublicationPreparationRecord record, DocumentReadLedger reads,
             DocumentReadLedger.PinnedHistory history, DocumentHistoricalAssessmentSources sources,
             DocumentPreparationCaptureDrain.Capture capture, PayloadBudget budget) implements AutoCloseable {
         @Override public void close() throws Exception {
@@ -335,7 +405,7 @@ class DocumentPreparationCaptureDrainIT {
                 assertThatThrownBy(() -> registration.admitInitial(CALLER, Map.of("member", DocumentPublicationCandidate.Mode.TYPED), NONE))
                         .hasStackTraceContaining("Injected registration");
             } else assertThat(registration.admitInitial(CALLER, Map.of("member", DocumentPublicationCandidate.Mode.TYPED), NONE)).isPresent();
-            var result = new Rig(fixture, command, reads, history, sources, registration.historicalCapture().orElseThrow(), budget);
+            var result = new Rig(fixture, command, record, reads, history, sources, registration.historicalCapture().orElseThrow(), budget);
             delivered = true; return result;
         } finally { if (!delivered) { sources.close(); release(reads, history); } }
     }
