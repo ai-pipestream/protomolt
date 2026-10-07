@@ -157,3 +157,33 @@ Both committed histories remain valid. Evidence:
 `docs/evidence/repository/2026-10-07-bounded-cleanup-retry`.
 This models reappearance with a new PUT and uses direct recovery calls. A delayed
 network PUT race, scheduled recheck timing and active-work shutdown remain open.
+
+## Delayed request qualification plan
+
+The remaining late-write test must hold the complete conditional-write EVAL frame
+sent by the real Redis client, before forwarding it to Redis. Bound retained
+frame count and bytes. Other connections must remain usable for recovery. Let the
+original client time out or cancel normally; do not clear its interrupt to make
+an adapter call succeed. A partial request is an error, not a captured write.
+
+Wait for the actual attempt lease to expire, then use recovery with the original
+generation and physical identity to record ABSENT while the key is absent.
+Forward the exact captured frame once and require Redis's real success response
+and matching bytes. The failed publication must still have no verified attempt,
+committed revision or object references. Recover that exact attempt again and
+verify absence while both retained neighboring revisions remain readable.
+
+This uses an explicit recovery pass and does not qualify the scheduled recheck
+interval. Keep provider-call shutdown as a separate case: a short held reply
+must retain resources until the accepted call exits. Neither a dropped reply nor
+a manually repeated PUT establishes delayed delivery of the original request.
+Sol reviewed this test approach; implementation and execution remain open.
+
+## Read shutdown checkpoint
+
+Library historical reads now qualify resource retention across caller cancellation
+and timed shutdown. The test holds a completed real Redis read inside its provider
+call, verifies SQL remains usable and Redis remains open, then releases the call
+and retries shutdown. Evidence:
+`docs/evidence/repository/2026-10-07-bounded-read-shutdown`.
+Active publication shutdown, gRPC cancellation and delayed requests remain open.

@@ -31,6 +31,7 @@ public final class BoundedDocumentHostProbe {
         var opens=new AtomicInteger(); var closes=new AtomicInteger();
         var real=new RedisBlobStoreProvider();
         var faults=new BoundedDocumentWriteFault();
+        var readGate=new BoundedDocumentReadGate();
         BlobStoreProvider selected=new BlobStoreProvider() {
             public String id() { return "redis"; }
             public BackendIdentity managedIdentity(Map<String,String> options) {
@@ -48,7 +49,7 @@ public final class BoundedDocumentHostProbe {
                     try { actual.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
                     throw failure;
                 }
-                return new OpenedBlobStore(faults.wrap(actual.store()),() -> { actual.close(); closes.incrementAndGet(); },
+                return new OpenedBlobStore(readGate.wrap(faults.wrap(actual.store())),() -> { actual.close(); closes.incrementAndGet(); },
                         actual.capabilities(),actual::ensureNamespace,actual.reclaimer());
             }
         };
@@ -144,6 +145,7 @@ public final class BoundedDocumentHostProbe {
                 verifyHistoryTransport(host,caller,fixture.document(),revision);
                 verifyHistoryTransport(host,caller,updated.document(),updateResult.getCommitted().getMembers(0));
                 require(closes.get()==0,"Redis remains open during host lifetime");
+                readGate.verifyShutdown(host,caller,revision,closes);
             } finally { schemas.close(); }
             require(closes.get()==1,"Redis closes once after host drain");
             Path restart=Files.createDirectory(Path.of(System.getenv("PROTOMOLT_TEST_BOUNDED_RESTART_DIR")));
