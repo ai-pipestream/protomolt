@@ -1,0 +1,15 @@
+openjdk version "25.0.3" 2026-04-21
+OpenJDK Runtime Environment GraalVM CE 25.1.3+9.1 (build 25.0.3+9-jvmci-25.1-b19)
+OpenJDK 64-Bit Server VM GraalVM CE 25.1.3+9.1 (build 25.0.3+9-jvmci-25.1-b19, mixed mode, sharing)
+Gradle 9.6.1
+Launcher JVM:  25.0.3 (GraalVM Community 25.0.3+9-jvmci-25.1-b19)
+docker 29.8.1
+redis:8.10.0-alpine sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
+redis:7-alpine sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+redis:7 sha256:595cc6f2bb3af6e03347b90deb6123c6aa2c81dea05ce08128de8a174b6ac67b
+redis:8.8.1-alpine sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
+rustfs/rustfs:latest sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
+rustfs/rustfs:1.0.0-beta.11-preview.1 sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+localstack/localstack:4.13 sha256:46302bcb91a7e8008e6394be8afafdbfa40fb77a54d4046a38be35992042d5de
+localstack/localstack:3.8 sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+localstack/localstack:3.7.2 sha256:811d4cd67e6cc833cd5849ddaac454abd90c0d0fc00d402f8f82ee47926c5e10
