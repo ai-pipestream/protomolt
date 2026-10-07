@@ -1,21 +1,47 @@
 # Scoped publication parity: 2026-10-07 repair of PR #411
 
-**Current tested source: `9f7d5a3557b6e19d866fe8bf0de374b78ad194c6`.** It is
+**Current tested source: `357db4e2af0a142c06d001f7ad941bbbe9ca896a`.** It merges
 target `refactor/repository-composition` at
-`775e2814a1751f2667598095856fd6a99bf668b0` (identical on Forgejo and GitHub when
-merged, merge commit `8f215a8a1`) plus the BOM repair `ef9fdbecb`, the
-document-platform fixture repair `e26b6b1f9` and the intake credential repair
-`9f7d5a355`. The scoped publication repair code is `5b1dd08be`. Evidence for this
-state is in [9f7d5a355/](9f7d5a355/) and the next section. It is added by a later
-evidence-only commit; `git diff 9f7d5a355 <final PR head>` changes files under
-`docs/evidence/repository/2026-10-07-scoped-transport-conformance/` only.
+`b3390ba66850d350d7528ec98f70e1d59ed54d8c` (identical on Forgejo and GitHub when
+merged) into `9f7d5a355`, whose repairs are described below: the BOM repair
+`ef9fdbecb`, the document-platform fixture repair `e26b6b1f9` and the intake
+credential repair `9f7d5a355`. The scoped publication repair code is `5b1dd08be`.
+Evidence for this state is in [357db4e2a/](357db4e2a/) and the next section. It
+is added by a later evidence-only commit; `git diff 357db4e2a <final PR head>`
+changes files under `docs/evidence/repository/2026-10-07-scoped-transport-conformance/` only.
 
-Earlier qualifications are kept below with their archives: `ef9fdbecb` in
+Earlier qualifications are kept below with their archives: `9f7d5a355` in
+[9f7d5a355/](9f7d5a355/), `ef9fdbecb` in
 [ef9fdbecb/](ef9fdbecb/) and `c01ca4e11` in this directory. Those archives are
 results for those commits, not for the current head. Earlier results in the
 parent directory belong to earlier sources: see [../README.md](../README.md)
 (coordinator integration, `1b9cdd8a8`) and
 [../HISTORICAL-AGENT-RUN.md](../HISTORICAL-AGENT-RUN.md) (original agent run).
+
+## Qualification at `357db4e2a`
+
+Target `b3390ba66` changed production publication and admission code in
+`repo/container` (registration, scope calls, admission authorization), so every
+gate was rerun after the merge. No source was changed.
+
+| Run | Exit | Wall | Result |
+| --- | --- | --- | --- |
+| parity-1 (`scopedPublicationTest --rerun-tasks`) | 0 | 79 s | 1 test, 0 fail/err/skip; 44/44 markers; run `14b395fe-…`; 174 tasks executed |
+| parity-2 (same) | 0 | 82 s | 1 test, 0 fail/err/skip; 44/44 markers; run `e01e6fb6-…`; 174 tasks executed |
+| focused regressions (five suites) | 0 | 67 s | 67 tests, 0 fail/err/skip |
+| admissionStorageTest | 0 | 7 m 46 s | 1 test, 0 fail/err/skip |
+| BOM completeness + consumer catalog | 0 | 2 s | both executed |
+| candidate toolkit consumer (stage / run) | 0 / 0 | 1 s / 2 s | consumer ran |
+| `:protomolt-document-platform:test --rerun-tasks` | 0 | 55 s | 69 tests in 17 suites, 0 fail/err/skip |
+| `:protomolt-intake-service:test --rerun-tasks` | 0 | 29 s | 61 tests in 8 suites, 0 fail/err/skip |
+
+Commands are the same as in the `9f7d5a355` table. Probe log SHA-256: parity-1
+`1ffadca5f7879969125f5a113fa1184da1b9f80e5326567dfafed51a4694ef63` (XML
+`34d8c629d1fa39659b1473bc2e62575327c8e263cb6ad64691d85c1442915230`), parity-2
+`650bc020a3ebaf0ed1c34bb3ab971d60d301c04762b8da179bf1a2de8a85dbc2` (XML
+`0a98dc9c52332fa843fa33f6aa4af2568d81ef398f857472b14bf1fc220b7d45`). Archives with
+`SHA256SUMS` are in `357db4e2a/`, and `357db4e2a/source-sha256.txt` fingerprints
+every non-evidence file this PR changes relative to the target.
 
 ## Qualification at `9f7d5a355`
 
