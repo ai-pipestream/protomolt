@@ -77,12 +77,18 @@ class S3LocalStackConditionalIT {
                 software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
         assertThat(client.getBucketVersioning(b -> b.bucket(BUCKET)).status()).isEqualTo(
                 software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED);
-        handle = BlobStores.discover().open("s3", Map.of(
-                "endpoint", LOCALSTACK.getEndpoint().toString(),
-                "region", LOCALSTACK.getRegion(),
-                "access-key", LOCALSTACK.getAccessKey(),
-                "secret-key", LOCALSTACK.getSecretKey(),
-                "path-style", "true", "conditional-writes", "true"));
+        handle = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", LOCALSTACK.getEndpoint().toString()),
+                Map.entry("region", LOCALSTACK.getRegion()),
+                Map.entry("access-key", LOCALSTACK.getAccessKey()),
+                Map.entry("secret-key", LOCALSTACK.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
         assertThat(handle.capabilities()).contains(
                 BlobCapability.ATOMIC_CONDITIONAL_WRITE, BlobCapability.AUTHORITATIVE_CONDITIONAL_READ);
         store = handle.store();

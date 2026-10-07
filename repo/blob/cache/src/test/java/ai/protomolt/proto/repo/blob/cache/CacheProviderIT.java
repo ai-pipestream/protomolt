@@ -92,16 +92,22 @@ class CacheProviderIT {
     }
 
     private static Map<String, String> redisOptions(String prefix) {
-        return Map.of("uri", redisUri(), "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", prefix);
+        return Map.of("uri", redisUri(), "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", prefix, "write-policy", "replace");
     }
 
     private static Map<String, String> s3Options() {
-        return Map.of(
-                "endpoint", LOCALSTACK.getEndpoint().toString(),
-                "region", LOCALSTACK.getRegion(),
-                "access-key", LOCALSTACK.getAccessKey(),
-                "secret-key", LOCALSTACK.getSecretKey(),
-                "path-style", "true", "conditional-writes", "false");
+        return Map.ofEntries(
+                Map.entry("endpoint", LOCALSTACK.getEndpoint().toString()),
+                Map.entry("region", LOCALSTACK.getRegion()),
+                Map.entry("access-key", LOCALSTACK.getAccessKey()),
+                Map.entry("secret-key", LOCALSTACK.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000"));
     }
 
     private static BlobStore.PutSpec spec(String bucket, String key) {

@@ -82,15 +82,17 @@ resolution paths over the same artifacts.
   `providerIds()`, `managedIdentity(id, options)` (no I/O), and
   `open(id, options[, requiredCapabilities])`. The packaged discovery probe
   asserts exactly `{s3, redis}` load from the staged JARs.
-- S3 options: `endpoint` (empty = SDK default), `region`, `path-style`,
+- S3 options, all required with no defaults: `endpoint` (explicitly empty
+  selects the regional AWS endpoint), `region`, `path-style`,
   `conditional-writes`, `credentials-mode` (`static` with `access-key`/
-  `secret-key`, or `default-chain`), and bounded timeout options ordered
+  `secret-key`, or `default-chain`), and four timeouts ordered
   connection/socket ≤ API attempt ≤ API call. Capabilities: `BOUNDED_READ`,
   `LIST`, `SERVER_SIDE_COPY`, `STREAMING_WRITE`, `NON_EXPIRING_WRITES`,
   `PHYSICAL_RECLAMATION`, plus `AUTHORITATIVE_CONDITIONAL_READ` and
   `ATOMIC_CONDITIONAL_WRITE` only with `conditional-writes=true`.
-- Redis options: `uri`, `ttl-seconds`, `max-object-bytes`, `key-prefix`, and
-  optional `write-policy` (`replace` default, `create-only`). Capabilities:
+- Redis options, all required with no defaults: `uri`, `ttl-seconds`,
+  `max-object-bytes`, `key-prefix`, and `write-policy` (`replace` or
+  `create-only`). Capabilities:
   `LIST`, `OBJECT_EXPIRY`, `BOUNDED_READ`, `AUTHORITATIVE_CONDITIONAL_READ`,
   `PHYSICAL_RECLAMATION`, `ATOMIC_CONDITIONAL_WRITE` (replace policy), and
   `NON_EXPIRING_WRITES` only with TTL zero.

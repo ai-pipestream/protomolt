@@ -117,7 +117,7 @@ class RedisPersistenceIT {
 
     private static OpenedBlobStore open(String host, int port) {
         return BlobStores.discover().open("redis", Map.of("uri", "redis://" + host + ":" + port,
-                "ttl-seconds", "0", "max-object-bytes", "1048576", "key-prefix", PREFIX));
+                "ttl-seconds", "0", "max-object-bytes", "1048576", "key-prefix", PREFIX, "write-policy", "replace"));
     }
 
     private static int port(GenericContainer<?> container) {

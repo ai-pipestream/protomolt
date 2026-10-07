@@ -43,7 +43,7 @@ class RedisBlobStoreIT {
     static void setUp() {
         handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("redis", java.util.Map.of(
                 "uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
-                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "it:"));
+                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "it:", "write-policy", "replace"));
         store = (RedisBlobStore) handle.store();
     }
 

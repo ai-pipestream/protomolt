@@ -39,7 +39,7 @@ public final class RedisPublishedConsumer {
             String uri = "redis://" + published;
             Map<String, String> options = Map.of(
                     "uri", uri, "ttl-seconds", "0", "max-object-bytes", "0",
-                    "key-prefix", "published-consumer-" + UUID.randomUUID());
+                    "key-prefix", "published-consumer-" + UUID.randomUUID(), "write-policy", "replace");
             // Readiness is checked outside the code under test, so no provider
             // failure is ever caught and retried.
             awaitRedisReady(container);

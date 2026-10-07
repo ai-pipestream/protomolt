@@ -15,8 +15,18 @@ public final class DocumentCrashWorker {
         UUID attempt = UUID.fromString(args[1]), node = UUID.fromString(args[2]);
         var env = System.getenv();
         try (var database = new LedgerDatabase(new LedgerConfig(env.get("TEST_DB_URL"), env.get("TEST_DB_USER"), env.get("TEST_DB_PASSWORD")));
-             var opened = BlobStores.discover().open("s3", Map.of("endpoint", env.get("TEST_ENDPOINT"), "region", env.get("TEST_REGION"),
-                     "access-key", env.get("TEST_ACCESS"), "secret-key", env.get("TEST_SECRET"), "path-style", "true", "conditional-writes", "false"))) {
+             var opened = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", env.get("TEST_ENDPOINT")),
+                Map.entry("region", env.get("TEST_REGION")),
+                Map.entry("access-key", env.get("TEST_ACCESS")),
+                Map.entry("secret-key", env.get("TEST_SECRET")),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")))) {
             var tx = new Tx(database.entityManagerFactory());
             String generation = env.get("TEST_GENERATION"), namespace = env.get("TEST_NAMESPACE");
             var identity = S3BackendIdentity.of(env.get("TEST_ENDPOINT"), env.get("TEST_REGION"), true);

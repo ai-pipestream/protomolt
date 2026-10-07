@@ -43,7 +43,7 @@ public final class ProviderDiscoveryConsumer {
         requireSecretFree(s3Identity);
 
         BackendIdentity redisIdentity = providers.managedIdentity("redis", Map.of(
-                "uri", "redis://127.0.0.1:1", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", ""));
+                "uri", "redis://127.0.0.1:1", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "", "write-policy", "replace"));
         require(redisIdentity.provider().equals("redis") && redisIdentity.schema().equals("redis/v2"),
                 "unexpected Redis backend identity: " + redisIdentity);
         requireSecretFree(redisIdentity);
@@ -51,10 +51,18 @@ public final class ProviderDiscoveryConsumer {
         expectIllegalArgument(() -> providers.managedIdentity("absent", Map.of()), "not installed");
         expectIllegalArgument(() -> providers.managedIdentity("s3", Map.of()), null);
 
-        Map<String, String> s3Options = Map.of(
-                "endpoint", "http://127.0.0.1:1", "region", "us-east-1",
-                "access-key", "consumer", "secret-key", "consumer-secret",
-                "path-style", "true", "conditional-writes", "true");
+        Map<String, String> s3Options = Map.ofEntries(
+                Map.entry("endpoint", "http://127.0.0.1:1"),
+                Map.entry("region", "us-east-1"),
+                Map.entry("access-key", "consumer"),
+                Map.entry("secret-key", "consumer-secret"),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000"));
         try (OpenedBlobStore opened = providers.open("s3", s3Options)) {
             require(opened.store() instanceof S3BlobStore, "S3 handle must expose the S3 adapter");
             require(opened.capabilities().equals(EnumSet.of(
@@ -76,7 +84,7 @@ public final class ProviderDiscoveryConsumer {
                 Set.of(BlobCapability.OBJECT_EXPIRY)).close());
 
         Map<String, String> redisOptions = Map.of(
-                "uri", "redis://127.0.0.1:1", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "");
+                "uri", "redis://127.0.0.1:1", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "", "write-policy", "replace");
         var redis = providers.open("redis", redisOptions);
         require(redis.store() instanceof RedisBlobStore, "Redis handle must expose the Redis adapter");
         require(redis.capabilities().equals(EnumSet.of(

@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RedisProviderTest {
     private static Map<String, String> options(String uri) {
-        return Map.of("uri", uri, "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", "");
+        return Map.of("uri", uri, "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", "", "write-policy", "replace");
     }
 
     @Test void discoveryDoesNotOpenAnEndpointAndRequiresExplicitSelection() {
@@ -29,6 +29,15 @@ class RedisProviderTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> providers.open("redis", options("redis://user:secret value@localhost")))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("secret");
+    }
+
+    @Test void writePolicyIsRequiredWithNoDefault() {
+        var options = new java.util.HashMap<>(options("redis://127.0.0.1:1"));
+        options.remove("write-policy");
+        assertThatThrownBy(() -> BlobStores.discover().open("redis", options))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("write-policy");
+        assertThatThrownBy(() -> BlobStores.discover().managedIdentity("redis", options))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("write-policy");
     }
 
     @Test void handleOwnsThePoolAndRefusesAccessAfterClose() throws Exception {

@@ -22,9 +22,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Selection rejection and owned-resource lifecycle of the real S3 factory. */
 class S3ProviderLifecycleTest {
     private static Map<String, String> options() {
-        return new java.util.HashMap<>(Map.of("endpoint", "http://127.0.0.1:1", "region", "us-east-1",
-                "access-key", "test", "secret-key", "test-secret", "path-style", "true",
-                "conditional-writes", "false"));
+        return new java.util.HashMap<>(Map.ofEntries(
+                Map.entry("endpoint", "http://127.0.0.1:1"),
+                Map.entry("region", "us-east-1"),
+                Map.entry("access-key", "test"),
+                Map.entry("secret-key", "test-secret"),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
     }
 
     @Test
