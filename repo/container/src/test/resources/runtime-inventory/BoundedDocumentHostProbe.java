@@ -73,6 +73,8 @@ public final class BoundedDocumentHostProbe {
             var options=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
                     (account,principal,operation) -> caller).withTransport(
                     new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
+            Fixture fixture;
+            PublishDocumentResponse result;
             try (var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.of(List.of(selected,forbidden)),
                     new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 require(opens.get()==1,"one Redis provider");
@@ -87,8 +89,8 @@ public final class BoundedDocumentHostProbe {
                 unavailable(() -> host.startHttp(0,"fixture-token"));
                 try { host.startBoundedArchiveNetty(0,"fixture-token"); throw new AssertionError("archive listener exposed"); }
                 catch (IllegalStateException expected) { }
-                var fixture=prepare(host,new Tx(database.entityManagerFactory()));
-                var result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
+                fixture=prepare(host,new Tx(database.entityManagerFactory()));
+                result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
                 require(result.hasCommitted() && result.getCommitted().getMembersCount()==1,"published member");
                 var replay=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
                 require(result.equals(replay),"exact receipt replay");
@@ -107,6 +109,11 @@ public final class BoundedDocumentHostProbe {
                 require(closes.get()==0,"Redis remains open during host lifetime");
             } finally { schemas.close(); }
             require(closes.get()==1,"Redis closes once after host drain");
+            Path restart=Files.createDirectory(Path.of(System.getenv("PROTOMOLT_TEST_BOUNDED_RESTART_DIR")));
+            Files.writeString(restart.resolve("generation"),generation);
+            Files.write(restart.resolve("request.pb"),fixture.request().toByteArray());
+            Files.write(restart.resolve("receipt.pb"),result.toByteArray());
+            Files.write(restart.resolve("document.pb"),fixture.document().toByteArray());
         } finally {
             try (var paths=Files.walk(directory)) {
                 for (var path:paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
@@ -115,7 +122,7 @@ public final class BoundedDocumentHostProbe {
         System.out.println("BOUNDED_DOCUMENT_HOST_STARTUP_OK");
         System.out.println("BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK");
     }
-    private static void verifyHistoryTransport(RepoServices host, RepositoryCaller caller, Document expected,
+    static void verifyHistoryTransport(RepoServices host, RepositoryCaller caller, Document expected,
             DocumentPublishedRevision revision) throws Exception {
         String name="bounded-history-"+UUID.randomUUID();
         host.startInProcess(name,"history-fixture-token",null);
