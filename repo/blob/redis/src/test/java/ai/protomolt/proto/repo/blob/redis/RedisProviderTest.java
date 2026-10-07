@@ -55,6 +55,21 @@ class RedisProviderTest {
         assertThatThrownBy(actual::store).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test void unreachableEndpointFailsTheFirstOperationAndStillClosesCleanly() throws Exception {
+        // The pool connects lazily: open acquired nothing, so startup failure
+        // surfaces at the first real operation, never as a silent success.
+        var handle = BlobStores.discover().open("redis", options("redis://127.0.0.1:1"));
+        var store = handle.store();
+        assertThatThrownBy(() -> store.get("namespace", "key"))
+                .isInstanceOf(redis.clients.jedis.exceptions.JedisConnectionException.class);
+        handle.close();
+        handle.close();
+        // After close, the owned pool refuses work observably instead of hanging.
+        assertThatThrownBy(() -> store.get("namespace", "key"))
+                .isInstanceOf(redis.clients.jedis.exceptions.JedisException.class)
+                .hasStackTraceContaining("Pool not open");
+    }
+
     @Test void nonExpiringCapabilityDependsOnConfiguredTtl() throws Exception {
         var capability = ai.protomolt.proto.repo.blob.spi.BlobCapability.NON_EXPIRING_WRITES;
         var options = new java.util.HashMap<>(options("redis://127.0.0.1:1"));

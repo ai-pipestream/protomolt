@@ -99,7 +99,8 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
         return java.time.Duration.ofMillis(millis);
     }
 
-    private static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {
+    /** Owned cleanup path: client first, credentials second, failures retained with suppression. */
+    static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {
         Exception failure = null;
         try { if (client != null) client.close(); } catch (Exception e) { failure = e; }
         try { if (credentials instanceof AutoCloseable closeable) closeable.close(); }
