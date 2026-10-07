@@ -1626,3 +1626,29 @@ Stage the retained artifact union through withRetainedEvidence before consuming
 promoteAccepted, then require the promoted batch to match that union. This keeps a
 staging failure from consuming the sole in-memory assessment. Set sticky publication
 state after successful promotion and reconcile subsequent uncertainty explicitly.
+
+### Private claimed publication implementation checkpoint
+
+The handle-only path above is now implemented through a sealed transaction fence
+and the existing publication writer. Generic historical publication still refuses
+claimed owners. The handle retains accepted Work through promotion and synchronous
+commit, binds START and the retained CREATE manifest in the commit transaction,
+and checks database-clock liveness after origin waits and deferred constraints.
+Artifactless opaque assessments use the same authorization checks in a real SQL
+transaction without weakening the schema-store nonempty-batch contract.
+
+Real-provider qualification covers typed reuse-only successor publication, initial
+opaque publication from an explicit retained admission, lost COMMIT acknowledgment
+with exact durable replay, and expiry while blocked on a historical origin. The
+full packaged driver, including restart/cleanup, passed for the expiry checkpoint.
+Credential revocation after promotion and before publication locks also passes
+the full driver: commit and pending observation refuse the revoked key, and no
+revision, receipt or new outbox event appears. This qualifies revocation-first,
+not the opposite ordering or a concurrent publication-wins race.
+See [source-bound publication evidence](../evidence/repository/2026-10-07-claimed-historical-publication/README.md).
+
+This supersedes the earlier statement that no private claimed publication path
+exists; it does not satisfy every acceptance case in the reviewed seam. Mixed
+claimed publication, scoped successor publication, publication-wins revocation
+races, broader recovery discovery and public integration remain open. Wire
+contracts, names, tags, imports and Any URLs are unchanged by this checkpoint.

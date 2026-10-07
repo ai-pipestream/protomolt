@@ -1,0 +1,5 @@
+667dd70496ac5f736a63b149bd1334cddc24e9424138d129ce3e73de3ef893f2  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalExecution.java
+085d3c8f74249b213bbdc5ebd4d828732beacea13b478a9d4ae5dee2638f2b19  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationAssessment.java
+24057620491994a5353bdc341f1076e696f034022b3a479c873d37dd612bd01b  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationCommit.java
+990a7bde09f0c1e89e8bc8c07f941ccdb4aa44fc9a45300870d6933ef2beb31a  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentAssessmentStorageRuntimeTest.java
+58475c2939c78ddff83e16fbf1d718e728f13622e88e1278946980aca09bd467  repo/container/src/test/resources/runtime-inventory/HistoricalSuccessorCreateProbe.java

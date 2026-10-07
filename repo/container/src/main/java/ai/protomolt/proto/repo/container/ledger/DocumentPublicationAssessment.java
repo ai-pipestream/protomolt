@@ -227,6 +227,29 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             }
         }
 
+        /** Candidate and accepted source Work cannot escape this synchronous handle-owned callback. */
+        synchronized <T> T withPromotedCandidate(Object expectedIdentity,
+                ai.protomolt.proto.repo.spi.RepositoryCaller caller, DocumentHistoricalAssessmentSources.Work expectedWork,
+                DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> modes,
+                ai.protomolt.proto.repo.spi.RepositoryReadControl control,
+                java.util.function.Function<DocumentPublicationCandidate, T> consumer) throws InvalidProtocolBufferException {
+            requireOpen();
+            if (executionIdentity == null || executionIdentity != expectedIdentity)
+                throw new IllegalArgumentException("Assessment belongs to another historical execution");
+            if (!assessment.command().canonical().equals(command.canonical()) || !assessment.modes().equals(modes))
+                throw new IllegalArgumentException("Assessment differs from registered command or modes");
+            work.requireSameOwner(expectedWork); work.requireCaller(caller);
+            if (inspecting) throw new IllegalStateException("Historical assessment operation is active");
+            inspecting = true;
+            try {
+                work.authorize(control);
+                var references = work.references(command, control::check);
+                try (var candidate = assessment.promoteAccepted(control::check, references)) {
+                    return consumer.apply(candidate);
+                }
+            } finally { inspecting = false; }
+        }
+
         /** Retains observed evidence only; does not decide, publish, or enable a runtime session. */
         synchronized DocumentAssessmentCreation.Created create(
                 ai.protomolt.proto.repo.spi.RepositoryCaller caller, RepositoryOperationLedger.Owner owner,

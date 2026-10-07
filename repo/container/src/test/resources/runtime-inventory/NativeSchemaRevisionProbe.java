@@ -49,6 +49,11 @@ public final class NativeSchemaRevisionProbe {
                 var originalObjects = objects(tx, source.revision());
                 var originalParts = List.copyOf(new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow()
                         .readManifest().getPartsList());
+                var opaqueCommand = AssessmentMixedReuseProbe.command(allReuse(tx, source));
+                var opaqueRevision = runtime.execute(caller, opaqueCommand, placements, Map.of(), Map.of(),
+                        Map.of("a", DocumentPublicationRuntime.Mode.OPAQUE), Optional.empty(),
+                        (authenticated, selected, occurrence) -> { throw new AssertionError("Opaque publication must not resolve schemas"); },
+                        RepositoryReadControl.NONE).getMembers(0);
                 for (int phase = 0; phase < definitions.size(); phase++) {
                     var member = allReuse(tx, source);
                     if (phase == 2) member = member.toBuilder().setClusterId("archive-routing-v2").build();
@@ -73,7 +78,7 @@ public final class NativeSchemaRevisionProbe {
                             .setParameter("op", command.operationId()).getSingleResult()).longValue());
                     require(attempts == 0, "no empty upload attempt for unchanged bytes");
                 }
-                HistoricalAssessmentCreationProbe.run(tx, provider, source, published.getFirst(), database);
+                HistoricalAssessmentCreationProbe.run(tx, provider, source, published.getFirst(), opaqueRevision, database);
                 NativeHistoricalMaterializationProbe.run(tx, provider, published.getFirst());
                 require(registryCalls.get() == 3, "one explicit contract selection for each revision");
                 for (var definition : List.of(a, b)) {
