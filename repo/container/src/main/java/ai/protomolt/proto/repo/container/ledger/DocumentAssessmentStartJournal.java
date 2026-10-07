@@ -82,7 +82,43 @@ final class DocumentAssessmentStartJournal {
                     .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult();
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-            em.createNativeQuery("""
+            return insertStarted(em, owner, command, proposedId, retention, control);
+        });
+        control.check(); return started;
+    }
+
+    /** Caller holds the historical handle's complete current execution/authority fence. */
+    static Started startOrLoadHistorical(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, Duration retention, RepositoryReadControl control) {
+        Objects.requireNonNull(retention); control.check();
+        if (owner.generation() != 1 || owner.executionClaim().orElseThrow().epoch() != 1)
+            throw new IllegalArgumentException("Historical start requires the initial execution owner");
+        if (retention.isNegative() || retention.isZero() || retention.compareTo(Duration.ofDays(1)) > 0 || retention.getNano() % 1000 != 0)
+            throw new IllegalArgumentException("Retention requires exact microseconds within one day");
+        var rows = em.createNativeQuery("""
+                SELECT assessment_id,retain_until,owner_nonce,command_sha256,retention_micros
+                FROM repository_publication_assessment_starts
+                WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=0 FOR UPDATE
+                """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                .setParameter("o", owner.key().operationId()).getResultList();
+        if (rows.isEmpty()) return insertStarted(em, owner, command, UUID.randomUUID(), retention, control);
+        Object[] row = (Object[]) rows.getFirst();
+        if (!owner.token().equals(row[2]) || !command.sha256().equals(HexFormat.of().formatHex((byte[]) row[3])))
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start binding differs");
+        if (((Number) row[4]).longValue() != retention.toNanos() / 1000)
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Historical assessment retention differs from its start");
+        // Evaluate time only after the row lock has been acquired. A projected
+        // expression in the locking SELECT can be evaluated before its lock wait.
+        var now = instant(em.createNativeQuery("SELECT clock_timestamp()").getSingleResult());
+        if (!instant(row[1]).isAfter(now))
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Historical assessment start has expired");
+        control.check();
+        return new Started((UUID) row[0], instant(row[1]));
+    }
+
+    private static Started insertStarted(EntityManager em, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
+            UUID proposedId, Duration retention, RepositoryReadControl control) {
+        em.createNativeQuery("""
                     INSERT INTO repository_publication_assessment_starts(account_id,principal,operation_id,predecessor_generation,
                       owner_nonce,command_sha256,assessment_id,retention_micros,retain_until)
                     VALUES (:a,:p,:o,:g,:owner,:digest,:id,:micros,clock_timestamp())
@@ -97,9 +133,7 @@ final class DocumentAssessmentStartJournal {
                     """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
                     .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getSingleResult();
             control.check();
-            return new Started((UUID) row[0], instant(row[1]));
-        });
-        control.check(); return started;
+        return new Started((UUID) row[0], instant(row[1]));
     }
 
     /** Called before the owner lock; SQL repeats this check for direct CREATE callers. */

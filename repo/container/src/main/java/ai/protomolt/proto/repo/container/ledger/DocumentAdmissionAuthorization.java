@@ -246,6 +246,10 @@ final class DocumentAdmissionAuthorization {
         if (!caller.processAuthority() && plan.members().stream().anyMatch(member -> member.intent().getDestination().getIfAbsent())) {
             if (creation == null) throw unavailable();
             creation.require(em, caller, plan);
+        } else if (!caller.processAuthority() && caller.credentialBinding().isPresent()) {
+            // Existing targets need no creation grant, but a cached caller or
+            // retained handle cannot preserve a revoked credential generation.
+            RepositoryCredentialAuthorities.requireLive(em, caller);
         }
         // Complete authorization for the entire set before returning any revision
         // conflict, including a stale readable source paired with a denied destination.

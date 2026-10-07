@@ -13,15 +13,25 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final Map<String, DocumentPublicationCandidate.Mode> modes;
     private final DocumentPreparationSourcePins.Prepared pins;
     private final DocumentPublicationScopeCalls.Call registration;
+    private final Tx tx;
+    private final DriveLedger drives;
+    private final DocumentPublicationPreparationRecord record;
+    private final DocumentPreparationCaptureDrain.Identity capture;
+    private final byte[] preparationDigest;
+    private final String encodedModes;
     private boolean closed;
 
     private DocumentHistoricalExecution(DocumentHistoricalAssessmentSources.Work work, PayloadBudget.Lease retained,
             RepositoryOperationLedger.Owner owner, DocumentOperationUploadAdmission.Prepared prepared,
             Map<String, DocumentPublicationCandidate.Mode> modes, DocumentPreparationSourcePins.Prepared pins,
-            DocumentPublicationScopeCalls.Call registration) {
+            DocumentPublicationScopeCalls.Call registration, Tx tx, DriveLedger drives,
+            DocumentPublicationPreparationRecord record, DocumentPreparationCaptureDrain.Identity capture, byte[] preparationDigest) {
         this.work = work; this.retained = retained; this.owner = owner; this.prepared = prepared;
         this.modes = Map.copyOf(modes); this.pins = pins;
         this.registration = registration;
+        this.tx = tx; this.drives = drives; this.record = record; this.capture = capture;
+        this.preparationDigest = preparationDigest.clone();
+        this.encodedModes = DocumentPublicationModesJournal.encode(record.command(), modes);
     }
 
     static DocumentHistoricalExecution open(Tx tx, PayloadBudget budget,
@@ -72,9 +82,10 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                     .map(part -> UUID.fromString(part.hasReuse() ? part.getReuse().getObject().getObjectId()
                             : part.getHistoricalReuse().getObject().getObjectId()))
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            final byte[] digest;
             try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
                 var encoded = DocumentPublicationPreparationCodec.encode(record);
-                var digest = DocumentPublicationPreparationJournal.digest(encoded);
+                digest = DocumentPublicationPreparationJournal.digest(encoded);
                 tx.inTransaction(em -> {
                     RepositoryExecutionClaimLedger.lockLive(em, claim);
                     var rows = em.createNativeQuery("""
@@ -113,7 +124,8 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 });
             }
             work.authorize(control);
-            return new DocumentHistoricalExecution(work, retained, owner, prepared, fixed, pins, registration);
+            return new DocumentHistoricalExecution(work, retained, owner, prepared, fixed, pins, registration,
+                    tx, drives, record, identity, digest);
         } catch (RuntimeException | Error failure) {
             var cleanup = new ArrayList<AutoCloseable>(); cleanup.add(work);
             if (retained != null) cleanup.add(retained);
@@ -121,6 +133,63 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             catch (RuntimeException | Error failed) { if (failed != failure) failure.addSuppressed(failed); }
             throw failure;
         }
+    }
+
+    /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
+    synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
+            RepositoryReadControl control) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller); work.authorize(control);
+        var command = record.command();
+        var references = work.references(command, control::check);
+        var plan = prepared.plan();
+        var authorization = DocumentAdmissionAuthorization.prepare(plan, references);
+        var creation = DocumentCreationAuthorization.prepare(plan, drives, caller);
+        var reuse = DocumentReuseAdmission.prepare(plan);
+        var objects = plan.members().stream().flatMap(member -> member.intent().getPartsList().stream())
+                .filter(part -> part.hasReuse() || part.hasHistoricalReuse())
+                .map(part -> UUID.fromString(part.hasReuse() ? part.getReuse().getObject().getObjectId()
+                        : part.getHistoricalReuse().getObject().getObjectId()))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        var started = tx.inTransaction(em -> {
+            var claim = owner.executionClaim().orElseThrow();
+            RepositoryExecutionClaimLedger.lockLive(em, claim);
+            var rows = em.createNativeQuery("""
+                    SELECT p.owner_nonce=:nonce AND p.preparation_sha256=:digest
+                      AND h.preparation_sha256=p.preparation_sha256 AND h.command_sha256=p.command_sha256 AND h.sealed
+                    FROM repository_publication_preparations p JOIN repository_preparation_history_sets h
+                      USING(account_id,principal,operation_id,predecessor_generation)
+                    WHERE p.account_id=:a AND p.principal=:p AND p.operation_id=:o AND p.predecessor_generation=0
+                    FOR UPDATE OF p,h
+                    """).setParameter("nonce", owner.token()).setParameter("digest", preparationDigest)
+                    .setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                    .setParameter("o", owner.key().operationId()).getResultList();
+            if (rows.size() != 1 || !Boolean.TRUE.equals(rows.getFirst()))
+                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical execution preparation binding changed");
+            em.createNativeQuery("""
+                    SELECT owner_nonce FROM repository_publication_modes
+                    WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=0 FOR UPDATE
+                    """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
+                    .setParameter("o", owner.key().operationId()).getSingleResult();
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+            DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization, creation);
+            DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), command, owner.generation(), encodedModes);
+            for (var placement : record.placements().values().stream()
+                    .sorted(Comparator.comparing(value -> value.drive().id())).toList()) {
+                placement.drive().lock(em, drives);
+                if (!ManagedBackendLedger.find(em, placement.generation()).filter(placement.profile()::equals).isPresent())
+                    throw new IllegalArgumentException("Historical execution placement differs from registered backend");
+            }
+            DocumentReuseAdmission.requireBoundSources(em, reuse);
+            var origins = DocumentPublicationLocks.lockIndependentOrigins(em, authorization.destinations(), objects, Set.of());
+            DocumentPublicationLocks.lockIndependentRetention(em, origins);
+            for (var reference : references) DocumentHistoricalReferenceAdmission.requireBoundSources(em, reference, origins, control);
+            DocumentPreparationSourcePins.requireActiveInitial(em, record, pins, claim, capture.owner().incarnation(), control::check);
+            return DocumentAssessmentStartJournal.startOrLoadHistorical(em, owner, command, retention, control);
+        });
+        work.authorize(control);
+        return started;
     }
 
     @Override public synchronized void close() {

@@ -145,6 +145,17 @@ final class DocumentPreparationSourcePins {
      */
     static void requireInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
             RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control) {
+        requireInitial(em, record, prepared, claim, coordinator, control, true);
+    }
+
+    /** Only for a handle that already confirmed the full immutable batch at construction. */
+    static void requireActiveInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control) {
+        requireInitial(em, record, prepared, claim, coordinator, control, false);
+    }
+
+    private static void requireInitial(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control, boolean full) {
         control.run();
         if (record.predecessorGeneration() != 0 || claim.epoch() != 1
                 || !record.key().equals(claim.key()) || !record.command().sha256().equals(claim.commandSha256()))
@@ -163,9 +174,10 @@ final class DocumentPreparationSourcePins {
         var rows = scope(em.createNativeQuery("""
                 SELECT b.expected_count,b.sealed,b.initial_capture,b.creation_xid=h.creation_xid,
                   own.claim_epoch,own.claim_token,own.incarnation,
-                  (SELECT count(*) FROM repository_preparation_source_pins p
+                  CASE WHEN :full THEN (SELECT count(*) FROM repository_preparation_source_pins p
                     WHERE p.account_id=b.account_id AND p.principal=b.principal AND p.operation_id=b.operation_id
-                      AND p.predecessor_generation=b.predecessor_generation AND p.pins_sha256=b.pins_sha256),
+                      AND p.predecessor_generation=b.predecessor_generation AND p.pins_sha256=b.pins_sha256)
+                    ELSE b.expected_count END,
                   EXISTS(SELECT 1 FROM repository_preparation_capture_drains d
                     WHERE d.account_id=b.account_id AND d.principal=b.principal AND d.operation_id=b.operation_id
                       AND d.predecessor_generation=b.predecessor_generation AND d.pins_sha256=b.pins_sha256),
@@ -176,7 +188,7 @@ final class DocumentPreparationSourcePins {
                 JOIN repository_preparation_history_sets h USING(account_id,principal,operation_id,predecessor_generation)
                 JOIN repository_preparation_pin_owners own USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
                 WHERE b.account_id=:a AND b.principal=:p AND b.operation_id=:o AND b.predecessor_generation=:g AND b.pins_sha256=:digest
-                """), record, prepared).getResultList();
+                """), record, prepared).setParameter("full", full).getResultList();
         if (rows.isEmpty()) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Initial preparation capture is absent");
         Object[] row = (Object[]) rows.getFirst();
@@ -187,7 +199,8 @@ final class DocumentPreparationSourcePins {
                 || Boolean.TRUE.equals(row[8]) || Boolean.TRUE.equals(row[9]))
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                     "Initial preparation capture is no longer executable");
-        long matches = ((Number) scope(em.createNativeQuery("""
+        if (full) {
+            long matches = ((Number) scope(em.createNativeQuery("""
                 SELECT count(*) FROM repository_preparation_source_pins p
                 JOIN jsonb_to_recordset(CAST(:rows AS jsonb))
                   q(reader uuid,pin uuid,object uuid,node uuid,revision uuid,publication bigint)
@@ -195,14 +208,15 @@ final class DocumentPreparationSourcePins {
                     AND p.node_id=q.node AND p.revision_id=q.revision AND p.publication_revision=q.publication
                 WHERE p.account_id=:a AND p.principal=:p AND p.operation_id=:o AND p.predecessor_generation=:g AND p.pins_sha256=:digest
                 """), record, prepared).setParameter("rows", prepared.json()).getSingleResult()).longValue();
-        if (matches != prepared.pins().size()) throw corrupt();
-        var live = em.createNativeQuery("""
-                SELECT p.pin_id FROM document_read_pins p JOIN jsonb_to_recordset(CAST(:rows AS jsonb))
-                  q(reader uuid,pin uuid,object uuid,node uuid,revision uuid,publication bigint)
-                  ON p.pin_id=q.pin AND p.reader_incarnation=q.reader AND p.object_id=q.object
-                    AND p.source_node=q.node AND p.source_revision=q.revision AND p.publication_revision=q.publication
-                WHERE p.read_scope='HISTORICAL' ORDER BY p.pin_id FOR SHARE OF p
-                """).setParameter("rows", prepared.json()).getResultList();
+            if (matches != prepared.pins().size()) throw corrupt();
+        }
+        var live = scope(em.createNativeQuery("""
+                SELECT p.pin_id FROM document_read_pins p JOIN repository_preparation_source_pins q
+                  ON p.pin_id=q.pin_id AND p.reader_incarnation=q.reader_incarnation AND p.object_id=q.object_id
+                    AND p.source_node=q.node_id AND p.source_revision=q.revision_id AND p.publication_revision=q.publication_revision
+                WHERE q.account_id=:a AND q.principal=:p AND q.operation_id=:o AND q.predecessor_generation=:g
+                  AND q.pins_sha256=:digest AND p.read_scope='HISTORICAL' ORDER BY p.pin_id FOR SHARE OF p
+                """), record, prepared).getResultList();
         if (live.size() != prepared.pins().size()) throw new DocumentPartAttemptLedger.FenceException(
                 "Initial preparation capture no longer has its live historical pins");
         control.run();
