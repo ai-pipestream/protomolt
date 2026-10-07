@@ -7127,3 +7127,12 @@ decision handler or public operation exists. Guard liveness is checked at guard
 execution, not an absolute commit-instant promise. Lease-fault, corruption,
 concurrency and handler qualification remain open. See
 [SQL evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md).
+
+**Recovery-limit timing qualification:** production operations are **unchanged**.
+Actual PostgreSQL time assertions establish rollback on expiry before rejection
+insertion and before deferred pairing. Early `SET CONSTRAINTS ALL IMMEDIATE`
+followed by lease expiry can commit an already validated pair; no activation,
+lease renewal or capture drain is produced. This records guard-time semantics,
+not a commit-instant liveness guarantee. The decision handler, corruption,
+concurrency and lost-reply cases remain open. See
+[timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md).

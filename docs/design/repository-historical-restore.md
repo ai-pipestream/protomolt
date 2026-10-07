@@ -1051,8 +1051,13 @@ See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contrac
 The [SQL foundation evidence](../evidence/repository/2026-10-07-recovery-limit-sql/README.md)
 qualifies paired decisions at both actual bounds, under-bound refusal, missing
 receipt refusal, and exclusion of a late activation in the same transaction.
-It does not yet qualify the handler, lease-expiry injection, corruption variants,
-lost replies or concurrent decisions. Liveness is checked when the guards run;
+It does not yet qualify the handler, corruption variants, lost replies or concurrent
+decisions. The [timing evidence](../evidence/repository/2026-10-07-recovery-limit-timing/README.md)
+now covers lease expiry before rejection insertion, expiry before normal deferred
+validation, and early constraint firing followed by an expired-lease commit.
+The first two roll back both rows; the last preserves the already validated
+terminal pair without granting execution or renewing leases.
+Liveness is checked when the guards run;
 forcing deferred constraints early can precede later wall-clock lease expiry.
 Do not describe this as an unconditional commit-instant liveness guarantee.
 The ordinary `DocumentPublicationRejections.cancel` path cannot resolve an

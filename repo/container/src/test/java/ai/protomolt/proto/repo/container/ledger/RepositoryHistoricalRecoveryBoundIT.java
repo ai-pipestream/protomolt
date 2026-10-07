@@ -171,7 +171,7 @@ class RepositoryHistoricalRecoveryBoundIT {
         })).hasStackTraceContaining("Coordinator successor requires exact activation");
     }
 
-    private static void insertRejection(jakarta.persistence.EntityManager em, Rig rig, RepositorySuccessorInstall.Plan plan) {
+    static void insertRejection(jakarta.persistence.EntityManager em, Rig rig, RepositorySuccessorInstall.Plan plan) {
             long at = ((Number) em.createNativeQuery("SELECT floor(extract(epoch FROM clock_timestamp())*1000000)")
                     .getSingleResult()).longValue();
             var receipt = ai.protomolt.proto.repo.v1.DocumentPublicationRejection.newBuilder()
@@ -193,7 +193,7 @@ class RepositoryHistoricalRecoveryBoundIT {
                     .setParameter("at", at).executeUpdate();
     }
 
-    private static void insertDecision(jakarta.persistence.EntityManager em, Rig rig,
+    static void insertDecision(jakarta.persistence.EntityManager em, Rig rig,
             RepositorySuccessorInstall.Plan plan, String kind, int count) {
         int inserted = em.createNativeQuery("""
                 INSERT INTO repository_recovery_limit_decisions(account_id,principal,operation_id,claim_epoch,claim_token,

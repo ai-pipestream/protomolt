@@ -47,6 +47,7 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     static Rig historicalInitial(Context c) throws Exception { return prepare(c, false, false, true, Duration.ofSeconds(1)); }
+    static Rig historicalInitial(Context c, Duration lease) throws Exception { return prepare(c, false, false, true, lease); }
 
     static Rig historicalCreationInitial(Context c, java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim) throws Exception {
         return prepare(c, false, false, true, Duration.ofSeconds(1), beforeClaim, true);
@@ -69,7 +70,11 @@ class DocumentCaptureAdmissionClosureIT {
                     admission.apply(em, rig.claim());
                 });
             }
-            c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
+            c.tx().readOnly(em -> em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id", rig.record().key().operationId()).getSingleResult());
             var identity = new RepositoryCoordinatorDrain.Identity(rig.record().key(), command.sha256(),
                     rig.claim().epoch(), rig.claim().token(), rig.coordinator());
             var reservation = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity,
@@ -468,7 +473,7 @@ class DocumentCaptureAdmissionClosureIT {
         } finally { if (!delivered) { sources.close(); release(reads, history); } }
     }
 
-    private static void append(Context c, Rig rig) throws Exception {
+    static void append(Context c, Rig rig) throws Exception {
         append(c, rig, em -> {});
     }
 
