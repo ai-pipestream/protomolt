@@ -247,15 +247,20 @@ class ArchiveServiceIT {
         assertThat(v1.getVersion()).isEqualTo(1);
         assertThat(v1.getDeduplicated()).isFalse();
         assertThat(v1.getManifest().getRenditionsList()).hasSize(2);
+        assertThat(v1.getManifest().getMetadataSnapshot().getTitle()).isEqualTo("Quarterly report");
+        assertThat(v1.getManifest().getMetadataSnapshot().getCurrentVersion()).isEqualTo(1);
 
         // v2: markdown changes, original does not — the unchanged rendition's
         // retained object reference must be shared, not copied.
         PutEntryResponse v2 = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address)
+                .setTitle("Revised report")
                 .addRenditions(rendition("original", "application/pdf", "raw-pdf-bytes"))
                 .addRenditions(rendition("markdown", "text/markdown", "# Report, revised"))
                 .build());
         assertThat(v2.getVersion()).isEqualTo(2);
+        assertThat(v2.getManifest().getMetadataSnapshot().getTitle()).isEqualTo("Revised report");
+        assertThat(v2.getManifest().getMetadataSnapshot().getCurrentVersion()).isEqualTo(2);
         assertThat(entryOf(v2.getManifest(), "original").getObjectKey())
                 .isEqualTo(entryOf(v1.getManifest(), "original").getObjectKey());
         assertThat(entryOf(v2.getManifest(), "markdown").getObjectKey())
@@ -264,6 +269,7 @@ class ArchiveServiceIT {
         // Identical content dedupes the whole save: no version lands.
         PutEntryResponse again = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address)
+                .setTitle("Current label")
                 .addRenditions(rendition("markdown", "text/markdown", "# Report, revised"))
                 .build());
         assertThat(again.getDeduplicated()).isTrue();
@@ -281,7 +287,8 @@ class ArchiveServiceIT {
         assertThat(current.getRenditions(0).getData().toStringUtf8())
                 .isEqualTo("# Report, revised");
         assertThat(current.getManifest().getRenditionsList()).hasSize(2);
-        assertThat(current.getInfo().getTitle()).isEqualTo("Quarterly report");
+        assertThat(current.getInfo().getTitle()).isEqualTo("Current label");
+        assertThat(current.getManifest().getMetadataSnapshot()).isEqualTo(v2.getManifest().getMetadataSnapshot());
 
         // Time travel: version 1 still reads byte-for-byte.
         GetEntryResponse historic = archives.getEntry(GetEntryRequest.newBuilder()
@@ -290,6 +297,8 @@ class ArchiveServiceIT {
                 .addRenditions("markdown")
                 .build());
         assertThat(historic.getRenditions(0).getData().toStringUtf8()).isEqualTo("# Report");
+        assertThat(historic.getInfo().getTitle()).isEqualTo("Current label");
+        assertThat(historic.getManifest().getMetadataSnapshot()).isEqualTo(v1.getManifest().getMetadataSnapshot());
 
         assertThat(archives.listVersions(ListVersionsRequest.newBuilder()
                 .setAddress(address).build()).getVersionsList())
@@ -449,6 +458,11 @@ class ArchiveServiceIT {
         assertThat(declared.getVersion()).isEqualTo(1);
         assertThat(declared.getSha256()).isEqualTo(sha256(body));
         assertThat(declared.getObjectKey()).isNotBlank();
+        var firstSnapshot = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address).setVersion(1).build()).getManifest().getMetadataSnapshot();
+        assertThat(firstSnapshot.getAddress()).isEqualTo(address);
+        assertThat(firstSnapshot.getCurrentVersion()).isEqualTo(1);
+        assertThat(firstSnapshot.getEntryUuid()).isEqualTo(declared.getEntryUuid());
         var duplicate = upload(address, "original", "text/plain", body, sha256(body));
         assertThat(duplicate.getVersion()).isEqualTo(declared.getVersion());
         assertThat(duplicate.getObjectKey()).isEqualTo(declared.getObjectKey());
@@ -467,6 +481,10 @@ class ArchiveServiceIT {
         GetEntryResponse read = archives.getEntry(GetEntryRequest.newBuilder()
                 .setAddress(address).build());
         assertThat(read.getRenditionsList()).hasSize(2);
+        assertThat(read.getManifest().getMetadataSnapshot().getCurrentVersion()).isEqualTo(2);
+        assertThat(archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address).setVersion(1).build()).getManifest().getMetadataSnapshot())
+                .isEqualTo(firstSnapshot);
         assertThat(entryOf(read.getManifest(), "original").getObjectKey())
                 .isEqualTo(declared.getObjectKey());
         assertThat(entryOf(read.getManifest(), "original").getStorageObjectId()).isNotBlank();

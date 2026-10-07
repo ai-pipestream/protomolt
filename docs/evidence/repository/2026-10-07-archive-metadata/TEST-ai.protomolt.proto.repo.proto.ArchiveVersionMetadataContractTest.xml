@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.proto.ArchiveVersionMetadataContractTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-07T03:54:29.648Z" hostname="krick" time="0.345">
+  <properties/>
+  <testcase name="absentLegacySnapshotDoesNotInventCurrentMetadata()" classname="ai.protomolt.proto.repo.proto.ArchiveVersionMetadataContractTest" time="0.227"/>
+  <testcase name="snapshotIdentityMustMatchItsVersion()" classname="ai.protomolt.proto.repo.proto.ArchiveVersionMetadataContractTest" time="0.01"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

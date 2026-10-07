@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.ArchiveServiceIT" tests="25" skipped="0" failures="0" errors="0" timestamp="2026-10-07T04:06:34.482Z" hostname="krick" time="21.072">
+  <properties/>
+  <testcase name="anUnversionedArchiveKeepsOneStatePerEntry()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.238"/>
+  <testcase name="expectedVersionGuardsConcurrentWriters()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.054"/>
+  <testcase name="theHttpDoorStreamsARenditionInWithAReceipt()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.127"/>
+  <testcase name="deletingARenditionAdmitsCleanupEverywhereAndLeavesTombstones()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.13"/>
+  <testcase name="deletingAnEntryRemovesEveryVersionAndSettlesTheCounters()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.084"/>
+  <testcase name="rejectedUploadUnblocksAProducerBeyondTheQueueCapacity()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.002"/>
+  <testcase name="theContractRefusesWhatItNames()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.106"/>
+  <testcase name="recreatedEntriesNeverReuseDeletedPhysicalKeys()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.165"/>
+  <testcase name="localAndGrpcArchiveOperationsShareVersionsAndReads()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.136"/>
+  <testcase name="theStreamingDoorLandsBytesWithAndWithoutADeclaredHash()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.067"/>
+  <testcase name="[1] &quot;put&quot;, &quot;false&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.058"/>
+  <testcase name="[2] &quot;put&quot;, &quot;false&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.033"/>
+  <testcase name="[3] &quot;put&quot;, &quot;true&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.349"/>
+  <testcase name="[4] &quot;put&quot;, &quot;true&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.356"/>
+  <testcase name="[5] &quot;cas&quot;, &quot;false&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.061"/>
+  <testcase name="[6] &quot;cas&quot;, &quot;false&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.051"/>
+  <testcase name="[7] &quot;cas&quot;, &quot;true&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.319"/>
+  <testcase name="[8] &quot;cas&quot;, &quot;true&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.295"/>
+  <testcase name="[9] &quot;delete&quot;, &quot;false&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.051"/>
+  <testcase name="[10] &quot;delete&quot;, &quot;false&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.061"/>
+  <testcase name="[11] &quot;delete&quot;, &quot;true&quot;, &quot;false&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.354"/>
+  <testcase name="[12] &quot;delete&quot;, &quot;true&quot;, &quot;true&quot;" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="2.292"/>
+  <testcase name="theStreamingDoorRefusesAShortDelivery()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.006"/>
+  <testcase name="aRetainedArchiveVersionsEntriesAndSharesUnchangedRenditions()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.062"/>
+  <testcase name="pruningKeepsTheNewestVersionsAndOnlyTargetsUnsharedObjects()" classname="ai.protomolt.proto.repo.service.ArchiveServiceIT" time="0.082"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 6b3d3ccd44986fb7384bc5f062bff515daad210c3b6005ce16e998763d7f6350
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.905547497S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:52049/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 58ce8ebfefd6b07a655cc5e205e27f289a5a551f76219c8b7dd96e0321ef63b8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.906082109S
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@65b81cbf
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table "public"."flyway_schema_history" does not exist yet
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 102 migrations (execution time 00:00.007s)
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "public"."flyway_schema_history" ...
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": << Empty Schema >>
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "83 - private assessment start"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "84 - journaled owner mode guards"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "85 - pre owner registration abandonment"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "86 - historical assessment provenance"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "87 - historical assessment snapshot version"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "88 - revision retention inventory indexes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "89 - private coordinator bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "90 - coordinator admission drain"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "91 - coordinator local drain"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "92 - graceful coordinator handoff"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "93 - atomic successor generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "94 - successor execution identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "95 - undrained coordinator execution fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "96 - coordinator reservation identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "97 - expired coordinator reservation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "98 - unactivated coordinator supersession"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "99 - repository credential authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "100 - repository creation grants"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "101 - preserve successor publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "102 - freeze archive version metadata"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 102 migrations to schema "public", now at version v102 (execution time 00:00.293s)
+Oct 07, 2026 12:06:37 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 07, 2026 12:06:37 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 07, 2026 12:06:37 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:52049/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 07, 2026 12:06:37 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+[Test worker] INFO ai.protomolt.proto.repo.service.UploadHttpServer - HTTP upload route listening on port 34273 (/v1/documents:upload)
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-none/archive-drive (id=38d3c6ed-444c-3163-9689-22e4c6029bc4, bucket=it-archive-acct-none-archive-drive, prefix='archive-drive')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-guard/archive-drive (id=2ca6cae5-5a3d-3e53-b3a9-a84df9e14170, bucket=it-archive-acct-guard-archive-drive, prefix='archive-drive')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-http/archive-drive (id=7a04c437-c254-30c4-b19e-3b081bcbb075, bucket=it-archive-acct-http-archive-drive, prefix='archive-drive')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-rtbf/archive-drive (id=9cbfadeb-a51a-39f2-a5d5-d358f628c600, bucket=it-archive-acct-rtbf-archive-drive, prefix='archive-drive')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-delete/archive-drive (id=c23e5e00-618c-355c-a89d-fe573134341a, bucket=it-archive-acct-delete-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-edges/archive-drive (id=9aaa96b5-a87f-3716-8da5-f2bbbcb70d17, bucket=it-archive-acct-edges-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-incarnation-false/archive-drive (id=1b6b72a2-a973-3593-b71e-c7e07481c54f, bucket=it-archive-acct-incarnation-false-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-incarnation-true/archive-drive (id=8d3391d4-ebbe-3eb5-a765-f70c3d6ed571, bucket=it-archive-acct-incarnation-true-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-shared/archive-drive (id=542bc41c-5c96-3ecf-acc5-cc9f9cf8a69d, bucket=it-archive-acct-shared-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-stream/archive-drive (id=3c8e56b8-e0fc-32db-b494-16b7e2f4c954, bucket=it-archive-acct-stream-archive-drive, prefix='archive-drive')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-c66fdc04-f396-4771-a84f-013eb3d7221f/guard-drive-c66fdc04-f396-4771-a84f-013eb3d7221f (id=e99212d7-0668-309b-8613-ecdfdcb8c03b, bucket=it-archive-guard-c66fdc04-f396-4771-a84f-013eb3d7221f-guard-dri, prefix='guard-drive-c66fdc04-f396-4771-a84f-013eb3d7221f')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-34bf01d3-2f3c-44ba-8366-68792c72b74e/guard-drive-34bf01d3-2f3c-44ba-8366-68792c72b74e (id=ba776170-f1be-3416-b332-5d3ade87a071, bucket=it-archive-guard-34bf01d3-2f3c-44ba-8366-68792c72b74e-guard-dri, prefix='guard-drive-34bf01d3-2f3c-44ba-8366-68792c72b74e')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-de3dc473-03b1-488b-9314-ca7010d29c92/guard-drive-de3dc473-03b1-488b-9314-ca7010d29c92 (id=12273174-b9ae-3df2-9bbd-1d31787e17b2, bucket=it-archive-guard-de3dc473-03b1-488b-9314-ca7010d29c92-guard-dri, prefix='guard-drive-de3dc473-03b1-488b-9314-ca7010d29c92')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-f23420ae-02e4-4f6b-ad95-73399954affb/guard-drive-f23420ae-02e4-4f6b-ad95-73399954affb (id=1db9b3f8-ee96-30bc-8b91-fadd06ee9643, bucket=it-archive-guard-f23420ae-02e4-4f6b-ad95-73399954affb-guard-dri, prefix='guard-drive-f23420ae-02e4-4f6b-ad95-73399954affb')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-b8996d92-c60a-485e-b7d2-693301bbda82/guard-drive-b8996d92-c60a-485e-b7d2-693301bbda82 (id=ea721f10-5e35-340f-b479-0bd5291b81b7, bucket=it-archive-guard-b8996d92-c60a-485e-b7d2-693301bbda82-guard-dri, prefix='guard-drive-b8996d92-c60a-485e-b7d2-693301bbda82')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-9689df72-602d-4102-a411-3a95543850f0/guard-drive-9689df72-602d-4102-a411-3a95543850f0 (id=0065405d-cf97-3f01-80d5-e1a8b7933862, bucket=it-archive-guard-9689df72-602d-4102-a411-3a95543850f0-guard-dri, prefix='guard-drive-9689df72-602d-4102-a411-3a95543850f0')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-bcecce38-8dcf-4ed6-b241-61c60bc5f8e5/guard-drive-bcecce38-8dcf-4ed6-b241-61c60bc5f8e5 (id=d1cd25a6-39c9-3fbe-ace6-88a41be25caf, bucket=it-archive-guard-bcecce38-8dcf-4ed6-b241-61c60bc5f8e5-guard-dri, prefix='guard-drive-bcecce38-8dcf-4ed6-b241-61c60bc5f8e5')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-9e9e0d98-d5ce-4969-ac4f-4e8cb1a29b1a/guard-drive-9e9e0d98-d5ce-4969-ac4f-4e8cb1a29b1a (id=c27324ac-300c-3ce2-b182-42a14a26a400, bucket=it-archive-guard-9e9e0d98-d5ce-4969-ac4f-4e8cb1a29b1a-guard-dri, prefix='guard-drive-9e9e0d98-d5ce-4969-ac4f-4e8cb1a29b1a')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-372da9b4-1e2e-43f7-9e56-fe126d8671a4/guard-drive-372da9b4-1e2e-43f7-9e56-fe126d8671a4 (id=8ca2aec6-2b08-35b6-a070-f340a2c5852e, bucket=it-archive-guard-372da9b4-1e2e-43f7-9e56-fe126d8671a4-guard-dri, prefix='guard-drive-372da9b4-1e2e-43f7-9e56-fe126d8671a4')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-12820722-c4df-4ee4-a60d-28d666b47c13/guard-drive-12820722-c4df-4ee4-a60d-28d666b47c13 (id=f5d14b3c-58d4-3cad-a03e-c7254959793e, bucket=it-archive-guard-12820722-c4df-4ee4-a60d-28d666b47c13-guard-dri, prefix='guard-drive-12820722-c4df-4ee4-a60d-28d666b47c13')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-f94ea1aa-59ef-49ef-b947-edfd6c5aac76/guard-drive-f94ea1aa-59ef-49ef-b947-edfd6c5aac76 (id=c22a44af-ce9f-341f-9b6c-616efefd294f, bucket=it-archive-guard-f94ea1aa-59ef-49ef-b947-edfd6c5aac76-guard-dri, prefix='guard-drive-f94ea1aa-59ef-49ef-b947-edfd6c5aac76')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive guard-41e4bdc5-ffb8-44c5-bff1-291baa2062d9/guard-drive-41e4bdc5-ffb8-44c5-bff1-291baa2062d9 (id=f2440635-dcfb-3af8-92a9-a5be01992e7a, bucket=it-archive-guard-41e4bdc5-ffb8-44c5-bff1-291baa2062d9-guard-dri, prefix='guard-drive-41e4bdc5-ffb8-44c5-bff1-291baa2062d9')
+[grpc-default-executor-0] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-short/archive-drive (id=5725333e-be28-3203-b698-704bb21b32f5, bucket=it-archive-acct-short-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-retained/archive-drive (id=0c5d8052-8d69-3a40-9bc2-30db3f909314, bucket=it-archive-acct-retained-archive-drive, prefix='archive-drive')
+[grpc-default-executor-1] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive acct-prune/archive-drive (id=181ee6b5-4f3f-3641-b3ad-06ec3451c635, bucket=it-archive-acct-prune-archive-drive, prefix='archive-drive')
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[Test worker] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+]]></system-err>
+</testsuite>
