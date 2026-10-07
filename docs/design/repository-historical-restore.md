@@ -1042,6 +1042,12 @@ unimplemented; neither V107 nor V108 loosens the existing root-deletion guard.
 ### Terminal handling for exhausted historical recovery
 
 This is the next implementation requirement, not an available operation.
+The additive receipt reason `RECOVERY_LIMIT_EXCEEDED = 4` now compiles and passes
+runtime generated/dynamic validation and canonical codec tests. Existing SQL
+reason checks deliberately still refuse it until the guarded sidecar transaction
+is implemented. Descriptor compatibility does not mean old runtime validators
+accept the new value: qualify and upgrade receipt readers before enabling writes.
+See [contract evidence](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).
 The ordinary `DocumentPublicationRejections.cancel` path cannot resolve an
 installed but unactivated successor: V95 requires exact activation before its
 owner mutation. A SQL regression preserves this guard and checks ordinary

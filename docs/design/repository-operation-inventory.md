@@ -7107,3 +7107,11 @@ The [13-test evidence](../evidence/repository/2026-10-07-installed-cancellation/
 does not close exhaustion handling. A **new, not yet implemented** private
 recovery-limit decision and additive rejection reason are specified in the
 [terminal design](repository-historical-restore.md#terminal-handling-for-exhausted-historical-recovery).
+
+**Recovery-limit receipt contract:** **extended** the rejection reason enum with
+additive value 4, `RECOVERY_LIMIT_EXCEEDED`. Existing fields, enum numbers, codecs,
+imports and Any URLs are unchanged. Runtime rules require REJECTED disposition
+and no assessment. Canonical encoding and the JSON Schema projection include the
+new reason. SQL still refuses the new value; the decision operation remains
+unimplemented. Older validators can reject unknown enum values, so qualify readers
+before enabling the writer. See [contract checks](../evidence/repository/2026-10-07-recovery-limit-contract/README.md).

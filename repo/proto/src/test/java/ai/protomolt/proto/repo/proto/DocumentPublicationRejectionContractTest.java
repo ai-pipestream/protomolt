@@ -9,6 +9,15 @@ import static org.assertj.core.api.Assertions.*;
 class DocumentPublicationRejectionContractTest {
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
+    @Test void recoveryLimitIsRejectedWithoutAssessmentOrCancellationSemantics() throws Exception {
+        var limit = rejection().setReasonValue(4).build();
+        check(limit, true);
+        check(limit.toBuilder().setDispositionValue(2).build(), false);
+        check(limit.toBuilder().setAssessment(assessment()).build(), false);
+        // Shape validity cannot prove that recovery is exhausted; that is a SQL obligation.
+        check(limit.toBuilder().setOwnerGeneration(64).build(), true);
+    }
+
     @Test void validatesBothDispositionsOnGeneratedAndDynamicMessages() throws Exception {
         var valid = rejection().build();
         check(valid, true);
@@ -70,6 +79,7 @@ class DocumentPublicationRejectionContractTest {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         com.fasterxml.jackson.databind.JsonNode schema = mapper.valueToTree(generator.generateRooted(DocumentPublicationRejection.getDescriptor()));
         assertThat(schema.at("/properties/accountId/maxLength").asInt()).isEqualTo(200);
+        assertThat(schema.at("/properties/reason").toString()).contains("RECOVERY_LIMIT_EXCEEDED");
         assertThat(schema.path("x-protomolt-cel").toString()).contains("publication-rejection-disposition");
         assertThat(schema.path("x-protomolt-cel").toString())
                 .contains("publication-rejection-assessment", "publication-rejection-retention");
