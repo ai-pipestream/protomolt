@@ -18,6 +18,13 @@ On release, the old publisher throws the exact Fenced exception and leaves no
 result or revision. The successor then installs, captures fresh sources, publishes
 the same command and verifies provider bytes, receipt identity and cleanup.
 
-Both the focused task and mandatory aggregate require these markers. The new
-aggregate has not finished. Public historical routing remains separate work;
-these tests do not establish completion of the repository goal.
+Both the focused task and mandatory aggregate require these markers. The full
+`:protomolt-repo-container:admissionStorageTest --max-workers=2 --console=plain`
+run passed at source commit `4997247d3458a6496b0de73515470d3d2774bfec`:
+1 aggregate test, 0 failures/errors/skips; Gradle 15m46s, JUnit 943.237s,
+timestamp 2026-10-07T22:53:33.543Z. Source hashes match `sources.sha256`.
+Terminal reports are `full-storage.xml.gz` and `full-storage.log.gz`.
+
+This aggregate includes all three publication/takeover orderings and the
+same-command successor publication checks. Public historical routing remains
+separate work; these tests do not establish completion of the repository goal.
