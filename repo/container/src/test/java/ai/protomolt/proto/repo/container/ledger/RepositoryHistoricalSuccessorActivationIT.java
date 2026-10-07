@@ -116,6 +116,9 @@ class RepositoryHistoricalSuccessorActivationIT {
                 assertThatThrownBy(() -> activation.activate(CALLER, CALLER, NONE)).hasStackTraceContaining("historical activation reply lost");
                 assertThat(armed).isFalse();
                 var tentative = activation.tentativeCapture().orElseThrow();
+                var cold = RepositoryHistoricalActivationEvidence.confirm(c.tx(), rig.budget(), CALLER, plan, rig.record(), NONE).orElseThrow();
+                assertThat(cold.captureSha256()).isEqualTo(tentative.identity().pinsSha256());
+                assertThat(cold.execution()).isEqualTo(tentative.identity().owner());
                 assertThat(activation.activate(CALLER, CALLER, NONE)).isSameAs(tentative);
                 assertThat(tentative.complete(CALLER, Duration.ZERO, NONE)).isPresent();
                 assertThat(count(c, "repository_historical_activations")).isEqualTo(1);
@@ -164,28 +167,36 @@ class RepositoryHistoricalSuccessorActivationIT {
         }
     }
 
-    private static RepositoryHistoricalSuccessorActivation activation(Tx tx, Context c, Rig rig,
+    static RepositoryHistoricalSuccessorActivation activation(Tx tx, Context c, Rig rig,
             RepositorySuccessorInstall.Plan plan, Captured later) {
         return new RepositoryHistoricalSuccessorActivation(tx, rig.budget(), plan, rig.record(), later.sources(), new DriveLedger(c.tx()));
     }
-    private static long count(Context c, String table) {
+    static long count(Context c, String table) {
         return c.tx().readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table).getSingleResult()).longValue());
     }
-    private static Object[] leases(Context c, Rig rig) {
+    static Object[] leases(Context c, Rig rig) {
         return c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                 SELECT c.lease_until,o.lease_until FROM repository_execution_claims c JOIN repository_operation_owners o
                 USING(account_id,principal,operation_id) WHERE c.operation_id=:id
                 """).setParameter("id", rig.record().key().operationId()).getSingleResult());
     }
-    private record Captured(DocumentReadLedger reads, DocumentReadLedger.PinnedHistory history,
+    record Captured(DocumentReadLedger reads, DocumentReadLedger.PinnedHistory history,
             DocumentHistoricalAssessmentSources sources) implements AutoCloseable {
         public void close() throws Exception {
             sources.close(); history.close(); history.release(); reads.fence(); reads.attestLocalQuiescence();
         }
     }
-    private static Captured capture(Context c, Rig rig) throws Exception {
+    static Captured capture(Context c, Rig rig) throws Exception { return capture(c, rig, CALLER); }
+
+    static Captured capture(Context c, Rig rig, RepositoryCaller caller) throws Exception {
         var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
-        var history = reads.captureHistorical(CALLER, rig.fixture().address(), rig.fixture().revision());
-        return new Captured(reads, history, DocumentHistoricalAssessmentSources.open(rig.record().command(), CALLER, List.of(history), NONE));
+        var history = reads.captureHistorical(caller, rig.fixture().address(), rig.fixture().revision());
+        boolean delivered = false;
+        try {
+            var result = new Captured(reads, history, DocumentHistoricalAssessmentSources.open(rig.record().command(), caller, List.of(history), NONE));
+            delivered = true; return result;
+        } finally {
+            if (!delivered) { history.close(); history.release(); reads.fence(); reads.attestLocalQuiescence(); }
+        }
     }
 }

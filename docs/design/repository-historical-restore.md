@@ -964,11 +964,34 @@ activation path still refuses a fresh historical command.
 
 Qualification covers actual two-owner captures, separate drain receipts, omitted
 or altered sidecar identities, rollback, lost reply and cancellation around commit.
-Fresh-process confirmation/attachment, concurrent activation, scoped revocation,
-multi-hop ancestry and traversal-limit qualification remain open. Keep claimed
-historical execution and root release gated. Success publication and broader
-multi-generation recovery require their own qualification; activation and capture
-registration alone do not prove them.
+`RepositoryHistoricalActivationEvidence.confirm` now returns immutable V94/V109
+identity from a separate connection without source handles, session attachment,
+lease renewal or local-drain authority. It binds command, epoch/token/incarnation,
+successor and retained preparation digests, capture digest and activation transaction.
+Missing activation returns absent; bare V94 execution is not historical evidence.
+Exact readback remains valid after capture completion or credential/source revocation;
+it does not authorize new reads or execution. Scoped activation tests separately
+check current source READ, creation grant and credential revocation after capture.
+
+A restarted process must not reuse the saved incarnation as process authority.
+The original live manager can reconcile its own retained attempt after a lost
+reply. Another process needs a fresh reservation, epoch, incarnation and source
+capture once the prior claim and owner expire. Old capture evidence remains
+required; only actual completion or durable reader quiescence can satisfy it.
+The cold-confirmation tests use a separate entity-manager factory in the same JVM,
+not a deployed restart or newly attached execution session.
+
+A three-owner regression now waits for actual epoch-2 claim and owner expiry,
+reserves a distinct epoch-3 incarnation, and follows two immutable V93 preparation
+links back to the original generation-0 retention set. Completing epochs 3 and 2
+still leaves coverage incomplete until epoch 1 releases its actual pins and gains
+a QUIESCED receipt. All three batches then qualify without changing the current
+leases. See the [confirmation and recovery evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
+
+Concurrent activation, traversal-limit qualification and deployed restart/session
+attachment remain open. Keep claimed historical execution and root release gated.
+Success publication and broader multi-generation recovery require their own
+qualification; activation and capture registration alone do not prove them.
 
 The reviewed next step retains the V103 header and adds a permanent per-preparation
 release receipt. In one transaction, lock claim, V81 preparation, V103 set and V104

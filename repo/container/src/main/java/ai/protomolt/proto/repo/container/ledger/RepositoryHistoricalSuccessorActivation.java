@@ -123,19 +123,9 @@ final class RepositoryHistoricalSuccessorActivation {
     }
 
     private boolean confirms(EntityManager em, byte[] sha, byte[] retainedSha, String modes) {
-        if (!RepositorySuccessorExecution.read(em, plan, sha, modes)) return false;
-        var rows = scope(em.createNativeQuery("""
-                SELECT claim_token,incarnation,predecessor_generation,preparation_sha256,command_sha256,
-                  retention_generation,retention_sha256,pins_sha256
-                FROM repository_historical_activations WHERE account_id=:a AND principal=:p AND operation_id=:o AND claim_epoch=:e
-                """)).setParameter("e", plan.reservation().predecessor().epoch()+1).getResultList();
-        if (rows.isEmpty()) throw unavailable();
-        var r = (Object[]) rows.getFirst();
-        if (!plan.reservation().successorToken().equals(r[0]) || !plan.reservation().successorIncarnation().equals(r[1])
-                || ((Number) r[2]).longValue()!=plan.next().predecessorGeneration() || !MessageDigest.isEqual(sha,(byte[]) r[3])
-                || !plan.next().command().sha256().equals(HexFormat.of().formatHex((byte[]) r[4]))
-                || ((Number) r[5]).longValue()!=retention.predecessorGeneration()
-                || !MessageDigest.isEqual(retainedSha,(byte[]) r[6]) || !MessageDigest.isEqual(capturedDigest,(byte[]) r[7]))
+        var evidence = RepositoryHistoricalActivationEvidence.read(em, plan, retention, sha, retainedSha, modes);
+        if (evidence.isEmpty()) return false;
+        if (!evidence.orElseThrow().captureSha256().equals(HexFormat.of().formatHex(capturedDigest)))
             throw new RepositoryException(RepositoryException.Code.CONFLICT, "Historical activation differs from this capture");
         return true;
     }

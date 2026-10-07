@@ -7061,5 +7061,16 @@ Real SQL qualification now covers two independently drained capture-owner epochs
 rollback, omitted/altered bindings, lost acknowledgement and cancellation around
 commit. Source provider observations remain synthetic. See the
 [activation evidence](../evidence/repository/2026-10-07-historical-activation/README.md).
-Cold attachment, scoped revocation, concurrent fresh attempts and broader ancestry
-qualification remain open. Public historical execution and root release stay gated.
+Cold attachment, concurrent fresh attempts and ancestry-limit qualification remain
+open. Public historical execution and root release stay gated.
+
+**Historical confirmation and scoped recovery:** a **new private** immutable
+readback operation confirms the exact activation from an independent connection,
+without restoring execution or local drain authority. Same-attempt confirmation
+reuses it. Scoped activation now has explicit credential, creation-grant and
+source-READ revocation cases. Actual lease expiry and a third owner exercise two
+ancestry edges; all three captures must independently drain. Protobuf contracts
+and public execution remain **unchanged**. The 56 passing SQL tests and their
+limits are recorded in the
+[confirmation evidence](../evidence/repository/2026-10-07-historical-confirmation/README.md).
+Separate connections in one JVM do not establish deployed restart recovery.

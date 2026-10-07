@@ -48,7 +48,15 @@ class DocumentCaptureAdmissionClosureIT {
 
     static Rig historicalInitial(Context c) throws Exception { return prepare(c, false, false, true, Duration.ofSeconds(1)); }
 
+    static Rig historicalCreationInitial(Context c, java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim) throws Exception {
+        return prepare(c, false, false, true, Duration.ofSeconds(1), beforeClaim, true);
+    }
+
     static RepositorySuccessorInstall.Plan installedHistoricalSuccessor(Context c, Rig rig) {
+        return installedHistoricalSuccessor(c, rig, LEASE);
+    }
+
+    static RepositorySuccessorInstall.Plan installedHistoricalSuccessor(Context c, Rig rig, Duration successorLease) {
             var command = rig.record().command();
             var modes = Map.of(command.intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
             try (var work = rig.sources().work()) {
@@ -65,10 +73,10 @@ class DocumentCaptureAdmissionClosureIT {
             var identity = new RepositoryCoordinatorDrain.Identity(rig.record().key(), command.sha256(),
                     rig.claim().epoch(), rig.claim().token(), rig.coordinator());
             var reservation = new RepositoryCoordinatorReservation.ExpiredUnquiesced(identity,
-                    UUID.randomUUID(), UUID.randomUUID(), LEASE,
+                    UUID.randomUUID(), UUID.randomUUID(), successorLease,
                     new RepositoryCoordinatorReservation.OwnerIdentity(1, rig.record().seeds().ownerNonce()));
             RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER, reservation, NONE);
-            var plan = RepositorySuccessorInstall.prepare(reservation, rig.record(), LEASE, modes);
+            var plan = RepositorySuccessorInstall.prepare(reservation, rig.record(), successorLease, modes);
             RepositorySuccessorInstall.install(c.tx(), rig.budget(), CALLER, plan, NONE);
             return plan;
     }
@@ -403,6 +411,11 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture, Duration lease) throws Exception {
+        return prepare(c, repeatedSelector, twoParts, capture, lease, ignored -> {}, false);
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture, Duration lease,
+            java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim, boolean creation) throws Exception {
         var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("capture-coverage")
                 .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                         .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
@@ -417,6 +430,12 @@ class DocumentCaptureAdmissionClosureIT {
         var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
         var history = reads.captureHistorical(CALLER, fixture.address(), fixture.revision());
         var intent = original.command().intent().toBuilder().setOperationId(UUID.randomUUID().toString()).setMembers(0, member(fixture, history));
+        if (creation) {
+            var target = intent.getMembers(0).toBuilder();
+            target.setDestination(target.getDestination().toBuilder().clearExpectedMutationRevision().setIfAbsent(true)
+                    .setAddress(target.getDestination().getAddress().toBuilder().setGraphAddressId("historical-creation")));
+            intent.setMembers(0, target);
+        }
         if (repeatedSelector) {
             var repeated = intent.getMembers(0).toBuilder().setMemberId("repeat");
             repeated.setDestination(repeated.getDestination().toBuilder().clearExpectedMutationRevision().setIfAbsent(true)
@@ -433,6 +452,7 @@ class DocumentCaptureAdmissionClosureIT {
         var budget = new PayloadBudget(64L * 1024 * 1024);
         boolean delivered = false;
         try {
+            beforeClaim.accept(record);
             var pins = DocumentPreparationSourcePins.prepare(command, sources.references(command, () -> {}), () -> {});
             var claim = c.tx().inTransaction(em -> {
                 var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, key, command, UUID.randomUUID(), lease, sources);
