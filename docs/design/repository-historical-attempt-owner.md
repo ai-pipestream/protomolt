@@ -1,6 +1,7 @@
 # Managed historical attempt ownership
 
-Status: reviewed design; the owner and public routing are not implemented.
+Status: reviewed design; a private installed-plan owner is implemented. Public
+routing and the complete managed recovery path are not implemented.
 Build on `RepositoryHistoricalSuccessorActivation`, its accepted-call attachment,
 and its classified capture disposal. Keep the public historical publication gate
 until the complete managed path is qualified.
@@ -140,4 +141,29 @@ subsequent authorized recovery, without claiming that recovery already succeeded
   historical-command gate is changed. Public documentation describes only that result.
 
 The existing single-source scoped mixed-successor probe, accepted-call probe and
-capture-disposal suites are prerequisites, not evidence that this owner is implemented.
+capture-disposal suites are prerequisites, not evidence of managed owner qualification.
+
+## Private installed-plan checkpoint
+
+`RepositoryInstalledHistoricalAttempts` now reserves entry capacity before source
+transfer, retains the activation/execution/assessment and acknowledged CREATE result,
+and separates request exclusion from retained scope permits. Exact local retries do
+not reserve another preparation scratch lease. New entry fingerprinting still uses a
+conservative roughly 49 MiB temporary encoding reservation; retained accounting uses
+actual encoded preparation/mode sizes. Encoding currently holds the short-lived map
+monitor; this has not been qualified under concurrent load.
+
+Seven real PostgreSQL tests qualify entry identity/exclusion, byte-capacity refusal,
+exact retries under budget pressure, failed source transfer, held-worker drainage,
+cancellation, START continuation across client calls, and activation rollback/lost
+reply cleanup. Source publication in these SQL fixtures uses synthetic provider
+observations; it is not provider durability evidence. The 21 existing activation and
+capture-disposal tests also pass. See the
+[installed owner evidence](../evidence/repository/2026-10-07-installed-historical-owner/README.md).
+
+Still required before managed use: qualify retained assessment plus CREATE/publication
+across distinct client calls against real providers; reconcile uncertain CREATE into
+an exact verified stage without reissuing CREATE; retire authenticated terminal/fenced
+entries during normal service operation; own proposal/install uncertainty; and wire and
+qualify both library and transport entry points. Currently entries remain until shutdown,
+so capacity can fill over a long-running service. The facade gate remains unchanged.
