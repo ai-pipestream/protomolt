@@ -16,7 +16,7 @@ final class HistoricalPublicationCommitWinnerProbe {
 
     static DocumentPublicationResult run(DataSource database, Tx independent, RepositoryCaller coordinator,
             RepositoryOperationLedger.Owner owner, RepositorySuccessorInstall.Plan plan,
-            Publication publication) throws Exception {
+            Publication publication, Runnable afterExpiry) throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var fired = new AtomicBoolean();
@@ -63,6 +63,7 @@ final class HistoricalPublicationCommitWinnerProbe {
                     }
                     require(count(observer, "repository_operation_success", owner) == 0, "uncommitted success invisible to observer");
                     long reservations = count(observer, "repository_coordinator_expirations", owner);
+                    afterExpiry.run();
                     contender = workers.submit(() -> RepositoryCoordinatorExpiration.reserve(
                             independent.withTimeouts(new SqlTimeouts(Duration.ofSeconds(15), Duration.ofSeconds(20))),
                             coordinator, proposal, RepositoryReadControl.NONE));

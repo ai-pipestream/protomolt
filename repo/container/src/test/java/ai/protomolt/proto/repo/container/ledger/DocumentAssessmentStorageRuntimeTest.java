@@ -252,8 +252,9 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner")) {
-                boolean commitWins = databaseName.equals("historical_commit_winner");
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first")) {
+                boolean oldFirst = databaseName.equals("historical_commit_winner_old_first");
+                boolean commitWins = databaseName.equals("historical_commit_winner") || oldFirst;
                 boolean overlap = databaseName.equals("historical_generation_overlap");
                 boolean selfSupersession = databaseName.equals("historical_self_supersession");
                 try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -265,7 +266,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                         classpath + java.io.File.pathSeparator + probe,
                         "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
-                if (commitWins) reconciliationBuilder.command().add("commit-wins");
+                if (commitWins) reconciliationBuilder.command().add(oldFirst ? "commit-wins-old-first" : "commit-wins");
                 if (overlap) reconciliationBuilder.command().add("overlap");
                 if (selfSupersession) reconciliationBuilder.command().add("self-supersession");
                 reconciliationBuilder.environment().putAll(builder.environment());
@@ -282,7 +283,8 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(reconciliation.exitValue()).as(result).isZero();
                     if (commitWins) {
                         assertThat(result).contains("HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK",
-                                "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK");
+                                "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK");
+                        assertThat(result).contains(oldFirst ? "HISTORICAL_LOSER_OLD_FIRST_OK" : "HISTORICAL_LOSER_NEW_FIRST_OK");
                     } else if (overlap) {
                         assertThat(result).contains("HISTORICAL_GENERATION_OVERLAP_HOST_OK",
                                 "SCOPED_HISTORICAL_GENERATION_OVERLAP_PUBLICATION_OK");

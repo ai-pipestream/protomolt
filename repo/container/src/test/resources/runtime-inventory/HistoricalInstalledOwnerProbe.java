@@ -10,7 +10,10 @@ import java.util.*;
 
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
-    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS }
+    enum Check {
+        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST;
+        boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
+    }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
             PayloadBudget budget, long before, RepositoryCaller coordinator, HistoricalGenerationOverlapProbe overlap) implements AutoCloseable {
         @Override public void close() throws Exception {
@@ -49,7 +52,7 @@ final class HistoricalInstalledOwnerProbe {
             PayloadBudget budget, Check check) throws Exception {
         long before = budget.reservedBytes();
         var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
-        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), check == Check.OVERLAP ? 2 : 1);
+        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), (check == Check.OVERLAP || check.commitWinner()) ? 2 : 1);
         HistoricalGenerationOverlapProbe overlap = null;
         try {
             var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
@@ -69,7 +72,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check == Check.COMMIT_WINS) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner()) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -167,6 +170,7 @@ final class HistoricalInstalledOwnerProbe {
         var attempts = prepared.attempts();
         var runtime = new DocumentPublicationScopeCalls();
         boolean transferred = false;
+        HistoricalPublicationLosingSuccessorProbe losing = null;
         Throwable primary = null;
         try {
             DocumentAssessmentStartJournal.Started started;
@@ -307,10 +311,12 @@ final class HistoricalInstalledOwnerProbe {
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
-                if (check == Check.COMMIT_WINS) {
+                if (check.commitWinner()) {
+                    losing = new HistoricalPublicationLosingSuccessorProbe(tx, attempts, caller, coordinator, command,
+                            request.identity(), fragments, accepted.fork());
                     result = HistoricalPublicationCommitWinnerProbe.run(database, tx, coordinator, owner, plan,
                             publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
-                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
+                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE), losing::selectWhilePublicationWaits);
                 } else {
                     result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
                             new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
@@ -319,6 +325,14 @@ final class HistoricalInstalledOwnerProbe {
             require(runtime.isIdle(), "publication request releases runtime barrier");
             HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);
             if (prepared.overlap() != null) prepared.overlap().verifyAndRetire();
+            if (losing != null) {
+                losing.verifyAndRetire(check == Check.COMMIT_WINS_OLD_FIRST);
+                require(budget.reservedBytes() == before, "both generation byte reservations returned");
+                require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                        "receipt preserved after losing proposal and publisher retirement");
+                System.out.println("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                return;
+            }
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 try {
                     request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
@@ -349,6 +363,7 @@ final class HistoricalInstalledOwnerProbe {
             primary = failure; throw failure;
         } finally {
             try {
+                if (losing != null) losing.close();
                 if (prepared.overlap() != null) prepared.overlap().releaseWorker();
                 runtime.close(); attempts.close();
                 require(runtime.awaitIdle(Duration.ofSeconds(1)), "client requests drained before owner shutdown");

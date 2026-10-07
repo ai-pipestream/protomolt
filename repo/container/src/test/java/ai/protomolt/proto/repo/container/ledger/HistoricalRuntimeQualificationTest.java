@@ -24,7 +24,13 @@ class HistoricalRuntimeQualificationTest {
         run("overlap", "HISTORICAL_GENERATION_OVERLAP_HOST_OK", "SCOPED_HISTORICAL_GENERATION_OVERLAP_PUBLICATION_OK");
     }
     @Test void commitWinner() throws Exception {
-        run("commit-wins", "HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK", "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK");
+        run("commit-wins", "HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK", "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK", "HISTORICAL_LOSER_NEW_FIRST_OK");
+    }
+
+    @Test void commitWinnerOldFirst() throws Exception {
+        run("commit-wins-old-first", "HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK",
+                "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK",
+                "HISTORICAL_LOSER_OLD_FIRST_OK");
     }
 
     private void run(String mode, String... markers) throws Exception {

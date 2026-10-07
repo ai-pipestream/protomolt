@@ -1082,8 +1082,7 @@ Evidence:
   26 SQL cases covering capacity and exact replacement lineage.
 
 These checkpoints do not enable the public historical entrypoint. Outstanding
-acceptance includes publication/takeover transaction orderings, reconciliation of a
-local successor proposal when the predecessor publishes first, and managed-host
+acceptance includes the remaining publication/takeover transaction orderings and managed-host
 routing with accepted-call shutdown and credential boundaries. Pruning, scale
 qualification and progressive hydration remain separate requirements of the goal.
 
@@ -1093,3 +1092,8 @@ transaction callback returns. Expiry after successful finalization can allow tha
 transaction to commit under the fencing locks; a waiting takeover must then reject
 the terminal operation. See `repository-historical-attempt-owner.md` for the
 reviewed barrier positions and current qualification status.
+
+The local proposal case passes focused provider checks in both retirement orders,
+including active Work, capture-drain records and preserved receipts. See
+`../evidence/repository/2026-10-07-local-successor-terminal-retirement/README.md`.
+The aggregate rerun remains pending; public historical routing is not enabled.

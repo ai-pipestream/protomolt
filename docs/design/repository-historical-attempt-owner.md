@@ -585,29 +585,31 @@ Sol reviewed the implementation. The full packaged-provider gate passed in 13m03
 with one aggregate case and zero failures/errors/skips (778.536 seconds). Evidence:
 `docs/evidence/repository/2026-10-07-publication-commit-winner/README.md`.
 
-This case tests SQL publication arbitration. It does not exercise a competing
-`beginSuccessor` entry or prove reconciliation of a selected local proposal after
-publication wins. Keep that owner-routing acceptance case separate, together with
-pre-finalization expiry and takeover-before-claim ordering.
+The initial case qualified direct SQL arbitration. The local-owner extension adds
+`beginSuccessor` while the publisher is gated, then advances that proposal after
+the publication commits. Pre-finalization expiry and takeover-before-claim ordering
+remain separate acceptance cases.
 
 #### Local proposal cleanup after predecessor publication
 
-Source review found an existing route for this case, still requiring qualification.
-`retireTerminal` uses active-call checks rather than mutation admission and observes
-the exact command's authorized global terminal result. It can retire an uninstalled
-selected proposal even though V97 never committed. Removing that proposal must not
-remove the older generation's ID. `resumeGeneration` can then retire the older
-entry despite its supersession-pending flag. Accepted Work must prevent final local
-release until the actual worker completes.
+`HistoricalPublicationLosingSuccessorProbe` retains a fork of accepted Work and
+selects a separate proposal after PostgreSQL lease expiry. The existing direct V97
+contender still proves the precise publisher lock wait. The local proposal does
+not advance until publication completes: its authorization path can acquire document
+locks before reaching V97, so it must not be described as the observed V97 waiter.
 
-Extend the post-finalization fixture by using `beginSuccessor` and its real
-`advancePreparation`, rather than only a direct reservation. Capture the old ID
-before its synchronized publication starts. Prove the pending successor is selected,
-its V97 waits and loses to terminal publication, and cleanup in each order preserves
-both IDs until their individual retirement. Assert no new reservation, installation
-or capture; retain the exact receipt; return all byte reservations after Work ends.
-A mutation attempt on the supersession-pending old entry should report disposal-only
-state, rather than being mistaken for the ordinary repeat-publication path.
+After provider readback, local `advancePreparation` must report terminal rejection.
+No reservation, installation or activation may be added. The focused cases exercise
+both retirement orders. The old generation stays owned until its worker drains;
+retiring it first must preserve the pending successor route. Removing the proposal
+first must preserve ID-based access to the old generation. V107 stays unchanged
+while Work is held and increases once after the publisher drains. Removing the
+uninstalled proposal adds no capture-drain attestation. Final checks require both
+IDs removed, all retained byte reservations returned and the exact receipt replayable.
+
+Both focused cases passed with 0 failures or skips in 2m07s. Sol reviewed the
+extension. The full storage rerun is pending. Evidence:
+`docs/evidence/repository/2026-10-07-local-successor-terminal-retirement/README.md`.
 
 Terminal proof requires the retained caller's current replay authority. Revocation
 before proof cannot authorize receipt delivery or mint that proof. Private shutdown
@@ -626,7 +628,7 @@ host as `admissionStorageTest`:
   --max-workers=2 --console=plain
 ```
 
-Other method names are `reconciliation`, `selfSupersession` and
+Other method names are `commitWinnerOldFirst`, `reconciliation`, `selfSupersession` and
 `overlappingGenerations`. Each case uses real PostgreSQL and LocalStack in an
 isolated host with the existing deadline and required-marker checks. The focused
 task is optional and excluded from ordinary unit tests. It does not replace the
