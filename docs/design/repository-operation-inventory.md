@@ -1,5 +1,25 @@
 # Repository operation inventory
 
+## Historical source lifetime (2026-10-07)
+
+- **Extended private registration:** an accepted call holds a source Work through
+  transaction completion and response unwinding. Closing source admission refuses
+  new calls without ending accepted calls' borrowed Uses.
+- **Extended schema resolution:** returned member resolutions hold that Work until
+  their components have all been offered cleanup. Cleanup failures propagate with
+  suppressed secondary errors. Failed construction also ends its Work.
+- **New internal drain observation:** source drain requires admission closure,
+  actual Work completion and successful release of borrowed Uses. Cancelling a
+  running future is not evidence that its worker has finished.
+- **Unchanged:** protobuf contracts, durable pin batches, physical pin release,
+  V91 attestations, public historical execution gates and retention pruning.
+
+The [14-test qualification](../evidence/repository/2026-10-07-source-lifetime/README.md)
+includes real PostgreSQL gates before commit and after commit before acknowledgement,
+retained schema resolution, cleanup failure and running-worker cancellation.
+Sol reviewed this checkpoint without a blocker. Factory setup still requires open
+sources. Queued-task cancellation and durable batch drain are not qualified here.
+
 ## Historical capture ownership (2026-10-07)
 
 - **Extended private registration:** V105 requires an immutable owner for each new

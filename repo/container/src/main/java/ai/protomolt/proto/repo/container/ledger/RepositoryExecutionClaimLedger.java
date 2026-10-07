@@ -54,6 +54,13 @@ final class RepositoryExecutionClaimLedger {
     /** Private registration only; the enclosing transaction must retain and check exact sources. */
     static Acquisition acquireHistoricalInitialInTransaction(EntityManager em, RepositoryOperationLedger.Key key,
             DocumentPublicationCommand command, UUID token, Duration lease, DocumentHistoricalAssessmentSources sources) {
+        try (var work = sources.work()) {
+            return acquireHistoricalInitialInTransaction(em, key, command, token, lease, work);
+        }
+    }
+
+    static Acquisition acquireHistoricalInitialInTransaction(EntityManager em, RepositoryOperationLedger.Key key,
+            DocumentPublicationCommand command, UUID token, Duration lease, DocumentHistoricalAssessmentSources.Work sources) {
         if (sources.references(command, () -> {}).isEmpty())
             throw new IllegalArgumentException("Historical registration requires pinned sources");
         if (!key.account().equals(command.intent().getAccountId()) || !key.operationId().equals(command.operationId()))

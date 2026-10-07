@@ -783,7 +783,22 @@ drain cannot certify work from every earlier epoch. This association grants no
 execution, release or quiescence authority; historical successor capture and the
 batch-local drain protocol still need end-to-end qualification.
 
-Normal release needs a batch-local barrier that closes source admission, drains
+The private source lifetime now closes admission independently of accepted work.
+Registration retains a Work through transaction completion and response unwinding;
+returned member schema resolutions retain theirs until component cleanup finishes.
+New admissions fail after close. `awaitDrained` requires all accepted Works to end
+and borrowed Uses to close successfully. This does not release physical pins or
+write a durable drain record. Factory setup is not an accepted registration and
+may fail safely if its sources close during construction.
+
+The running-worker cancellation test deliberately waits for actual worker exit,
+not Future completion. Any future asynchronous submission must additionally handle
+rejection or cancellation before the task starts, handing ownership to the worker
+only when it actually starts; otherwise a queued task could leak its Work. That
+submission integration is not implemented or qualified by this checkpoint.
+See the [local lifetime evidence](../evidence/repository/2026-10-07-source-lifetime/README.md).
+
+Normal release still needs a batch-local barrier that closes source admission, drains
 the borrowed Uses and actual schema/provider workers, releases exact native pins,
 and records an immutable drain for that capture and epoch. Registration currently
 leaves source Uses with the caller, so V91's host-local marker is insufficient

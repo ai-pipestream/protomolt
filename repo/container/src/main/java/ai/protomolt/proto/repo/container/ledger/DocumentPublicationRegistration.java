@@ -72,8 +72,10 @@ final class DocumentPublicationRegistration {
     }
 
     /**
-     * Private registration qualification. The caller owns sources and must keep them
-     * open through commit or reconciliation of an uncertain response. No session is enabled.
+     * Private registration qualification. Setup requires open sources; accepted admission
+     * holds its own Work through commit/response unwinding, even if source admission closes.
+     * Reconciliation after an uncertain response needs open sources or a fresh capture.
+     * No session is enabled.
      */
     static DocumentPublicationRegistration historical(Tx tx, PayloadBudget budget,
             DocumentPublicationPreparationRecord preparation, DocumentHistoricalAssessmentSources sources,
@@ -133,13 +135,14 @@ final class DocumentPublicationRegistration {
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
-        try (var scope = registrations.enter();
+        try (var sourceWork = historical == null ? null : historical.work();
+             var scope = registrations.enter();
              var reserved = budget.reserve((long) DocumentPublicationPreparationCodec.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES
                      + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES
                      + (historical == null ? 0 : DocumentPreparationSourcePins.MAX_BYTES))) {
             // Reject an immediately denied caller before marking the session uncertain.
             // Authorization is checked again under the claim lock before any domain writes.
-            preflight(caller,control);
+            preflight(caller,control,sourceWork);
             var bytes = DocumentPublicationPreparationCodec.encode(preparation);
             var digest = DocumentPublicationPreparationJournal.digest(bytes);
             var encodedModes = DocumentPublicationModesJournal.encode(preparation.command(),fixedModes);
@@ -147,10 +150,10 @@ final class DocumentPublicationRegistration {
                     ? RepositoryOperationLedger.prepareAdmission(preparation.key(), preparation.command(),
                             preparation.seeds().ownerNonce(), preparation.lease())
                     : RepositoryOperationLedger.prepareHistoricalAdmission(preparation.key(), preparation.command(),
-                            preparation.seeds().ownerNonce(), preparation.lease(), historical);
+                            preparation.seeds().ownerNonce(), preparation.lease(), sourceWork);
             var reuse = historical == null ? null : DocumentReuseAdmission.prepare(plan);
             var sourcePins = historical == null ? null : DocumentPreparationSourcePins.prepare(preparation.command(),
-                    historical.references(preparation.command(), control::check), control::check);
+                    sourceWork.references(preparation.command(), control::check), control::check);
             var objects = historical == null ? java.util.Set.<UUID>of() : plan.members().stream()
                     .flatMap(member -> member.intent().getPartsList().stream())
                     .filter(part -> part.hasReuse() || part.hasHistoricalReuse())
@@ -164,7 +167,7 @@ final class DocumentPublicationRegistration {
                         ? RepositoryExecutionClaimLedger.acquireInitialInTransaction(em, preparation.key(),
                                 preparation.command(), claimToken, preparation.lease())
                         : RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, preparation.key(),
-                                preparation.command(), claimToken, preparation.lease(), historical);
+                                preparation.command(), claimToken, preparation.lease(), sourceWork);
                 var claim = acquired.claim();
                 RepositoryCoordinatorBinding.bindInitial(em,acquired,coordinator);
                 DocumentAdmissionAuthorization.lockAndAuthorize(em,caller,plan,authorization,creation);
@@ -184,7 +187,7 @@ final class DocumentPublicationRegistration {
                     DocumentReuseAdmission.requireBoundSources(em, reuse);
                     var origins = DocumentPublicationLocks.lockIndependentOrigins(em, authorization.destinations(), objects, java.util.Set.of());
                     DocumentPublicationLocks.lockIndependentRetention(em, origins);
-                    for (var source : historical.references(preparation.command(), control::check))
+                    for (var source : sourceWork.references(preparation.command(), control::check))
                         DocumentHistoricalReferenceAdmission.requireBoundSources(em, source, origins, control);
                     DocumentPreparationSourcePins.insert(em, preparation, sourcePins, claim, coordinator, control::check);
                 }
@@ -210,11 +213,15 @@ final class DocumentPublicationRegistration {
     }
 
     private void preflight(RepositoryCaller caller, RepositoryReadControl control) {
+        try (var work = historical == null ? null : historical.work()) { preflight(caller, control, work); }
+    }
+
+    private void preflight(RepositoryCaller caller, RepositoryReadControl control, DocumentHistoricalAssessmentSources.Work work) {
         control.check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (historical != null) {
-            historical.requireCaller(caller);
-            historical.references(preparation.command(), control::check);
+            work.requireCaller(caller);
+            work.references(preparation.command(), control::check);
         }
         tx.inTransaction(em -> {
             DocumentAdmissionAuthorization.lockAndAuthorize(em, caller, plan, authorization,creation);

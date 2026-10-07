@@ -162,7 +162,7 @@ final class RepositoryOperationLedger {
 
     /** Preparation of private registration only; this grants no historical execution capability. */
     static java.util.function.BiFunction<EntityManager, RepositoryExecutionClaimLedger.Claim, Admission> prepareHistoricalAdmission(
-            Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease, DocumentHistoricalAssessmentSources sources) {
+            Key key, DocumentPublicationCommand command, UUID ownerNonce, Duration lease, DocumentHistoricalAssessmentSources.Work sources) {
         if (sources.references(command, () -> {}).isEmpty())
             throw new IllegalArgumentException("Historical registration requires pinned sources");
         return prepareCheckedAdmission(key, command, ownerNonce, lease);
