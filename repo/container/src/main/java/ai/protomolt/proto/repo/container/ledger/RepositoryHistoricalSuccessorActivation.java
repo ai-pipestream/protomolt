@@ -55,7 +55,20 @@ final class RepositoryHistoricalSuccessorActivation {
     synchronized DocumentHistoricalExecution openExecution(RepositoryCaller coordinator, RepositoryCaller caller,
             DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls scopes,
             RepositoryReadControl control) {
-        var scope = scopes.enter();
+        return openWithScope(coordinator, caller, accepted, control, scopes.enter());
+    }
+
+    /** Continue a live host call after new admission closes, on the same shutdown barrier. */
+    synchronized DocumentHistoricalExecution openAcceptedExecution(RepositoryCaller coordinator, RepositoryCaller caller,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls scopes,
+            DocumentPublicationScopeCalls.Call acceptedCall, RepositoryReadControl control) {
+        return openWithScope(coordinator, caller, accepted, control,
+                Objects.requireNonNull(acceptedCall).forkAccepted(scopes));
+    }
+
+    private DocumentHistoricalExecution openWithScope(RepositoryCaller coordinator, RepositoryCaller caller,
+            DocumentHistoricalAssessmentSources.Work accepted, RepositoryReadControl control,
+            DocumentPublicationScopeCalls.Call scope) {
         try {
             var capture = activateAccepted(coordinator, caller, control, accepted);
             return DocumentHistoricalSuccessorExecution.open(tx, budget, plan, retention, sources, capture,

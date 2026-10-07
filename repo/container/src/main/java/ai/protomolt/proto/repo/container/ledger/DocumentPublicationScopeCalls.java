@@ -33,6 +33,12 @@ final class DocumentPublicationScopeCalls {
 
     final class Call implements AutoCloseable {
         private boolean ended;
+        /** Reject continuation through a different runtime's shutdown barrier. */
+        Call forkAccepted(DocumentPublicationScopeCalls expected) {
+            if (expected != DocumentPublicationScopeCalls.this)
+                throw new IllegalArgumentException("Accepted call belongs to another publication scope");
+            return forkAccepted();
+        }
         /** Continuation of an accepted call; never reopens external admission. */
         Call forkAccepted() {
             synchronized (DocumentPublicationScopeCalls.this) {

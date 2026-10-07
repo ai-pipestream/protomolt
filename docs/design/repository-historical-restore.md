@@ -1668,3 +1668,10 @@ The expired predecessor is fenced and its unverified upload object is unchanged.
 See [scoped successor evidence](../evidence/repository/2026-10-07-scoped-mixed-successor/README.md).
 This supersedes the mixed/scoped successor test gap above for this single-source
 private path; managed historical orchestration and public exposure remain open.
+
+The private successor attachment now accepts a continuation of an existing host
+call after new publication admission closes. It validates the call's barrier,
+refuses ended permits, refunds failed attachment forks, and keeps the execution
+counted after its parent call ends. Full real-provider qualification passed;
+see [accepted-call evidence](../evidence/repository/2026-10-07-accepted-historical-call/README.md).
+This is a prerequisite for managed historical orchestration, not its public enablement.

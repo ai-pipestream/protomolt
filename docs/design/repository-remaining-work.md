@@ -1016,3 +1016,29 @@ Tests must cover managed scoped mixed successors, missing/corrupt fresh payload 
 before reservation, activation/CREATE/publication lost acknowledgments, revocation,
 and shutdown timeout with held schema/provider work followed by successful drain and
 zero retained payload budget. Preserve ordinary recovery's existing shutdown order.
+
+### Historical owner disposal after uncertain activation
+
+A tentative Java capture is assigned inside V109 activation before commit. Its
+presence alone does not prove that V104/V105 capture rows committed. Existing
+`DocumentPreparationCaptureDrain.Capture.complete` waits local Work/Uses, releases
+native pins and records V107 LOCAL against the exact durable capture owner. It is
+appropriate for a committed capture, including one later fenced by claim takeover;
+it cannot be used as unconditional disposal for a rolled-back activation.
+
+Before a managed owner disposes uncertain state, close new owner admission and
+settle its accepted transaction/worker calls. Classify the exact activation and
+capture identities as committed, consistently absent or inconsistent. Positive
+confirmation must bind the plan, retained preparation, execution and capture digest.
+The existing activation evidence helper returning empty alone is not sufficient:
+it can also return empty when prerequisite reservation/execution evidence is missing.
+Check the exact V109/V104/V105 rows as a consistent set. SQL failure, partial rows or
+mismatched identities retain unresolved ownership and propagate the failure.
+
+Committed capture cleanup uses the existing complete/drain protocol after actual
+Work exits. Consistently absent activation requires local-only source/read cleanup
+with no V107 marker. Do not infer rollback from a failed drain insertion or claim
+remote quiescence from local disposal. Test rollback, lost acknowledgment, committed
+then fenced takeover, unavailable confirmation, held workers and exact pin release.
+This is a design requirement for managed historical ownership, not implemented
+public recovery behavior.
