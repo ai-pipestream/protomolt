@@ -160,6 +160,44 @@ final class DocumentPreparationSourcePins {
         if (record.predecessorGeneration() != 0 || claim.epoch() != 1
                 || !record.key().equals(claim.key()) || !record.command().sha256().equals(claim.commandSha256()))
             throw new IllegalArgumentException("Initial capture differs from preparation claim");
+        requireCapture(em, record, prepared, claim, coordinator, control, full, true, "");
+    }
+
+    /**
+     * Verify a fresh successor batch against already verified V109 activation evidence.
+     * Caller holds its live claim before origin/retention locks and owns exact source Work.
+     * The retained record is the original root anchor, not the successor's preparation.
+     * This does not verify execution preparation, current document authorization or grant execution.
+     */
+    static void requireSuccessor(EntityManager em, DocumentPublicationPreparationRecord retention, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, String activationTransaction,
+            Runnable control) {
+        requireSuccessor(em, retention, prepared, claim, coordinator, activationTransaction, control, true);
+    }
+
+    /** Only for a handle whose full attachment verification and authorization completed. */
+    static void requireActiveSuccessor(EntityManager em, DocumentPublicationPreparationRecord retention, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, String activationTransaction,
+            Runnable control) {
+        requireSuccessor(em, retention, prepared, claim, coordinator, activationTransaction, control, false);
+    }
+
+    private static void requireSuccessor(EntityManager em, DocumentPublicationPreparationRecord retention, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, String activationTransaction,
+            Runnable control, boolean full) {
+        if (claim.epoch() <= 1 || !retention.key().equals(claim.key())
+                || !retention.command().sha256().equals(claim.commandSha256()))
+            throw new IllegalArgumentException("Successor capture differs from preparation claim");
+        if (activationTransaction == null || !activationTransaction.matches("[1-9][0-9]*"))
+            throw new IllegalArgumentException("Successor capture requires an activation transaction");
+        requireCapture(em, retention, prepared, claim, coordinator, control, full, false, activationTransaction);
+    }
+
+    private static void requireCapture(EntityManager em, DocumentPublicationPreparationRecord record, Prepared prepared,
+            RepositoryExecutionClaimLedger.Claim claim, java.util.UUID coordinator, Runnable control,
+            boolean full, boolean initial, String activationTransaction) {
+        control.run();
+        String kind = initial ? "Initial" : "Successor";
         java.util.Objects.requireNonNull(coordinator);
         RepositoryCoordinatorBinding.requireResume(em, claim, coordinator);
         boolean closed = (Boolean) em.createNativeQuery("""
@@ -170,9 +208,11 @@ final class DocumentPreparationSourcePins {
                 """).setParameter("a", record.key().account()).setParameter("p", record.key().principal())
                 .setParameter("o", record.key().operationId()).setParameter("epoch", claim.epoch()).getSingleResult();
         if (closed) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                "Initial preparation capture admission is closed");
+                kind + " preparation capture admission is closed");
         var rows = scope(em.createNativeQuery("""
-                SELECT b.expected_count,b.sealed,b.initial_capture,b.creation_xid=h.creation_xid,
+                SELECT b.expected_count,b.sealed,b.initial_capture,
+                  CASE WHEN :initial THEN b.creation_xid=h.creation_xid
+                    ELSE b.creation_xid::text=CAST(:activation AS text) END,
                   own.claim_epoch,own.claim_token,own.incarnation,
                   CASE WHEN :full THEN (SELECT count(*) FROM repository_preparation_source_pins p
                     WHERE p.account_id=b.account_id AND p.principal=b.principal AND p.operation_id=b.operation_id
@@ -188,17 +228,18 @@ final class DocumentPreparationSourcePins {
                 JOIN repository_preparation_history_sets h USING(account_id,principal,operation_id,predecessor_generation)
                 JOIN repository_preparation_pin_owners own USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
                 WHERE b.account_id=:a AND b.principal=:p AND b.operation_id=:o AND b.predecessor_generation=:g AND b.pins_sha256=:digest
-                """), record, prepared).setParameter("full", full).getResultList();
+                """), record, prepared).setParameter("full", full).setParameter("initial", initial)
+                .setParameter("activation", activationTransaction).getResultList();
         if (rows.isEmpty()) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                "Initial preparation capture is absent");
+                kind + " preparation capture is absent");
         Object[] row = (Object[]) rows.getFirst();
         if (((Number) row[0]).intValue() != prepared.pins().size() || !Boolean.TRUE.equals(row[1])
-                || !Boolean.TRUE.equals(row[2]) || !Boolean.TRUE.equals(row[3])
+                || !Boolean.valueOf(initial).equals(row[2]) || !Boolean.TRUE.equals(row[3])
                 || ((Number) row[7]).longValue() != prepared.pins().size()) throw corrupt();
         if (((Number) row[4]).longValue() != claim.epoch() || !claim.token().equals(row[5]) || !coordinator.equals(row[6])
                 || Boolean.TRUE.equals(row[8]) || Boolean.TRUE.equals(row[9]))
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                    "Initial preparation capture is no longer executable");
+                    kind + " preparation capture is no longer executable");
         if (full) {
             long matches = ((Number) scope(em.createNativeQuery("""
                 SELECT count(*) FROM repository_preparation_source_pins p
@@ -218,7 +259,7 @@ final class DocumentPreparationSourcePins {
                   AND q.pins_sha256=:digest AND p.read_scope='HISTORICAL' ORDER BY p.pin_id FOR SHARE OF p
                 """), record, prepared).getResultList();
         if (live.size() != prepared.pins().size()) throw new DocumentPartAttemptLedger.FenceException(
-                "Initial preparation capture no longer has its live historical pins");
+                kind + " preparation capture no longer has its live historical pins");
         control.run();
     }
 

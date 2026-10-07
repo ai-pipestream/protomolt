@@ -72,6 +72,60 @@ class ScopedHistoricalSuccessorActivationIT {
         }
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"creation,before", "credential,before", "source,before",
+            "creation,after", "credential,after", "source,after"})
+    void successorAttachmentAndHeldExecutionRecheckRevocation(String revoked, String phase) throws Exception {
+        try (var c = context(POSTGRES)) {
+            var credential = new RepositoryCredentialBinding("successor-execution-test", UUID.randomUUID(), 1);
+            var caller = new RepositoryCaller("principal", false, Set.of("account"), Set.of(), Optional.of(credential));
+            var authorities = new RepositoryCredentialAuthorities(c.tx());
+            authorities.register(COORDINATOR, credential, caller.principalName());
+            var grants = new RepositoryCreationGrants(c.tx(), new DriveLedger(c.tx()));
+            try (var rig = historicalCreationInitial(c, record -> grants.install(COORDINATOR, RepositoryCreationGrants.prepare(
+                    caller, record.command(), record.placements(), (System.currentTimeMillis()+300_000)*1000)))) {
+                var security = DocumentSecurity.newBuilder().addPermissions(AccessRule.newBuilder()
+                        .setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ)).build();
+                setSourcePolicy(c, rig, com.google.protobuf.util.JsonFormat.printer().print(security));
+                var plan = installedHistoricalSuccessor(c, rig);
+                var scopes = new DocumentPublicationScopeCalls();
+                long baseline = rig.budget().reservedBytes();
+                try (var later = capture(c, rig, caller); var work = later.sources().work()) {
+                    var activation = activation(c.tx(), c, rig, plan, later);
+                    var captured = activation.activateAccepted(COORDINATOR, caller, NONE, work);
+                    var held = phase.equals("after") ? activation.openExecution(COORDINATOR, caller, work, scopes, NONE) : null;
+                    try {
+                        switch (revoked) {
+                            case "creation" -> grants.revoke(COORDINATOR, rig.record().key());
+                            case "credential" -> authorities.revoke(COORDINATOR, credential, caller.principalName());
+                            case "source" -> setSourcePolicy(c, rig, "{}");
+                            default -> throw new AssertionError(revoked);
+                        }
+                        var expected = revoked.equals("credential") ? RepositoryException.Code.UNAUTHENTICATED
+                                : RepositoryException.Code.NOT_FOUND;
+                        assertThatThrownBy(() -> {
+                            if (held != null) held.start(caller, Duration.ofMinutes(1), NONE);
+                            else try (var unexpected = activation.openExecution(COORDINATOR, caller, work, scopes, NONE)) {
+                                throw new AssertionError("Revoked caller attached execution");
+                            }
+                        }).isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(expected));
+                        for (var table : List.of("repository_publication_assessment_starts", "repository_schema_artifact_claims",
+                                "document_assessment_owners", "document_revision_commits")) {
+                            long rows = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:o")
+                                    .setParameter("o", rig.record().key().operationId()).getSingleResult()).longValue());
+                            assertThat(rows).as(table).isZero();
+                        }
+                    } finally { if (held != null) held.close(); }
+                    assertThat(scopes.isIdle()).isTrue();
+                    assertThat(rig.budget().reservedBytes()).isEqualTo(baseline);
+                    work.close();
+                    assertThat(captured.complete(COORDINATOR, Duration.ZERO, NONE)).isPresent();
+                } finally { scopes.close(); }
+            }
+        }
+    }
+
     private static void setSourcePolicy(Context c, Rig rig, String policy) {
         c.tx().inTransaction(em -> { em.createNativeQuery("UPDATE documents SET security=CAST(:policy AS jsonb) WHERE node_id=:node")
                 .setParameter("policy", policy).setParameter("node", ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(rig.fixture().address()))

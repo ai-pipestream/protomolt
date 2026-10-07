@@ -13,7 +13,7 @@ import java.util.*;
 public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
         ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
-        STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT
+        STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
@@ -93,6 +93,7 @@ public final class HistoricalAssessmentCreationProbe {
                     claimed(tx, provider, caller, command, policy, source.placement(), history, fragments, budget, observation,
                             fault, mixed, scenario == Scenario.MIXED_CONTENTION ? database : null, scenario);
                     System.out.println(scenario == Scenario.MIXED_CONTENTION ? "CLAIMED_HISTORICAL_MIXED_ORIGIN_CONTENTION_OK"
+                            : scenario == Scenario.SUCCESSOR ? "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK"
                             : scenario == Scenario.START_CONCURRENT ? "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK"
                             : scenario == Scenario.START_ROLLBACK ? "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK"
                             : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_REFUSED_OK"
@@ -176,7 +177,7 @@ public final class HistoricalAssessmentCreationProbe {
         boolean createFault = fault != null && !startFault;
         var key = new RepositoryOperationLedger.Key("account", caller.principalName(), command.operationId());
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
-                Map.of(placement.drive().id(), placement), Duration.ofMinutes(5), 0);
+                Map.of(placement.drive().id(), placement), scenario == Scenario.SUCCESSOR ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
         var scopes = new DocumentPublicationScopeCalls();
         try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
             var registration = DocumentPublicationRegistration.historical(tx, budget, record, sources, UUID.randomUUID(),
@@ -206,6 +207,11 @@ public final class HistoricalAssessmentCreationProbe {
                         "repeated start preserves coordinates and acknowledged permission");
                 if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
                         "lost START acknowledgement recovers identity; rolled back START permits a new identity");
+                if (scenario == Scenario.SUCCESSOR) {
+                    HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
+                            policy, fragments, budget, observation, registration.drainIdentity());
+                    return;
+                }
                 var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
                 try (var assessment = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
                         mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
