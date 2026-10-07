@@ -12,6 +12,7 @@ public final class HistoricalOwnerReconciliationHost {
         var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
             case "self-supersession" -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
             case "overlap" -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
+            case "claim-expires" -> HistoricalInstalledOwnerProbe.Check.CLAIM_EXPIRES;
             case "commit-wins" -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS;
             case "commit-wins-old-first" -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS_OLD_FIRST;
             default -> throw new IllegalArgumentException("Unknown historical qualification mode");
@@ -28,6 +29,7 @@ public final class HistoricalOwnerReconciliationHost {
             observation.identity(() -> {});
         }
         System.out.println(switch (check) {
+            case CLAIM_EXPIRES -> "HISTORICAL_CLAIM_EXPIRY_HOST_OK";
             case OVERLAP -> "HISTORICAL_GENERATION_OVERLAP_HOST_OK";
             case SELF_SUPERSESSION -> "HISTORICAL_SELF_SUPERSESSION_HOST_OK";
             case COMMIT_WINS, COMMIT_WINS_OLD_FIRST -> "HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK";

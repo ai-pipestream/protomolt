@@ -33,6 +33,11 @@ class HistoricalRuntimeQualificationTest {
                 "HISTORICAL_LOSER_OLD_FIRST_OK");
     }
 
+    @Test void claimExpiresBeforeFinalization() throws Exception {
+        run("claim-expires", "HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK",
+                "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK");
+    }
+
     private void run(String mode, String... markers) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
@@ -60,7 +65,7 @@ class HistoricalRuntimeQualificationTest {
                 assertThat(process.exitValue()).as(output).isZero();
                 assertThat(output).contains(markers);
                 assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
-                        "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                        "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
             } finally {
                 if (process.isAlive()) {
                     process.destroyForcibly();

@@ -252,7 +252,8 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first")) {
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry")) {
+                boolean claimExpiry = databaseName.equals("historical_claim_expiry");
                 boolean oldFirst = databaseName.equals("historical_commit_winner_old_first");
                 boolean commitWins = databaseName.equals("historical_commit_winner") || oldFirst;
                 boolean overlap = databaseName.equals("historical_generation_overlap");
@@ -266,6 +267,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                         classpath + java.io.File.pathSeparator + probe,
                         "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
+                if (claimExpiry) reconciliationBuilder.command().add("claim-expires");
                 if (commitWins) reconciliationBuilder.command().add(oldFirst ? "commit-wins-old-first" : "commit-wins");
                 if (overlap) reconciliationBuilder.command().add("overlap");
                 if (selfSupersession) reconciliationBuilder.command().add("self-supersession");
@@ -281,7 +283,9 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
                     String result = Files.readString(reconciliationLog);
                     assertThat(reconciliation.exitValue()).as(result).isZero();
-                    if (commitWins) {
+                    if (claimExpiry) {
+                        assertThat(result).contains("HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK");
+                    } else if (commitWins) {
                         assertThat(result).contains("HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK",
                                 "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK");
                         assertThat(result).contains(oldFirst ? "HISTORICAL_LOSER_OLD_FIRST_OK" : "HISTORICAL_LOSER_NEW_FIRST_OK");
@@ -298,7 +302,7 @@ class DocumentAssessmentStorageRuntimeTest {
                                 "HISTORICAL_RECONCILIATION_RELEASED_OK");
                     }
                     assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-                    assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                    assertThat(result).contains(claimExpiry ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 } finally {
                     if (reconciliation.isAlive()) {
                         reconciliation.destroyForcibly();

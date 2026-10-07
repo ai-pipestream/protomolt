@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST;
+        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -72,7 +72,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner()) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner() || check == Check.CLAIM_EXPIRES) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -311,7 +311,16 @@ final class HistoricalInstalledOwnerProbe {
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
-                if (check.commitWinner()) {
+                if (check == Check.CLAIM_EXPIRES) {
+                    HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
+                            publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
+                    require(request.retireFenced(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                            == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "expired publisher retires after confirmed takeover");
+                    require(budget.reservedBytes() == before, "expired publisher returns retained bytes");
+                    System.out.println("SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK");
+                    return;
+                } else if (check.commitWinner()) {
                     losing = new HistoricalPublicationLosingSuccessorProbe(tx, attempts, caller, coordinator, command,
                             request.identity(), fragments, accepted.fork());
                     result = HistoricalPublicationCommitWinnerProbe.run(database, tx, coordinator, owner, plan,

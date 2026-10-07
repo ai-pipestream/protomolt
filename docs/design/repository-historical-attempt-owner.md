@@ -635,3 +635,26 @@ task is optional and excluded from ordinary unit tests. It does not replace the
 full `admissionStorageTest` dependency of `check`; all historical scenarios remain
 mandatory there. The first focused commit-winner run passed in 1m17s. The complete focused run passed: 4 tests, no failures or skips, in 4m17s.
 Evidence: `docs/evidence/repository/2026-10-07-focused-historical-runtime/`.
+
+#### Claim expiry before finalization
+
+`HistoricalPublicationClaimExpiryProbe` blocks the publisher on a real historical
+origin attempt row. PostgreSQL confirms the publisher-to-origin and
+reservation-to-publisher lock waits using backend PIDs. The test waits for both
+claim and owner expiry, checks that the assessment and selected upload leases are
+still live, and releases the origin lock.
+
+Capture revalidation calls `RepositoryExecutionClaimLedger.lockLive` after origin
+binding. That earlier check raises `Fenced`; this case does not reach V79 deferred
+finalization. The first fixture expected the later SQL guard and failed. Production
+code was unchanged when the assertion was corrected to the actual claim boundary.
+The second run passed in 1m07s. Final-source qualification passed in 1m05s
+with 1 test and no failures or skips. Sol reviewed the fixture and aggregate wiring.
+Evidence: `docs/evidence/repository/2026-10-07-pre-finalization-claim-expiry/README.md`.
+The aggregate rerun for this extension remains pending.
+
+The test requires zero committed result/revision rows and confirmation of the
+waiting reservation after rollback. The old private generation retires through
+its exact fence and returns retained bytes. It leaves a durable successor
+reservation; successor installation and provider publication after this specific
+race remain unqualified. The before-claim acquisition ordering also remains open.
