@@ -292,36 +292,46 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
-                 var statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE DATABASE historical_reconciliation");
-            }
-            var reconciliationBuilder = new ProcessBuilder(
-                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
-                    classpath + java.io.File.pathSeparator + probe,
-                    "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
-            reconciliationBuilder.environment().putAll(builder.environment());
-            String reconciliationJdbc = postgres.getJdbcUrl().replaceFirst(
-                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/historical_reconciliation");
-            assertThat(reconciliationJdbc).isNotEqualTo(postgres.getJdbcUrl());
-            reconciliationBuilder.environment().put("PROTOMOLT_TEST_JDBC", reconciliationJdbc);
-            var reconciliationLog = directory.resolve("historical-reconciliation.log");
-            var reconciliation = reconciliationBuilder.redirectErrorStream(true).redirectOutput(reconciliationLog.toFile()).start();
-            try {
-                assertThat(reconciliation.waitFor(90, TimeUnit.SECONDS)).as("Historical reconciliation host completed; log: %s", reconciliationLog).isTrue();
-                assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
-                String result = Files.readString(reconciliationLog);
-                assertThat(reconciliation.exitValue()).as(result).isZero();
-                assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK", "HISTORICAL_RECONCILIATION_HOST_OK");
-                assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-                assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
-                assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
-                        "HISTORICAL_RECONCILIATION_RELEASED_OK");
-            } finally {
-                if (reconciliation.isAlive()) {
-                    reconciliation.destroyForcibly();
-                    assertThat(reconciliation.waitFor(10, TimeUnit.SECONDS)).isTrue();
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession")) {
+                boolean selfSupersession = databaseName.equals("historical_self_supersession");
+                try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                     var statement = connection.createStatement()) {
+                    statement.executeUpdate("CREATE DATABASE " + databaseName);
+                }
+                var reconciliationBuilder = new ProcessBuilder(
+                        Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                        "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                        classpath + java.io.File.pathSeparator + probe,
+                        "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
+                if (selfSupersession) reconciliationBuilder.command().add("self-supersession");
+                reconciliationBuilder.environment().putAll(builder.environment());
+                String reconciliationJdbc = postgres.getJdbcUrl().replaceFirst(
+                        "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/" + databaseName);
+                assertThat(reconciliationJdbc).isNotEqualTo(postgres.getJdbcUrl());
+                reconciliationBuilder.environment().put("PROTOMOLT_TEST_JDBC", reconciliationJdbc);
+                var reconciliationLog = directory.resolve(databaseName.replace('_', '-') + ".log");
+                var reconciliation = reconciliationBuilder.redirectErrorStream(true).redirectOutput(reconciliationLog.toFile()).start();
+                try {
+                    assertThat(reconciliation.waitFor(90, TimeUnit.SECONDS)).as("Historical reconciliation host completed; log: %s", reconciliationLog).isTrue();
+                    assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
+                    String result = Files.readString(reconciliationLog);
+                    assertThat(reconciliation.exitValue()).as(result).isZero();
+                    if (selfSupersession) {
+                        assertThat(result).contains("HISTORICAL_SELF_SUPERSESSION_HOST_OK",
+                                "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK",
+                                "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
+                    } else {
+                        assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK", "HISTORICAL_RECONCILIATION_HOST_OK");
+                        assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
+                                "HISTORICAL_RECONCILIATION_RELEASED_OK");
+                    }
+                    assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
+                    assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                } finally {
+                    if (reconciliation.isAlive()) {
+                        reconciliation.destroyForcibly();
+                        assertThat(reconciliation.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                    }
                 }
             }
             }

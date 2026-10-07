@@ -10,7 +10,7 @@ import java.util.*;
 
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
-    enum Check { ORDINARY, REVOKED, EXPIRED }
+    enum Check { ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
             PayloadBudget budget, long before, RepositoryCaller coordinator) implements AutoCloseable {
         @Override public void close() throws Exception {
@@ -46,7 +46,7 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, Duration.ofMinutes(2), timeouts)) {
+            try (var request = attempts.beginProposed(caller, original, modes, observed, check == Check.SELF_SUPERSESSION ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -70,7 +70,7 @@ final class HistoricalInstalledOwnerProbe {
                         == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "first call reserves one proposal");
             }
             require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "proposal survives first call");
-            final RepositorySuccessorInstall.Plan plan;
+            RepositorySuccessorInstall.Plan plan;
             try (var request = attempts.resume(caller, command).orElseThrow()) {
                 require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
                         == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "second call confirms retained installation");
@@ -79,6 +79,41 @@ final class HistoricalInstalledOwnerProbe {
             require(count(tx, "repository_coordinator_expirations", command.operationId()) == 1
                     && count(tx, "repository_successor_installs", command.operationId()) == 1,
                     "one exact reservation and installation before any new history capture");
+            if (check == Check.SELF_SUPERSESSION) {
+                var previous = plan;
+                tx.readOnly(em -> em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:op
+                        """).setParameter("op", command.operationId()).getSingleResult());
+                try (var request = attempts.resume(caller, command).orElseThrow()) {
+                    require(request.reconcileUnactivated(coordinator, modes, bodies, RepositoryReadControl.NONE),
+                            "same retained owner replaces its own expired installed claim");
+                    try {
+                        request.installedPlan(coordinator, RepositoryReadControl.NONE);
+                        throw new AssertionError("Replacement exposed the old installed plan");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.CONFLICT, "replacement still requires installation");
+                    }
+                }
+                require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)),
+                        "same entry survives replacement request");
+                try (var request = attempts.resume(caller, command).orElseThrow()) {
+                    require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
+                            == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "replacement installs on a later request");
+                    plan = request.installedPlan(coordinator, RepositoryReadControl.NONE);
+                }
+                require(plan.reservation().predecessor().epoch() == previous.reservation().predecessor().epoch() + 1
+                        && !plan.reservation().successorToken().equals(previous.reservation().successorToken())
+                        && !plan.reservation().successorIncarnation().equals(previous.reservation().successorIncarnation())
+                        && !plan.next().seeds().ownerNonce().equals(previous.next().seeds().ownerNonce()),
+                        "replacement advances epoch and mints distinct claim, process and owner identities");
+                require(count(tx, "repository_coordinator_supersessions", command.operationId()) == 1
+                        && count(tx, "repository_successor_installs", command.operationId()) == 2
+                        && count(tx, "repository_historical_activations", command.operationId()) == 0,
+                        "one replacement and two installs precede fresh capture or activation");
+                System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK");
+            }
             System.out.println("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
             return new Prepared(attempts, plan, budget, before, coordinator);
         } catch (Exception | Error failure) {
@@ -292,6 +327,7 @@ final class HistoricalInstalledOwnerProbe {
                 if (primary != cleanup) primary.addSuppressed(cleanup);
             }
         }
+        if (check == Check.SELF_SUPERSESSION) System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK");
         System.out.println(fault == null ? "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK"
                 : "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK");
     }

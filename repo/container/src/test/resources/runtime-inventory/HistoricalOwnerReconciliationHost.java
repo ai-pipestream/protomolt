@@ -9,6 +9,7 @@ public final class HistoricalOwnerReconciliationHost {
             Class.forName("org.junit.jupiter.api.Test");
             throw new AssertionError("Ambient test framework leaked into reconciliation host");
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
+        boolean selfSupersession = args.length == 2 && args[1].equals("self-supersession");
         var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(args[0]), () -> {});
         try (var provider = new AssessmentProviderProbe();
              var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
@@ -16,9 +17,9 @@ public final class HistoricalOwnerReconciliationHost {
             var tx = new Tx(database.entityManagerFactory());
             var source = AssessmentMixedReuseProbe.publishSource(tx, provider, "reconciliation", true);
             new DocumentSchemaPolicies(tx).activate(AssessmentCreationProbe.initialPolicy(), 0, () -> {});
-            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true);
+            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource(), true, selfSupersession);
             observation.identity(() -> {});
         }
-        System.out.println("HISTORICAL_RECONCILIATION_HOST_OK");
+        System.out.println(selfSupersession ? "HISTORICAL_SELF_SUPERSESSION_HOST_OK" : "HISTORICAL_RECONCILIATION_HOST_OK");
     }
 }

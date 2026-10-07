@@ -28,6 +28,8 @@ Do not replace an assessment after promotion or fabricate successful reconciliat
 
 ## Two separate lifetimes
 
+The initial single-generation owner uses the following call boundaries. The concurrent-generation design below replaces full-call operation exclusion for historical takeover.
+
 Each accepted client call holds the managed runtime's existing call permit and
 operation-key exclusion through routing and synchronous work. The runtime owns and
 closes those permits. A private Attempt exclusively borrows one retained entry;
@@ -378,8 +380,94 @@ then the 18-case preparation class passed after adding pending-replacement shutd
 V97, V93 and V98 replies; synthetic provider observations only establish archived
 source fixtures. See [self-supersession evidence](../evidence/repository/2026-10-07-historical-self-supersession/README.md).
 
-This transition has not yet been exercised in the packaged real-provider host.
-Its next qualification must retain one owner through expiry and replacement before
-capture, then publish/read back actual provider bytes and verify the receipt.
+The packaged real-provider host now retains one owner through actual expiry and
+replacement before fresh capture, publishes a mixed revision, verifies exact provider
+bytes and receipt replay, and retires the owner. The complete gate passed in 11m13s
+(670.386 seconds for its one aggregate test, no failures or skips). The additional
+scenario runs in a separate database/JVM with a 90-second host limit and a 30-second
+operation lease; earlier host limits are unchanged. See
+[provider evidence](../evidence/repository/2026-10-07-historical-self-supersession-provider/README.md).
 Attached V94 recovery, managed library/gRPC routing, and the earlier authorization
 boundary decision remain outstanding. No new public API is enabled by this change.
+
+## Design next: concurrent recovery generations within bounded ownership
+
+Reviewed with Sol on 2026-10-07; this section specifies work still to implement.
+The performance requirement is explicit: a fenced generation's slow local worker
+must not force a successor to wait for that worker before making safe progress.
+Memory, accepted work and cleanup remain bounded; expiry alone proves no drainage.
+
+Existing behavior to retain:
+
+- `RepositoryHistoricalSuccessorActivation.activateWithWork` already retains its
+  tentative capture and confirms exact committed activation after a lost reply.
+  Same-host live retries can reuse accepted Work without opening source admission.
+- `RepositoryInstalledHistoricalAttempts` retains execution, acknowledged START,
+  assessment and sticky CREATE/publication state across calls.
+- `RepositoryHistoricalCaptureState` classifies exact capture registration under
+  the claim lock. Disposal distinguishes absent local registration from committed
+  capture; only actual local drainage or separate quiescence proof permits release.
+- An immutable `RepositoryHistoricalActivationEvidence` receipt does not reconstruct
+  accepted Work, native pins or execution authority on another host.
+
+### Ownership and routing
+
+Keep an operation slot keyed by account, principal and operation ID. Each retained
+Entry has a stable local identity independent of SQL claim epoch: preactivation V98
+can advance that epoch while preserving one Entry. The slot tracks current, at most
+one proposed successor, and bounded disposal-only Entries. Every Entry retains its
+own exact SQL current/pending proposals, caller binding, modes, retention digest,
+preparation leases, capture and execution state.
+
+Route key-based retries to retained pending/current state before fresh discovery.
+Old generations are addressed through internal retained handles only for disposal.
+Allocate the successor Entry, its proposal and budget before V97. While its outcome
+is uncertain, suspend admission of new mutations to the old Entry; already accepted
+work remains owned and SQL fences arbitrate its outcome. Do not clear old START,
+CREATE, assessment or publication flags.
+
+Exact V97 confirmation switches routing to the successor and makes the old Entry
+disposal-only. Successor installation and fresh capture proceed independently of old
+reader drainage. A lost V97 reply retains both Entries and the exact pending identity.
+If old publication wins first, failed takeover is reconciled against authorized
+terminal replay; a failed reservation is not permission to discard uncertain state.
+If the prospective successor expires before attachment, V98 updates that same stable
+Entry using the already qualified pending-proposal protocol.
+
+Use short, versioned slot transitions and per-Entry call exclusion. No map/slot
+monitor spans SQL, provider calls or local drainage. In particular, the existing
+`RepositoryPublicationCalls` same-key permit spans a complete runtime call and
+would serialize takeover behind a slow old call. Historical routing must not reuse
+that exclusion unchanged; SQL claim fences remain the cross-process authority.
+
+### Capacity, shutdown and acceptance
+
+Capacity counts every current, proposed and draining Entry and every retained byte
+lease. Refuse exhaustion before V97; never evict an old generation merely because a
+new one can run. Keep a bounded explicit disposal path so drained generations do not
+accumulate indefinitely. Closing host admission prevents new requests; accepted
+calls remain owned through completion. After accepted-call drainage, close owner
+admission and dispose all retained generations independently. A timeout preserves
+unfinished Entries and budgets rather than reporting fictitious cleanup.
+
+Required tests against real SQL, then packaged providers:
+
+1. Hold old V94 Work while a new V97/V93/V94 generation publishes and its exact
+   bytes and receipt are read back. Assert successor progress before releasing Work.
+2. Inject V97 before-commit failure and after-commit reply loss. Retries preserve one
+   prospective Entry and proposal and never recreate old START/CREATE state.
+3. Race old publication with V97 using barriers. Exactly one durable outcome wins;
+   receipt replay or successor publication matches that winner.
+4. Exhaust entry and byte capacity: zero V97 writes, existing state unchanged.
+5. Fenced old disposal waits for real Work, then records its own exact V107; new
+   capture, provider versions and receipt remain intact.
+6. Let a prospective successor expire. V98 changes SQL identity within its stable
+   Entry; both uncertain claim identities remain accounted for until confirmation.
+7. Close admission with old and new accepted work present. Refuse new calls, drain
+   each generation, and preserve unresolved ownership when the wait times out.
+8. For rolled-back V94, release local resources without a false capture-drain row.
+   A restarted process never turns a cold activation receipt into execution rights.
+
+Implement and qualify this owner structure before enabling managed historical
+routing. It does not require redesigning protobuf contracts or relaxing ownership,
+provider checks, retention or JCR capability boundaries.
