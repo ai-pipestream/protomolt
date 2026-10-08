@@ -1357,3 +1357,22 @@ provider batch. Initial delivery and retry report UNAUTHENTICATED; no rejection
 or publication is recorded. Cleanup releases assessment sessions and retained
 memory. See `docs/evidence/repository/2026-10-08-pending-replay-revocation/`.
 Revocation at the final decision transaction remains a separate concurrency case.
+
+### Cold preparation implementation checkpoint
+
+`RepositoryHistoricalAttemptPreparation` can now begin without the original
+retention record. It verifies request modes before reservation, then loads the
+immediate predecessor and original anchor before preparing a successor plan.
+The preparation owns the anchor lease and digest. A checked accessor prevents
+use before resolution; confirmed supersession and close release that metadata.
+The existing warm constructor still requires a supplied retention record.
+
+Focused PostgreSQL cases cover installation from unresolved metadata, wrong modes
+before reservation, and deliberate missing-anchor corruption before installation.
+They assert stable proposal/plan identity, no execution activation, no publication
+for the recovery operation, and complete memory release. The corruption fixture
+disables triggers to represent damaged storage, not an allowed application write.
+
+This primitive has no cold registry entry yet. Registry capacity ownership,
+uncertain-reply qualification, multiple-successor composition and separate-process
+provider execution remain required before public routing.

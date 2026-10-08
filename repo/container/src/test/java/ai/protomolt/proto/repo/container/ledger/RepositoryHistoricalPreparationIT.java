@@ -26,6 +26,63 @@ class RepositoryHistoricalPreparationIT {
     private static final Duration LEASE = Duration.ofMinutes(5);
     private static final SqlTimeouts TIMEOUTS = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
 
+    @ParameterizedTest @ValueSource(strings = {"valid", "wrong-modes", "missing-anchor"})
+    void coldPreparationLoadsAnchorBeforeInstalling(String scenario) throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var fixedModes = modes(rig);
+            var observed = expired(c, rig, fixedModes).candidate().orElseThrow();
+            var proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(observed.predecessor(),
+                    java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), LEASE, observed.owner());
+            var requested = scenario.equals("wrong-modes")
+                    ? Map.of(fixedModes.keySet().iterator().next(), DocumentPublicationCandidate.Mode.OPAQUE) : fixedModes;
+            var budget = new PayloadBudget(256L * 1024 * 1024);
+            var preparation = new RepositoryHistoricalAttemptPreparation(c.tx(), budget, TIMEOUTS,
+                    proposal, rig.record().command(), requested, LEASE);
+            try (preparation) {
+                assertThat(preparation.cold()).isTrue();
+                assertThatThrownBy(preparation::requireResolvedRetention).hasMessageContaining("unresolved");
+                if (scenario.equals("wrong-modes")) {
+                    assertThatThrownBy(() -> preparation.advance(CALLER, CALLER, requested, Map.of(), NONE))
+                            .hasMessageContaining("modes differ from fixed modes");
+                    assertThat(count(c, "repository_coordinator_expirations")).isZero();
+                } else {
+                    assertThat(preparation.advance(CALLER, CALLER, requested, Map.of(), NONE))
+                            .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
+                    assertThatThrownBy(preparation::requireResolvedRetention).hasMessageContaining("unresolved");
+                    if (scenario.equals("missing-anchor")) {
+                        c.tx().inTransaction(em -> {
+                            em.createNativeQuery("SET LOCAL session_replication_role = replica").executeUpdate();
+                            em.createNativeQuery("DELETE FROM repository_preparation_history_sets WHERE operation_id=:o")
+                                    .setParameter("o", rig.record().key().operationId()).executeUpdate();
+                        });
+                        assertThatThrownBy(() -> preparation.advance(CALLER, CALLER, requested, Map.of(), NONE))
+                                .isInstanceOf(RepositoryException.class);
+                        assertThatThrownBy(preparation::requireResolvedRetention).hasMessageContaining("unresolved");
+                    } else {
+                        assertThat(preparation.advance(CALLER, CALLER, requested, Map.of(), NONE))
+                                .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
+                        assertThat(DocumentPublicationPreparationCodec.encode(preparation.requireResolvedRetention()))
+                                .isEqualTo(DocumentPublicationPreparationCodec.encode(rig.record()));
+                        var plan = preparation.installedPlan();
+                        assertThat(preparation.advance(CALLER, CALLER, requested, Map.of(), NONE))
+                                .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
+                        assertThat(preparation.installedPlan()).isSameAs(plan);
+                        assertThat(preparation.proposal()).isSameAs(proposal);
+                        assertThat(budget.reservedBytes()).isPositive();
+                    }
+                }
+                assertThat(count(c, "repository_successor_installs")).isEqualTo(scenario.equals("valid") ? 1 : 0);
+                assertThat(count(c, "repository_historical_activations")).isZero();
+                long published = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM document_revision_commits WHERE operation_id=:o")
+                        .setParameter("o", rig.record().key().operationId()).getSingleResult()).longValue());
+                assertThat(published).isZero();
+            }
+            assertThat(budget.reservedBytes()).isZero();
+            assertThatThrownBy(preparation::requireResolvedRetention).hasMessageContaining("closed");
+        }
+    }
+
     @Test void historicalWorkAcceptsDecodedExactCommandButRejectsAnotherOperation() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2)); var work = rig.sources().work()) {
             var original = rig.record().command();

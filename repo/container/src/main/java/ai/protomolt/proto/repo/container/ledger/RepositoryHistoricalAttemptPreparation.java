@@ -19,6 +19,8 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     private final Duration lease;
     private final DocumentPublicationPreparationRecord retention;
     private final byte[] retentionDigest;
+    private RepositoryHistoricalRetentionLoader.Loaded recoveredRetention;
+    private byte[] recoveredDigest;
     private Phase phase = Phase.PROPOSED;
     private RepositoryReservedPreparation.Loaded loaded;
     private PayloadBudget.Lease nextBytes;
@@ -31,7 +33,36 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
             DocumentPublicationPreparationRecord retention, byte[] retentionDigest) {
         this.tx = tx.withTimeouts(timeouts); this.budget = budget; this.timeouts = timeouts;
         this.proposal = proposal; this.command = command; this.modes = Map.copyOf(modes); this.lease = lease;
-        this.retention = retention; this.retentionDigest = retentionDigest.clone();
+        this.retention = Objects.requireNonNull(retention); this.retentionDigest = retentionDigest.clone();
+    }
+
+    /** Cold preparation owns metadata only; a later verified load is required before installation. */
+    RepositoryHistoricalAttemptPreparation(Tx tx, PayloadBudget budget, SqlTimeouts timeouts,
+            RepositoryCoordinatorReservation.Proposal proposal, DocumentPublicationCommand command,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Duration lease) {
+        this.tx = Objects.requireNonNull(tx).withTimeouts(Objects.requireNonNull(timeouts));
+        this.budget = Objects.requireNonNull(budget); this.timeouts = timeouts;
+        this.proposal = Objects.requireNonNull(proposal); this.command = Objects.requireNonNull(command);
+        this.modes = Map.copyOf(modes); this.lease = Objects.requireNonNull(lease);
+        retention = null; retentionDigest = null;
+        if (!proposal.predecessor().commandSha256().equals(command.sha256())
+                || !proposal.predecessor().key().operationId().equals(command.operationId())
+                || !proposal.predecessor().key().account().equals(command.intent().getAccountId())
+                || DocumentPreparationHistoryRoots.roots(command).isEmpty())
+            throw new IllegalArgumentException("Cold historical proposal differs from command");
+    }
+
+    boolean cold() { return retention == null; }
+    DocumentPublicationPreparationRecord requireResolvedRetention() {
+        requireSettled();
+        if (!cold()) return retention;
+        if (recoveredRetention == null) throw new IllegalStateException("Historical retention anchor is unresolved");
+        return recoveredRetention.record();
+    }
+    private void verifyRetentionIfResolved(jakarta.persistence.EntityManager em) {
+        if (!cold()) DocumentHistoricalRetentionBinding.require(em, retention, retentionDigest, false);
+        else if (recoveredRetention != null)
+            DocumentHistoricalRetentionBinding.require(em, recoveredRetention.record(), recoveredDigest, false);
     }
 
     Phase phase() { requireOpen(); return phase; }
@@ -63,7 +94,7 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
         try (var snapshot = DocumentRecoveryPayloads.prepare(command, payloads, budget, control)) {
             tx.inTransaction(em -> {
                 control.check(); DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
-                DocumentHistoricalRetentionBinding.require(em, retention, retentionDigest, false);
+                verifyRetentionIfResolved(em);
                 control.check(); return null;
             });
             if (pending == null) {
@@ -138,7 +169,7 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
         try (var snapshot = DocumentRecoveryPayloads.prepare(command, payloads, budget, control)) {
             tx.inTransaction(em -> {
                 control.check(); DocumentAdmissionAuthorization.authorizeRejection(em, caller, command);
-                DocumentHistoricalRetentionBinding.require(em, retention, retentionDigest, false);
+                verifyRetentionIfResolved(em);
                 if (phase == Phase.PROPOSED && proposal instanceof RepositoryCoordinatorReservation.ExpiredUnquiesced expired)
                     DocumentPublicationModesJournal.requireBoundModes(em, expired.predecessor().key(), command,
                             expired.owner().generation(), DocumentPublicationModesJournal.encode(command, modes));
@@ -163,6 +194,20 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
                             coordinator, caller, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(), control);
                     if (!loaded.modes().equals(modes)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                             "Historical recovery modes differ from fixed modes");
+                    if (cold() && recoveredRetention == null) {
+                        var anchor = new RepositoryHistoricalRetentionLoader(tx, budget, timeouts).load(
+                                coordinator, caller, proposal, RepositoryCoordinatorReservation.owner(proposal).orElseThrow(),
+                                loaded.record(), control);
+                        try {
+                            var record = anchor.record();
+                            if (!record.command().canonical().equals(command.canonical())
+                                    || !record.key().equals(proposal.predecessor().key()))
+                                throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Recovered retention command differs");
+                            recoveredDigest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record));
+                            recoveredRetention = anchor;
+                        } catch (RuntimeException | Error failure) { anchor.close(); throw failure; }
+                    }
+                    requireResolvedRetention();
                     if (plan == null) {
                         var bytes = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES);
                         try {
@@ -196,7 +241,8 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     }
     private void releasePreparation() {
         if (loaded != null) loaded.close();
+        if (recoveredRetention != null) recoveredRetention.close();
         if (nextBytes != null) nextBytes.close();
-        loaded = null; plan = null; nextBytes = null;
+        loaded = null; plan = null; nextBytes = null; recoveredRetention = null; recoveredDigest = null;
     }
 }
