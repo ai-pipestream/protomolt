@@ -52,6 +52,13 @@ final class DocumentHistoricalAssessmentSources implements AutoCloseable {
             permit.requireActive();
             for (var source : sources.values()) source.history().requireCaller(caller);
         }
+        DocumentReadLedger.PinnedHistory history(NodeAddress address, UUID revision) {
+            permit.requireActive();
+            var source = sources.get(new Key(address, revision));
+            if (source == null) throw new IllegalArgumentException("Historical source is not captured");
+            source.use().plan();
+            return source.history();
+        }
         void requireOpaque(DocumentPublicationMember member, RepositoryReadControl control) {
             permit.requireActive(); requireOpaqueAccepted(member, control);
         }
