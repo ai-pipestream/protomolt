@@ -51,6 +51,8 @@ class RoleNodeIT {
 
     static final String ACCOUNT = "acct-rolenode";
     static final String API_KEY = "role-node-key";
+    /** Synthetic operator token guarding the repo node's listener; its clients present it. */
+    static final String OPERATOR_TOKEN = "role-node-operator-token";
 
     @Container
     static final PostgreSQLContainer REPO_DB = new PostgreSQLContainer("postgres:18-alpine");
@@ -81,7 +83,7 @@ class RoleNodeIT {
                 null, null, null, null, 0, 0L));
         repoNode = Composer.emptyBuilder()
                 .module(repoModule)
-                .environment(Map.of())
+                .environment(Map.of("PROTOMOLT_API_TOKEN", OPERATOR_TOKEN))
                 .build()
                 .boot(List.of(RepoServiceModule.ROLE));
 
@@ -93,16 +95,25 @@ class RoleNodeIT {
                 .module(intakeModule)
                 .environment(Map.of(
                         "PROTOMOLT_REPO_TARGET", "127.0.0.1:" + repoModule.grpcPort()))
-                .remoteOpener(target -> NettyChannelBuilder.forTarget(target).usePlaintext().build())
+                .remoteOpener(target -> NettyChannelBuilder.forTarget(target).usePlaintext()
+                        .intercept(MetadataUtils.newAttachHeadersInterceptor(operator()))
+                        .build())
                 .build()
                 .boot(List.of(IntakeModule.ROLE));
 
         repoChannel = NettyChannelBuilder.forAddress("127.0.0.1", repoModule.grpcPort())
                 .usePlaintext()
+                .intercept(MetadataUtils.newAttachHeadersInterceptor(operator()))
                 .build();
         intakeChannel = NettyChannelBuilder.forAddress("127.0.0.1", intakeModule.grpcPort())
                 .usePlaintext()
                 .build();
+    }
+
+    static Metadata operator() {
+        Metadata identity = new Metadata();
+        identity.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), OPERATOR_TOKEN);
+        return identity;
     }
 
     @AfterAll

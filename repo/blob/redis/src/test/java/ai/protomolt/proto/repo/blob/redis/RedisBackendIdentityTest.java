@@ -18,7 +18,7 @@ class RedisBackendIdentityTest {
     }
     @Test void managedIdentityRequiresValidExplicitOptionsWithoutAcquiringConnections() {
         var provider = new RedisBlobStoreProvider();
-        var options = Map.of("uri", "redis://127.0.0.1:1/2", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "x");
+        var options = Map.of("uri", "redis://127.0.0.1:1/2", "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "x", "write-policy", "replace");
         assertThat(provider.managedIdentity(options)).isEqualTo(RedisBackendIdentity.of("redis://127.0.0.1:1/2", "x"));
         assertThatThrownBy(() -> provider.managedIdentity(Map.of())).isInstanceOf(IllegalArgumentException.class);
         for (String invalid : new String[]{"redis://u:password@localhost:0", "redis://u:password@localhost/abc", "redis://u:password@localhost/999999999999"})

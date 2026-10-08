@@ -35,15 +35,18 @@ public final class IntakeServices implements AutoCloseable {
     private final IntakeServiceConfig config;
     private final ApiKeyIdentityResolver resolver;
     private final ManagedChannel repoChannel;
+    private final boolean ownsRepoChannel;
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final ServerServiceDefinition intakeService;
     private final List<IntakeHttpServer> httpServers = new ArrayList<>();
     private Server server;
 
-    private IntakeServices(IntakeServiceConfig config, ApiKeyIdentityResolver resolver) {
+    private IntakeServices(IntakeServiceConfig config, ApiKeyIdentityResolver resolver,
+                           ManagedChannel borrowedRepoChannel) {
         this.config = config;
         this.resolver = resolver;
-        this.repoChannel = openRepoChannel(config.repoTarget());
+        this.ownsRepoChannel = borrowedRepoChannel == null;
+        this.repoChannel = ownsRepoChannel ? openRepoChannel(config.repoTarget()) : borrowedRepoChannel;
         this.documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
         IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes());
         this.intakeService =
@@ -63,7 +66,29 @@ public final class IntakeServices implements AutoCloseable {
         if (resolver == null) {
             throw new IllegalArgumentException("resolver must not be null");
         }
-        return new IntakeServices(config, resolver);
+        return new IntakeServices(config, resolver, null);
+    }
+
+    /**
+     * Builds the stack over a repo channel the caller owns, such as a composed node's
+     * channel that already carries the node's credential. {@link #close()} leaves it open.
+     *
+     * @param config service configuration
+     * @param resolver the key store every call authenticates against
+     * @param repoChannel the borrowed channel to the repo service
+     */
+    public static IntakeServices build(IntakeServiceConfig config, ApiKeyIdentityResolver resolver,
+                                       ManagedChannel repoChannel) {
+        if (config == null) {
+            throw new IllegalArgumentException("config must not be null");
+        }
+        if (resolver == null) {
+            throw new IllegalArgumentException("resolver must not be null");
+        }
+        if (repoChannel == null) {
+            throw new IllegalArgumentException("repoChannel must not be null");
+        }
+        return new IntakeServices(config, resolver, repoChannel);
     }
 
     /** Starts the intake service on an in-process server named {@code name}. */
@@ -122,6 +147,9 @@ public final class IntakeServices implements AutoCloseable {
         }
         if (server != null) {
             server.shutdownNow();
+        }
+        if (!ownsRepoChannel) {
+            return;
         }
         repoChannel.shutdownNow();
         try {

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="recovered-missing-version" tests="5" failures="0" errors="0" skipped="0">
+  <testcase classname="recovered-missing-version" name="missing-version.raw_refused" timestamp="2026-10-07T12:03:44.155423300Z"><system-out>readRaw(v1) -&gt; DATA_LOSS</system-out></testcase>
+  <testcase classname="recovered-missing-version" name="missing-version.validated_refused" timestamp="2026-10-07T12:03:44.156320145Z"><system-out>readValidated(v1) -&gt; DATA_LOSS</system-out></testcase>
+  <testcase classname="recovered-missing-version" name="missing-version.materialized_refused" timestamp="2026-10-07T12:03:44.189291860Z"><system-out>readMaterialized(v1) -&gt; DATA_LOSS</system-out></testcase>
+  <testcase classname="recovered-missing-version" name="missing-version.latest_still_reads" timestamp="2026-10-07T12:03:44.531454479Z"><system-out>revision 2 unaffected; revision 1 was not served from the newer version</system-out></testcase>
+  <testcase classname="recovered-missing-version" name="missing-version.schema.no_live_lookup" timestamp="2026-10-07T12:03:44.568744085Z"><system-out>live schema resolution attempts=0</system-out></testcase>
+</testsuite>

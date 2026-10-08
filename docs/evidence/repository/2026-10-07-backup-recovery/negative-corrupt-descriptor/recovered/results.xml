@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="recovered-corrupt-descriptor" tests="4" failures="0" errors="0" skipped="0">
+  <testcase classname="recovered-corrupt-descriptor" name="corrupt-descriptor.raw_explicit_opaque" timestamp="2026-10-07T12:03:53.421669413Z"><system-out>raw fragments still byte-equal: explicit opaque access, no validity claim</system-out></testcase>
+  <testcase classname="recovered-corrupt-descriptor" name="corrupt-descriptor.validated_refused" timestamp="2026-10-07T12:03:53.463450740Z"><system-out>readValidated(v1) -&gt; DATA_LOSS</system-out></testcase>
+  <testcase classname="recovered-corrupt-descriptor" name="corrupt-descriptor.materialized_refused" timestamp="2026-10-07T12:03:53.497577537Z"><system-out>readMaterialized(v1) -&gt; DATA_LOSS; no typed value invented</system-out></testcase>
+  <testcase classname="recovered-corrupt-descriptor" name="corrupt-descriptor.schema.no_live_lookup" timestamp="2026-10-07T12:03:53.542179456Z"><system-out>live schema resolution attempts=0</system-out></testcase>
+</testsuite>

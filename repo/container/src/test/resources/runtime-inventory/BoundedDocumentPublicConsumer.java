@@ -14,15 +14,21 @@ public final class BoundedDocumentPublicConsumer {
     @FunctionalInterface public interface Bootstrap { Fixture prepare(RepoServices host) throws Exception; }
     public static void run(RepoServiceConfig config,ManagedSchemaAccess schemas,ManagedPublicationOptions publication,
             RepositoryCaller caller,Bootstrap bootstrap,boolean rpc,ReaderHostOptions identity) throws Exception {
+        String mode=(identity==null ? "" : "hosted-")+(rpc ? "rpc" : "library");
+        long started = System.nanoTime();
+        phase(mode, "host-build-start", started);
         var history=rpc ? new HistoricalReadAccess(auth -> caller,32L*1024*1024,2) : null;
         var limits=new BoundedDocumentOptions(1024*1024,64L*1024*1024);
         try (var host=identity==null
                 ? RepoServices.buildBoundedDocuments(config,BridgeEngine.standard(),history,schemas,publication,limits)
                 : RepoServices.buildBoundedDocumentsHosted(config,BridgeEngine.standard(),history,schemas,publication,limits,identity)) {
+            phase(mode, "host-built", started);
             require(host.services().size()==(rpc ? 2 : 0),"only explicitly selected RPCs mounted");
             unavailable(host::repository); unavailable(host::archiveRepository); unavailable(host::archiveMutationRepository);
             unavailable(host::driveRepository); unavailable(() -> host.startHttp(0,"fixture-token"));
+            phase(mode, "fixture-prepare-start", started);
             var fixture=bootstrap.prepare(host);
+            phase(mode, "fixture-prepared", started);
             ManagedChannel channel=null;
             try {
                 PublishDocumentResponse result;
@@ -37,25 +43,37 @@ public final class BoundedDocumentPublicConsumer {
                             .withDeadlineAfter(10,TimeUnit.SECONDS);
                     unauthenticated(() -> wrong.publishDocument(fixture.request()));
                     authenticated=withToken(channel,"public-bounded-fixture-token");
+                    phase(mode, "typed-publication-start", started);
                     result=DocumentPublicationServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
                             .publishDocument(fixture.request());
-                } else result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
+                    phase(mode, "typed-publication-complete", started);
+                } else {
+                    phase(mode, "typed-publication-start", started);
+                    result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
+                    phase(mode, "typed-publication-complete", started);
+                }
                 require(result.hasCommitted() && result.getCommitted().getMembersCount()==1,"public consumer committed typed document");
+                phase(mode, "receipt-replay-start", started);
                 require(host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE).equals(result),
                         "library returns exact committed receipt");
+                phase(mode, "receipt-replay-complete", started);
                 var revision=result.getCommitted().getMembers(0);
+                phase(mode, "history-read-start", started);
                 try (var read=host.historicalRepository().readValidated(caller,revision.getAddress(),
                         UUID.fromString(revision.getRevisionId()),RepositoryReadControl.NONE)) {
                     require(read.document().equals(fixture.expected()),"library decodes retained typed history");
                     read.authorizeDelivery(RepositoryReadControl.NONE);
                 }
+                phase(mode, "history-read-complete", started);
                 if (rpc) {
+                    phase(mode, "rpc-replay-start", started);
                     require(DocumentPublicationServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
                             .publishDocument(fixture.request()).equals(result),"remote exact receipt replay");
                     var read=DocumentHistoryServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
                             .readRevision(ReadRevisionRequest.newBuilder().setAddress(revision.getAddress()).setRevisionId(revision.getRevisionId())
                                     .setMode(HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_VALIDATED).build());
                     require(read.getValidated().getDocument().equals(fixture.expected()),"RPC decodes retained typed history");
+                    phase(mode, "rpc-history-read-complete", started);
                 }
             } finally {
                 if (channel!=null) {
@@ -63,10 +81,17 @@ public final class BoundedDocumentPublicConsumer {
                     require(channel.awaitTermination(5,TimeUnit.SECONDS),"public consumer channel drained");
                 }
             }
+            phase(mode, "host-close-start", started);
         }
+        phase(mode, "host-closed", started);
         System.out.println(identity==null
                 ? (rpc ? "BOUNDED_PUBLIC_CONSUMER_RPC_OK" : "BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK")
                 : (rpc ? "BOUNDED_HOSTED_CONSUMER_RPC_OK" : "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK"));
+    }
+    private static void phase(String mode, String name, long started) {
+        System.out.printf("PHASE name=consumer-%s-%s elapsed_ms=%d%n", mode, name,
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        System.out.flush();
     }
     private static Channel withToken(Channel channel,String token) {
         var headers=new Metadata();

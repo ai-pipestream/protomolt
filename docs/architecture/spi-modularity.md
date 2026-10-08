@@ -65,16 +65,17 @@ any cleanup failure. Closing a handle attempts cleanup once and forbids further
 access through that handle; previously obtained store references must not be used
 after closure. Factory-created clients are owned, not borrowed.
 
-The Redis factory requires `uri`, `ttl-seconds`, `max-object-bytes`, and `key-prefix`.
-The S3 factory requires `endpoint`, `region`, `access-key`, `secret-key`,
-`path-style`, and `conditional-writes`. Booleans accept only `true` or `false`.
-The original key-pair option form selects static credentials. Alternatively,
-`credentials-mode=static` requires that pair, while `credentials-mode=default-chain`
-forbids it and explicitly selects the AWS credential chain. An empty `endpoint`
-selects the regional AWS endpoint; it is not a fallback for malformed input.
-The factory sets finite timeouts. Optional millisecond settings are
-`api-call-timeout-ms` (default 300000), `api-attempt-timeout-ms` (60000),
-`connection-timeout-ms` (10000), and `socket-timeout-ms` (60000). Values must be
+Neither factory defaults any option; a missing option fails before acquisition.
+The Redis factory requires `uri`, `ttl-seconds`, `max-object-bytes`, `key-prefix`,
+and `write-policy`. The S3 factory requires `endpoint`, `region`, `path-style`,
+`conditional-writes`, `credentials-mode`, and four millisecond timeouts
+(`api-call-timeout-ms`, `api-attempt-timeout-ms`, `connection-timeout-ms`,
+`socket-timeout-ms`). Booleans accept only `true` or `false`.
+`credentials-mode=static` requires `access-key` and `secret-key`, while
+`credentials-mode=default-chain` forbids them and explicitly selects the AWS
+credential chain. An explicitly empty `endpoint` selects the regional AWS
+endpoint; it is not a fallback for a missing or malformed value. The repository
+host passes 300000, 60000, 10000 and 60000 ms respectively. Timeout values must be
 positive integers no greater than 2147483647, with connection and socket timeouts
 no greater than the attempt timeout, and the attempt timeout no greater than the
 whole-call timeout. These budgets apply to SDK operations, including writes;

@@ -1,0 +1,299 @@
+candidate_head=805bc682a88e6ec9729ce34899ffe7bed11284c4
+status:
+5f42fc3bf6ab3cb1843ead570f1ed352bf5594115bec50c8da800f4c0013160d  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryCoordinatorHandoffIT.java
+5aaaf722d64dd996991e1e204e923e5fe5cb3bac8b0e5bd347ac2860a70e4298  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentNativePublicationFixture.java
+5d40e41579c33bbe1ea1914657a29912d13cb492cf8e0ae1ec1912375def4b8c  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentOperationCommandsIT.java
+813107dc9e6c3446f4b3b9ff82b166fb024f42eec1693774f7e9c55b2f87d13a  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaArtifactsIT.java
+8b09e7bfe01b876a197e544f0f94e3959c13655bb3f21feb03a6fd9edac63a9e  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaAssetsIT.java
+682981ba824ac04778675ed0abaa38cd4fba0f85c836a097c1e21d9b79b067fd  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaEvidenceIT.java
+59c8225fa872761b6bcfc2ed41c4629fd7c226752bd982105bc63ad9c1415740  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/LegacyPublicationPreparationFixture.java
+2910a8b696e35193e2f0852cc5fdd73dfb25eefb85328f602e0520a623b25640  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositorySuccessorInstallIT.java
+command=./gradlew :protomolt-repo-container:test --tests ai.protomolt.proto.repo.container.ledger.RepositoryCoordinatorHandoffIT --tests ai.protomolt.proto.repo.container.ledger.DocumentOperationCommandsIT --tests ai.protomolt.proto.repo.container.ledger.DocumentRevisionSchemaArtifactsIT --tests ai.protomolt.proto.repo.container.ledger.DocumentRevisionSchemaAssetsIT --tests ai.protomolt.proto.repo.container.ledger.DocumentRevisionSchemaEvidenceIT --tests ai.protomolt.proto.repo.container.ledger.RepositorySuccessorInstallIT --rerun-tasks --max-workers=2 --console=plain
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:extractProto
+> Task :protomolt-asset-proto:extractProto
+> Task :protomolt-protobuf-validation:processProtoResources
+> Task :protomolt-protobuf-validation:processResources
+> Task :protomolt-asset-proto:extractIncludeProto
+> Task :protomolt-cel:compileJava
+> Task :protomolt-asset-proto:generateProto
+> Task :protomolt-formats:compileJava
+> Task :protomolt-protobuf-validation:extractIncludeProto
+> Task :protomolt-descriptors:compileJava
+> Task :protomolt-protobuf-validation:generateProto
+> Task :protomolt-sources:compileJava
+> Task :protomolt-compat:compileJava
+> Task :protomolt-helpers:compileJava
+> Task :protomolt-compat:processResources NO-SOURCE
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-helpers:processResources NO-SOURCE
+> Task :protomolt-kafka-serde:protobufDummy UP-TO-DATE
+> Task :protomolt-kafka-wire:processResources NO-SOURCE
+> Task :protomolt-mapper:processResources NO-SOURCE
+> Task :protomolt-mapper-cel:processResources NO-SOURCE
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractProto
+> Task :protomolt-protobuf-metadata:processProtoResources
+> Task :protomolt-protobuf-metadata:processResources
+> Task :protomolt-protobuf-quality:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-quality:extractProto
+> Task :protomolt-protobuf-quality:processProtoResources
+> Task :protomolt-protobuf-quality:processResources
+> Task :protomolt-schema-confluent:processResources NO-SOURCE
+> Task :protomolt-sources:processResources NO-SOURCE
+> Task :protomolt-kafka-serde:extractIncludeProto
+> Task :protomolt-kafka-serde:extractProto
+> Task :protomolt-kafka-serde:generateProto NO-SOURCE
+> Task :protomolt-kafka-wire:compileJava
+> Task :protomolt-protobuf-validation:compileJava
+> Task :protomolt-mapper:compileJava
+> Task :protomolt-mapper-cel:compileJava
+> Task :protomolt-protobuf-metadata:extractIncludeProto
+> Task :protomolt-protobuf-metadata:generateProto
+> Task :protomolt-protobuf-metadata:compileJava
+> Task :protomolt-protobuf-quality:extractIncludeProto
+> Task :protomolt-protobuf-quality:generateProto
+> Task :protomolt-protobuf-quality:compileJava
+> Task :protomolt-schema-confluent:compileJava
+> Task :protomolt-asset-proto:compileJava
+> Task :protomolt-protobuf-validation-protovalidate:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation-protovalidate:extractIncludeProto
+> Task :protomolt-protobuf-validation-protovalidate:extractProto
+> Task :protomolt-kafka-serde:compileJava
+> Task :protomolt-asset-proto:processProtoResources
+> Task :protomolt-asset-proto:processResources
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto
+> Task :protomolt-repo-proto:extractProto
+> Task :protomolt-protobuf-validation-protovalidate:generateProto
+> Task :protomolt-repo-proto:generateProto
+> Task :protomolt-protobuf-validation-protovalidate:compileJava
+> Task :protomolt-repo-blob-spi:compileJava
+> Task :protomolt-repo-container:processResources
+> Task :protomolt-http-json:compileJava
+> Task :protomolt-http-jsonschema:protobufDummy UP-TO-DATE
+> Task :protomolt-http-jsonschema:extractIncludeProto
+> Task :protomolt-http-jsonschema:extractProto
+> Task :protomolt-http-jsonschema:generateProto NO-SOURCE
+> Task :protomolt-http-jsonschema:compileJava
+> Task :protomolt-actions:compileJava
+> Task :protomolt-actions:processResources NO-SOURCE
+> Task :protomolt-actions:classes
+> Task :protomolt-actions:jar
+> Task :protomolt-asset-characterize:compileJava
+> Task :protomolt-asset-bridge:compileJava
+> Task :protomolt-asset-bridge:processResources NO-SOURCE
+> Task :protomolt-asset-bridge:classes
+> Task :protomolt-asset-bridge:jar
+> Task :protomolt-asset-characterize:processResources
+> Task :protomolt-asset-characterize:classes
+> Task :protomolt-asset-characterize:jar
+> Task :protomolt-asset-proto:classes
+> Task :protomolt-asset-proto:jar
+> Task :protomolt-protobuf-types:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-types:extractIncludeProto
+> Task :protomolt-protobuf-types:extractProto
+> Task :protomolt-protobuf-types:generateProto
+> Task :protomolt-protobuf-types:compileJava
+> Task :protomolt-authz:compileJava
+> Task :protomolt-authz:processResources NO-SOURCE
+> Task :protomolt-authz:classes
+> Task :protomolt-authz:jar
+> Task :protomolt-authz-grpc:compileJava
+> Task :protomolt-authz-grpc:processResources NO-SOURCE
+> Task :protomolt-authz-grpc:classes
+> Task :protomolt-authz-grpc:jar
+> Task :protomolt-cel:classes
+> Task :protomolt-cel:jar
+> Task :protomolt-compat:classes
+> Task :protomolt-compat:jar
+> Task :protomolt-grpc-channel-policy:compileJava
+> Task :protomolt-composer:compileJava
+> Task :protomolt-composer:processResources NO-SOURCE
+> Task :protomolt-composer:classes
+> Task :protomolt-composer:jar
+> Task :protomolt-descriptors:classes
+> Task :protomolt-descriptors:jar
+> Task :protomolt-formats:classes
+> Task :protomolt-formats:jar
+> Task :protomolt-grpc-channel-policy:processResources NO-SOURCE
+> Task :protomolt-grpc-channel-policy:classes
+> Task :protomolt-grpc-channel-policy:jar
+> Task :protomolt-grpc-service-profile:protobufDummy UP-TO-DATE
+> Task :protomolt-grpc-service-profile:extractIncludeProto
+> Task :protomolt-grpc-service-profile:extractProto
+> Task :protomolt-grpc-service-profile:generateProto
+> Task :protomolt-grpc-service-profile:compileJava
+> Task :protomolt-grpc-service-profile:processProtoResources
+> Task :protomolt-grpc-service-profile:processResources
+> Task :protomolt-grpc-service-profile:classes
+> Task :protomolt-grpc-service-profile:jar
+> Task :protomolt-grpc-workflow:protobufDummy UP-TO-DATE
+> Task :protomolt-http-jsonschema:processProtoResources
+> Task :protomolt-http-jsonschema:processResources NO-SOURCE
+> Task :protomolt-inference-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-inference-proto:extractProto
+> Task :protomolt-inference-proto:processProtoResources
+> Task :protomolt-inference-proto:processResources
+> Task :protomolt-protobuf-llm:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-llm:extractProto
+> Task :protomolt-protobuf-llm:processProtoResources
+> Task :protomolt-protobuf-llm:processResources
+> Task :protomolt-protobuf-prompt:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-prompt:extractProto
+> Task :protomolt-protobuf-prompt:processProtoResources
+> Task :protomolt-protobuf-prompt:processResources
+> Task :protomolt-grpc-workflow:extractIncludeProto
+> Task :protomolt-grpc-workflow:extractProto
+> Task :protomolt-grpc-workflow:generateProto
+> Task :protomolt-inference-proto:extractIncludeProto
+> Task :protomolt-inference-proto:generateProto
+> Task :protomolt-protobuf-llm:extractIncludeProto
+> Task :protomolt-protobuf-llm:generateProto
+> Task :protomolt-protobuf-llm:compileJava
+> Task :protomolt-protobuf-prompt:extractIncludeProto
+> Task :protomolt-protobuf-prompt:generateProto
+> Task :protomolt-protobuf-prompt:compileJava
+> Task :protomolt-repo-proto:compileJava
+> Task :protomolt-inference-proto:compileJava
+> Task :protomolt-repo-codec:compileJava
+> Task :protomolt-repo-spi:compileJava
+> Task :protomolt-repo-admission:compileJava
+> Task :protomolt-grpc-workflow:compileJava
+> Task :protomolt-grpc-workflow:processProtoResources
+> Task :protomolt-grpc-workflow:processResources
+> Task :protomolt-grpc-workflow:classes
+> Task :protomolt-grpc-workflow:jar
+> Task :protomolt-helpers:classes
+> Task :protomolt-helpers:jar
+> Task :protomolt-http-json:processResources NO-SOURCE
+> Task :protomolt-http-json:classes
+> Task :protomolt-http-json:jar
+> Task :protomolt-http-jsonschema:classes
+> Task :protomolt-http-jsonschema:jar
+> Task :protomolt-inference-proto:classes
+> Task :protomolt-inference-proto:jar
+> Task :protomolt-kafka-serde:processProtoResources
+> Task :protomolt-kafka-serde:processResources NO-SOURCE
+> Task :protomolt-kafka-serde:classes
+> Task :protomolt-kafka-serde:jar
+> Task :protomolt-kafka-wire:classes
+> Task :protomolt-kafka-wire:jar
+> Task :protomolt-mapper:classes
+> Task :protomolt-mapper:jar
+> Task :protomolt-mapper-cel:classes
+> Task :protomolt-mapper-cel:jar
+> Task :protomolt-protobuf-llm:classes
+> Task :protomolt-protobuf-llm:jar
+> Task :protomolt-protobuf-metadata:classes
+> Task :protomolt-protobuf-metadata:jar
+> Task :protomolt-protobuf-prompt:classes
+> Task :protomolt-protobuf-prompt:jar
+> Task :protomolt-protobuf-quality:classes
+> Task :protomolt-protobuf-quality:jar
+> Task :protomolt-protobuf-types:processProtoResources
+> Task :protomolt-protobuf-types:processResources
+> Task :protomolt-protobuf-types:classes
+> Task :protomolt-protobuf-types:jar
+> Task :protomolt-protobuf-validation:classes
+> Task :protomolt-protobuf-validation:jar
+> Task :protomolt-protobuf-validation-protovalidate:processProtoResources
+> Task :protomolt-protobuf-validation-protovalidate:processResources
+> Task :protomolt-protobuf-validation-protovalidate:classes
+> Task :protomolt-protobuf-validation-protovalidate:jar
+> Task :protomolt-registry:compileJava
+> Task :protomolt-registry:processResources
+> Task :protomolt-registry:classes
+> Task :protomolt-registry:jar
+> Task :protomolt-repo-admission:processResources NO-SOURCE
+> Task :protomolt-repo-admission:classes
+> Task :protomolt-repo-admission:jar
+> Task :protomolt-repo-blob-cache:compileJava
+> Task :protomolt-repo-blob-cache:processResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:classes
+> Task :protomolt-repo-blob-cache:jar
+> Task :protomolt-repo-blob-grpc:compileJava
+> Task :protomolt-repo-blob-grpc:processResources NO-SOURCE
+> Task :protomolt-repo-blob-grpc:classes
+> Task :protomolt-repo-blob-grpc:jar
+
+> Task :protomolt-repo-blob-redis:compileJava
+Note: /work/worktrees/protomolt/repository-side-task-integration/repo/blob/redis/src/main/java/ai/protomolt/proto/repo/blob/redis/RedisBlobStore.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :protomolt-repo-blob-redis:processResources
+> Task :protomolt-repo-blob-redis:classes
+> Task :protomolt-repo-blob-redis:jar
+> Task :protomolt-repo-blob-s3:compileJava
+> Task :protomolt-repo-blob-s3:processResources
+> Task :protomolt-repo-blob-s3:classes
+> Task :protomolt-repo-blob-s3:jar
+> Task :protomolt-repo-blob-spi:processResources NO-SOURCE
+> Task :protomolt-repo-blob-spi:classes
+> Task :protomolt-repo-blob-spi:jar
+> Task :protomolt-repo-codec:processResources NO-SOURCE
+> Task :protomolt-repo-codec:classes
+> Task :protomolt-repo-codec:jar
+> Task :protomolt-repo-schema-registry:compileJava
+> Task :protomolt-schema-registry-git:compileJava
+> Task :protomolt-repo-engine:processResources NO-SOURCE
+> Task :protomolt-repo-proto:generateCompilerIdentity
+> Task :protomolt-repo-proto:processProtoResources
+> Task :protomolt-repo-proto:processResources
+> Task :protomolt-repo-proto:classes
+> Task :protomolt-repo-proto:jar
+> Task :protomolt-repo-schema-registry:processResources NO-SOURCE
+> Task :protomolt-repo-schema-registry:classes
+> Task :protomolt-repo-schema-registry:jar
+> Task :protomolt-repo-service:processResources NO-SOURCE
+> Task :protomolt-repo-spi:processResources NO-SOURCE
+> Task :protomolt-repo-spi:classes
+> Task :protomolt-repo-spi:jar
+> Task :protomolt-schema-confluent:classes
+> Task :protomolt-schema-confluent:jar
+> Task :protomolt-schema-registry-git:processResources
+> Task :protomolt-schema-registry-git:classes
+> Task :protomolt-schema-registry-git:jar
+> Task :protomolt-sources:classes
+
+> Task :protomolt-repo-container:compileJava
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :protomolt-repo-container:classes
+> Task :protomolt-sources:jar
+> Task :protomolt-repo-container:jar
+> Task :protomolt-repo-container:processTestResources
+> Task :protomolt-repo-engine:compileJava
+> Task :protomolt-repo-engine:classes
+> Task :protomolt-repo-engine:jar
+
+> Task :protomolt-repo-service:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :protomolt-repo-service:classes
+> Task :protomolt-repo-service:jar
+
+> Task :protomolt-repo-container:compileTestJava
+Note: /work/worktrees/protomolt/repository-side-task-integration/repo/container/src/test/java/ai/protomolt/proto/repo/container/lifecycle/KafkaPurgeQueueTest.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :protomolt-repo-container:testClasses
+> Task :protomolt-repo-container:test
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/repository-side-task-integration/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 1m 35s
+168 actionable tasks: 168 executed

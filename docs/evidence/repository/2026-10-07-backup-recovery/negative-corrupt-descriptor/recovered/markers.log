@@ -1,0 +1,4 @@
+CHECK_OK corrupt-descriptor.raw_explicit_opaque :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused :: readValidated(v1) -> DATA_LOSS
+CHECK_OK corrupt-descriptor.materialized_refused :: readMaterialized(v1) -> DATA_LOSS; no typed value invented
+CHECK_OK corrupt-descriptor.schema.no_live_lookup :: live schema resolution attempts=0

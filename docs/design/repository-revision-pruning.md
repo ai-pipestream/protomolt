@@ -316,3 +316,47 @@ new capture table is required solely for hypothetical zero-part native history.
 The implementation must still prove SQL acquisition fencing, native-reference and
 mirror transitions, legacy coverage, and the complete lock order. This review is
 not evidence that pruning, schema reclamation or their acceptance gates have landed.
+
+## Implementation inventory after coverage reconciliation
+
+Source review on 2026-10-08 established these coupled changes for the next migration.
+This inventory is not an enabled prune API.
+
+1. The active `repository_native_reference_exists` definition is in V66, including
+   the ASSESSMENT alternative. Update only the live DOCUMENT_HISTORY predicate for
+   completed prune records. V26's reference guard must continue rejecting deletion
+   while a native owner exists. Preserve all unrelated owner alternatives.
+2. V39's history mirror runs when a projection seals. Pruning therefore requires
+   explicit removal of the exact revision/publication-revision mirror set. Preserve
+   immutable publication, part, physical-location, commit and receipt records.
+   Check the complete distinct object set before and after mirror removal; a missing
+   reference is corruption, not an excuse to prune an incomplete set.
+3. Use V65 `lock_repository_retention_set` for the complete object set after the
+   document fence. That function orders archive origins, document attempt origins,
+   then retention rows. Do not substitute an object-by-object loop. Acquire schema
+   locks afterward in digest order. Recheck dependencies after any lock wait.
+4. Extend V116 read-pin and preparation-root acquisition and V117 assessment-slot
+   acquisition with exact revision-state checks under the existing source fence.
+   Current-scope pins remain protected after a pointer move. V63 and V86 also require
+   consistency with the changed live-reference predicate. A reference cannot be
+   acquired between eligibility inspection and the completed prune transaction.
+5. Add the authorized pruned-content refusal to `DocumentHistoricalReadRows`,
+   `DocumentHistoricalReferenceAdmission` and `DocumentHistoricalSchemaRows`.
+   Schema-only materialization is a separate entry path and must not load descriptors
+   for pruned content. Keep receipt replay on immutable evidence rather than forcing
+   content capture as a replay prerequisite.
+6. V55/V56/V57 associations remain archival evidence. Update live-retention diagnostics
+   to distinguish them from content ownership. V48 descriptor payload separation
+   and schema reclamation still require a separate populated migration and tests;
+   deleting physical history mirrors alone does not reclaim descriptor bytes.
+7. Persist idempotent prune identity and exact reclaim candidates with reference
+   release. Provider cleanup must resolve immutable physical identity to the exact
+   provider version; `repository_physical_locations` alone does not contain every
+   provider version field. Audit the archive/document source records before defining
+   cleanup bindings. The existing attempt-wide cleanup worker remains unsuitable.
+
+External branches based on 4f4d66bff cover additional reconciliation qualification,
+RustFS scaling and isolated backup. The coordinating branch retains the pruning
+migration, acquisition checks, reclamation protocol and integration review. No agent
+should merge a schema or retention change merely because an older-base rehearsal
+passes. Re-run the applicable acceptance cases after integration.

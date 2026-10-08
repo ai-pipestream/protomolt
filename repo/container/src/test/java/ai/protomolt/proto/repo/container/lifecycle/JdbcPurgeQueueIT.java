@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * SKIP LOCKED proof (a row locked by another open transaction is skipped by
  * claimBatch, then becomes claimable once the lock releases).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcPurgeQueueIT extends AbstractLifecycleIT {
 
     private static DocumentPurgeRecord newRecord(Instant requestedAt) {

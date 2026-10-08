@@ -8,7 +8,7 @@ Two complete clean-room rehearsals restored a QUIESCED backup of a seeded reposi
 (PostgreSQL 18 ledger plus a pinned RustFS volume) into fresh stores and verified it in a
 fresh production-JAR host with no schema registry, followed by ten negative JUnit cases
 (fourteen injected scenarios) on disposable copies. The procedure is documented in
-[operations/repository-backup-recovery.md](../../../operations/repository-backup-recovery.md).
+[operations/repository-backup-rehearsal.md](../../../operations/repository-backup-rehearsal.md).
 This is backup verification of one deployment shape, not production backup readiness,
 not pruning, and not cross-provider disaster recovery.
 

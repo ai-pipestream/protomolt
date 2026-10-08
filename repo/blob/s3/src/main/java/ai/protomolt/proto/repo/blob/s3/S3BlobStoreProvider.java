@@ -16,30 +16,36 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 
-/** S3 factory with explicitly selected static credentials or the AWS default chain. */
+/**
+ * S3 factory with explicitly selected static credentials or the AWS default chain.
+ * Every option is required; nothing is defaulted.
+ */
 public final class S3BlobStoreProvider implements BlobStoreProvider {
-    private static final Map<String, Long> TIMEOUT_DEFAULTS = Map.of(
-            "api-call-timeout-ms", 300_000L, "api-attempt-timeout-ms", 60_000L,
-            "connection-timeout-ms", 10_000L, "socket-timeout-ms", 60_000L);
+    private static final Set<String> TIMEOUTS = Set.of(
+            "api-call-timeout-ms", "api-attempt-timeout-ms", "connection-timeout-ms", "socket-timeout-ms");
     @Override public String id() { return "s3"; }
 
     @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
         String endpoint = options.get("endpoint");
         if (endpoint == null) throw new IllegalArgumentException("Missing S3 identity endpoint");
+        if (options.get("region") == null || options.get("region").isBlank())
+            throw new IllegalArgumentException("Missing S3 identity region");
         return S3BackendIdentity.of(endpoint.isEmpty() ? S3BackendIdentity.SDK_DEFAULT : endpoint,
                 options.get("region"), bool(options, "path-style"));
     }
 
     @Override public OpenedBlobStore open(Map<String, String> options) {
-        // The original explicit key-pair form remains supported.
-        String mode = options.containsKey("credentials-mode") ? options.get("credentials-mode") : "static";
+        String mode = options.get("credentials-mode");
+        if (mode == null) throw new IllegalArgumentException("Missing S3 option: credentials-mode");
         if (!Set.of("static", "default-chain").contains(mode)) {
             throw new IllegalArgumentException("S3 credentials-mode must be static or default-chain");
         }
-        var keys = new HashSet<>(Set.of("endpoint", "region", "path-style", "conditional-writes"));
-        for (String key : TIMEOUT_DEFAULTS.keySet()) if (options.containsKey(key)) keys.add(key);
-        if (options.containsKey("credentials-mode")) keys.add("credentials-mode");
+        var keys = new HashSet<>(Set.of("endpoint", "region", "path-style", "conditional-writes", "credentials-mode"));
+        keys.addAll(TIMEOUTS);
         if (mode.equals("static")) keys.addAll(Set.of("access-key", "secret-key"));
+        for (String key : keys) {
+            if (!options.containsKey(key)) throw new IllegalArgumentException("Missing S3 option: " + key);
+        }
         if (!options.keySet().equals(keys)) throw new IllegalArgumentException("Invalid S3 option set");
         for (String key : keys) {
             if (options.get(key) == null || (!key.equals("endpoint") && options.get(key).isBlank())) {
@@ -92,14 +98,15 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
 
     private static java.time.Duration timeout(Map<String, String> options, String key) {
         long millis;
-        try { millis = options.containsKey(key) ? Long.parseLong(options.get(key)) : TIMEOUT_DEFAULTS.get(key); }
+        try { millis = Long.parseLong(options.get(key)); }
         catch (NumberFormatException invalid) { throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds"); }
         if (millis <= 0 || millis > Integer.MAX_VALUE)
             throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds no greater than 2147483647");
         return java.time.Duration.ofMillis(millis);
     }
 
-    private static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {
+    /** Owned cleanup path: client first, credentials second, failures retained with suppression. */
+    static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {
         Exception failure = null;
         try { if (client != null) client.close(); } catch (Exception e) { failure = e; }
         try { if (credentials instanceof AutoCloseable closeable) closeable.close(); }

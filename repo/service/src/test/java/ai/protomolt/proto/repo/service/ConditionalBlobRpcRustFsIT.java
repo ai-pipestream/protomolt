@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Proves conditional RPC status and adapter behavior against the pinned deployment store. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ConditionalBlobRpcRustFsIT {
     @Container static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer("postgres:18-alpine");
