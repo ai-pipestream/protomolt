@@ -200,7 +200,9 @@ class ManagedSchemaHostIT {
         }
     }
 
-    @Test void journaledObservationFailureLeavesSchemaLifecycleWithCallerAndDrainsReaders() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void journaledObservationFailureLeavesSchemaLifecycleWithCallerAndDrainsReaders(boolean historical) throws Exception {
         var config = config("journaled-startup-" + UUID.randomUUID());
         try (var store = GitSchemaRegistryStore.builder().repositoryDir(directory).build();
              var database = new LedgerDatabase(config.ledger())) {
@@ -208,9 +210,10 @@ class ManagedSchemaHostIT {
             var access = new Access(store, definition(StringValue.getDescriptor()));
             long before = tx.readOnly(em -> ((Number) em.createNativeQuery(
                     "SELECT count(*) FROM repository_reader_incarnations WHERE state='ACTIVE'").getSingleResult()).longValue());
-            var journaled = new ManagedDocumentServices.Journaled(new DocumentPublicationRuntime.Assessments(
-                    directory.resolve("absent-runtime-bundle"), Duration.ofMinutes(5), Duration.ofSeconds(5)),
-                    (account, principal, operation) -> ADMIN);
+            var options = new ManagedPublicationOptions(directory.resolve("absent-runtime-bundle"), Duration.ofMinutes(5),
+                    Duration.ofSeconds(5), (account, principal, operation) -> ADMIN);
+            if (historical) options = options.withRecovery((account, principal, operation) -> ADMIN).withHistoricalPublication(2);
+            var journaled = options.journaled();
             try {
                 assertThatThrownBy(() -> new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(),
                         null, access, null, journaled)).isInstanceOf(java.io.UncheckedIOException.class)

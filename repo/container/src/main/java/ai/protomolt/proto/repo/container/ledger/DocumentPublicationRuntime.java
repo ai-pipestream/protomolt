@@ -290,7 +290,30 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         T run(RepositoryInstalledHistoricalAttempts attempts) throws E;
     }
 
-    /** Internal public-boundary qualification; host API exposure waits for cold and takeover parity. */
+    /**
+     * Managed historical publication with explicit retained-generation capacity and recovery authority.
+     * Original backend identities must resolve exactly; unavailable retained storage cannot be substituted.
+     * Successful construction transfers external worker lifecycle ownership; on failure it stays with the caller.
+     * This factory does not provision host termination verification or a recovery scheduler.
+     */
+    public static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentHistoricalRetainedReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime managedHistoricalJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers, int historicalCapacity,
+            RecoveryAuthority recoveryAuthority) throws IOException {
+        if (historicalCapacity < 1) throw new IllegalArgumentException("Historical generation capacity must be positive");
+        Objects.requireNonNull(tx); Objects.requireNonNull(drives); Objects.requireNonNull(ledger);
+        Objects.requireNonNull(reader); Objects.requireNonNull(budget); Objects.requireNonNull(backends);
+        Objects.requireNonNull(assemblyLimits); Objects.requireNonNull(sqlTimeouts);
+        return historicalJournaled(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                assessments, authority, externalWorkers, historicalCapacity, recoveryAuthority);
+    }
+
+    /** Shared historical implementation; lifecycle-only composition remains internal. */
     static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentHistoricalRetainedReader & DocumentReadLifecycle.Reader>
             DocumentPublicationRuntime historicalJournaled(
             Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,

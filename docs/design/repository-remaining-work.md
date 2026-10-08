@@ -12,10 +12,10 @@ supervisor execution. Verified termination, bounded reader discovery and a calla
 recovery step now exist; none installs a deployed verifier or scheduler. Capture
 and preparation-root disposal still require separate operation authority.
 
-The immediate open integration is public historical publication. A package-private
-qualification factory now dispatches historical requests through the library and
-authenticated in-process gRPC boundaries. Existing public factories still reject
-historical selectors. The internal path covers committed and rejected receipts,
+The immediate open integration is managed historical publication. An explicit
+managed factory and service option now route historical requests through library
+and authenticated in-process gRPC boundaries. Ordinary options still reject
+historical selectors. The shared dispatcher covers committed and rejected receipts,
 START and CREATE acknowledgement loss, three cold-process crash boundaries, and
 concurrent takeover while an old provider reply remains held. Library cancellation,
 orderly shutdown and remote-client cancellation also retain actual workers and
@@ -25,8 +25,10 @@ work. Altered retries and invalid identities are refused; cleanup authority fail
 and SQL pin-release rollback retain ownership and permit subsequent cleanup.
 Explicit gRPC deadlines and orderly service admission close now retain actual
 producer resources until drainage. Focused recovery acknowledgement, corrupt-journal,
-revocation and policy checks now pass. Explicit managed-host historical configuration
-and service composition remain before exposing the host factory; see the
+revocation and policy checks now pass. Managed-host configuration and initial
+publication/replay now pass with retained physical identity checks over Redis.
+Cold hosted recovery, unavailable retained backends and held-work shutdown still
+need service-level qualification; see the
 [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
 and [next integration](repository-historical-restore.md#next-managed-host-integration).
 START reconciliation retains an exact attempt identity and requires current
@@ -58,6 +60,7 @@ Recent evidence:
 - [Historical public publication before credential/policy change](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md)
 - [Historical public uncertain recovery acknowledgement](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md)
 - [Historical public corrupt-journal recovery](../evidence/repository/2026-10-08-historical-public-corrupt-journal/README.md)
+- [Explicit managed historical publication](../evidence/repository/2026-10-08-managed-historical-host/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

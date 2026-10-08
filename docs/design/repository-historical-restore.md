@@ -1001,9 +1001,10 @@ broader backup qualification and progressive hydration remain required afterward
 
 #### Remaining factory exposure checks
 
-Keep the factory package-private until the following public-route checks have
-evidence. Existing private execution tests are useful regression coverage but do
-not prove that facade routing carries the same identity, control and cleanup rules.
+These public-route checks gate managed factory exposure. Existing private execution
+tests are useful regression coverage but do not prove that facade routing carries
+the same identity, control and cleanup rules. The reviewed dispatcher now has an
+explicit managed wrapper; host composition qualification is recorded below.
 
 - Transport cancellation and deadline: hold a real provider reply, cancel through
   the remote client, prove server capacity and delivery reservations remain held
@@ -1095,17 +1096,19 @@ not replace the remaining full-goal pruning, backup, performance or hydration wo
 
 #### Next managed-host integration
 
-The qualified dispatcher is still reached through the package-private
-`DocumentPublicationRuntime.historicalJournaled` factory. `ManagedDocumentServices`
-uses `managedJournaled`, and `ManagedPublicationOptions` has no historical capacity
-or opt-in. Passing the checks above does not change that host wiring.
+The shared dispatcher remains implemented in `historicalJournaled`. Its public
+`managedHistoricalJournaled` wrapper now requires explicit generation capacity and
+recovery authority. `ManagedPublicationOptions.withHistoricalPublication` opts the
+managed service into that wrapper after `withRecovery` has supplied authority.
+Existing constructors keep historical publication disabled. No protobuf operation,
+field number, import or stored type URL changed.
 
-The next implementation must provide explicit historical publication configuration
-with positive generation capacity and current per-operation recovery authority.
-Drain authority remains separate. Ordinary journaled publication must keep working
-without historical activation; selecting historical publication without its required
-configuration must fail before resources are exposed. Construction failure must
-leave cleanup ownership clear, including schema workers and native readers.
+Configuration rejects nonpositive capacity and absent recovery authority before
+host acquisition. Drain authority remains separate. The service transfers schema
+worker ownership only after constructing the repository facade; on failure it
+drains a constructed runtime rather than just its reader. Schema close completion
+is recorded only after success, so repeated shutdown is idempotent and exceptions
+remain retryable. Caller-owned schema access remains usable after failed composition.
 
 Retained reads and recovered uploads must resolve their original backend generation
 and profile, including storage identity. New initial uploads may use the current
@@ -1114,11 +1117,18 @@ an unavailable historical identity must remain an explicit failure. Supporting
 additional retained backends requires an identity-based resolver with owned provider
 lifetime, not substitution of the current backend or provider-specific defaults.
 
-Qualify the wiring through the actual managed service and its library and
-authenticated gRPC boundaries: new mixed publication, retained revision readback,
-exact retry, cold recovery, missing backend refusal, and close while work is held.
-Also cover absent/invalid configuration and failed construction cleanup. Keep host
-activation and public API availability unclaimed until that composition passes.
+The hosted bounded-document builder now has real PostgreSQL, Redis and Git coverage
+for ordinary publication followed by mixed historical/new content, library-first
+and authenticated gRPC-first execution, exact retries, retained-schema readback and
+physical identity preservation. Disabled configuration refuses historical requests
+on both boundaries. Real registry lifecycle tests and ordinary/historical observation
+failure tests cover schema ownership and reader cleanup.
+
+See [managed host evidence](../evidence/repository/2026-10-08-managed-historical-host/README.md).
+Next qualify cold hosted recovery, unavailable retained backend identity and close
+while historical work is held. The public composition entry now exists, but full
+host recovery, multi-backend operation and deployment remain unqualified. Keep those
+features out of availability claims until their service-level cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)
 

@@ -18,6 +18,16 @@ class DocumentAssessmentStorageRuntimeTest {
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
 
     @Test void boundedPublicHostBinding() throws Exception {
+        boundedPublicHostBinding("BoundedDocumentPublicFactoryProbe", "BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK", "BOUNDED_PUBLIC_CONSUMER_RPC_OK",
+                "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
+    }
+
+    @Test void managedHistoricalHostBinding() throws Exception {
+        boundedPublicHostBinding("ManagedHistoricalHostProbe", "MANAGED_HISTORICAL_ENABLED_LIBRARY_OK", "MANAGED_HISTORICAL_ENABLED_RPC_OK",
+                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK", "MANAGED_HISTORICAL_DISABLED_RPC_OK");
+    }
+
+    private void boundedPublicHostBinding(String probe, String... markers) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
              var redis = new org.testcontainers.containers.GenericContainer<>("redis:7-alpine")
@@ -28,7 +38,7 @@ class DocumentAssessmentStorageRuntimeTest {
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                     compiled.classpath() + java.io.File.pathSeparator + compiled.probe(),
-                    "ai.protomolt.proto.repo.service.BoundedDocumentPublicFactoryProbe", compiled.bundle().toString());
+                    "ai.protomolt.proto.repo.service." + probe, compiled.bundle().toString());
             builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
             builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
             builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
@@ -39,8 +49,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
-                assertThat(result).contains("BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK", "BOUNDED_PUBLIC_CONSUMER_RPC_OK",
-                        "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
+                assertThat(result).contains(markers);
                 System.out.println(result);
             } finally {
                 if (process.isAlive()) {
