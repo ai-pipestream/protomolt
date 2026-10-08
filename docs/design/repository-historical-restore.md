@@ -889,13 +889,24 @@ attempts every batch release and the plan use, preserving the original failure.
 Closing the ordinary pinned plan leaves SQL release to the reader lifecycle after
 actual drain, as in ordinary publication.
 
-The public driver still needs accepted-call routing and its tests. It must observe
-authorized terminal replay before host selection, inspect an existing local entry
-before allocating a capture, and use explicit host coordinator authority for cold
-successor recovery. Branch before the ordinary operation-wide guard so historical
-provider work cannot prevent another generation from taking over. The outer
-accepted call and owned attempt lifetimes must cover shutdown and worker drain.
-No new default coordinator, provider, schema or credential fallback is permitted.
+`DocumentHistoricalPublicationDispatch` now implements this routing behind a
+package-private runtime factory. It observes authorized terminal replay before
+host selection, inspects local entries before allocating a capture, and requires
+explicit host recovery authority. It branches before the ordinary operation-wide
+guard and uses the facade's accepted call through synchronous execution. Cold
+restart and takeover through this entry point still require qualification before
+the host factory becomes public. Existing public factories retain the historical
+execution guard. No default coordinator, provider, schema or credential fallback
+is supplied.
+
+The attempt retains verified upload selections with its owned assessment. A
+CREATE retry reconciles those exact selections without resolving schemas again.
+After authorized terminal replay, the dispatcher marks retained generations for
+disposal without performing cleanup SQL on the receipt-delivery path. Bounded
+maintenance runs before new nonterminal work and through runtime `tick()`. It
+borrows only proven, unborrowed retirement entries and performs authority lookup
+and disposal outside the registry monitor. Failed cleanup remains visible and
+retryable; borrowed workers continue to protect their generations and source pins.
 
 `inspectSelected` returns only a staleable local generation ID and borrowed,
 attached and disposal state. It neither borrows the entry nor changes capacity,
@@ -928,11 +939,11 @@ refuse wrong callers or altered commands before disclosing busy state.
 
 #### End-to-end acceptance
 
-Public composition must address both entry guards: `DocumentPublicationFacade`
-and `RemoteDocumentPublicationRepository` currently call
-`requireExecutionSupported` before execution. Enable the historical branch only
-with explicit host configuration and qualify it through both the shared library
-and the authenticated gRPC client. Keep guards on ordinary-only internals;
+The facade enables the historical branch only for the internal qualification
+factory. `RemoteDocumentPublicationRepository` validates the envelope and response
+but leaves execution capability decisions to the authenticated server. Qualify
+the complete historical branch through both the shared library and that client
+before exposing host configuration. Keep guards on ordinary-only internals;
 removing every occurrence would bypass their distinct historical ownership path.
 
 For synchronous dispatch, the facade's existing accepted call is sufficient.

@@ -17,6 +17,7 @@ final class HistoricalInitialOwnerProbe {
             HistoricalCreateCommitFault fault, javax.sql.DataSource database) throws Exception {
         run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation, fault, database, false);
         if (fault == null) {
+            HistoricalPublicDispatchProbe.run(tx, provider, caller, command, placement, revision, fragments, budget, database);
             var current = new DocumentLedger(tx).findByNodeId(
                     ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress())).orElseThrow();
             var member = command.intent().getMembers(0);

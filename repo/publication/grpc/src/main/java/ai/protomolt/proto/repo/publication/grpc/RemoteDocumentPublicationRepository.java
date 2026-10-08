@@ -57,7 +57,7 @@ public final class RemoteDocumentPublicationRepository implements DocumentPublic
         try (var reservation=reserve((long)request.getSerializedSize()+DocumentPublicationCommand.MAX_COMMAND_BYTES
                 +DocumentPublicationResponseValidator.MAX_BYTES)) {
             var input=DocumentPublicationInput.validate(request,control);
-            input.command().requireExecutionSupported();
+            // The authenticated server decides which execution capabilities are enabled.
             long nanos=Math.min(timeoutNanos,control.remainingNanos());
             if (nanos<=0) throw new RepositoryException(RepositoryException.Code.DEADLINE_EXCEEDED,"Publication deadline expired");
             var deadline=io.grpc.Deadline.after(nanos,TimeUnit.NANOSECONDS);

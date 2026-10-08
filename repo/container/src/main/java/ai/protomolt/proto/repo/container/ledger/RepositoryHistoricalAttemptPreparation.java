@@ -53,6 +53,7 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
     }
 
     boolean cold() { return retention == null; }
+    Map<String, DocumentPublicationCandidate.Mode> modes() { return modes; }
     DocumentPublicationPreparationRecord requireResolvedRetention() {
         requireSettled();
         if (!cold()) return retention;

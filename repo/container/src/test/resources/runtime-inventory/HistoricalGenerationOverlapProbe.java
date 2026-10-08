@@ -70,6 +70,8 @@ final class HistoricalGenerationOverlapProbe implements AutoCloseable {
                 }
                 require(next.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
                         == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "reserve successor while old Work held");
+                require(attempts.retireReady(2, key -> coordinator, RepositoryReadControl.NONE) == 0,
+                        "maintenance skips the borrowed fenced predecessor");
             }
         }
         RepositorySuccessorInstall.Plan plan;
@@ -88,16 +90,13 @@ final class HistoricalGenerationOverlapProbe implements AutoCloseable {
         // Called only after actual provider readback and exact committed receipt verification.
         require(!history.isReleased() && worker != null, "old worker still holds history after successor publication");
         require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 2)), "publication retains both generations");
-        try (var old = attempts.resumeGeneration(coordinator, caller, command, oldId).orElseThrow()) {
-            require(old.retireFenced(coordinator, Duration.ZERO, RepositoryReadControl.NONE)
-                    == RepositoryInstalledHistoricalAttempts.Retirement.RETAINED, "old retirement waits for actual worker drainage");
-        }
+        require(attempts.retireReady(2, key -> coordinator, RepositoryReadControl.NONE) == 0,
+                "maintenance waits for actual predecessor worker drainage");
         require(!history.isReleased(), "retirement attempt cannot release held capture");
         releaseWorker();
-        try (var old = attempts.resumeGeneration(coordinator, caller, command, oldId).orElseThrow()) {
-            require(old.retireFenced(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
-                    == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "drained old generation retires independently");
-        }
+        require(attempts.retireReady(2, key -> coordinator, RepositoryReadControl.NONE) == 1,
+                "maintenance retires the drained predecessor independently");
+        require(attempts.drain().unresolved() == 1, "maintenance returns the predecessor capacity slot");
         require(history.isReleased(), "old capture released after actual worker drainage");
         try (var next = attempts.resume(caller, command).orElseThrow()) {
             require(next.identity().equals(newId), "old retirement preserves successor retry identity");
