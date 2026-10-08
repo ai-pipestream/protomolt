@@ -60,6 +60,8 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
             } finally { permits.release(); }
         } catch (RepositoryOperationLedger.CommandConflictException conflict) {
             throw new RepositoryException(RepositoryException.Code.CONFLICT, conflict.getMessage(), conflict);
+        } catch (DocumentSchemaPolicies.StalePolicy stale) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, stale.getMessage(), stale);
         } catch (PayloadBudget.CapacityExceededException exhausted) {
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Publication byte capacity exhausted",exhausted);
         }

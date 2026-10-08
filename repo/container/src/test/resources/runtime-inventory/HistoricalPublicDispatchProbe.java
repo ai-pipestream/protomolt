@@ -39,7 +39,7 @@ final class HistoricalPublicDispatchProbe {
             var scoped = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), caller.identities(), Optional.of(binding));
             run(tx, provider, scoped, original, placement, source, fragments, budget, null, phase);
         }
-        for (String phase : List.of("read-library", "read-grpc", "write-library", "write-grpc"))
+        for (String phase : List.of("read-library", "read-grpc", "write-library", "write-grpc", "policy-library", "policy-grpc"))
             run(tx, provider, caller, original, placement, source, fragments, budget, null, phase);
     }
 
@@ -48,7 +48,7 @@ final class HistoricalPublicDispatchProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
-                || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-");
+                || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-");
         var readerId = UUID.randomUUID();
         var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {

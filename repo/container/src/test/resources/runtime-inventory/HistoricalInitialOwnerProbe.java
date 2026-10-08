@@ -18,6 +18,9 @@ final class HistoricalInitialOwnerProbe {
         run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation, fault, database, false);
         if (fault == null) {
             HistoricalPublicDispatchProbe.run(tx, provider, caller, command, placement, revision, fragments, budget, database);
+            var currentPolicy = new DocumentSchemaPolicies(tx).read(command.intent().getAccountId(), () -> {});
+            require(currentPolicy.policy().bytes().equals(policy.policy().bytes()), "public policy fixtures restore original content");
+            policy = currentPolicy;
             var current = new DocumentLedger(tx).findByNodeId(
                     ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress())).orElseThrow();
             var member = command.intent().getMembers(0);

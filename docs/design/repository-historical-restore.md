@@ -1048,8 +1048,12 @@ not prove that facade routing carries the same identity, control and cleanup rul
   Publication-first ordering still needs an exact commit gate
   and observed blocked writer; revoked READ/credentials deny later receipt access,
   while WRITE-only revocation can leave authorized committed replay available.
-  Inspect and qualify public error mapping for `DocumentSchemaPolicies.StalePolicy`
-  when changing current policy; its internal exception is not an API contract.
+  Active policy replacement during upload now has library/gRPC cases. The facade
+  maps `DocumentSchemaPolicies.StalePolicy` to FAILED_PRECONDITION; exact retry
+  preserves the stale assessment and reports the same specific failure without
+  new upload, selection or schema work. Private exception behavior is unchanged.
+  See [policy-change evidence](../evidence/repository/2026-10-08-historical-public-policy-change/README.md).
+  Publication-first and competing-writer SQL orderings remain to be qualified.
 - Publication acknowledgement loss: commit the real publication transaction and
   lose its reply. An exact public retry must recover the authorized durable receipt
   with one revision, no second PUT and no second assessment CREATE.

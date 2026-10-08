@@ -16,10 +16,15 @@ final class HistoricalPublicAuthorizationProbe {
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         var registry = runtime.withHistoricalAttempts(value -> value);
         boolean credential = change.equals("credential");
-        if (!credential && !change.equals("read") && !change.equals("write")) throw new IllegalArgumentException(change);
-        String saved = credential ? null : tx.readOnly(em -> (String) em.createNativeQuery(
+        boolean policyChange = change.equals("policy");
+        if (!credential && !policyChange && !change.equals("read") && !change.equals("write")) throw new IllegalArgumentException(change);
+        var catalog = new DocumentSchemaPolicies(tx);
+        var oldPolicy = policyChange ? catalog.read(key.account(), () -> {}) : null;
+        DocumentSchemaPolicies.Selection replacement = null;
+        String saved = credential || policyChange ? null : tx.readOnly(em -> (String) em.createNativeQuery(
                 "SELECT security::text FROM documents WHERE node_id=:id").setParameter("id", node).getSingleResult());
-        var expected = credential ? RepositoryException.Code.UNAUTHENTICATED : RepositoryException.Code.NOT_FOUND;
+        var expected = credential ? RepositoryException.Code.UNAUTHENTICATED
+                : policyChange ? RepositoryException.Code.FAILED_PRECONDITION : RepositoryException.Code.NOT_FOUND;
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var pending = executor.submit(() -> repository.publishDocument(caller, request, RepositoryReadControl.NONE));
             try {
@@ -28,6 +33,16 @@ final class HistoricalPublicAuthorizationProbe {
                         "accepted call retains its generation and historical captures before revocation");
                 if (credential) new RepositoryCredentialAuthorities(tx).revoke(new RepositoryCaller("operator", true),
                         caller.credentialBinding().orElseThrow(), caller.principalName());
+                else if (policyChange) {
+                    var limits = oldPolicy.policy().definition().getLimits();
+                    require(limits.getMaxFragments() > 1, "fixture policy has room to reduce fragment bound");
+                    var changed = ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy.of(oldPolicy.policy().definition().toBuilder()
+                            .setLimits(limits.toBuilder().setMaxFragments(limits.getMaxFragments() - 1)).build(), () -> {});
+                    replacement = catalog.activate(changed, oldPolicy.revision(), () -> {});
+                    require(replacement.revision() == oldPolicy.revision() + 1
+                                    && !replacement.policy().sha256().equals(oldPolicy.policy().sha256()),
+                            "policy replacement changes content and advances its revision");
+                }
                 else {
                     var retained = change.equals("read") ? Access.ACCESS_WRITE : Access.ACCESS_READ;
                     var removed = change.equals("read") ? Access.ACCESS_READ : Access.ACCESS_WRITE;
@@ -46,6 +61,7 @@ final class HistoricalPublicAuthorizationProbe {
                     require(failure.getCause() instanceof RepositoryException denied
                                     && denied.code() == expected,
                             "public call reports revoked " + change + ": " + failure.getCause());
+                    if (policyChange) require(stalePolicy(failure), "first refusal identifies the exact stale policy");
                 }
                 for (String table : java.util.List.of("document_revision_commits", "document_assessment_owners",
                         "repository_operation_success")) {
@@ -62,6 +78,7 @@ final class HistoricalPublicAuthorizationProbe {
                     throw new AssertionError("Revoked authority retried public historical publication");
                 } catch (RepositoryException denied) {
                     require(denied.code() == expected, "retry rechecks current " + change + " authority");
+                    if (policyChange) require(stalePolicy(denied), "retry retains the original stale policy assessment");
                 }
                 require(puts == provider.completedPuts() && selected == selections.get() && resolved == resolutions.get(),
                         "revoked retry adds no PUT, host selection or schema resolution");
@@ -71,7 +88,21 @@ final class HistoricalPublicAuthorizationProbe {
                 require(stopped && registry.drain().unresolved() == 0 && reads.outstandingReads() == 0,
                         "explicit process cleanup authority releases revoked request resources");
             } finally { provider.releasePut(); }
-        } finally { if (!credential) security(tx, node, saved); }
+        } finally {
+            if (replacement != null) catalog.activate(oldPolicy.policy(), replacement.revision(), () -> {});
+            else if (!credential && !policyChange) security(tx, node, saved);
+        }
+    }
+
+    private static boolean stalePolicy(Throwable failure) {
+        for (Throwable next = failure; next != null; next = next.getCause()) {
+            if (next instanceof DocumentSchemaPolicies.StalePolicy
+                    && "Prepared schema policy is no longer active".equals(next.getMessage())) return true;
+            if (next instanceof io.grpc.StatusRuntimeException remote
+                    && remote.getStatus().getCode() == io.grpc.Status.Code.FAILED_PRECONDITION
+                    && "Prepared schema policy is no longer active".equals(remote.getStatus().getDescription())) return true;
+        }
+        return false;
     }
 
     private static void security(Tx tx, java.util.UUID node, String value) {
