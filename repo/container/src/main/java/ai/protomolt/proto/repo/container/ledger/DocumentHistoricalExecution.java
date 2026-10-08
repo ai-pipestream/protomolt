@@ -186,6 +186,66 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         }
     }
 
+    /** Transfer owns a separate execution lifetime; callbacks do not acquire the parent monitor. */
+    DocumentUploadCoordinator.Staged stageUploads(RepositoryCaller caller, DocumentUploadCoordinator coordinator,
+            Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies,
+            Map<String, String> attributes, RepositoryReadControl control) {
+        try (var child = forkTransfer(caller, control, coordinator.boundedAuthority(tx))) {
+            return coordinator.stageAuthorized(prepared, bodies, attributes, control::check, child.uploadAuthority(caller, control));
+        }
+    }
+
+    private synchronized DocumentHistoricalExecution forkTransfer(RepositoryCaller caller, RepositoryReadControl control, Tx bounded) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller); work.authorize(control);
+        var cleanup = new ArrayList<AutoCloseable>();
+        try {
+            var bytes = budget.reserve(retained.bytes()); cleanup.add(bytes);
+            var source = work.fork(); cleanup.add(source);
+            var scope = registration.forkAccepted(); cleanup.add(scope);
+            var child = new DocumentHistoricalExecution(source, bytes, owner, prepared, modes, pins, scope,
+                    bounded, budget, drives, record, capture, preparationDigest, successor);
+            child.successorAttachmentVerified = successorAttachmentVerified;
+            return child;
+        } catch (RuntimeException | Error failure) {
+            try { DocumentHistoricalAssessmentSources.closeAll(cleanup); }
+            catch (RuntimeException | Error failed) { if (failed != failure) failure.addSuppressed(failed); }
+            throw failure;
+        }
+    }
+
+    private DocumentUploadAuthority uploadAuthority(RepositoryCaller caller, RepositoryReadControl control) {
+        return new DocumentUploadAuthority() {
+            public DocumentOperationUploadAdmission.Admission admit() { return admitUploads(caller, control); }
+            public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                var renewal = selections.isEmpty() ? null : DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                mutate(caller, control, em -> {
+                    DocumentSelectedAttemptLedger.renewOwnerAndSelections(em, owner, renewal, prepared.lease());
+                    return null;
+                });
+            }
+            public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                var renewal = DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                return mutate(caller, control, em -> DocumentSelectedAttemptLedger.renew(em, owner, renewal));
+            }
+            public void verify(DocumentSelectedAttemptLedger.Selected selection, List<DocumentSelectedAttemptLedger.Observation> observations) {
+                var verification = DocumentSelectedAttemptLedger.prepareVerification(observations);
+                mutate(caller, control, em -> DocumentSelectedAttemptLedger.verifyBatch(em, owner, selection, verification));
+            }
+            public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections, Runnable active) {
+                var renewal = selections.isEmpty() ? null : DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                mutate(caller, control, em -> {
+                    active.run();
+                    DocumentOperationUploadAdmission.requireInitialSelections(em, owner, prepared);
+                    DocumentSelectedAttemptLedger.renewOwnerAndSelections(em, owner, renewal, prepared.lease());
+                    active.run();
+                    return null;
+                });
+            }
+            public void afterDrain() { mutate(caller, control, em -> null); }
+        };
+    }
+
     /** Owns a child of this exact source/registration scope through all assessment work and cleanup. */
     synchronized DocumentPublicationAssessment.Historical prepareAssessment(RepositoryCaller caller,
             DocumentSchemaPolicies.Selection policy,

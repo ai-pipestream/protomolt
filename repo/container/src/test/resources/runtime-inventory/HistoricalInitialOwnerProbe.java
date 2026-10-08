@@ -31,7 +31,7 @@ final class HistoricalInitialOwnerProbe {
         Throwable primary = null;
         try {
             DocumentAssessmentStartJournal.Started started;
-            DocumentOperationUploadAdmission.Admission admitted;
+            DocumentUploadCoordinator.Staged admitted;
             try (var request = attempts.beginInitial(caller, record, modes, UUID.randomUUID())) {
                 require(count(tx, key, "repository_execution_claims") == 0, "slot reservation has no claim effects");
                 history = reads.captureHistorical(caller, revision.getAddress(), UUID.fromString(revision.getRevisionId()));
@@ -40,7 +40,29 @@ final class HistoricalInitialOwnerProbe {
                 request.attachSources(sources, accepted, RepositoryReadControl.NONE); transferred = true;
                 sources.close();
                 request.openExecution(coordinator, RepositoryReadControl.NONE);
-                admitted = request.admitUploads(RepositoryReadControl.NONE);
+                var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
+                var parts = command.intent().getMembers(0).getPartsList();
+                for (int ordinal = 0; ordinal < parts.size(); ordinal++) {
+                    var part = parts.get(ordinal);
+                    if (part.hasUpload()) bodies.put(new DocumentUploadPayloads.Key("a", ordinal),
+                            new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(), part.getSlot().getSubKey(),
+                                    fragments.get(ordinal).toByteArray(), part.getUpload().getSha256()));
+                }
+                try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
+                        "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
+                        "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
+                        "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+                     var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
+                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload backend");
+                         return new DocumentUploadCoordinator.Backend(profile.identity(), opened);
+                     }, 2, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)))) {
+                    admitted = request.stageUploads(uploads, bodies, Map.of(), RepositoryReadControl.NONE);
+                    var replay = request.stageUploads(uploads, bodies, Map.of(), RepositoryReadControl.NONE);
+                    require(replay.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()
+                            .equals(admitted.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()),
+                            "historical upload replay retains verified selections");
+                    require(uploads.providerActivity().active() == 0, "historical upload workers exited");
+                }
                 started = request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE);
                 var ordinary = new HashMap<Integer, ByteString>();
                 var declared = command.intent().getMembers(0);
@@ -82,17 +104,6 @@ final class HistoricalInitialOwnerProbe {
             try (var request = attempts.resume(caller, command).orElseThrow()) {
                 request.openExecution(coordinator, RepositoryReadControl.NONE);
                 require(request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE).equals(started), "initial START survives separate calls");
-                var physical = request.withAssessment(assessment -> assessment.preparePhysical(record.placements(),
-                        record.seeds().attempts(), record.lease(), record.seeds().uploadTokens(), RepositoryReadControl.NONE), RepositoryReadControl.NONE);
-                var member = physical.plan().members().getFirst();
-                var measured = member.attempt().orElseThrow().uploads().stream().map(part -> {
-                    var object = part.object();
-                    var actual = DocumentPartTransfer.upload(provider.store(), placement.drive().namespace(), object,
-                            fragments.get(part.revisionOrdinal()).toByteArray(), Map.of(), () -> {}, () -> {});
-                    return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
-                            object.contentType(), actual.version(), actual.etag());
-                }).toList();
-                new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
                 if (fault == null) request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
                 else {
                     fault.arm(started.assessment());

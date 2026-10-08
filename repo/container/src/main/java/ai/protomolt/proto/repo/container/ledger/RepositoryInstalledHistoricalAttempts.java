@@ -474,6 +474,11 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         synchronized DocumentOperationUploadAdmission.Admission admitUploads(RepositoryReadControl control) {
             return execution(control).admitUploads(entry.caller, control);
         }
+        synchronized DocumentUploadCoordinator.Staged stageUploads(DocumentUploadCoordinator coordinator,
+                Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies,
+                Map<String, String> attributes, RepositoryReadControl control) {
+            return execution(control).stageUploads(entry.caller, coordinator, bodies, attributes, control);
+        }
         synchronized void prepareAssessment(DocumentSchemaPolicies.Selection policy,
                 Map<String, Map<Integer, ByteString>> fragments, Optional<DocumentSchemaAdmission.Definition> container,
                 DocumentPublicationCandidate.Resolver resolver, DocumentRevisionAssembly.Limits limits,

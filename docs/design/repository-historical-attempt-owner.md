@@ -1106,4 +1106,16 @@ and clean up every acquired resource if construction fails. Release the monitor
 before starting upload workers. Keep all three child resources until the
 coordinator returns or throws after worker drainage. Parent close can then release
 its own reservation without leaving the child's referenced metadata unaccounted.
-This child capability and its lifetime tests remain to be implemented.
+The private stageUploads path now creates that child and applies the coordinator's
+SQL lock and statement timeouts to its transactions. Admission, renewals,
+observation verification and delivery use the existing complete historical
+authorization transaction. Provider work runs outside the parent execution monitor.
+The initial-owner provider probe now uses this path and verifies exact selection
+replay before assessment publication, including lost CREATE acknowledgement.
+
+This does not establish concurrent shutdown behavior: the request Attempt monitor
+still serializes its operations. Barrier tests for close, revocation, expiry and
+late observations remain required, as does successor coordinator qualification.
+Selection equality alone does not count provider writes. The configured SQL limits
+bound individual locks and statements, not total transfer duration. Public routing
+remains disabled.

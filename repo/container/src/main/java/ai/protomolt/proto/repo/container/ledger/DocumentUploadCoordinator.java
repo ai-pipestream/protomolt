@@ -62,6 +62,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     private final Resolver resolver;
     private final int parallelism;
     private final Duration flushAge;
+    private final SqlTimeouts timeouts;
     private final Semaphore operationsInFlight = new Semaphore(32);
     private final Semaphore partsInFlight = new Semaphore(32, true);
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -82,6 +83,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         if (flushAge.compareTo(Duration.ofMillis(1)) < 0 || flushAge.compareTo(Duration.ofSeconds(1)) > 0)
             throw new IllegalArgumentException("Observation flush age must be one millisecond to one second");
         var bounded = tx.withTimeouts(timeouts);
+        this.timeouts = timeouts;
         this.admission = new DocumentOperationUploadAdmission(bounded, drives);
         this.selected = new DocumentSelectedAttemptLedger(bounded);
         this.budget = Objects.requireNonNull(budget);
@@ -89,6 +91,9 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         this.parallelism = parallelism;
         this.flushAge = flushAge;
     }
+
+    /** Apply this coordinator's lock and statement bounds to operation-specific SQL authority. */
+    Tx boundedAuthority(Tx authority) { return authority.withTimeouts(timeouts); }
 
     Staged stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
