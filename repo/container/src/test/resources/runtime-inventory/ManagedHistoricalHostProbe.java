@@ -129,7 +129,7 @@ public final class ManagedHistoricalHostProbe {
                 .setShape(Any.pack(StringValue.of("fresh host parser payload"), "type.test"))).build();
     }
 
-    private static PublishDocumentRequest historical(Tx tx, RepositoryCaller caller, PublishDocumentRequest source, DocumentPublishedRevision revision) {
+    static PublishDocumentRequest historical(Tx tx, RepositoryCaller caller, PublishDocumentRequest source, DocumentPublishedRevision revision) {
         var member = source.getIntent().getMembers(0).toBuilder().clearParts().setDestination(DocumentRevisionCondition.newBuilder()
                 .setAddress(revision.getAddress()).setExpectedMutationRevision(revision.getMutationRevision()));
         var ledger = new DocumentReadLedger(tx, UUID.randomUUID());

@@ -1133,8 +1133,11 @@ drained. Preparation retains its actual encoded plan allowance rather than a fix
 A new historical publication now refuses an unavailable source generation with
 `FAILED_PRECONDITION` through both hosted boundaries, with no current-backend
 substitution. See [unavailable source evidence](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md).
-Next qualify unavailable upload placements during recovery and close while historical
-work is held. Multi-backend operation, deployed recovery and performance remain
+Hosted cancellation and timed close now retain exact source pins and shared resources
+while a real Redis PUT reply is held. Repeated close after actual worker exit quiesces
+the reader and fences the host. See [held-provider evidence](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md).
+Next qualify unavailable upload placements during recovery and close during held
+schema loads and historical reads. Multi-backend operation, deployed recovery and performance remain
 unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)

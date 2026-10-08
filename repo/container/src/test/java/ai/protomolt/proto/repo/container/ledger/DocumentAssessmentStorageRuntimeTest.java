@@ -28,6 +28,11 @@ class DocumentAssessmentStorageRuntimeTest {
                 "MANAGED_HISTORICAL_UNAVAILABLE_LIBRARY_OK", "MANAGED_HISTORICAL_UNAVAILABLE_RPC_OK");
     }
 
+    @Test void managedHistoricalShutdown() throws Exception {
+        boundedPublicHostBinding("ManagedHistoricalShutdownProbe", "MANAGED_HISTORICAL_HELD_PUT_LIBRARY_OK",
+                "MANAGED_HISTORICAL_HELD_PUT_RPC_OK");
+    }
+
     private void boundedPublicHostBinding(String probe, String... markers) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
