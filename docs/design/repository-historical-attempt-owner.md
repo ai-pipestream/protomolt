@@ -1415,3 +1415,54 @@ It does not qualify every later crash phase, public managed routing or transport
 parity. The crashed writer's old
 reader-incarnation cleanup remains an explicit acceptance item: fresh-process
 cleanup must not be described as proof that orphaned captures have been reclaimed.
+
+### Crashed-reader reclamation: remaining design work
+
+Existing primitives already separate fencing, quiescence, pin recovery, capture
+drain and preparation-root release. `DocumentReadRecovery.recoverBatch` requires a
+permanently QUIESCED reader and removes native pins and their mirrors in bounded
+transactions. `DocumentPreparationCaptureDrain.recover` then records the exact
+capture drain. `DocumentPreparationRootReleases.release` requires drained captures
+and exact terminal evidence before releasing preparation roots. The immutable
+capture journals preserve reader/pin identities after native pins are deleted.
+
+The missing prerequisite is durable evidence for a reader owned by a dead process.
+V32 accepts only LOCAL_DRAIN; `DocumentReadLedger.attestLocalQuiescence` requires
+the owning ledger's local drainage. `ReaderRegistration` cannot adopt an existing
+incarnation. A restarted process must not use these paths to manufacture local
+drain evidence for its predecessor. Lease expiry, execution fencing and a missing
+network response remain insufficient.
+
+Before adding an external quiescence transition, define a trusted host-attestation
+boundary and a durable reader-to-host-execution binding established before read
+admission. Bind the exact reader registration nonce and process incarnation; a
+PID, hostname or newly discovered database row alone is not an ownership proof.
+Host-execution identities must be permanent and non-reusable. Reader registration
+and binding must commit atomically before its first read. Termination must fence
+all later reader admission under that execution, including concurrent registration.
+The registration nonce is an identity discriminator, not an authorization secret;
+independent trusted authority must still authorize the attestation.
+The attestor must independently establish that the owning execution and its read
+workers have stopped. Request-supplied assertions cannot establish that fact.
+Existing readers without this binding must remain protected unless a separately
+specified trusted recovery procedure establishes their identity and termination.
+
+An eventual transition must preserve distinct provenance from LOCAL_DRAIN, reject
+an absent or mismatched binding, preserve permanent incarnation tombstones, and
+return the same receipt after an uncertain commit. Keep proof verification outside
+SQL locks and bind its result to immutable identity in the transaction. No provider
+work, host polling or global reader lock belongs inside that transaction. This is
+a repository-foundation lifecycle primitive shared by document and archive reads;
+it must introduce no S3-specific or JCR dependency into base storage.
+
+Acceptance must first show that old ACTIVE/FENCED readers keep their pins and
+preparation roots after publication by a successor. Expiry/fencing without proof
+must still prohibit recovery and pruning. Then an exact externally verified
+termination may establish quiescence, bounded pin recovery, exact capture drain,
+and terminal root release. Include wrong host/registration, duplicate proof,
+conflicting proof, lost reply, partial cleanup and concurrent cleanup cases.
+The process-restart driver can establish termination of its own child; that is
+not a generic proof for a remote host or an arbitrary reader incarnation.
+
+This section specifies an open boundary. No external quiescence transition or
+crashed-reader reclamation API is implemented or advertised by the restart tests.
