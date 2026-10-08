@@ -1035,6 +1035,17 @@ not prove that facade routing carries the same identity, control and cleanup rul
   credential generation, or change admission policy between capture and commit.
   Prove both SQL orderings through public dispatch, including authorized replay
   when publication wins. A retained source is not a retained authorization grant.
+  Library and authenticated in-process gRPC now cover credential revocation
+  committed while a real upload reply is held. Both refuse completion and retry
+  with UNAUTHENTICATED, create no assessment/commit/success rows, and drain through
+  separate process cleanup authority. See [credential evidence](../evidence/repository/2026-10-08-historical-public-credential-revocation/README.md).
+  This proves revocation before upload completion, not the publication-lock race.
+  The remaining cases must isolate READ and WRITE on the shared source/destination
+  node with selective ACLs. Publication-first ordering needs an exact commit gate
+  and observed blocked writer; revoked READ/credentials deny later receipt access,
+  while WRITE-only revocation can leave authorized committed replay available.
+  Inspect and qualify public error mapping for `DocumentSchemaPolicies.StalePolicy`
+  when changing current policy; its internal exception is not an API contract.
 - Publication acknowledgement loss: commit the real publication transaction and
   lose its reply. An exact public retry must recover the authorized durable receipt
   with one revision, no second PUT and no second assessment CREATE.

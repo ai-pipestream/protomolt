@@ -48,6 +48,7 @@ Recent evidence:
 - [Historical cleanup fairness and authority retry](../evidence/repository/2026-10-08-historical-cleanup-fairness/README.md)
 - [Historical public SQL cleanup rollback](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md)
 - [Historical public deadline and service close](../evidence/repository/2026-10-08-historical-public-transport-stop/README.md)
+- [Historical public credential revocation during upload](../evidence/repository/2026-10-08-historical-public-credential-revocation/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

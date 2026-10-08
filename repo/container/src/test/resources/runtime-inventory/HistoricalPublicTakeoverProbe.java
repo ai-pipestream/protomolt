@@ -35,6 +35,10 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
 
     OpenedBlobStore opened() { return observed; }
     int completedPuts() { return calls.get(); }
+    void awaitPut() throws InterruptedException {
+        require(entered.await(15, TimeUnit.SECONDS), "public call completed real PUT before authorization change");
+    }
+    void releasePut() { release.countDown(); }
 
     void exerciseStop(Tx tx, DocumentPublicationRuntime runtime, DocumentReadLedger reads,
             DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
