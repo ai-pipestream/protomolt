@@ -362,12 +362,32 @@ class DocumentPreparationCaptureDrainIT {
     }
 
     @Test void populatedMigrationCreatesNoInventedDrainAndOriginalCaptureCanComplete() throws Exception {
-        try (var c = context(POSTGRES, "106"); var rig = prepare(c, c.tx(), Duration.ofMinutes(5))) {
+        try (var c = DocumentPreparationRootReleaseIT.legacyReaderContext(POSTGRES, "106").context();
+             var rig = DocumentCaptureAdmissionClosureIT.historicalInitial(c, Duration.ofMinutes(5))) {
+            DocumentPreparationCaptureDrain.Capture capture;
+            try (var work = rig.sources().work()) {
+                var pins = DocumentPreparationSourcePins.prepare(rig.record().command(),
+                        work.references(rig.record().command(), () -> {}), () -> {});
+                var record = rig.record();
+                var admission = RepositoryOperationLedger.prepareHistoricalAdmission(record.key(), record.command(),
+                        record.seeds().ownerNonce(), record.lease(), work);
+                // Recover the local handle for the exact capture written by the
+                // V106 fixture. This verifies its existing rows; it creates no drain.
+                capture = c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                    DocumentPublicationModesJournal.insert(em, rig.claim(), record,
+                            DocumentPublicationModesJournal.encode(record.command(), Map.of(
+                                    record.command().intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED)));
+                    assertThat(admission.apply(em, rig.claim()).owner()).isPresent();
+                    return DocumentPreparationCaptureDrain.register(c.tx(), em, rig.record(), pins,
+                            rig.claim(), rig.coordinator(), rig.sources(), work, NONE);
+                });
+            }
             org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
                     .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").target("107").load().migrate();
-            assertThat(count(c, "repository_preparation_capture_drains", rig)).isZero();
-            assertThat(count(c, "repository_preparation_pin_owners", rig)).isEqualTo(1);
-            assertThat(rig.capture().complete(CALLER, Duration.ZERO, NONE)).isPresent();
+            assertThat(DocumentPreparationCoverageCertificatesIT.count(c, rig.record(), "repository_preparation_capture_drains")).isZero();
+            assertThat(DocumentPreparationCoverageCertificatesIT.count(c, rig.record(), "repository_preparation_pin_owners")).isEqualTo(1);
+            assertThat(capture.complete(CALLER, Duration.ZERO, NONE)).isPresent();
         }
     }
 

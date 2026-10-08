@@ -112,7 +112,7 @@ class DocumentPreparationRootReleaseIT {
     }
 
     static LegacyReaderContext legacyReaderContext(PostgreSQLContainer postgres,String target) {
-        if (!java.util.Set.of("103","107","110").contains(target))
+        if (!java.util.Set.of("103","104","106","107","110").contains(target))
             throw new IllegalArgumentException("Unsupported legacy reader fixture version");
         var base=context(postgres,target);
         var enabled=new AtomicBoolean(true);

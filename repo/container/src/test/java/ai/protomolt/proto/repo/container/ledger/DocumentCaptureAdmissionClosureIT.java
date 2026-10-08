@@ -477,7 +477,9 @@ class DocumentCaptureAdmissionClosureIT {
                 var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(em, key, command, UUID.randomUUID(), lease, sources);
                 RepositoryCoordinatorBinding.bindInitial(em, acquired, coordinator);
                 var bytes = DocumentPublicationPreparationCodec.encode(record);
-                DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
+                if (LegacyPublicationPreparationFixture.beforeCoverageCertificates(em))
+                    LegacyPublicationPreparationFixture.insertProjected(em, record, sources.references(command, () -> {}));
+                else DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
                         DocumentPublicationPreparationJournal.digest(bytes), sources.references(command, () -> {}));
                 afterPreparation.run();
                 lockSources(em, fixture, pins);

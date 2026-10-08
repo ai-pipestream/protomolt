@@ -145,8 +145,14 @@ root set can still omit the command's actual sources. The private Java journal
 must require `DocumentPreparationHistoryRoots.coverage` to return EXACT before
 writing a certificate in the same transaction. Bind that certificate to preparation
 identity, preparation digest, command digest, root count/digest and verifier version.
-A deferred new-preparation constraint must require both the certificate and sealed
-header. This is still planned; no certificate is currently written.
+For a new root-owning preparation, the deferred constraint must require both the
+certificate and sealed header. An install-only recovery successor is different:
+its executable preparation refers to an older retained-root owner. Allow that
+installation only through the exact same-transaction successor edge, including
+owner and command/preparation digests, with V93's claim, modes and owner completion
+checks. It must retain an unresolved entry and must not acquire an invented history
+header or certificate. Installation does not grant activation or capture authority.
+The certificate implementation is under test; pruning is not enabled.
 
 This proof relies on the trusted repository handler. Direct table DML using the
 backend database role is privileged administration, not a supported publication
@@ -163,7 +169,11 @@ for released roots, use `DocumentPreparationRootReleases.requireReleased` to ver
 the exact terminal receipt, canonical roots and qualified capture drains. Missing
 headers, false empty sets, mismatched digests or absent release evidence stay
 unresolved. Do not invent roots or infer release from expiry. Clear an unresolved
-entry only in the transaction that records its verified certificate.
+entry only in the transaction that records its verified certificate. Successors
+need separate bounded lineage reconciliation through immutable install edges to
+the original verified root owner, including its exact release proof when released.
+An activation receipt alone does not replace that verification. Both ordinary and
+historical successors remain unresolved until this reconciliation is implemented.
 
 Avoid an account counter lock held across document or physical-origin locks. A
 READ COMMITTED indexed unresolved check is combined with the source document's

@@ -35,7 +35,25 @@ final class LegacyPublicationPreparationFixture {
         });
     }
 
-    private static void insert(jakarta.persistence.EntityManager em, DocumentPublicationPreparationRecord record) {
+    /** Actual old writer SQL, also used to prove that a newer schema rejects uncertified writes. */
+    static void insertProjected(jakarta.persistence.EntityManager em, DocumentPublicationPreparationRecord record,
+            java.util.List<DocumentHistoricalReferenceAdmission.Prepared> sources) {
+        DocumentHistoricalReferenceAdmission.requireComplete(record.command(), sources, () -> {});
+        insert(em, record);
+        DocumentPreparationHistoryRoots.insert(em, record,
+                DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record)), sources);
+    }
+
+    /** Test fixtures deliberately mounting an old schema select its old writer, not a production fallback. */
+    static boolean beforeCoverageCertificates(jakarta.persistence.EntityManager em) {
+        int version = ((Number) em.createNativeQuery(
+                "SELECT max(CAST(version AS integer)) FROM flyway_schema_history WHERE success AND version IS NOT NULL")
+                .getSingleResult()).intValue();
+        if (version < 103) throw new IllegalArgumentException("Projected fixture requires at least V103");
+        return version < 118;
+    }
+
+    static void insert(jakarta.persistence.EntityManager em, DocumentPublicationPreparationRecord record) {
         var bytes = DocumentPublicationPreparationCodec.encode(record);
         em.createNativeQuery("""
                     INSERT INTO repository_publication_preparations(account_id,principal,operation_id,predecessor_generation,
