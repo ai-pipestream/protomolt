@@ -1074,8 +1074,8 @@ quiescence. Managed capture acquisition and this shutdown wiring remain unfinish
 
 Ordinary DocumentUploadCoordinator admission rejects historical owners with execution
 claims. The private historical stageUploads entry now supplies operation-specific
-authority. The initial-owner provider probe qualifies that entry; successor probe
-qualification is in progress. Other probes still use direct transfers and do not
+authority. Initial-owner and successor provider tests qualify that entry. Other
+tests still use direct transfers and do not
 provide evidence for this coordinator entry.
 
 Reuse existing payload budgets, backend resolution, workers, flushing and heartbeat.
@@ -1115,10 +1115,10 @@ authorization transaction. Provider work runs outside the parent execution monit
 The initial-owner provider probe now uses this path and verifies exact selection
 replay before assessment publication, including lost CREATE acknowledgement.
 
-This does not establish concurrent shutdown behavior: the request Attempt monitor
-still serializes its operations. Barrier tests for close, revocation, expiry and
-late observations remain required, as does successor coordinator qualification.
-Selection equality alone does not count provider writes. The configured SQL limits
+The request Attempt monitor still serializes its operations. The checkpoint below
+records the qualified shutdown and fault cases and the remaining coverage.
+Selection equality alone does not count provider writes; the later fault tests
+instrument the real adapter. The configured SQL limits
 bound individual locks and statements, not total transfer duration. Public routing
 remains disabled.
 
@@ -1157,7 +1157,26 @@ selected attempt rows, current claim identity, source captures and byte reservat
 - Count real provider writes on a successful exact replay. Stable selection
   equality is already checked, but does not establish this provider-effect claim.
 
-These are acceptance cases, not completed evidence. SQL timeouts apply to each
+These are acceptance cases; the evidence below covers a subset. SQL timeouts apply to each
 statement and lock; provider deadlines and total request cancellation are separate.
 For revocation and takeover tests, commit the policy or claim change before releasing
 the provider barrier, so the expected transaction ordering is explicit.
+
+Qualification checkpoint:
+
+- The full storage gate passed with the successor uploader, including mixed and
+  historical-only revisions. See `2026-10-08-successor-upload-storage` evidence.
+- SQL lifetime tests cover successor parent close, cancellation during admission
+  and initial claim-lock timeout. They use no provider I/O. See
+  `2026-10-08-historical-upload-lifetime`.
+- Real initial-owner provider tests cover READ denial, cancellation after PUT,
+  lost provider reply, verified replay with one PUT, and lost SQL verification
+  acknowledgement. See `2026-10-08-historical-upload-provider-faults` and
+  `2026-10-08-historical-verification-reply`.
+- Initial-owner admission shutdown retains provider work and memory after future
+  cancellation until actual completion. See `2026-10-08-historical-provider-shutdown`.
+
+The evidence directories are under `docs/evidence/repository/`. Remaining cases
+include successor provider faults, destination-only revocation, expiry/takeover
+during PUT, cancellation after verification and SQL timeout in a later callback.
+Managed public routing and transport parity remain unfinished.
