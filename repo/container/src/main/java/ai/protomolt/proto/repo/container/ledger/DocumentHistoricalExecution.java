@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.spi.*;
 import java.util.*;
 
@@ -427,6 +428,51 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             return publication.commitHistoricalOwned(caller, owner, prepared, candidate.opaque(), selected,
                     candidate.schemas(), observedControl, references, fence);
         });
+    }
+
+    /** Constructed only by a synchronized operation on its live execution handle. */
+    final class RejectionFence {
+        private final PublicationFence stage;
+        private RejectionFence(PublicationFence stage) { this.stage = stage; }
+        void requireBinding(RepositoryOperationLedger.Owner expectedOwner,
+                DocumentPublicationCommand command, DocumentAssessmentCreation.Created expectedStage) {
+            if (!owner.equals(expectedOwner) || !record.command().canonical().equals(command.canonical())
+                    || !stage.stage.equals(expectedStage)) throw new IllegalArgumentException("Historical rejection binding differs");
+        }
+        void lockRegistration(jakarta.persistence.EntityManager em) { stage.lockRegistration(em); }
+        void verifyEvidence(jakarta.persistence.EntityManager em) {
+            DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), record.command(), owner.generation(), encodedModes);
+            stage.verifyStage(em);
+            stage.verifyCapture(em);
+            stage.requireLiveStage(em);
+        }
+    }
+
+    /** Revalidate exact retained evidence; a validation exception alone is never a rejection decision. */
+    synchronized DocumentPublicationReplay.Observation rejectAssessment(RepositoryCaller caller,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections, DocumentAssessmentCreation.Created stage,
+            DocumentReadLedger reads, DocumentAssessmentReader reader, DocumentRevisionAssembly.Limits limits,
+            DocumentAssessmentRuntimeObserver.Observation observation, java.time.Duration minimumRemaining,
+            RepositoryReadControl control) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller);
+        if (attemptedCreate == null || !attemptedCreate.stage().equals(stage)
+                || !attemptedCreate.selections().equals(Map.copyOf(selections)))
+            throw new IllegalArgumentException("Historical rejection differs from original CREATE");
+        var terminal = new DocumentPublicationReplay(tx).observe(caller, record.command());
+        control.check();
+        if (terminal.state() == DocumentPublicationReplay.State.COMMITTED
+                || terminal.state() == DocumentPublicationReplay.State.TERMINATED) return terminal;
+        work.authorize(control);
+        var fence = new RejectionFence(new PublicationFence(caller, selections, stage, control));
+        try (var capture = reads.captureAssessment(caller, owner, record.command(),
+                DocumentAssessmentRetainedSlots.uploadSelections(selections), stage.assessment(), stage.manifestSha256(),
+                stage.retainUntil(), budget, control::check);
+             var verified = DocumentAssessmentReplay.verify(capture, reader, budget, limits, observation, control)) {
+            work.authorize(control);
+            return new DocumentAssessmentRejections(tx, minimumRemaining).decideHistorical(
+                    caller, owner, record.command(), verified, control, fence);
+        }
     }
 
     /** Constructed only by a synchronized operation on its live execution handle. */

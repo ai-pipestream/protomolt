@@ -1207,12 +1207,9 @@ successful insert can establish acknowledgement; loading an existing START canno
 The PostgreSQL and packaged-provider checks are recorded in
 `docs/evidence/repository/2026-10-08-historical-progress/`.
 
-Before adding public dispatch, integrate the historical owner with runtime shutdown
-and qualify that lifecycle independently. Historical validation rejection also
-needs a complete terminal decision path: the current private owner prepares and
-retains assessments but does not expose that complete rejection flow. Preserve the
-public historical restriction until rejection, cold recovery and library/transport
-acceptance cases are complete.
+Runtime shutdown composition and the private initial-owner rejection path are
+qualified below. Preserve the public historical restriction until the remaining
+rejection cases, cold recovery and library/transport acceptance cases are complete.
 
 ### Historical runtime shutdown composition
 
@@ -1239,3 +1236,30 @@ Qualification is recorded under
 `docs/evidence/repository/2026-10-08-historical-runtime-shutdown/`.
 The subsequent accepted-action check is under
 `docs/evidence/repository/2026-10-08-historical-runtime-scope/`.
+
+### Private historical validation rejection
+
+The retained attempt now composes assessment capture, whole-assessment replay and
+the existing durable rejection gate. It requires the original acknowledged CREATE
+and exact upload selections. Historical Work stays attached while a separate
+assessment read owns its replay inputs through the decision transaction; reader
+capacity must accommodate both. No source protection is released to make room.
+
+For a pending decision, the gate locks the exact claim before the operation owner.
+Historical registration, START, modes, sealed assessment, retained slot bindings
+and capture checks remain part of the transaction. Preliminary authorized terminal
+observation takes an owner shared lock while the exclusive claim lock is held;
+registration and the owner write lock follow. Dedicated contention qualification
+must cover that ordering rather than assuming it from sequential success.
+
+Receipt replay runs before live mutation checks. The first retry test exposed a
+terminal-owner write attempted by the wrapper; that preflight was removed. The
+fixed real-provider test produces a rejection from invalid mixed historical/upload
+content, confirms no publication, lets the claim and owner expire naturally and
+retrieves the same rejection through the retained attempt. See
+`docs/evidence/repository/2026-10-08-historical-rejection/`.
+
+This is private initial-owner qualification. Successor rejection, lock contention,
+revocation at decision/delivery, lost rejection acknowledgement and cancellation
+still need historical-path coverage before managed/public enablement. The broad
+storage regression is recorded separately when it completes.

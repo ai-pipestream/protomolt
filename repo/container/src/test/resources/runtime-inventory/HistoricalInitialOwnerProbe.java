@@ -14,13 +14,30 @@ final class HistoricalInitialOwnerProbe {
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation, fault, database, false);
+        if (fault == null) {
+            var current = new DocumentLedger(tx).findByNodeId(
+                    ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress())).orElseThrow();
+            var member = command.intent().getMembers(0);
+            var rejected = new DocumentPublicationCommand(command.intent().toBuilder().setOperationId(UUID.randomUUID().toString())
+                    .setMembers(0, member.toBuilder().setDestination(member.getDestination().toBuilder()
+                            .setExpectedMutationRevision(current.mutationRevision))).build());
+            run(tx, provider, caller, rejected, policy, placement, revision, fragments, budget, observation, null, database, true);
+        }
+    }
+
+    private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
+            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
+            Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
+            HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject) throws Exception {
         require(!caller.processAuthority(), "initial owner executes as a credential-bound scoped caller");
         var coordinator = new RepositoryCaller(caller.principalName(), true);
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
-                Map.of(placement.drive().id(), placement), Duration.ofMinutes(2), 0);
+                Map.of(placement.drive().id(), placement), reject ? Duration.ofSeconds(10) : Duration.ofMinutes(2), 0);
         var modes = Map.of("a", DocumentPublicationCandidate.Mode.TYPED);
-        var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
+        var freshDefinition = reject ? ObservedAssessmentProbe.invalidSchema()
+                : ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
         long before = budget.reservedBytes();
         var attempts = new RepositoryInstalledHistoricalAttempts(tx, budget, new DriveLedger(tx), 1);
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
@@ -136,6 +153,40 @@ final class HistoricalInitialOwnerProbe {
                     require(request.progress(RepositoryReadControl.NONE).acknowledgedCreation().orElseThrow().equals(reconciled),
                             "reconciliation updates retained CREATE progress");
                 }
+            }
+            if (reject) {
+                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                    require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact rejection backend");
+                    return provider.store();
+                }, 4, 4_000_000, budget); var request = attempts.resume(caller, command).orElseThrow()) {
+                    var decided = request.rejectAssessment(selections, reads, reader,
+                            new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                    require(decided.state() == DocumentPublicationReplay.State.TERMINATED
+                            && decided.rejection().orElseThrow().getAssessment().getAssessmentId().equals(started.assessment().toString()),
+                            "invalid historical candidate produces exact assessment-bound rejection");
+                    require(new DocumentPublicationReplay(tx).observe(caller, command).rejection().equals(decided.rejection()),
+                            "historical rejection replays durably");
+                    tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15))).inTransaction(em -> {
+                        em.createNativeQuery("""
+                                SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM GREATEST(c.lease_until,o.lease_until)-clock_timestamp()))+0.05)
+                                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                                WHERE c.operation_id=:id
+                                """).setParameter("id", command.operationId()).getSingleResult();
+                        require(Boolean.TRUE.equals(em.createNativeQuery("""
+                                SELECT c.lease_until<=clock_timestamp() AND o.lease_until<=clock_timestamp()
+                                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                                WHERE c.operation_id=:id
+                                """).setParameter("id", command.operationId()).getSingleResult()), "rejection owner and claim naturally expire");
+                    });
+                    require(request.rejectAssessment(selections, reads, reader,
+                            new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE).rejection().equals(decided.rejection()),
+                            "same historical entry returns its terminal rejection without mutation authority");
+                    require(count(tx, key, "document_revision_commits") == 0, "invalid historical candidate never publishes");
+                }
+                System.out.println("HISTORICAL_INITIAL_REJECTION_OK");
+                return;
             }
             DocumentPublicationResult result;
             try (var request = attempts.resume(caller, command).orElseThrow()) {

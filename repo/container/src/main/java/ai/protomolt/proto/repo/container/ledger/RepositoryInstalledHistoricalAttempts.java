@@ -547,6 +547,16 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             return execution.publishAssessment(entry.caller, entry.assessment, selections, observation,
                     storage, publication, entry.stage, control);
         }
+        synchronized DocumentPublicationReplay.Observation rejectAssessment(
+                Map<String, DocumentSelectedAttemptLedger.Selected> selections,
+                DocumentReadLedger reads, DocumentAssessmentReader reader, DocumentRevisionAssembly.Limits limits,
+                DocumentAssessmentRuntimeObserver.Observation observation, Duration minimumRemaining,
+                RepositoryReadControl control) {
+            var execution = execution(control);
+            if (entry.stage == null) throw new IllegalStateException("Historical CREATE is not acknowledged");
+            return execution.rejectAssessment(entry.caller, selections, entry.stage, reads, reader, limits,
+                    observation, minimumRemaining, control);
+        }
         /** Terminal replay authorizes cleanup only, never receipt delivery or replacement execution. */
         synchronized Retirement retireTerminal(RepositoryCaller coordinator, Duration timeout,
                 RepositoryReadControl control) throws InterruptedException {

@@ -51,6 +51,19 @@ final class DocumentAssessmentRejections {
     /** The private-constructor proof owns the exact replay inputs and read Use through commit. */
     DocumentPublicationReplay.Observation decide(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, DocumentAssessmentReplay.Verified verified, RepositoryReadControl control) {
+        return decide(caller, owner, command, verified, control, null);
+    }
+
+    DocumentPublicationReplay.Observation decideHistorical(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, DocumentAssessmentReplay.Verified verified, RepositoryReadControl control,
+            DocumentHistoricalExecution.RejectionFence fence) {
+        Objects.requireNonNull(fence).requireBinding(owner, command, verified.stage());
+        return decide(caller, owner, command, verified, control, fence);
+    }
+
+    private DocumentPublicationReplay.Observation decide(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, DocumentAssessmentReplay.Verified verified, RepositoryReadControl control,
+            DocumentHistoricalExecution.RejectionFence historical) {
         Objects.requireNonNull(owner); Objects.requireNonNull(command); Objects.requireNonNull(verified).check(control);
         var key = owner.key(); var snapshot = verified.snapshot(); var manifest = snapshot.manifest(); var stage = verified.stage();
         DocumentAdmissionAuthorization.requireCaller(caller, owner, command.intent().getAccountId());
@@ -67,6 +80,19 @@ final class DocumentAssessmentRejections {
                 stage.retainUntil().getNano() / 1000);
         if (stage.retainUntil().getNano() % 1000 != 0) throw new IllegalStateException("Assessment deadline lost microsecond precision");
         return tx.inTransaction(em -> {
+            // Establish claim -> owner order without requiring liveness before terminal replay.
+            if (owner.executionClaim().isPresent()) em.createNativeQuery("""
+                    SELECT claim_token FROM repository_execution_claims
+                    WHERE account_id=:a AND principal=:p AND operation_id=:o FOR UPDATE
+                    """).setParameter("a", key.account()).setParameter("p", key.principal())
+                    .setParameter("o", key.operationId()).getResultList();
+            if (historical != null) {
+                var terminal = DocumentPublicationReplay.observe(em, caller, command, key);
+                verified.check(control);
+                if (terminal.state() == DocumentPublicationReplay.State.COMMITTED
+                        || terminal.state() == DocumentPublicationReplay.State.TERMINATED) return terminal;
+                historical.lockRegistration(em);
+            }
             var owners = em.createNativeQuery("""
                     SELECT owner_generation FROM repository_operation_owners
                     WHERE account_id=:account AND principal=:principal AND operation_id=:op FOR UPDATE
@@ -92,6 +118,7 @@ final class DocumentAssessmentRejections {
                     .setParameter("command", command.sha256()).setParameter("manifest", stage.manifestSha256())
                     .setParameter("deadline", OffsetDateTime.ofInstant(stage.retainUntil(), ZoneOffset.UTC)).getResultList();
             if (rows.size() != 1) throw new IllegalStateException("Verified assessment is no longer retained under its exact identity");
+            if (historical != null) historical.verifyEvidence(em);
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             verified.check(control);
             long now = ((Number) em.createNativeQuery("SELECT floor(extract(epoch FROM clock_timestamp())*1000000)")
