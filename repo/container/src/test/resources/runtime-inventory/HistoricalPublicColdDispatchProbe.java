@@ -95,7 +95,7 @@ final class HistoricalPublicColdDispatchProbe {
         System.out.println("HISTORICAL_PUBLIC_COLD_DISPATCH_GRPC_OK");
     }
 
-    private static void verifyPublished(Tx tx, AssessmentProviderProbe provider, DocumentReadLedger reads, RepositoryCaller caller,
+    static void verifyPublished(Tx tx, AssessmentProviderProbe provider, DocumentReadLedger reads, RepositoryCaller caller,
             DocumentPublicationCommand command, Map<Integer, ByteString> uploads, DocumentPublicationResult result) {
         var member = result.getMembers(0);
         var current = new DocumentLedger(tx).findByNodeId(

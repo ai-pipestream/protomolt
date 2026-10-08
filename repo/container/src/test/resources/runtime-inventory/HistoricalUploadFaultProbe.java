@@ -212,7 +212,7 @@ final class HistoricalUploadFaultProbe {
             if (next instanceof RepositoryExecutionClaimLedger.Fenced) return true;
         return false;
     }
-    private static void expire(Tx tx, RepositoryOperationLedger.Key key) {
+    static void expire(Tx tx, RepositoryOperationLedger.Key key) {
         tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(5))).inTransaction(em -> {
             em.createNativeQuery("SELECT claim_token FROM repository_execution_claims WHERE operation_id=:o FOR UPDATE")
                     .setParameter("o", key.operationId()).getSingleResult();

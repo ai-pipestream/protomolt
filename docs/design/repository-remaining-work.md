@@ -12,14 +12,18 @@ supervisor execution. Verified termination, bounded reader discovery and a calla
 recovery step now exist; none installs a deployed verifier or scheduler. Capture
 and preparation-root disposal still require separate operation authority.
 
-The immediate open integration is public historical publication. Its facade still
-rejects historical selectors; the private retained-attempt and cold-restart paths
-are qualified independently. Keep that guard until accepted-call dispatch, retries,
-caller identity and shutdown pass library and authenticated transport tests.
-The private START reconciliation retains an exact attempt identity and requires
-current authority before restoring the original handle's CREATE permission. See
+The immediate open integration is public historical publication. A package-private
+qualification factory now dispatches historical requests through the library and
+authenticated in-process gRPC boundaries. Existing public factories still reject
+historical selectors. The internal path covers committed and rejected receipts,
+START and CREATE acknowledgement loss, three cold-process crash boundaries, and
+concurrent takeover while an old provider reply remains held. Public failure and
+shutdown qualification remains before exposing the host factory.
+START reconciliation retains an exact attempt identity and requires current
+authority before restoring the original handle's CREATE permission. See
 [historical restore](repository-historical-restore.md#reconciliation-of-an-uncertain-start-acknowledgement).
-Qualification of that boundary and public dispatch remains required.
+These tests do not establish production provisioning, network transport parity,
+throughput or horizontal scaling.
 
 Pruning must now account for persisted historical preparations and their retained
 roots. The older assumption that journals cannot contain historical selectors is
@@ -28,6 +32,9 @@ fairness and progressive hydration remain requirements of the full goal.
 
 Recent evidence:
 
+- [Historical public dispatch](../evidence/repository/2026-10-08-historical-public-dispatch/README.md)
+- [Historical cold-process dispatch](../evidence/repository/2026-10-08-historical-public-cold-restart/README.md)
+- [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

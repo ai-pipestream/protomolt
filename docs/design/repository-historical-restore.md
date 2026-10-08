@@ -896,8 +896,11 @@ explicit host recovery authority. It branches before the ordinary operation-wide
 guard and uses the facade's accepted call through synchronous execution. Cold
 restart now has authenticated in-process gRPC qualification at the initial,
 reserved and installed crash boundaries, with provider readback and original
-writer cleanup. Concurrent takeover and public failure-boundary qualification
-remain before the host factory becomes public. Existing public factories retain the historical
+writer cleanup. Concurrent takeover also passes with a library predecessor held
+after its real provider PUT and an authenticated in-process gRPC successor. The
+successor commits once with fresh upload identities; the old reply remains
+unverified and its worker must drain before retirement. Public failure-boundary
+qualification remains before the host factory becomes public. Existing public factories retain the historical
 execution guard. No default coordinator, provider, schema or credential fallback
 is supplied.
 

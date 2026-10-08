@@ -25,6 +25,7 @@ final class HistoricalPublicDispatchProbe {
             }
         }
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "reject");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "takeover");
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
@@ -46,14 +47,15 @@ final class HistoricalPublicDispatchProbe {
         try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
                 "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
                 "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
-                "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")))) {
+                "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+             var takeover = new HistoricalPublicTakeoverProbe(opened)) {
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
-                        return new DocumentPublicationRuntime.Backend(profile.identity(), opened);
+                        return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover") ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
-                    Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
+                    phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
                     new DocumentPublicationRuntime.Assessments(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
                             Duration.ofMinutes(5), Duration.ofSeconds(5)), authority::forOperation,
                     new DocumentPublicationRuntime.ExternalWorkers() {
@@ -115,7 +117,11 @@ final class HistoricalPublicDispatchProbe {
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
                     int resolvedBeforeRetry = resolutions.get();
-                    if (remote) transport(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
+                    if (phase.equals("takeover") && !remote) {
+                        takeover.exercise(tx, runtime, repository, caller, request.build(), selections, resolutions);
+                        HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
+                                repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
+                    } else if (remote) transport(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
                     else exercise(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
                     if (phase.equals("create")) require(resolvedBeforeRetry > 0 && resolutions.get() == resolvedBeforeRetry,
                             "public CREATE retry reuses retained assessment without schema resolution");
@@ -124,6 +130,7 @@ final class HistoricalPublicDispatchProbe {
                             "completed public operation releases its generation slot");
                 }
             } finally {
+                takeover.close();
                 runtime.close();
                 boolean stopped = false;
                 for (int pass = 0; pass < 16 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(1));
@@ -131,7 +138,8 @@ final class HistoricalPublicDispatchProbe {
             }
         }
         require(budget.reservedBytes() == baseline, "public historical dispatch releases byte reservations");
-        System.out.println(phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"
+        System.out.println(phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
+                : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"
                 : fault == null ? "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_GRPC_OK"
                 : "HISTORICAL_PUBLIC_" + phase.toUpperCase(java.util.Locale.ROOT) + "_ACK_RECOVERY_OK");
     }
