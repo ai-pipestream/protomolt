@@ -326,6 +326,15 @@ class DocumentAssessmentStorageRuntimeTest {
                     }
                 }
             }
+            try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                 var statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE DATABASE historical_cold_restart");
+            }
+            var coldEnvironment = new java.util.HashMap<>(builder.environment());
+            coldEnvironment.put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl().replaceFirst(
+                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/historical_cold_restart"));
+            HistoricalColdRestartDriver.run(new StorageRuntimeProbeCompiler.Compiled(bundle, classpath, probe),
+                    coldEnvironment, directory.resolve("cold-restart"));
             }
         }
     }

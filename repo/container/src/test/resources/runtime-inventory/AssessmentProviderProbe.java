@@ -15,6 +15,9 @@ public final class AssessmentProviderProbe implements AutoCloseable {
     private final ManagedBackendLedger.Profile profile;
 
     AssessmentProviderProbe() {
+        this(true);
+    }
+    AssessmentProviderProbe(boolean provision) {
         String endpoint = System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), region = System.getenv("PROTOMOLT_TEST_S3_REGION");
         client = software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(java.net.URI.create(endpoint))
                 .region(software.amazon.awssdk.regions.Region.of(region)).forcePathStyle(true)
@@ -23,9 +26,11 @@ public final class AssessmentProviderProbe implements AutoCloseable {
                         software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
                                 System.getenv("PROTOMOLT_TEST_S3_ACCESS"), System.getenv("PROTOMOLT_TEST_S3_SECRET")))).build();
         try {
-            client.createBucket(request -> request.bucket("namespace"));
-            client.putBucketVersioning(request -> request.bucket("namespace").versioningConfiguration(
-                    configuration -> configuration.status(software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
+            if (provision) {
+                client.createBucket(request -> request.bucket("namespace"));
+                client.putBucketVersioning(request -> request.bucket("namespace").versioningConfiguration(
+                        configuration -> configuration.status(software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
+            }
             store = new S3BlobStore(client);
             profile = new ManagedBackendLedger.Profile(S3BackendIdentity.of(endpoint, region, true), "assessment-provider");
         } catch (RuntimeException | Error failure) { client.close(); throw failure; }

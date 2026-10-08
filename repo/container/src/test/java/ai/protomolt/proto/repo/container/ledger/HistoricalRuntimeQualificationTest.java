@@ -34,6 +34,23 @@ class HistoricalRuntimeQualificationTest {
         run("cold-owner", "HISTORICAL_COLD_OWNER_HOST_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
                 "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
     }
+    @Test void coldProcessRestart() throws Exception {
+        var compiled = StorageRuntimeProbeCompiler.compile(directory);
+        try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
+             var storage = new AssessmentStorageBackend("localstack")) {
+            postgres.start(); storage.start();
+            var environment = new java.util.HashMap<String, String>();
+            environment.put("PROTOMOLT_TEST_RUNTIME_BUNDLE", compiled.bundle().toString());
+            environment.put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
+            environment.put("PROTOMOLT_TEST_USER", postgres.getUsername());
+            environment.put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
+            environment.put("PROTOMOLT_TEST_S3_ENDPOINT", storage.getEndpoint().toString());
+            environment.put("PROTOMOLT_TEST_S3_REGION", storage.getRegion());
+            environment.put("PROTOMOLT_TEST_S3_ACCESS", storage.getAccessKey());
+            environment.put("PROTOMOLT_TEST_S3_SECRET", storage.getSecretKey());
+            HistoricalColdRestartDriver.run(compiled, environment, directory.resolve("cold-restart"));
+        }
+    }
     @Test void overlappingGenerations() throws Exception {
         run("overlap", "HISTORICAL_GENERATION_OVERLAP_HOST_OK", "SCOPED_HISTORICAL_GENERATION_OVERLAP_PUBLICATION_OK");
     }

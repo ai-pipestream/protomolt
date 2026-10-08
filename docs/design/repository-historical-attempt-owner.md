@@ -1392,6 +1392,22 @@ activation. Scratch and retained reservations overlap during transfer; digest
 encoding reserves its own temporary space. These budgets account for serialized
 payload sizes, not total JVM object overhead.
 
-The provider harness creates the predecessor and recovery entry in one JVM.
-Separate-process restart recovery and transport parity remain required before
-public routing.
+The cold-owner provider harness creates the predecessor and recovery entry in one
+JVM. A separate restart fixture now terminates the writer with `Runtime.halt(23)`
+after committing the initial capture, registration and START. The driver waits for
+that exact process and its named SQL sessions to exit before starting recovery.
+The request file contains only the protobuf command and resubmitted upload bytes;
+synthetic credential binding comes independently from the trusted test host and
+is checked against durable credential authority.
+
+The new process discovers the expired predecessor, loads the original anchor from
+SQL, captures sources, and reads their exact provider versions with checksum
+checks. Historical schema resolution must use retained definitions; only the new
+upload requests a fresh definition. It then creates the assessment, publishes,
+replays the receipt and retires its own resources. The test is included in the
+mandatory storage driver as well as a focused qualification entry point.
+
+This proves recovery from a crashed writer after START. It does not qualify every
+crash phase, public managed routing or transport parity. The crashed writer's old
+reader-incarnation cleanup remains an explicit acceptance item: fresh-process
+cleanup must not be described as proof that orphaned captures have been reclaimed.

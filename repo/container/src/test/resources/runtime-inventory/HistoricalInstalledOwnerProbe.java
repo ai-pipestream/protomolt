@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, COLD, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
+        ORDINARY, COLD, COLD_RESTART_WRITER, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -50,15 +50,26 @@ final class HistoricalInstalledOwnerProbe {
     static Prepared prepare(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
             DocumentPublicationPreparationRecord original, Map<Integer, ByteString> fragments,
             PayloadBudget budget, Check check) throws Exception {
+        return prepare(tx, caller, coordinator, original.command(), Optional.of(original), fragments, budget, check);
+    }
+
+    static Prepared prepareCold(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationCommand command, Map<Integer, ByteString> uploads, PayloadBudget budget) throws Exception {
+        return prepare(tx, caller, coordinator, command, Optional.empty(), uploads, budget, Check.COLD);
+    }
+
+    private static Prepared prepare(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationCommand command, Optional<DocumentPublicationPreparationRecord> original,
+            Map<Integer, ByteString> fragments, PayloadBudget budget, Check check) throws Exception {
         long before = budget.reservedBytes();
         var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
         var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), (check == Check.OVERLAP || check.commitWinner()) ? 2 : 1);
         HistoricalGenerationOverlapProbe overlap = null;
         try {
             var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
-            var command = original.command();
+            var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
-                    .inspect(coordinator, original.key(), command.sha256(), RepositoryReadControl.NONE);
+                    .inspect(coordinator, key, command.sha256(), RepositoryReadControl.NONE);
             require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND,
                     "provider owner begins from actual expired predecessor discovery");
             var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
@@ -76,7 +87,7 @@ final class HistoricalInstalledOwnerProbe {
                     || check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) ? Duration.ofSeconds(30) : Duration.ofMinutes(2);
             try (var request = check == Check.COLD
                     ? attempts.beginColdProposed(caller, new DocumentPublicationCommand(command.intent()), modes, observed, lease, timeouts)
-                    : attempts.beginProposed(caller, original, modes, observed, lease, timeouts)) {
+                    : attempts.beginProposed(caller, original.orElseThrow(), modes, observed, lease, timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");

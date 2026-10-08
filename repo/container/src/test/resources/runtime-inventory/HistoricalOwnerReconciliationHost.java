@@ -12,6 +12,7 @@ public final class HistoricalOwnerReconciliationHost {
         var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
             case "initial-owner" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER;
             case "cold-owner" -> HistoricalInstalledOwnerProbe.Check.COLD;
+            case "cold-restart-writer" -> HistoricalInstalledOwnerProbe.Check.COLD_RESTART_WRITER;
             case "self-supersession" -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
             case "overlap" -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
             case "takeover-first" -> HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST;
