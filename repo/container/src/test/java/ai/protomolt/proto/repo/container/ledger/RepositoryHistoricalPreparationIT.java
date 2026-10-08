@@ -363,7 +363,8 @@ class RepositoryHistoricalPreparationIT {
                 }
                 var exact = identity(c, rig);
                 assertThat(owner.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 1));
-                assertThat(budget.reservedBytes()).isPositive();
+                long retainedBytes = budget.reservedBytes();
+                assertThat(retainedBytes).isPositive().isLessThan(DocumentPublicationPreparationCodec.MAX_BYTES);
                 cancelled.set(false);
                 // A fresh observation sees our reservation/install. The retained entry must win.
                 var changedObservation = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
@@ -381,6 +382,7 @@ class RepositoryHistoricalPreparationIT {
                     if (!installation) assertThat(retry.advancePreparation(CALLER, modes, Map.of(), NONE))
                             .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
                 }
+                if (installation) assertThat(budget.reservedBytes()).isEqualTo(retainedBytes);
                 assertThat(count(c, "repository_coordinator_expirations")).isEqualTo(1);
                 assertThat(count(c, "repository_successor_installs")).isEqualTo(1);
                 try (var later = capture(c, rig)) {

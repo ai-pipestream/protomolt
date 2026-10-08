@@ -27,8 +27,9 @@ Explicit gRPC deadlines and orderly service admission close now retain actual
 producer resources until drainage. Focused recovery acknowledgement, corrupt-journal,
 revocation and policy checks now pass. Managed-host configuration and initial
 publication/replay now pass with retained physical identity checks over Redis.
-Cold hosted recovery, unavailable retained backends and held-work shutdown still
-need service-level qualification; see the
+Cold hosted recovery now passes all three crash boundaries through the full S3
+host after correcting retained-plan budget accounting. Unavailable retained backends
+and held-work shutdown still need service-level qualification; see the
 [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
 and [next integration](repository-historical-restore.md#next-managed-host-integration).
 START reconciliation retains an exact attempt identity and requires current
@@ -44,6 +45,7 @@ fairness and progressive hydration remain requirements of the full goal.
 
 Recent evidence:
 
+- [Managed historical cold recovery](../evidence/repository/2026-10-08-managed-historical-cold/README.md)
 - [Historical public dispatch](../evidence/repository/2026-10-08-historical-public-dispatch/README.md)
 - [Historical cold-process dispatch](../evidence/repository/2026-10-08-historical-public-cold-restart/README.md)
 - [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)

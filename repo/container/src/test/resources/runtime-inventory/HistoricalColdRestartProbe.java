@@ -123,7 +123,10 @@ public final class HistoricalColdRestartProbe {
                     .inspect(coordinator, key, command.sha256(), RepositoryReadControl.NONE);
             require(discovered.status() == expected, "fresh process discovers exact persisted phase");
             var budget = new PayloadBudget(128_000_000);
-            if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_PUBLIC_DISPATCH"))) {
+            if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_MANAGED_DISPATCH"))) {
+                ManagedHistoricalColdDispatchProbe.run(tx, provider, caller, command, uploads);
+                reclaimOriginalWriter(tx, coordinator, command, budget);
+            } else if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_PUBLIC_DISPATCH"))) {
                 HistoricalPublicColdDispatchProbe.run(tx, provider, caller, command, uploads, budget);
                 reclaimOriginalWriter(tx, coordinator, command, budget);
             } else {

@@ -1125,10 +1125,14 @@ on both boundaries. Real registry lifecycle tests and ordinary/historical observ
 failure tests cover schema ownership and reader cleanup.
 
 See [managed host evidence](../evidence/repository/2026-10-08-managed-historical-host/README.md).
-Next qualify cold hosted recovery, unavailable retained backend identity and close
-while historical work is held. The public composition entry now exists, but full
-host recovery, multi-backend operation and deployment remain unqualified. Keep those
-features out of availability claims until their service-level cases pass.
+Cold recovery now passes through the full S3 hosted builder at initial, reserved
+and installed crash boundaries, with exact public retries and both hosted readers
+drained. Preparation retains its actual encoded plan allowance rather than a fixed
+16 MiB reservation that exceeded the host budget during activation. See
+[managed cold evidence](../evidence/repository/2026-10-08-managed-historical-cold/README.md).
+Next qualify unavailable retained backend identity and close while historical work
+is held. Multi-backend operation, deployed recovery and performance remain
+unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)
 

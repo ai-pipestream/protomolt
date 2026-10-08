@@ -174,6 +174,10 @@ public final class ObservedAssessmentProbe {
                 new com.google.protobuf.Descriptors.FileDescriptor[]{ValidateProto.getDescriptor()}).findMessageTypeByName("StringValue"));
     }
     static DocumentSchemaAdmission.Definition asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
+        // The managed restart scenario must seed the same installed container contract
+        // that the public host uses, including its type URL and compiler provenance.
+        if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_MANAGED_DISPATCH"))
+                && type.equals(Document.getDescriptor())) return BuiltinDocumentSchema.definition();
         var closure = DescriptorFingerprints.closure(type); var bytes = closure.toByteString();
         var metadata = RepositorySchemaAsset.newBuilder().setSchema(PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
                         .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(closure))).setArtifactSha256(sha(bytes))

@@ -73,17 +73,28 @@ class HistoricalRuntimeQualificationTest {
         coldProcessRestart("reserved", true, true);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"initial", "reserved", "installed"})
+    void coldManagedProcessRestart(String phase) throws Exception {
+        coldProcessRestart(phase, true, false, true);
+    }
+
     private void coldProcessRestart(String phase, boolean publicDispatch) throws Exception {
         coldProcessRestart(phase, publicDispatch, false);
     }
 
     private void coldProcessRestart(String phase, boolean publicDispatch, boolean corruptPreparation) throws Exception {
+        coldProcessRestart(phase, publicDispatch, corruptPreparation, false);
+    }
+
+    private void coldProcessRestart(String phase, boolean publicDispatch, boolean corruptPreparation, boolean managed) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
              var storage = new AssessmentStorageBackend("localstack")) {
             postgres.start(); storage.start();
             var environment = new java.util.HashMap<String, String>();
             environment.put("PROTOMOLT_TEST_COLD_CORRUPT_PREPARATION", Boolean.toString(corruptPreparation));
+            environment.put("PROTOMOLT_TEST_COLD_MANAGED_DISPATCH", Boolean.toString(managed));
             environment.put("PROTOMOLT_TEST_RUNTIME_BUNDLE", compiled.bundle().toString());
             environment.put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
             environment.put("PROTOMOLT_TEST_USER", postgres.getUsername());

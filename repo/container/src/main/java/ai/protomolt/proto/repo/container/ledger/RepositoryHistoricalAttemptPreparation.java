@@ -212,11 +212,14 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
                     }
                     requireResolvedRetention();
                     if (plan == null) {
-                        var bytes = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES);
-                        try {
-                            plan = RepositorySuccessorInstall.prepare(proposal, loaded.record(), lease, modes);
+                        try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+                            var prepared = RepositorySuccessorInstall.prepare(proposal, loaded.record(), lease, modes);
+                            // Keep only the encoded plan allowance after preparation. Activation
+                            // reserves its own scratch space from the same bounded host budget.
+                            var bytes = budget.reserve(DocumentPublicationPreparationCodec.encode(prepared.next()).size());
+                            plan = prepared;
                             nextBytes = bytes;
-                        } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
+                        }
                     }
                     // install first confirms this exact plan. Never reload after an uncertain V93.
                     RepositorySuccessorInstall.install(tx, budget, coordinator, plan, control);
