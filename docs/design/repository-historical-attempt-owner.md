@@ -1072,9 +1072,11 @@ quiescence. Managed capture acquisition and this shutdown wiring remain unfinish
 
 ### Historical upload coordinator composition
 
-DocumentUploadCoordinator calls ordinary admission, which rejects historical owners
-with execution claims. Private probes use DocumentPartTransfer directly and do not
-qualify the coordinator path.
+Ordinary DocumentUploadCoordinator admission rejects historical owners with execution
+claims. The private historical stageUploads entry now supplies operation-specific
+authority. The initial-owner provider probe qualifies that entry; successor probe
+qualification is in progress. Other probes still use direct transfers and do not
+provide evidence for this coordinator entry.
 
 Reuse existing payload budgets, backend resolution, workers, flushing and heartbeat.
 An internal transfer authority must apply historical authorization and ownership
@@ -1090,7 +1092,7 @@ would otherwise deadlock. Retain protection until workers, heartbeat and flusher
 exit. Freeze DocumentHistoricalSuccessorBinding's verified activation receipt or
 synchronize that check independently; preserve receipt equality.
 
-Sol reviewed this design. Implementation and barrier tests remain required for
+Sol reviewed this design. Barrier tests remain required for
 expiry, revocation, late observations, uncertain provider replies and shutdown.
 Public historical publication remains disabled pending integration and conformance.
 
@@ -1119,3 +1121,43 @@ late observations remain required, as does successor coordinator qualification.
 Selection equality alone does not count provider writes. The configured SQL limits
 bound individual locks and statements, not total transfer duration. Public routing
 remains disabled.
+
+### Historical upload race qualification still required
+
+Use barriers around real provider calls and real PostgreSQL transactions. Exercise
+initial and activated successor executions separately. Record provider effects,
+selected attempt rows, current claim identity, source captures and byte reservations.
+
+- After an actual PUT but before its observation returns, revoke source READ or
+  destination WRITE. Release the provider barrier. Staging must fail, and the late
+  observation must not authorize assessment creation or publication. Account for
+  the stored object as an uncertain or abandoned attempt, rather than deleting it
+  while its provider worker is active.
+- At that same barrier, expire or supersede the execution claim. The original
+  worker must fail its current-owner check. A successor must use its own attempt
+  and token; it cannot accept the predecessor's late observation.
+- Close the parent execution while a direct private transfer is active. Its child
+  must keep source protection, registration and metadata accounting until workers
+  exit. Test the request owner separately: closing admission must prevent new
+  requests, and detach must respect its timeout while the existing request runs.
+- Cancel during provider I/O and after observation verification. Both paths must
+  drain actual workers and release the child budget exactly once. Future
+  cancellation alone cannot establish drainage.
+- Block the registration row in another transaction. The configured SQL lock
+  timeout must terminate transfer authorization without starting a provider write
+  or leaking the child resources. Test a later callback independently from initial
+  admission to qualify the worker cleanup path.
+- Return an error after the real provider accepts a write. A retry must not issue
+  an implicit replacement write. Reconciliation must use the original attempt
+  identity and verify the real object before any successful replay.
+- Commit observation verification in PostgreSQL, then lose its acknowledgement.
+  Staging must report failure and drain. An exact replay must recover the same
+  VERIFIED attempt and token without another PUT or a replacement selection. This
+  differs from a lost provider reply before SQL verification has committed.
+- Count real provider writes on a successful exact replay. Stable selection
+  equality is already checked, but does not establish this provider-effect claim.
+
+These are acceptance cases, not completed evidence. SQL timeouts apply to each
+statement and lock; provider deadlines and total request cancellation are separate.
+For revocation and takeover tests, commit the policy or claim change before releasing
+the provider barrier, so the expected transaction ordering is explicit.

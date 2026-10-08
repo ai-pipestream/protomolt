@@ -152,7 +152,31 @@ final class HistoricalSuccessorCreateProbe {
                                     new RepositorySchemaArtifacts(tx), oldStart, RepositoryReadControl.NONE);
                             throw new AssertionError("Expired predecessor performed late CREATE");
                         } catch (RepositoryExecutionClaimLedger.Fenced expected) { /* Exact predecessor claim refused. */ }
-                        var admitted = execution.admitUploads(caller, RepositoryReadControl.NONE);
+                        var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
+                        var parts = command.intent().getMembers(0).getPartsList();
+                        for (int ordinal = 0; ordinal < parts.size(); ordinal++) {
+                            var part = parts.get(ordinal);
+                            if (part.hasUpload()) bodies.put(new DocumentUploadPayloads.Key("a", ordinal),
+                                    new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(), part.getSlot().getSubKey(),
+                                            fresh.get(ordinal).toByteArray(), part.getUpload().getSha256()));
+                        }
+                        DocumentUploadCoordinator.Staged admitted;
+                        try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
+                                "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
+                                "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
+                                "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+                             var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
+                                 require(plan.next().placements().values().stream().anyMatch(value ->
+                                         value.generation().equals(generation) && value.profile().equals(profile)), "exact successor upload placement");
+                                 return new DocumentUploadCoordinator.Backend(profile.identity(), opened);
+                             }, 2, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)))) {
+                            admitted = execution.stageUploads(caller, uploads, bodies, Map.of(), RepositoryReadControl.NONE);
+                            var replay = execution.stageUploads(caller, uploads, bodies, Map.of(), RepositoryReadControl.NONE);
+                            require(replay.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()
+                                    .equals(admitted.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()),
+                                    "successor replay retains verified selections");
+                            require(uploads.providerActivity().active() == 0, "successor provider workers exit");
+                        }
                         require(admitted.attempts().size() == (mixed ? 1 : 0), "only mixed successor needs a fresh upload attempt");
                         var owner = tx.inTransaction(em -> {
                             var claim = RepositoryExecutionClaimLedger.lockLive(em, plan.next().key(), command.sha256(),
@@ -172,17 +196,6 @@ final class HistoricalSuccessorCreateProbe {
                                 require(attempt.token().equals(plan.next().seeds().uploadTokens().get("a"))
                                         && !attempt.token().equals(original.seeds().uploadTokens().get("a")), "successor has a new upload token");
                                 var selected = new DocumentSelectedAttemptLedger.Selected("a", 1, attempt.id(), attempt.token());
-                                var physical = assessment.preparePhysical(plan.next().placements(), plan.next().seeds().attempts(),
-                                        plan.next().lease(), plan.next().seeds().uploadTokens(), RepositoryReadControl.NONE);
-                                var member = physical.plan().members().getFirst();
-                                var measured = member.attempt().orElseThrow().uploads().stream().map(upload -> {
-                                    var object = upload.object();
-                                    var actual = DocumentPartTransfer.upload(provider.store(), member.placement().drive().namespace(), object,
-                                            fresh.get(upload.revisionOrdinal()).toByteArray(), Map.of(), () -> {}, () -> {});
-                                    return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
-                                            object.contentType(), actual.version(), actual.etag());
-                                }).toList();
-                                new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
                                 require(tx.readOnly(em -> ((Number) em.createNativeQuery("""
                                         SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:id
                                         """).setParameter("id", original.seeds().attempts().get("a")).getSingleResult()).longValue()) == 1,
