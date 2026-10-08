@@ -26,10 +26,10 @@ import java.util.stream.*;
 class RepositoryScalingReport {
     /** Every workload setting that distinguishes a configuration; pooled rows share all of them. */
     record Key(int replicas, int pool, int clients, int heap, String journaled, String sampleMillis,
-            String payloadBytes, int iterations, String readSlots, String readHandles, String budgetBytes) {
-        static final String HEADER = "journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,payload_bytes,iterations_per_client,total_read_slots,total_read_handles,total_budget_bytes";
+            String payloadBytes, int iterations, String readSlots, String readHandles, String budgetBytes, String trace) {
+        static final String HEADER = "journaled,trace,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,payload_bytes,iterations_per_client,total_read_slots,total_read_handles,total_budget_bytes";
         String csv() {
-            return journaled + "," + replicas + "," + pool + "," + clients + "," + heap + "," + sampleMillis + "," + payloadBytes + ","
+            return journaled + "," + trace + "," + replicas + "," + pool + "," + clients + "," + heap + "," + sampleMillis + "," + payloadBytes + ","
                     + iterations + "," + readSlots + "," + readHandles + "," + budgetBytes;
         }
     }
@@ -72,6 +72,10 @@ class RepositoryScalingReport {
             else if (!sources.equals(identityText)) throw new IllegalArgumentException("source-identity.txt of " + label + " differs from " + sourcesLabel);
             windows.addAll(read(root, label));
         }
+        // Tracing adds proxy overhead to every JDBC call; traced and untraced runs are never
+        // summarised together, and nothing is written when they are mixed.
+        if (windows.stream().map(w -> w.key.trace).distinct().count() > 1)
+            throw new IllegalArgumentException("Traced and untraced runs cannot be pooled; analyse them separately");
         writeWindows(out, windows);
         writeConfigs(out, windows);
         writeWorkers(out, windows);
@@ -198,11 +202,11 @@ class RepositoryScalingReport {
     }
 
     static void writeTrace(Path out, List<Window> windows) throws Exception {
-        if (windows.stream().noneMatch(w -> !w.trace.isEmpty())) return;
+        if (windows.stream().noneMatch(w -> w.key.trace.equals("true"))) return;
         var totals = new TreeMap<String, long[]>();
         var text = new StringBuilder("run,window,replicas,pool_per_replica,operation,metric,completion_site,count,nanos,failures\n");
         for (var w : windows) {
-            if (w.trace.isEmpty()) throw new IllegalStateException("Mixed traced and untraced windows: " + w.run + " " + w.name);
+            if (w.trace.isEmpty()) throw new IllegalStateException("Traced window without trace rows: " + w.run + " " + w.name);
             for (String line : w.trace) {
                 String[] cells = line.split(",");
                 var sum = totals.computeIfAbsent(w.run + "," + w.name + "," + w.key.replicas + "," + w.key.pool + "," + cells[0] + "," + cells[1] + "," + cells[2], k -> new long[3]);
@@ -248,7 +252,7 @@ class RepositoryScalingReport {
             int replicas = Integer.parseInt(row[1]);
             w.key = new Key(replicas, Integer.parseInt(row[2]), clients, Integer.parseInt(row[6]), journaled, sampleMillis,
                     environment.get("payload_string_bytes"), iterations, environment.get("total_read_slots"),
-                    environment.get("total_read_handles"), environment.get("total_payload_budget_bytes"));
+                    environment.get("total_read_handles"), environment.get("total_payload_budget_bytes"), environment.get("trace"));
             w.operations = Long.parseLong(row[4]); w.nanos = Long.parseLong(row[5]);
             if (Integer.parseInt(row[3]) * replicas != clients) throw new IllegalStateException("Client split mismatch: " + w.name);
             for (String kind : KINDS) { w.latency.put(kind, new ArrayList<>()); w.byIteration.put(kind, new ArrayList<>()); }

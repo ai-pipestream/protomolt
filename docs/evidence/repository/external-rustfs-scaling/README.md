@@ -12,7 +12,13 @@ defects. The harness and analyzer were corrected (window versus settled
 snapshots, deterministic probe JAR and per-source hashes, run provenance in the
 analyzer, trace aggregation, PIDs in `workers.csv`, a recorded sampling interval
 with a control run, a warmup trend table) and the whole series was rerun. This
-document describes the rerun only.
+document describes the rerun only. Sol's second pass rated those eight items
+resolved or mitigated with an explicit caveat and listed five analyzer and
+wording follow-ups (asynchronous verify work in the per-publication totals,
+whole-directory duplicate hashing and source-identity matching, the warmup tail
+bucket, PUT-only labelling, the per-window settle maximum); the third pass
+confirmed those five resolved and found one more, trace mode missing from the
+configuration key, which is fixed in the final commit.
 
 ## Identity
 
