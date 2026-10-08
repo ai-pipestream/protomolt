@@ -23,8 +23,10 @@ class DocumentHistoricalRegistrationAuthorizationIT {
             .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_READ))
             .addPermissions(AccessRule.newBuilder().setIdentityType("public").setIdentity("public").setAccess(Access.ACCESS_WRITE)).build();
 
-    @ParameterizedTest @CsvSource({"false,false", "true,false", "false,true"})
-    void capturedHistoryDoesNotPreserveRevokedAuthorityForRegistrationOrRetry(boolean beforeRegistration, boolean revokeKey) throws Exception {
+    @ParameterizedTest @CsvSource({"false,false,false", "true,false,false", "false,true,false",
+            "false,false,true", "false,true,true"})
+    void capturedHistoryDoesNotPreserveRevokedAuthorityForRegistrationOrRetry(boolean beforeRegistration, boolean revokeKey,
+            boolean loseStartReply) throws Exception {
         var binding = new RepositoryCredentialBinding("historical-test", UUID.randomUUID(), 1);
         var caller = new RepositoryCaller("scoped", false, Set.of("account"), Set.of(),
                 revokeKey ? Optional.of(binding) : Optional.empty());
@@ -53,8 +55,19 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                 var placement = original.prepared().members().getFirst().placement();
                 var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                         Map.of(placement.drive().id(), placement), Duration.ofMinutes(5), 0);
-                try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
-                    var registration = DocumentPublicationRegistration.historical(c.tx(), budget, record, sources,
+                var loseReply = new java.util.concurrent.atomic.AtomicBoolean();
+                var datasource = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
+                    if (!loseReply.get()) return;
+                    long starts = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:id")
+                            .setParameter("id", key.operationId()).getSingleResult()).longValue());
+                    if (starts == 1 && loseReply.compareAndSet(true, false))
+                        throw new java.sql.SQLException("injected START acknowledgement loss");
+                });
+                try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
+                            Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"));
+                     var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
+                    var registration = DocumentPublicationRegistration.historical(new Tx(emf), budget, record, sources,
                             UUID.randomUUID(), new DocumentPublicationScopeCalls(), new DriveLedger(c.tx()), RepositoryReadControl.NONE);
                     var modes = Map.of("member", DocumentPublicationCandidate.Mode.TYPED);
                     List<?> before = List.of();
@@ -72,6 +85,12 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                     if (beforeRegistration) setPolicy(c, fixture.address(), writeOnly);
                     else {
                         try (var execution = registration.historicalExecution(caller, registeredOwner, modes, RepositoryReadControl.NONE)) {
+                            if (loseStartReply) {
+                                loseReply.set(true);
+                                assertThatThrownBy(() -> execution.start(caller, Duration.ofMinutes(5), RepositoryReadControl.NONE))
+                                        .hasStackTraceContaining("injected START acknowledgement loss");
+                                assertThat(execution.progress().acknowledgedStart()).isEmpty();
+                            }
                             if (revokeKey) credentials.revoke(administrator, binding, caller.principalName());
                             else setPolicy(c, fixture.address(), writeOnly);
                             denied(denial, () -> execution.admitUploads(caller, RepositoryReadControl.NONE));
@@ -79,7 +98,15 @@ class DocumentHistoricalRegistrationAuthorizationIT {
                             long starts = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
                                     "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:id")
                                     .setParameter("id", key.operationId()).getSingleResult()).longValue());
-                            assertThat(starts).isZero();
+                            assertThat(starts).isEqualTo(loseStartReply ? 1 : 0);
+                            assertThat(execution.progress().acknowledgedStart()).isEmpty();
+                            for (String table : List.of("repository_schema_artifact_claims", "document_assessment_owners",
+                                    "document_revision_commits")) {
+                                long downstream = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                                        "SELECT count(*) FROM " + table + " WHERE operation_id=:id")
+                                        .setParameter("id", key.operationId()).getSingleResult()).longValue());
+                                assertThat(downstream).as(table).isZero();
+                            }
                         }
                     }
                     denied(denial, () -> registration.admitInitial(caller, modes, RepositoryReadControl.NONE));

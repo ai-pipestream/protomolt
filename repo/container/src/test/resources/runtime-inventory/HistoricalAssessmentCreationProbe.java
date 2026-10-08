@@ -169,7 +169,7 @@ public final class HistoricalAssessmentCreationProbe {
                             : scenario == Scenario.SUCCESSOR ? "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK"
                             : scenario == Scenario.START_CONCURRENT ? "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK"
                             : scenario == Scenario.START_ROLLBACK ? "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK"
-                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_REFUSED_OK"
+                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_CREATE_OK"
                             : fault == null ? (mixed ? "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK")
                             : fault.lostAcknowledgement() ? "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK");
                 }
@@ -284,8 +284,8 @@ public final class HistoricalAssessmentCreationProbe {
                         "repeated start preserves coordinates and acknowledged permission");
                 if (scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER)
                     HistoricalColdRestartProbe.checkpointAndHalt(tx, command, caller, fragments, budget);
-                if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
-                        "lost START acknowledgement recovers identity; rolled back START permits a new identity");
+                if (startFault) require(started.assessment().equals(fault.proposedStart()),
+                        "START retry retains the original private proposal across rollback or lost acknowledgement");
                 if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
                         || installedOwner) {
                     HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
@@ -361,24 +361,6 @@ public final class HistoricalAssessmentCreationProbe {
                                 "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
                                 .setParameter("op", command.operationId()).getSingleResult()).longValue());
                         require(claims == 0, "foreign handle staged no schema claims");
-                    }
-                    if (scenario == Scenario.START_LOST_ACK) {
-                        try {
-                            execution.createAssessment(caller, assessment, selections, observation,
-                                    new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
-                            throw new AssertionError("Lost START acknowledgement granted CREATE permission");
-                        } catch (RepositoryException expected) {
-                            require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
-                                    && expected.getMessage().contains("requires reconciliation"),
-                                    "original handle without acknowledged START cannot CREATE");
-                        }
-                        long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
-                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
-                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
-                        require(claims == 0, "lost START acknowledgement stages no schema claims on either handle");
-                        require(new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).isEmpty(),
-                                "START coordinates alone do not establish an assessment");
-                        return;
                     }
                     var authorityBefore = authority(tx, owner.key());
                     DocumentAssessmentCreation.Created created = null;

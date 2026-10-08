@@ -798,15 +798,14 @@ wire fields or a promise of recovery on behalf of a revoked caller.
 V83 coordinates are not a transferable CREATE capability. Preserve `start()`'s
 coordinate idempotence: competing handles load one committed UUID/deadline, a
 rolled-back start may retry, and a lost start acknowledgement reloads its original
-coordinates. Only the handle whose INSERT is positively acknowledged may CREATE.
-Record an internal insert outcome from the SQL update count; do not infer the
-winner from a proposed UUID or a pre-insert read. Arm its private permission only
-after commit and final authorization return normally. Validate full persisted
-scope, command, owner, retention and expiry on readback/conflict.
+coordinates. CREATE requires a positively acknowledged START, either the original
+INSERT or the exact original handle's reconciliation described below. A fresh
+handle cannot claim a persisted proposal. Arm the private permission only after
+commit and final authorization return normally. Validate full persisted scope,
+command, owner, retention and expiry on readback/conflict.
 
 Repeated start on the acknowledged winning handle keeps the same permission.
-A handle that only loads a start, including the original handle after losing its
-start acknowledgement, is reconciliation-only. Refuse its CREATE before schema
+A different handle that only loads a start is reconciliation-only. Refuse its CREATE before schema
 claims even when it prepares its own valid assessment. A CREATE SQL attempt
 consumes the local permission before entering the transaction; loaded coordinates
 or empty discovery cannot restore it. Schema staging is a separate authorized,
@@ -815,9 +814,10 @@ idempotent transaction and is not represented by the CREATE-attempt marker.
 Qualification must show two independent handles returning identical start
 coordinates but only one able to CREATE; the other must write no schema claims.
 Real before-commit rollback must allow a later acknowledged start to win. Real
-after-commit acknowledgement loss must leave both coordinate recovery and new
-handles unable to CREATE, while a positively committed assessment can still be
-discovered and reconciled under current authority. Repeat, expiry, retention
+after-commit acknowledgement loss must allow the original handle to reconcile
+its retained proposal under current authority, while new handles remain unable
+to CREATE. A positively committed assessment can still be discovered and
+reconciled separately. Repeat, expiry, retention
 mismatch and credential revocation checks must retain their existing semantics.
 
 This is an intermediate ownership boundary, not complete crash recovery. If the
@@ -829,12 +829,12 @@ qualification before they can serve that purpose. Keep the public path closed
 until this recovery sequence and publication are proven. No protobuf change or
 new repository-wide transaction boundary is introduced by the private permit.
 
-### Planned reconciliation of an uncertain START acknowledgement
+### Reconciliation of an uncertain START acknowledgement
 
-The current implementation above deliberately refuses CREATE after losing the
-START acknowledgement. Before public historical publication is enabled, extend
-that boundary to let the original live handle reconcile its own uncertain START.
-This is planned behavior, not an available public operation.
+The private execution handle can reconcile its own uncertain START. This replaces
+the earlier restriction that required a positively acknowledged INSERT on that
+handle. Public historical publication remains gated while its complete dispatch
+and recovery sequence are qualified.
 
 Retain a private proposed assessment UUID and exact retention duration on the
 synchronized historical execution handle before entering its first START
@@ -859,8 +859,8 @@ owner fencing and credential revocation denied. Preserve the existing CREATE
 lost-acknowledgement tests. Keep public historical dispatch gated until these
 cases and its complete publication and recovery sequence pass.
 
-Sol reviewed this proposed boundary against the current journal and execution
-fences. Implementation and qualification remain open.
+Sol reviewed this boundary against the current journal and execution fences.
+Qualification evidence must distinguish internal CREATE from public publication.
 
 ### Acceptance before enabling public restore
 

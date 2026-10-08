@@ -22,7 +22,8 @@ class DocumentHistoricalExecutionIT {
 
     @ParameterizedTest
     @ValueSource(strings = {"valid", "held", "rollback", "lost-ack", "modes", "owner", "missing-capture", "roots", "closed", "registration-closed",
-            "start-concurrent", "start-retention", "start-expired", "start-rollback", "start-lost-ack"})
+            "start-concurrent", "start-retention", "start-expired", "start-rollback", "start-lost-ack",
+            "start-lost-ack-retention", "start-lost-ack-expired", "start-lost-ack-owner", "start-lost-ack-claim"})
     void initialHandleRequiresCompleteRegisteredIdentityAndRetainsSources(String variant) throws Exception {
         try (var c = context(POSTGRES)) {
             var original = DocumentSchemaRetentionFixture.prepare(c);
@@ -92,7 +93,7 @@ class DocumentHistoricalExecutionIT {
                 });
                 var datasource = DocumentJdbcFaults.afterCommit(beforeCommit, () -> {
                     if (loseAcknowledgement.compareAndSet(true, false)) throw new java.sql.SQLException(
-                            variant.equals("start-lost-ack") ? "injected assessment-start lost acknowledgement" : "injected registration lost acknowledgement");
+                            variant.startsWith("start-lost-ack") ? "injected assessment-start lost acknowledgement" : "injected registration lost acknowledgement");
                 });
                 try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                             Map.of("hibernate.connection.datasource", datasource, "hibernate.hbm2ddl.auto", "validate"));
@@ -149,7 +150,7 @@ class DocumentHistoricalExecutionIT {
                             assertThat(execution.progress().observedStart()).isEmpty();
                             assertThat(execution.progress().acknowledgedStart()).isEmpty();
                             var retention = Duration.ofMinutes(5);
-                            if (variant.equals("start-rollback") || variant.equals("start-lost-ack")) {
+                            if (variant.equals("start-rollback") || variant.startsWith("start-lost-ack")) {
                                 startFault.set(true);
                                 assertThatThrownBy(() -> execution.start(CALLER, retention, NONE))
                                         .hasStackTraceContaining("injected assessment-start");
@@ -157,49 +158,71 @@ class DocumentHistoricalExecutionIT {
                                 long count = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
                                         "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:o")
                                         .setParameter("o", command.operationId()).getSingleResult()).longValue());
-                                assertThat(count).isEqualTo(variant.equals("start-lost-ack") ? 1 : 0);
+                                assertThat(count).isEqualTo(variant.startsWith("start-lost-ack") ? 1 : 0);
                                 assertThat(execution.progress().startAttempted()).isTrue();
                                 assertThat(execution.progress().observedStart()).isEmpty();
                                 assertThat(execution.progress().acknowledgedStart()).isEmpty();
                             }
-                            DocumentAssessmentStartJournal.Started started;
-                            if (variant.equals("start-concurrent")) {
-                                try (var second = registration.historicalExecution(CALLER, candidateOwner, requestedModes, NONE);
-                                     var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-                                    var go = new java.util.concurrent.CountDownLatch(1);
-                                    var first = executor.submit(() -> { go.await(); return execution.start(CALLER, retention, NONE); });
-                                    var other = executor.submit(() -> { go.await(); return second.start(CALLER, retention, NONE); });
-                                    go.countDown();
-                                    started = first.get(15, java.util.concurrent.TimeUnit.SECONDS);
-                                    assertThat(other.get(15, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(started);
-                                }
-                            } else started = execution.start(CALLER, retention, NONE);
-                            assertThat(execution.start(CALLER, retention, NONE)).isEqualTo(started);
-                            assertThat(execution.progress().observedStart()).contains(started);
-                            assertThat(execution.progress().createAttempted()).isFalse();
-                            assertThat(execution.progress().publicationAttempted()).isFalse();
-                            if (variant.equals("start-lost-ack"))
-                                assertThat(execution.progress().acknowledgedStart()).isEmpty();
-                            else if (!variant.equals("start-concurrent"))
-                                assertThat(execution.progress().acknowledgedStart()).contains(started);
-                            if (variant.equals("start-lost-ack")) assertThat(started.assessment()).isEqualTo(proposedStart.get());
-                            if (variant.equals("start-rollback")) assertThat(started.assessment()).isNotEqualTo(proposedStart.get());
-                            if (variant.equals("start-retention"))
-                                assertThatThrownBy(() -> execution.start(CALLER, retention.plusSeconds(1), NONE))
-                                        .hasMessage("Historical assessment retention differs from its start");
-                            if (variant.equals("start-expired")) {
-                                c.tx().inTransaction(em -> {
+                            if (variant.startsWith("start-lost-ack-")) {
+                                if (!variant.endsWith("retention")) c.tx().inTransaction(em -> {
                                     em.createNativeQuery("SET LOCAL session_replication_role=replica").executeUpdate();
-                                    em.createNativeQuery("UPDATE repository_publication_assessment_starts SET retain_until=clock_timestamp()-interval '1 second' WHERE operation_id=:o")
+                                    String table = variant.endsWith("expired") ? "repository_publication_assessment_starts"
+                                            : variant.endsWith("owner") ? "repository_operation_owners" : "repository_execution_claims";
+                                    String deadline = variant.endsWith("expired") ? "retain_until" : "lease_until";
+                                    em.createNativeQuery("UPDATE " + table + " SET " + deadline
+                                            + "=clock_timestamp()-interval '1 second' WHERE operation_id=:o")
                                             .setParameter("o", command.operationId()).executeUpdate();
                                 });
-                                assertThatThrownBy(() -> execution.start(CALLER, retention, NONE))
-                                        .hasMessage("Historical assessment start has expired");
+                                assertThatThrownBy(() -> execution.start(CALLER,
+                                        variant.endsWith("retention") ? retention.plusSeconds(1) : retention, NONE))
+                                        .isInstanceOf(variant.endsWith("owner") ? RepositoryOperationLedger.OwnerFencedException.class
+                                                : variant.endsWith("claim") ? RepositoryExecutionClaimLedger.Fenced.class : RepositoryException.class);
+                                assertThat(execution.progress().acknowledgedStart()).isEmpty();
+                                assertThat(execution.progress().createAttempted()).isFalse();
+                                for (String table : List.of("repository_schema_artifact_claims", "document_assessment_owners",
+                                        "document_revision_commits")) {
+                                    assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                                            "SELECT count(*) FROM " + table + " WHERE operation_id=:o")
+                                            .setParameter("o", command.operationId()).getSingleResult()).longValue())).as(table).isZero();
+                                }
+                            } else {
+                                DocumentAssessmentStartJournal.Started started;
+                                if (variant.equals("start-concurrent")) {
+                                    try (var second = registration.historicalExecution(CALLER, candidateOwner, requestedModes, NONE);
+                                         var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                                        var go = new java.util.concurrent.CountDownLatch(1);
+                                        var first = executor.submit(() -> { go.await(); return execution.start(CALLER, retention, NONE); });
+                                        var other = executor.submit(() -> { go.await(); return second.start(CALLER, retention, NONE); });
+                                        go.countDown();
+                                        started = first.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                                        assertThat(other.get(15, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(started);
+                                    }
+                                } else started = execution.start(CALLER, retention, NONE);
+                                assertThat(execution.start(CALLER, retention, NONE)).isEqualTo(started);
+                                assertThat(execution.progress().observedStart()).contains(started);
+                                assertThat(execution.progress().createAttempted()).isFalse();
+                                assertThat(execution.progress().publicationAttempted()).isFalse();
+                                if (!variant.equals("start-concurrent"))
+                                    assertThat(execution.progress().acknowledgedStart()).contains(started);
+                                if (variant.equals("start-lost-ack")) assertThat(started.assessment()).isEqualTo(proposedStart.get());
+                                if (variant.equals("start-rollback")) assertThat(started.assessment()).isEqualTo(proposedStart.get());
+                                if (variant.equals("start-retention"))
+                                    assertThatThrownBy(() -> execution.start(CALLER, retention.plusSeconds(1), NONE))
+                                            .hasMessage("Historical assessment retention differs from its start");
+                                if (variant.equals("start-expired")) {
+                                    c.tx().inTransaction(em -> {
+                                        em.createNativeQuery("SET LOCAL session_replication_role=replica").executeUpdate();
+                                        em.createNativeQuery("UPDATE repository_publication_assessment_starts SET retain_until=clock_timestamp()-interval '1 second' WHERE operation_id=:o")
+                                                .setParameter("o", command.operationId()).executeUpdate();
+                                    });
+                                    assertThatThrownBy(() -> execution.start(CALLER, retention, NONE))
+                                            .hasMessage("Historical assessment start has expired");
+                                }
+                                var startIds = c.tx().readOnly(em -> em.createNativeQuery(
+                                        "SELECT assessment_id FROM repository_publication_assessment_starts WHERE operation_id=:o")
+                                        .setParameter("o", command.operationId()).getResultList());
+                                assertThat(startIds).containsExactly(started.assessment());
                             }
-                            var startIds = c.tx().readOnly(em -> em.createNativeQuery(
-                                    "SELECT assessment_id FROM repository_publication_assessment_starts WHERE operation_id=:o")
-                                    .setParameter("o", command.operationId()).getResultList());
-                            assertThat(startIds).containsExactly(started.assessment());
                             scopes.close();
                             assertThat(scopes.awaitIdle(Duration.ZERO)).isFalse();
                             sources.close(); history.close();

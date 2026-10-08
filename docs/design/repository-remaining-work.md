@@ -16,11 +16,10 @@ The immediate open integration is public historical publication. Its facade stil
 rejects historical selectors; the private retained-attempt and cold-restart paths
 are qualified independently. Keep that guard until accepted-call dispatch, retries,
 caller identity and shutdown pass library and authenticated transport tests.
-The START journal currently preserves coordinates after an uncertain commit but
-does not restore the original handle's CREATE permission. The reviewed proposal
-in [historical restore](repository-historical-restore.md#planned-reconciliation-of-an-uncertain-start-acknowledgement)
-retains an exact private attempt identity and requires current authority before
-reconciliation. Its implementation and tests precede public dispatch.
+The private START reconciliation retains an exact attempt identity and requires
+current authority before restoring the original handle's CREATE permission. See
+[historical restore](repository-historical-restore.md#reconciliation-of-an-uncertain-start-acknowledgement).
+Qualification of that boundary and public dispatch remains required.
 
 Pruning must now account for persisted historical preparations and their retained
 roots. The older assumption that journals cannot contain historical selectors is

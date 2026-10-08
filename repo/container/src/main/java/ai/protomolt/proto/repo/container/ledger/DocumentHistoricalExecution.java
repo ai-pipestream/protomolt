@@ -24,6 +24,8 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentHistoricalSuccessorBinding successor;
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
+    private record AttemptedStart(UUID assessment, java.time.Duration retention) {}
+    private AttemptedStart attemptedStart;
     private boolean startAttempted;
     private DocumentAssessmentStartJournal.Started observedStart;
     private boolean assessmentCreateAttempted;
@@ -178,16 +180,24 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
         var result = mutate(caller, control, em -> {
+            Objects.requireNonNull(retention);
+            if (retention.isNegative() || retention.isZero() || retention.compareTo(java.time.Duration.ofDays(1)) > 0
+                    || retention.getNano() % 1000 != 0)
+                throw new IllegalArgumentException("Retention requires exact microseconds within one day");
+            if (attemptedStart == null) attemptedStart = new AttemptedStart(UUID.randomUUID(), retention);
+            else if (!attemptedStart.retention().equals(retention))
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Historical assessment retention differs from its start");
             startAttempted = true;
             return successor == null
-                    ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), retention, control)
-                    : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), retention, control);
+                    ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), attemptedStart.assessment(), retention, control)
+                    : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), attemptedStart.assessment(), retention, control);
         });
-        // Only a positively acknowledged INSERT grants this handle CREATE authority.
-        // Loading coordinates after an uncertain acknowledgement is reconciliation-only.
-        if (result.inserted()) acknowledgedStart = result.started();
-        else if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
+        // A retained private proposal can reconcile this handle's lost INSERT reply.
+        // mutate has rechecked all current fences and authorized delivery after commit.
+        if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start changed");
+        if (attemptedStart.assessment().equals(result.started().assessment())) acknowledgedStart = result.started();
         observedStart = result.started();
         return result.started();
     }
