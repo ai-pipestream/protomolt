@@ -18,7 +18,8 @@ class HistoricalRuntimeQualificationTest {
     }
     @Test void initialOwner() throws Exception {
         run("initial-owner", "HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
-                "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
+                "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK", "HISTORICAL_UPLOAD_REPLAY_OK",
+                "HISTORICAL_UPLOAD_REVOKE_OK", "HISTORICAL_UPLOAD_CANCEL_OK", "HISTORICAL_UPLOAD_LOST_PROVIDER_REPLY_OK");
     }
     @Test void selfSupersession() throws Exception {
         run("self-supersession", "HISTORICAL_SELF_SUPERSESSION_HOST_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK",
