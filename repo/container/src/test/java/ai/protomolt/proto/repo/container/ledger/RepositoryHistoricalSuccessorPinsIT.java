@@ -206,7 +206,19 @@ class RepositoryHistoricalSuccessorPinsIT {
                         .hasMessage("Successor historical activation is absent");
                 var actual = activation(c.tx(), c, rig, plan, later).activateAccepted(CALLER, CALLER, NONE, work);
                 assertThat(actual.identity()).isEqualTo(identity);
-                assertThatCode(check::run).doesNotThrowAnyException();
+                // Share the binding as upload heartbeat and verification callbacks will.
+                try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                    var start = new java.util.concurrent.CountDownLatch(1);
+                    var checks = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+                    for (int i = 0; i < 4; i++) checks.add(workers.submit(() -> {
+                        if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new AssertionError("Binding verification start timed out");
+                        check.run();
+                        return null;
+                    }));
+                    start.countDown();
+                    for (var checked : checks) checked.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                }
                 assertThatThrownBy(() -> new DocumentHistoricalSuccessorBinding(plan, plan.next(), identity, pins))
                         .isInstanceOf(IllegalArgumentException.class)
                         .hasMessage("Successor execution capture differs from installed preparation");

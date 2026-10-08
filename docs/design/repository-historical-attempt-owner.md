@@ -1093,3 +1093,17 @@ synchronize that check independently; preserve receipt equality.
 Sol reviewed this design. Implementation and barrier tests remain required for
 expiry, revocation, late observations, uncertain provider replies and shutdown.
 Public historical publication remains disabled pending integration and conformance.
+
+The successor binding now atomically pins the first verified activation receipt.
+Each later registration check compares the complete receipt with that value;
+capture checks read a single published value. PostgreSQL tests exercise concurrent
+callers, but registration row locks can serialize receipt verification.
+
+A transfer child must also reserve its own metadata budget before execution:
+source-pin and mode bounds, plus successor binding bytes when applicable. Fork
+accepted Work and registration while the parent execution monitor is acquired,
+and clean up every acquired resource if construction fails. Release the monitor
+before starting upload workers. Keep all three child resources until the
+coordinator returns or throws after worker drainage. Parent close can then release
+its own reservation without leaving the child's referenced metadata unaccounted.
+This child capability and its lifetime tests remain to be implemented.
