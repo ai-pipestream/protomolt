@@ -17,8 +17,11 @@ qualification factory now dispatches historical requests through the library and
 authenticated in-process gRPC boundaries. Existing public factories still reject
 historical selectors. The internal path covers committed and rejected receipts,
 START and CREATE acknowledgement loss, three cold-process crash boundaries, and
-concurrent takeover while an old provider reply remains held. Public failure and
-shutdown qualification remains before exposing the host factory.
+concurrent takeover while an old provider reply remains held. Library cancellation,
+orderly shutdown and remote-client cancellation also retain actual workers and
+resources until drainage. Deadline, negative-identity, revocation/policy,
+publication-acknowledgement and cleanup-failure checks remain before exposing the
+host factory; see the explicit [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks).
 START reconciliation retains an exact attempt identity and requires current
 authority before restoring the original handle's CREATE permission. See
 [historical restore](repository-historical-restore.md#reconciliation-of-an-uncertain-start-acknowledgement).
@@ -35,6 +38,7 @@ Recent evidence:
 - [Historical public dispatch](../evidence/repository/2026-10-08-historical-public-dispatch/README.md)
 - [Historical cold-process dispatch](../evidence/repository/2026-10-08-historical-public-cold-restart/README.md)
 - [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)
+- [Historical public cancellation and shutdown](../evidence/repository/2026-10-08-historical-public-stop/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

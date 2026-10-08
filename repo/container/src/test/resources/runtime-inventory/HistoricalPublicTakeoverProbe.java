@@ -35,6 +35,123 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
 
     OpenedBlobStore opened() { return observed; }
 
+    void exerciseStop(Tx tx, DocumentPublicationRuntime runtime, DocumentReadLedger reads,
+            DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+            boolean cancel) throws Exception {
+        var command = new DocumentPublicationCommand(request.getIntent());
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        var cancelled = new AtomicBoolean();
+        var control = new RepositoryReadControl() {
+            public boolean isCancelled() { return cancelled.get(); }
+            public long remainingNanos() { return Long.MAX_VALUE; }
+        };
+        // Inspection only: after close(), new external registry calls must be refused.
+        var attempts = runtime.withHistoricalAttempts(value -> value);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var publication = executor.submit(() -> repository.publishDocument(caller, request, control));
+            try {
+                require(entered.await(15, TimeUnit.SECONDS), "accepted historical call completed real PUT before stop");
+                if (cancel) cancelled.set(true);
+                runtime.close();
+                require(!runtime.shutdownStep(java.time.Duration.ZERO), "held accepted call prevents shutdown completion");
+                require(!publication.isDone() && attempts.drain().active() == 1 && reads.outstandingReads() > 0,
+                        "shutdown retains the actual producer, generation and historical read pins");
+                try {
+                    repository.publishDocument(caller, request, RepositoryReadControl.NONE);
+                    throw new AssertionError("Closed runtime accepted another public call");
+                } catch (RepositoryException refused) {
+                    require(refused.code() == RepositoryException.Code.UNAVAILABLE, "closed public admission reports unavailable");
+                }
+                require(count(tx, key, "document_revision_commits") == 0
+                                && count(tx, key, "document_assessment_owners") == 0,
+                        "held upload has not reached assessment or publication");
+                release.countDown();
+                if (cancel) {
+                    try {
+                        publication.get(15, TimeUnit.SECONDS);
+                        throw new AssertionError("Cancelled historical call returned success");
+                    } catch (ExecutionException failure) {
+                        require(cancelled(failure), "historical producer reports cancellation: " + failure.getCause());
+                    }
+                    require(!Boolean.TRUE.equals(attempt(tx, writes.getFirst())[2]), "cancelled PUT reply stays unverified");
+                    require(count(tx, key, "document_revision_commits") == 0
+                                    && count(tx, key, "document_assessment_owners") == 0,
+                            "cancelled producer never reaches assessment or publication");
+                } else {
+                    var result = publication.get(15, TimeUnit.SECONDS);
+                    require(result.hasCommitted(), "accepted historical call can finish during orderly shutdown");
+                    DocumentPublicationResponseValidator.requireValid(command, caller.principalName(), result);
+                    require(count(tx, key, "document_revision_commits") == 1, "accepted shutdown call commits exactly once");
+                }
+                boolean stopped = false;
+                for (int pass = 0; pass < 16 && !stopped; pass++)
+                    stopped = runtime.shutdownStep(java.time.Duration.ofSeconds(1));
+                require(stopped && attempts.drain().unresolved() == 0 && reads.outstandingReads() == 0,
+                        "shutdown completes only after real producer and captures drain");
+            } finally { release.countDown(); }
+        }
+    }
+
+    private static boolean cancelled(Throwable failure) {
+        for (var next = failure; next != null; next = next.getCause())
+            if (next instanceof RepositoryException refusal && refusal.code() == RepositoryException.Code.CANCELLED) return true;
+        return false;
+    }
+
+    void exerciseRemoteCancellation(Tx tx, DocumentPublicationRuntime runtime, DocumentReadLedger reads,
+            DocumentPublicationRepository remote, RepositoryCaller caller, PublishDocumentRequest request,
+            ai.protomolt.proto.repo.service.DocumentPublicationGrpcService service, PayloadBudget delivery,
+            CountDownLatch serverCancelled) throws Exception {
+        var command = new DocumentPublicationCommand(request.getIntent());
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        var cancelled = new AtomicBoolean();
+        var control = new RepositoryReadControl() {
+            public boolean isCancelled() { return cancelled.get(); }
+            public long remainingNanos() { return Long.MAX_VALUE; }
+        };
+        var attempts = runtime.withHistoricalAttempts(value -> value);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var call = executor.submit(() -> remote.publishDocument(caller, request, control));
+            try {
+                require(entered.await(15, TimeUnit.SECONDS), "authenticated historical RPC reached real PUT");
+                cancelled.set(true);
+                try {
+                    call.get(5, TimeUnit.SECONDS);
+                    throw new AssertionError("Cancelled historical RPC returned success");
+                } catch (ExecutionException failure) {
+                    require(cancelled(failure), "remote client reports cancellation");
+                }
+                require(serverCancelled.await(5, TimeUnit.SECONDS), "client cancellation reaches server context");
+                require(!service.awaitIdle(java.time.Duration.ZERO) && delivery.reservedBytes() > 0
+                                && attempts.drain().active() == 1 && reads.outstandingReads() > 0,
+                        "cancelled transport retains its actual producer, delivery budget and historical captures");
+                try {
+                    remote.publishDocument(caller, request, RepositoryReadControl.NONE);
+                    throw new AssertionError("Cancelled transport released capacity before producer exit");
+                } catch (RepositoryException refusal) {
+                    require(refusal.code() == RepositoryException.Code.RESOURCE_EXHAUSTED, "held producer occupies transport capacity");
+                }
+                runtime.close();
+                require(!runtime.shutdownStep(java.time.Duration.ZERO), "cancelled RPC producer prevents premature runtime shutdown");
+                require(count(tx, key, "document_revision_commits") == 0
+                                && count(tx, key, "document_assessment_owners") == 0,
+                        "cancelled held RPC has no assessment or commit");
+                release.countDown();
+                require(service.awaitIdle(java.time.Duration.ofSeconds(15)), "actual RPC producer drains after provider release");
+                require(!Boolean.TRUE.equals(attempt(tx, writes.getFirst())[2])
+                                && count(tx, key, "document_revision_commits") == 0
+                                && count(tx, key, "document_assessment_owners") == 0,
+                        "late cancelled RPC reply cannot validate or publish content");
+                require(delivery.reservedBytes() == 0, "transport releases budget after actual producer exit");
+                boolean stopped = false;
+                for (int pass = 0; pass < 16 && !stopped; pass++)
+                    stopped = runtime.shutdownStep(java.time.Duration.ofSeconds(1));
+                require(stopped && attempts.drain().unresolved() == 0 && reads.outstandingReads() == 0,
+                        "cancelled RPC shutdown returns all generations and captures");
+            } finally { release.countDown(); }
+        }
+    }
+
     void exercise(Tx tx, DocumentPublicationRuntime runtime, DocumentPublicationRepository repository,
             RepositoryCaller caller, PublishDocumentRequest request, AtomicInteger selections, AtomicInteger resolutions) throws Exception {
         var command = new DocumentPublicationCommand(request.getIntent());

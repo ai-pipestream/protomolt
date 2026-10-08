@@ -994,6 +994,39 @@ Published examples must wait for the public acceptance cases. Pending-source
 retention and safe cleanup are prerequisites for claimed restore activation;
 broader backup qualification and progressive hydration remain required afterward.
 
+#### Remaining factory exposure checks
+
+Keep the factory package-private until the following public-route checks have
+evidence. Existing private execution tests are useful regression coverage but do
+not prove that facade routing carries the same identity, control and cleanup rules.
+
+- Transport cancellation and deadline: hold a real provider reply, cancel through
+  the remote client, prove server capacity and delivery reservations remain held
+  until the actual producer exits, then prove no assessment or commit occurred.
+  Qualify orderly close independently; an accepted uncancelled call may finish.
+  Library cancellation and orderly close, plus cancellation through the remote
+  client and authenticated in-process gRPC service, now pass. The transport test
+  proves server-side capacity remains occupied after the client returns CANCELLED.
+  Explicit deadline and transport orderly-close cases remain.
+- Negative identity and intent: change modes, canonical command or destination
+  condition under an existing operation identity; reject before selector, schema
+  resolution or provider work. Cover uncertain local proposals and corrupt journal
+  contents without treating corruption as permission for initial admission.
+- Current authorization and policy: revoke source READ, destination WRITE or
+  credential generation, or change admission policy between capture and commit.
+  Prove both SQL orderings through public dispatch, including authorized replay
+  when publication wins. A retained source is not a retained authorization grant.
+- Publication acknowledgement loss: commit the real publication transaction and
+  lose its reply. An exact public retry must recover the authorized durable receipt
+  with one revision, no second PUT and no second assessment CREATE.
+- Cleanup failure: fail a real pin or generation retirement step after terminal
+  publication. Receipt delivery remains independent of cleanup; bounded maintenance
+  reports the failure, retries it, and eventually returns capacity without dropping
+  retained ownership. Qualify fairness when an earlier entry remains undrainable.
+
+These checks supplement cold-process and concurrent takeover evidence; they do
+not replace the remaining full-goal pruning, backup, performance or hydration work.
+
 ### Pending source projection checkpoint (2026-10-07)
 
 V103 adds an indexed set of distinct source `(node_id, revision_id)` pairs for an

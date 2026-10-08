@@ -26,12 +26,16 @@ final class HistoricalPublicDispatchProbe {
         }
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "reject");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "takeover");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "cancel");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "shutdown");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-cancel");
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
         long baseline = budget.reservedBytes();
+        boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.equals("rpc-cancel");
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
         var reader = new DocumentPartReader((generation, profile) -> {
             require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical read provider");
@@ -52,7 +56,7 @@ final class HistoricalPublicDispatchProbe {
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
-                        return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover") ? takeover.opened() : opened);
+                        return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover") || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
                     phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
@@ -94,7 +98,7 @@ final class HistoricalPublicDispatchProbe {
                         });
             });
             try {
-                for (boolean remote : fault == null ? List.of(false, true) : List.of(false)) {
+                for (boolean remote : fault == null && !stoppingCase ? List.of(false, true) : List.of(false)) {
                     var current = new DocumentLedger(tx).findByNodeId(
                             ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress())).orElseThrow();
                     var member = original.intent().getMembers(0);
@@ -117,7 +121,13 @@ final class HistoricalPublicDispatchProbe {
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
                     int resolvedBeforeRetry = resolutions.get();
-                    if (phase.equals("takeover") && !remote) {
+                    if (stoppingCase) {
+                        if (phase.equals("rpc-cancel")) withTransport(repository, caller, 1,
+                                (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseRemoteCancellation(
+                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery, serverCancelled));
+                        else takeover.exerciseStop(tx, runtime, reads, repository, caller, request.build(), phase.equals("cancel"));
+                        continue;
+                    } else if (phase.equals("takeover") && !remote) {
                         takeover.exercise(tx, runtime, repository, caller, request.build(), selections, resolutions);
                         HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
                                 repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
@@ -138,7 +148,8 @@ final class HistoricalPublicDispatchProbe {
             }
         }
         require(budget.reservedBytes() == baseline, "public historical dispatch releases byte reservations");
-        System.out.println(phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
+        System.out.println(stoppingCase ? "HISTORICAL_PUBLIC_" + phase.replace('-', '_').toUpperCase(java.util.Locale.ROOT) + "_DRAIN_OK"
+                : phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
                 : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"
                 : fault == null ? "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_GRPC_OK"
                 : "HISTORICAL_PUBLIC_" + phase.toUpperCase(java.util.Locale.ROOT) + "_ACK_RECOVERY_OK");
@@ -156,6 +167,18 @@ final class HistoricalPublicDispatchProbe {
 
     static void transport(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
             AtomicInteger selections, AtomicInteger resolutions, boolean rejected) throws Exception {
+        withTransport(repository, caller, 2, (remote, service, delivery, serverCancelled) ->
+                exercise(remote, caller, request, selections, resolutions, rejected));
+    }
+
+    @FunctionalInterface
+    private interface TransportAction {
+        void run(DocumentPublicationRepository remote, ai.protomolt.proto.repo.service.DocumentPublicationGrpcService service,
+                PayloadBudget delivery, java.util.concurrent.CountDownLatch serverCancelled) throws Exception;
+    }
+
+    private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
+            int transportCapacity, TransportAction action) throws Exception {
         String token = "historical-fixture-" + UUID.randomUUID();
         var credential = caller.credentialBinding().orElseThrow();
         var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(
@@ -163,10 +186,12 @@ final class HistoricalPublicDispatchProbe {
                 Optional.of(new ai.protomolt.proto.authz.CredentialBinding(credential.issuer(), credential.credentialId(), credential.generation())));
         var delivery = new PayloadBudget(64_000_000);
         var clientBudget = new PayloadBudget(64_000_000);
+        var serverCancelled = new java.util.concurrent.CountDownLatch(1);
         try (var service = new ai.protomolt.proto.repo.service.DocumentPublicationGrpcService(repository, actual -> {
             require(actual.equals(authentication), "transport binds authenticated fixture identity");
+            io.grpc.Context.current().addListener(context -> serverCancelled.countDown(), Runnable::run);
             return caller;
-        }, delivery, 2); var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+        }, delivery, transportCapacity); var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             String name = io.grpc.inprocess.InProcessServerBuilder.generateName();
             var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
                     .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
@@ -182,7 +207,7 @@ final class HistoricalPublicDispatchProbe {
                         .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
                 var remote = new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(
                         caller, stub, clientBudget, Duration.ofSeconds(60), 2);
-                exercise(remote, caller, request, selections, resolutions, rejected);
+                action.run(remote, service, delivery, serverCancelled);
             } finally {
                 channel.shutdownNow(); require(channel.awaitTermination(10, TimeUnit.SECONDS), "historical channel drains");
                 server.shutdownNow(); require(server.awaitTermination(10, TimeUnit.SECONDS), "historical server drains");
