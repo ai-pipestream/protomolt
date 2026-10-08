@@ -27,8 +27,12 @@ final class HistoricalInitialOwnerProbe {
                     .setOperationId(UUID.randomUUID().toString()).build());
             try (var rejectionFault = new HistoricalCreateCommitFault(database, true)) {
                 run(rejectionFault.tx(), provider, caller, lostReply, policy, placement, revision, fragments, budget,
-                        observation, null, database, true, rejectionFault, tx);
+                        observation, null, database, true, rejectionFault, tx, false);
             }
+            var cancelledFirst = new DocumentPublicationCommand(rejected.intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            run(tx, provider, caller, cancelledFirst, policy, placement, revision, fragments, budget,
+                    observation, null, database, true, null, tx, true);
         }
     }
 
@@ -37,14 +41,14 @@ final class HistoricalInitialOwnerProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject) throws Exception {
         run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation,
-                fault, database, reject, null, tx);
+                fault, database, reject, null, tx, false);
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject,
-            HistoricalCreateCommitFault rejectionFault, Tx observer) throws Exception {
+            HistoricalCreateCommitFault rejectionFault, Tx observer, boolean cancelFirst) throws Exception {
         require(!caller.processAuthority(), "initial owner executes as a credential-bound scoped caller");
         var coordinator = new RepositoryCaller(caller.principalName(), true);
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
@@ -177,6 +181,44 @@ final class HistoricalInitialOwnerProbe {
                     require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact rejection backend");
                     return provider.store();
                 }, 4, 4_000_000, budget); var request = attempts.resume(caller, command).orElseThrow()) {
+                    if (cancelFirst) {
+                        var terminal = new java.util.concurrent.atomic.AtomicReference<DocumentPublicationReplay.Observation>();
+                        DocumentAssessmentReader cancelling = (capture, memberId, control) -> {
+                            var batch = reader.readAssessment(capture, memberId, control);
+                            try {
+                                require(terminal.get() == null, "single member reaches cancellation barrier once");
+                                terminal.set(new DocumentPublicationRejections(observer).cancel(caller, owner, command, RepositoryReadControl.NONE));
+                                return batch;
+                            } catch (RuntimeException | Error failure) {
+                                try { batch.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+                                throw failure;
+                            }
+                        };
+                        try {
+                            request.rejectAssessment(selections, reads, cancelling,
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                                    Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                            throw new AssertionError("Cancelled assessment continued delivery");
+                        } catch (RepositoryOperationLedger.TerminalOperationException expected) {
+                            require(terminal.get() != null, "terminal refusal follows explicit cancellation after provider read");
+                        }
+                        var result = terminal.get();
+                        require(result.rejection().orElseThrow().getReason()
+                                == DocumentPublicationRejectionReason.DOCUMENT_PUBLICATION_REJECTION_REASON_EXPLICIT_CANCELLATION,
+                                "cancellation remains the terminal reason");
+                        reader.close();
+                        require(request.rejectAssessment(selections, reads, reader,
+                                new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                                Duration.ofSeconds(5), RepositoryReadControl.NONE).equals(result), "retry returns cancellation without provider access");
+                        require(new DocumentPublicationReplay(observer).observe(caller, command).equals(result)
+                                && count(observer, key, "repository_operation_rejection") == 1
+                                && count(observer, key, "document_revision_commits") == 0,
+                                "cancelled candidate has one cancellation and no publication");
+                        reads.releaseDrained(32);
+                        require(reads.outstandingReads() == heldReads && !history.isReleased(), "cancelled replay releases assessment but retains historical source");
+                        System.out.println("HISTORICAL_CANCELLATION_BEFORE_REJECTION_OK");
+                        return;
+                    }
                     if (rejectionFault != null) {
                         rejectionFault.armRejection(owner, started.assessment());
                         rejectionFault.onRejectionCommit(pid -> {

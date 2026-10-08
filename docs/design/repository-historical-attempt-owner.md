@@ -1295,3 +1295,10 @@ providers. Cancellation waits at the rejection commit boundary, then returns the
 same receipt after commit despite loss of the rejection acknowledgement.
 See `docs/evidence/repository/2026-10-08-rejection-cancellation-race/`.
 Cancellation-before-rejection and pending-decision revocation remain unqualified.
+
+Cancellation during historical assessment replay is qualified with a real provider
+batch. Cancellation commits before batch delivery; replay reports a terminal error,
+and retry returns the cancellation receipt without provider access. SQL contains
+one cancellation and no published revision. See
+`docs/evidence/repository/2026-10-08-cancellation-before-rejection/`.
+This case does not establish simultaneous SQL decision-queue ordering.
