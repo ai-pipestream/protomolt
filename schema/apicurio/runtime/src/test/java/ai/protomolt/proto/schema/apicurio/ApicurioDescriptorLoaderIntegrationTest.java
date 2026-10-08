@@ -10,6 +10,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.extension.TestWatcher;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -18,6 +21,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -153,6 +157,23 @@ class ApicurioDescriptorLoaderIntegrationTest {
 
     private HttpClient http;
     private RegistryClient registryClient;
+
+    @RegisterExtension
+    final TestWatcher registryLogOnFailure = new TestWatcher() {
+        @Override
+        public void testFailed(ExtensionContext context, Throwable cause) {
+            String diagnosticPath = System.getenv("PROTOMOLT_APICURIO_TEST_DIAGNOSTIC_PATH");
+            if (diagnosticPath == null || diagnosticPath.isBlank()) {
+                return;
+            }
+            try {
+                REGISTRY.writeBoundedLogTail(Path.of(diagnosticPath));
+            } catch (IOException e) {
+                System.err.println("Could not save bounded Apicurio Testcontainer log: "
+                        + e.getClass().getSimpleName());
+            }
+        }
+    };
 
     static String configuredRegistryUrl(String defaultUrl) {
         String url = System.getProperty("protomolt.it.apicurio.url");

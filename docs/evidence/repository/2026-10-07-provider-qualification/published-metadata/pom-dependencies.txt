@@ -1,0 +1,10 @@
+staged POM dependency inspection (gradle-module)
+
+protomolt-repo-blob-spi -> <no dependencies>
+protomolt-repo-blob-s3 -> compile:ai.pipestream:protomolt-repo-blob-spi, compile:software.amazon.awssdk:s3, runtime:software.amazon.awssdk:url-connection-client
+protomolt-repo-blob-redis -> compile:ai.pipestream:protomolt-repo-blob-spi, runtime:redis.clients:jedis
+protomolt-repo-blob-cache -> compile:ai.pipestream:protomolt-repo-blob-spi, runtime:org.slf4j:slf4j-api
+protomolt-repo-blob-grpc -> compile:ai.pipestream:protomolt-repo-blob-spi, compile:ai.pipestream:protomolt-repo-proto, runtime:ai.pipestream:protomolt-protobuf-validation, runtime:ai.pipestream:protomolt-repo-codec
+protomolt-repo-spi -> compile:ai.pipestream:protomolt-repo-proto, runtime:ai.pipestream:protomolt-descriptors
+protomolt-repo-codec -> compile:ai.pipestream:protomolt-repo-proto, compile:com.google.protobuf:protobuf-java, runtime:ai.pipestream:protomolt-descriptors, runtime:com.google.protobuf:protobuf-java-util
+protomolt-repo-publication-grpc -> compile:ai.pipestream:protomolt-repo-blob-spi, compile:ai.pipestream:protomolt-repo-proto, compile:ai.pipestream:protomolt-repo-spi

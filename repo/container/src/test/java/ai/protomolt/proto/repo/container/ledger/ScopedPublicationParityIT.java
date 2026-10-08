@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * runtime plus the compiled probe. The scenario matrix lives in
  * {@code runtime-inventory/ScopedPublicationProbe.java}; this harness only
  * assembles the runtime, compiles and launches it, and checks its markers.
+ *
+ * <p>The probe log persists at the path in
+ * {@code protomolt.test.scopedPublicationLog} (the task's results directory,
+ * {@code build/test-results/scopedPublicationTest/scoped-publication.log}),
+ * outliving temporary-directory cleanup. Each run deletes it first and the probe
+ * echoes a fresh run identifier, so an earlier success cannot satisfy a later run.
+ * Compilation and launch failures are written there as well.
  */
 class ScopedPublicationParityIT {
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
@@ -26,8 +34,14 @@ class ScopedPublicationParityIT {
     @Test void scopedPublicationAuthorizationIsEquivalentAcrossLibraryAndAuthenticatedGrpc() throws Exception {
         String bundleProperty = System.getProperty("protomolt.test.admissionRuntimeBundle");
         String hostProperty = System.getProperty("protomolt.test.storageHostClasspath");
+        String logProperty = System.getProperty("protomolt.test.scopedPublicationLog");
         assertThat(bundleProperty).as("Run :protomolt-repo-container:scopedPublicationTest").isNotBlank();
         assertThat(hostProperty).isNotBlank();
+        assertThat(logProperty).isNotBlank();
+        var log = Path.of(logProperty);
+        Files.createDirectories(log.getParent());
+        Files.deleteIfExists(log);
+        String run = UUID.randomUUID().toString();
         var bundle = Path.of(bundleProperty);
         var inventory = DocumentRuntimeInventory.read(bundle, () -> {});
         var jars = new LinkedHashMap<String, Path>();
@@ -50,6 +64,7 @@ class ScopedPublicationParityIT {
         var compilerErrors = new java.io.ByteArrayOutputStream();
         int compiled = javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, compilerErrors,
                 "-proc:none", "-classpath", classpath, "-d", classes.toString(), source.toString());
+        if (compiled != 0) Files.writeString(log, "probe compilation failed (run " + run + ")\n" + compilerErrors);
         assertThat(compiled).as("probe compilation: %s", compilerErrors.toString()).isZero();
         var probe = directory.resolve("scoped-publication-probe.jar");
         try (var output = new java.util.jar.JarOutputStream(Files.newOutputStream(probe)); var paths = Files.walk(classes)) {
@@ -63,7 +78,6 @@ class ScopedPublicationParityIT {
                 var storage = new AssessmentStorageBackend("localstack")) {
             postgres.start();
             storage.start();
-            var log = directory.resolve("scoped-publication.log");
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
                     classpath + java.io.File.pathSeparator + probe,
@@ -75,19 +89,27 @@ class ScopedPublicationParityIT {
             builder.environment().put("PROTOMOLT_TEST_S3_REGION", storage.getRegion());
             builder.environment().put("PROTOMOLT_TEST_S3_ACCESS", storage.getAccessKey());
             builder.environment().put("PROTOMOLT_TEST_S3_SECRET", storage.getSecretKey());
-            var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            builder.environment().put("PROTOMOLT_TEST_PROBE_RUN", run);
+            Process process;
+            try {
+                process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            } catch (java.io.IOException failure) {
+                Files.writeString(log, "probe launch failed (run " + run + "): " + failure + "\n");
+                throw failure;
+            }
             try {
                 assertThat(process.waitFor(600, TimeUnit.SECONDS))
                         .as("Scoped publication parity probe completed; log: %s", log).isTrue();
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
+                assertThat(result).as("probe log is from this run").contains("SCOPED_PUBLICATION_RUN " + run);
                 var markers = new ArrayList<String>();
                 for (String via : List.of("LIBRARY", "GRPC")) {
                     for (String scenario : List.of("TYPED", "OPAQUE", "KEY_SEPARATION", "ROTATION", "UNBOUND",
                             "ACCOUNT", "COMMAND", "MIXED_ATOMICITY", "GRANT_REVOCATION", "GRANT_EXPIRY",
                             "REPLAY_ROTATION", "READ_REVOCATION", "UPLOAD_HELD", "COMMIT_WINS",
-                            "SHARED_KEY_CONCURRENCY", "RETRY", "CONTRACT_VS_AUTHZ")) {
+                            "SHARED_KEY_CONCURRENCY", "RETRY", "CONTRACT_VS_AUTHZ", "IDENTITY_SUBSTITUTION")) {
                         markers.add("SCOPED_PUBLICATION_" + scenario + "_" + via + "_OK");
                     }
                     for (String ordering : List.of("REVOKED", "HELD_LIVE", "EXPIRED")) {
@@ -96,6 +118,8 @@ class ScopedPublicationParityIT {
                 }
                 markers.add("SCOPED_PUBLICATION_TRANSPORT_FAIL_CLOSED_OK");
                 markers.add("SCOPED_PUBLICATION_PARITY_OK");
+                // 42 original scenario markers plus IDENTITY_SUBSTITUTION on each path.
+                assertThat(markers).hasSize(44).doesNotHaveDuplicates();
                 for (String marker : markers) {
                     assertThat(result).as("probe log contains %s", marker).contains(marker);
                 }

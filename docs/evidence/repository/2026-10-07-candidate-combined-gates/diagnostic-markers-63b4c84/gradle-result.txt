@@ -1,0 +1,45 @@
+> Task :protomolt-schema-registry-git:classes
+> Task :protomolt-schema-registry-git:jar
+> Task :protomolt-sources:classes
+> Task :protomolt-sources:jar
+
+> Task :protomolt-repo-container:compileJava
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :protomolt-repo-container:classes
+> Task :protomolt-repo-container:jar
+> Task :protomolt-repo-container:processTestResources
+> Task :protomolt-repo-engine:compileJava
+> Task :protomolt-repo-engine:classes
+> Task :protomolt-repo-engine:jar
+
+> Task :protomolt-repo-service:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :protomolt-repo-service:classes
+> Task :protomolt-repo-service:jar
+
+> Task :protomolt-repo-container:compileTestJava
+Note: /work/worktrees/protomolt/repository-side-task-integration/repo/container/src/test/java/ai/protomolt/proto/repo/container/lifecycle/KafkaPurgeQueueTest.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :protomolt-repo-container:admissionTransportRuntimeInventory
+Admission runtime inventory: 38 artifacts, 15992702 bytes
+
+> Task :protomolt-repo-container:testClasses
+> Task :protomolt-repo-container:admissionStorageTest
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/repository-side-task-integration/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 8m 9s
+174 actionable tasks: 174 executed

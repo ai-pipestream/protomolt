@@ -93,10 +93,18 @@ final class HistoricalInitialOwnerProbe {
                             new ai.protomolt.proto.repo.codec.PartObject(part.getSlot().getPart(), part.getSlot().getSubKey(),
                                     fragments.get(ordinal).toByteArray(), part.getUpload().getSha256()));
                 }
-                try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
-                        "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
-                        "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
-                        "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
+                try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.ofEntries(
+                Map.entry("endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT")),
+                Map.entry("region", System.getenv("PROTOMOLT_TEST_S3_REGION")),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS")),
+                Map.entry("secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
                      var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
                          require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload backend");
                          return new DocumentUploadCoordinator.Backend(profile.identity(), opened);

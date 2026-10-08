@@ -6,9 +6,10 @@ import java.net.URI;
 import java.util.Map;
 import java.util.Set;
 
-/** Redis factory; configuration is explicit, including zero limits and empty prefix. */
+/** Redis factory; configuration is explicit, including zero limits, empty prefix and write policy. */
 public final class RedisBlobStoreProvider implements BlobStoreProvider {
-    private static final Set<String> OPTIONS = Set.of("uri", "ttl-seconds", "max-object-bytes", "key-prefix");
+    private static final Set<String> OPTIONS = Set.of(
+            "uri", "ttl-seconds", "max-object-bytes", "key-prefix", "write-policy");
 
     @Override public String id() { return "redis"; }
 
@@ -33,10 +34,8 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
     }
 
     private static RedisBlobStoreConfig config(Map<String, String> options) {
-        var allowed = new java.util.HashSet<>(OPTIONS);
-        allowed.add("write-policy");
-        if (!options.keySet().containsAll(OPTIONS) || !allowed.containsAll(options.keySet())) {
-            throw new IllegalArgumentException("Redis requires uri, ttl-seconds, max-object-bytes and key-prefix; write-policy is optional");
+        if (!options.keySet().equals(OPTIONS)) {
+            throw new IllegalArgumentException("Redis requires exactly uri, ttl-seconds, max-object-bytes, key-prefix and write-policy");
         }
         URI uri;
         try { uri = URI.create(options.get("uri")); }
@@ -56,9 +55,10 @@ public final class RedisBlobStoreProvider implements BlobStoreProvider {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Redis ttl-seconds and max-object-bytes must be integers");
         }
-        RedisWritePolicy policy = switch (options.getOrDefault("write-policy", "replace")) {
+        RedisWritePolicy policy = switch (options.get("write-policy")) {
             case "replace" -> RedisWritePolicy.REPLACE;
             case "create-only" -> RedisWritePolicy.CREATE_ONLY;
+            case null -> throw new IllegalArgumentException("Missing Redis option: write-policy");
             default -> throw new IllegalArgumentException("Redis write-policy must be replace or create-only");
         };
         return new RedisBlobStoreConfig(uri.toString(), ttl, max, options.get("key-prefix"), policy);

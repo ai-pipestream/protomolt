@@ -1,0 +1,41 @@
+CHECK_OK new-generation.distinct :: generation=recovery-other-3fece422-f850-4dcc-95e1-609313035857
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@4f2b503c
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 111 migrations (execution time 00:00.047s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 111
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 07, 2026 8:03:32 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 07, 2026 8:03:32 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 07, 2026 8:03:32 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 07, 2026 8:03:32 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:32978/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 07, 2026 8:03:33 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+CHECK_OK new-generation.host_started :: a new generation binds freely at the recorded endpoint
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK new-generation.history_refused :: readRaw -> IllegalStateException: Original document backend is not configured on this host
+CHECK_OK new-generation.archive_refused :: getEntry -> IllegalStateException: Original archive backend is not configured on this host
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK new-generation.schema.no_live_lookup :: live schema resolution attempts=0
+RECOVERED_HOST_NEW_GENERATION_OK

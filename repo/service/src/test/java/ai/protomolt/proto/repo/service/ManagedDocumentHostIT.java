@@ -27,8 +27,18 @@ class ManagedDocumentHostIT {
             // Invalid writer capability configuration must fail before registering
             // an archive reader, even though the backing client is a real adapter.
             var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.discover();
-            var options = java.util.Map.of("endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(),
-                    "path-style", "true", "conditional-writes", "false", "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey());
+            var options = java.util.Map.ofEntries(
+                java.util.Map.entry("endpoint", S3.getEndpoint().toString()),
+                java.util.Map.entry("region", S3.getRegion()),
+                java.util.Map.entry("path-style", "true"),
+                java.util.Map.entry("conditional-writes", "false"),
+                java.util.Map.entry("access-key", S3.getAccessKey()),
+                java.util.Map.entry("secret-key", S3.getSecretKey()),
+                java.util.Map.entry("credentials-mode", "static"),
+                java.util.Map.entry("api-call-timeout-ms", "300000"),
+                java.util.Map.entry("api-attempt-timeout-ms", "60000"),
+                java.util.Map.entry("connection-timeout-ms", "10000"),
+                java.util.Map.entry("socket-timeout-ms", "60000"));
             try (var backing = providers.open("s3", options)) {
                 var tx = new ai.protomolt.proto.repo.container.ledger.Tx(database.entityManagerFactory());
                 var profile = new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger.Profile(

@@ -37,7 +37,35 @@ jobs:
           version: '1.70.0'
 
       - name: Build and test
-        run: ./gradlew build --console=plain -PtestJdk=${{ matrix.test-jdk }}
+        env:
+          PROTOMOLT_APICURIO_TEST_DIAGNOSTIC_PATH: ${{ runner.temp }}/apicurio-test-diagnostics/registry.log
+        run: ./gradlew build -x :protomolt-repo-container:admissionStorageTest --console=plain -PtestJdk=${{ matrix.test-jdk }}
+
+      # This host starts PostgreSQL, Redis, LocalStack and a separate JVM. Run it
+      # after the broad build's sibling test workers have drained so its fixed
+      # operation deadlines are not measured under unrelated test contention.
+      - name: Repository storage host resources
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/RepositoryHostResources.java" <<'EOF'
+          class RepositoryHostResources {
+              public static void main(String[] args) {
+                  System.out.printf("java=%s availableProcessors=%d maxMemoryBytes=%d%n",
+                      System.getProperty("java.version"), Runtime.getRuntime().availableProcessors(),
+                      Runtime.getRuntime().maxMemory());
+              }
+          }
+          EOF
+          java "$RUNNER_TEMP/RepositoryHostResources.java"
+          printf 'cgroup cpu.max='
+          cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unavailable
+          printf 'cgroup memory.max='
+          cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unavailable
+
+      - name: Repository storage host tests
+        env:
+          PROTOMOLT_TEST_HOST_DIAGNOSTIC_PATH: ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
+        run: ./gradlew :protomolt-repo-container:admissionStorageTest --rerun --console=plain -PtestJdk=${{ matrix.test-jdk }} --max-workers=2
 
       - name: Save failed sample test reports
         if: failure()
@@ -49,6 +77,52 @@ jobs:
             samples/build/reports/tests/test/
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Prepare admission runtime progress log
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=repo/container/build/test-results/admissionStorageTest/TEST-ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest.xml
+          output="$RUNNER_TEMP/repository-host-diagnostics"
+          mkdir -p "$output"
+          if [[ -f "$report" ]]; then
+            log=$(sed -n '/log: / { s/.*log: \([^ ;"]*\).*/\1/; s/\]$//; p; q; }' "$report")
+            if [[ -n "$log" && -f "$log" ]]; then
+              awk '/^[A-Z0-9_]+$/ && /(_OK|_START|_BEGIN|_END|_FAILED)$/ { print; next } \
+                   /^PHASE name=[a-z-]+ elapsed_ms=[0-9]+$/ { print }' "$log" \
+                > "$output/assessment-host-progress.log"
+            fi
+          fi
+
+      - name: Save repository test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-test-diagnostics-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            repo/container/build/test-results/test/*.xml
+            repo/container/build/reports/tests/test/
+            repo/container/build/test-results/admissionStorageTest/*.xml
+            repo/container/build/reports/tests/admissionStorageTest/
+            ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
+            repo/service/build/test-results/test/*.xml
+            repo/service/build/reports/tests/test/
+            ${{ runner.temp }}/repository-host-diagnostics/
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Save Apicurio integration diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apicurio-test-diagnostics-jdk-${{ matrix.test-jdk }}-${{ github.run_attempt }}
+          path: |
+            schema/apicurio/runtime/build/test-results/test/*.xml
+            schema/apicurio/runtime/build/reports/tests/test/
+            ${{ runner.temp }}/apicurio-test-diagnostics/registry.log
+          if-no-files-found: warn
+          retention-days: 3
 
       # Excluded from `build` because these tests fork an agent JVM and shell out to
       # protoc, which is slower than anything the default test task runs. The lane keeps

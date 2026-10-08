@@ -21,9 +21,18 @@ public final class NativeReplicaProbe {
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args[1]);
-        var options = Map.of("endpoint", env("PROTOMOLT_TEST_S3_ENDPOINT"), "region", "us-east-1",
-                "path-style", "true", "conditional-writes", "true", "access-key", env("PROTOMOLT_TEST_S3_ACCESS"),
-                "secret-key", env("PROTOMOLT_TEST_S3_SECRET"));
+        var options = Map.ofEntries(
+                Map.entry("endpoint", env("PROTOMOLT_TEST_S3_ENDPOINT")),
+                Map.entry("region", "us-east-1"),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("access-key", env("PROTOMOLT_TEST_S3_ACCESS")),
+                Map.entry("secret-key", env("PROTOMOLT_TEST_S3_SECRET")),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000"));
         var profile = new ManagedBackendLedger.Profile(S3BackendIdentity.of(options.get("endpoint"), "us-east-1", true), "native-replica");
         try (var database = new LedgerDatabase(new LedgerConfig(env("PROTOMOLT_TEST_JDBC"), env("PROTOMOLT_TEST_USER"), env("PROTOMOLT_TEST_PASSWORD"),
                 Integer.parseInt(System.getenv().getOrDefault("PROTOMOLT_NATIVE_POOL", "10")), LedgerConfig.DEFAULT_MIGRATION_LOCATION));

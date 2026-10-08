@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-wrong-endpoint" tests="8" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-wrong-endpoint" name="restore.provider_identity" timestamp="2026-10-08T15:37:32.770695199Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:39835</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="restore.pg_restore" timestamp="2026-10-08T15:37:37.018237771Z"><system-out>exit=0 into new database protomolt-recovery-7dca67bc3-65bfd8c0-rst-pg</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="restore.xid_epoch" timestamp="2026-10-08T15:37:37.062392143Z"><system-out>next xid 1580 &gt; max stored xid8 1012 (no advancement needed)</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="restore.sequences" timestamp="2026-10-08T15:37:37.062840942Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="restore.migration_level" timestamp="2026-10-08T15:37:37.063377717Z"><system-out>V111</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="wrong-endpoint.observed" timestamp="2026-10-08T15:37:38.855143910Z"><system-out>recovered host exit=0 marker=RECOVERED_HOST_WRONG_ENDPOINT_OK</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="wrong-endpoint.not_ready" timestamp="2026-10-08T15:37:38.855235413Z"><system-out>no READY advertised</system-out></testcase>
+  <testcase classname="negative-wrong-endpoint" name="wrong-endpoint.original_backup_untouched" timestamp="2026-10-08T15:37:38.856178186Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>

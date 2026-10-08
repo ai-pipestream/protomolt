@@ -24,7 +24,14 @@ class DocumentCapturedPinReuseIT {
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void capturedPinCannotBeReinsertedWhileFreshCapturesAndUnrelatedHandlesStillWork(boolean migrateExisting) throws Exception {
-        try (var c = migrateExisting ? context(POSTGRES, "105") : context(POSTGRES)) {
+        // Current reader registration needs V112, so the existing-pin case cannot run production code on a V105
+        // schema. V106 is DDL only (one function and one trigger, defined nowhere else), so the case removes that
+        // DDL, captures the pin without it, then applies the V106 script itself to the existing rows.
+        try (var c = context(POSTGRES)) {
+            if (migrateExisting) c.tx().inTransaction(em -> {
+                em.createNativeQuery("DROP TRIGGER a_document_captured_pin_reuse ON document_read_pins").executeUpdate();
+                em.createNativeQuery("DROP FUNCTION refuse_captured_document_pin_reuse()").executeUpdate();
+            });
             var fixture = retained(c);
             var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
             var history = reads.captureHistorical(CALLER, fixture.address(), fixture.revision());
@@ -32,9 +39,15 @@ class DocumentCapturedPinReuseIT {
             try {
                 var pin = register(c, fixture, history);
                 if (migrateExisting) {
-                    org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
-                            .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo")
-                            .target("106").load().migrate();
+                    String v106;
+                    try (var script = DocumentCapturedPinReuseIT.class.getResourceAsStream(
+                            "/db/migration/repo/V106__captured_document_pin_identity.sql")) {
+                        assertThat(script).as("V106 migration script").isNotNull();
+                        v106 = new String(script.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                    try (var connection = c.pool().getConnection(); var statement = connection.createStatement()) {
+                        statement.execute(v106);
+                    }
                     assertThat(rows(c, "document_read_pins", pin.pin())).isEqualTo(1);
                 }
                 history.close(); history.release();

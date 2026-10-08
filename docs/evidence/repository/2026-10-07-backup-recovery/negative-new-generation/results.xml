@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-new-generation" tests="8" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-new-generation" name="restore.provider_identity" timestamp="2026-10-07T12:03:28.534086866Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:42129</system-out></testcase>
+  <testcase classname="negative-new-generation" name="restore.pg_restore" timestamp="2026-10-07T12:03:31.973984105Z"><system-out>exit=0 into new database protomolt-recovery-506c2ee22-2cbb457a-rst-pg</system-out></testcase>
+  <testcase classname="negative-new-generation" name="restore.xid_epoch" timestamp="2026-10-07T12:03:32.012374011Z"><system-out>next xid 1580 &gt; max stored xid8 1012 (no advancement needed)</system-out></testcase>
+  <testcase classname="negative-new-generation" name="restore.sequences" timestamp="2026-10-07T12:03:32.012903301Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="negative-new-generation" name="restore.migration_level" timestamp="2026-10-07T12:03:32.013537199Z"><system-out>V111</system-out></testcase>
+  <testcase classname="negative-new-generation" name="new-generation.observed" timestamp="2026-10-07T12:03:34.767110893Z"><system-out>recovered host exit=0 marker=RECOVERED_HOST_NEW_GENERATION_OK</system-out></testcase>
+  <testcase classname="negative-new-generation" name="new-generation.not_ready" timestamp="2026-10-07T12:03:34.767247892Z"><system-out>no READY advertised</system-out></testcase>
+  <testcase classname="negative-new-generation" name="new-generation.original_backup_untouched" timestamp="2026-10-07T12:03:34.768586883Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>
