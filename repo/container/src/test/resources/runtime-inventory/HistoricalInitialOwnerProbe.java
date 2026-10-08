@@ -10,6 +10,7 @@ import java.util.*;
 
 /** Real provider publication through a retained initial owner, without a successor installation. */
 final class HistoricalInitialOwnerProbe {
+    private enum ReplayInterruption { NONE, CANCEL, REVOKE }
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
@@ -27,12 +28,16 @@ final class HistoricalInitialOwnerProbe {
                     .setOperationId(UUID.randomUUID().toString()).build());
             try (var rejectionFault = new HistoricalCreateCommitFault(database, true)) {
                 run(rejectionFault.tx(), provider, caller, lostReply, policy, placement, revision, fragments, budget,
-                        observation, null, database, true, rejectionFault, tx, false);
+                        observation, null, database, true, rejectionFault, tx, ReplayInterruption.NONE);
             }
             var cancelledFirst = new DocumentPublicationCommand(rejected.intent().toBuilder()
                     .setOperationId(UUID.randomUUID().toString()).build());
             run(tx, provider, caller, cancelledFirst, policy, placement, revision, fragments, budget,
-                    observation, null, database, true, null, tx, true);
+                    observation, null, database, true, null, tx, ReplayInterruption.CANCEL);
+            var revoked = new DocumentPublicationCommand(rejected.intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            run(tx, provider, caller, revoked, policy, placement, revision, fragments, budget,
+                    observation, null, database, true, null, tx, ReplayInterruption.REVOKE);
         }
     }
 
@@ -41,14 +46,14 @@ final class HistoricalInitialOwnerProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject) throws Exception {
         run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation,
-                fault, database, reject, null, tx, false);
+                fault, database, reject, null, tx, ReplayInterruption.NONE);
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject,
-            HistoricalCreateCommitFault rejectionFault, Tx observer, boolean cancelFirst) throws Exception {
+            HistoricalCreateCommitFault rejectionFault, Tx observer, ReplayInterruption interruption) throws Exception {
         require(!caller.processAuthority(), "initial owner executes as a credential-bound scoped caller");
         var coordinator = new RepositoryCaller(caller.principalName(), true);
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
@@ -181,7 +186,42 @@ final class HistoricalInitialOwnerProbe {
                     require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact rejection backend");
                     return provider.store();
                 }, 4, 4_000_000, budget); var request = attempts.resume(caller, command).orElseThrow()) {
-                    if (cancelFirst) {
+                    if (interruption == ReplayInterruption.REVOKE) {
+                        var revoked = new java.util.concurrent.atomic.AtomicBoolean();
+                        DocumentAssessmentReader revoking = (capture, memberId, control) -> {
+                            var batch = reader.readAssessment(capture, memberId, control);
+                            try {
+                                require(revoked.compareAndSet(false, true), "one revocation after real provider read");
+                                new RepositoryCredentialAuthorities(observer).revoke(coordinator,
+                                        caller.credentialBinding().orElseThrow(), caller.principalName());
+                                return batch;
+                            } catch (RuntimeException | Error failure) {
+                                try { batch.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+                                throw failure;
+                            }
+                        };
+                        for (int attempt = 0; attempt < 2; attempt++) {
+                            if (attempt == 1) reader.close();
+                            try {
+                                request.rejectAssessment(selections, reads, attempt == 0 ? revoking : reader,
+                                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                                        Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                                throw new AssertionError("Revoked credential completed assessment replay");
+                            } catch (RepositoryException refused) {
+                                require(revoked.get() && refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                        "revoked credential prevents decision and retry");
+                            }
+                        }
+                        require(count(observer, key, "repository_operation_rejection") == 0
+                                && count(observer, key, "document_revision_commits") == 0,
+                                "revocation is neither a rejection decision nor publication");
+                        reads.releaseDrained(32);
+                        require(reads.outstandingReads() == heldReads && !history.isReleased(),
+                                "revoked replay releases assessment and preserves source until shutdown");
+                        System.out.println("HISTORICAL_REJECTION_REPLAY_REVOKED_OK");
+                        return;
+                    }
+                    if (interruption == ReplayInterruption.CANCEL) {
                         var terminal = new java.util.concurrent.atomic.AtomicReference<DocumentPublicationReplay.Observation>();
                         DocumentAssessmentReader cancelling = (capture, memberId, control) -> {
                             var batch = reader.readAssessment(capture, memberId, control);

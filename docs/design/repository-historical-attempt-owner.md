@@ -1302,3 +1302,9 @@ and retry returns the cancellation receipt without provider access. SQL contains
 one cancellation and no published revision. See
 `docs/evidence/repository/2026-10-08-cancellation-before-rejection/`.
 This case does not establish simultaneous SQL decision-queue ordering.
+
+Credential revocation during pending assessment replay is qualified with a real
+provider batch. Initial delivery and retry report UNAUTHENTICATED; no rejection
+or publication is recorded. Cleanup releases assessment sessions and retained
+memory. See `docs/evidence/repository/2026-10-08-pending-replay-revocation/`.
+Revocation at the final decision transaction remains a separate concurrency case.
