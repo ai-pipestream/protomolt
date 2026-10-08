@@ -40,8 +40,9 @@ with cgroup v2. PostgreSQL ran its image defaults (`synchronous_commit=on`,
 `track_wal_io_timing`, which are observation settings. RustFS ran with
 versioning and conditional writes enabled through the existing provider options.
 No container had CPU or memory limits. The host was shared with other agents'
-builds: one-minute load averages at window start ranged from 7.4 to 20.3
-(`summary/windows.csv`), and whole-host busy CPU exceeded the sum of this
+builds: one-minute load averages ranged from 6.5 to 19.2 at window start and
+7.4 to 20.3 at window end (`summary/windows.csv`, `loadavg_begin` and
+`loadavg_done`), and whole-host busy CPU exceeded the sum of this
 benchmark's components by 2.5 to 10.7 cores depending on the window.
 
 ## Runs
@@ -98,10 +99,11 @@ is not timed separately); latencies are per operation, nearest-rank.
 
 The two lowest windows of the series (`compare-2` t10 at 65.5 ops/s with four
 processes and eight connections each, and `compare-2` t11 at 69.0 with one
-process) started at one-minute host load averages of 17.9 and 19.2, the highest
-of the series; the other windows of those configurations were 77.5 to 85.5 and
-73.3 to 80.0. Excluding those two, every configuration's windows lie within 10%
-of each other. Two processes with sixteen connections in total are 20% faster than one
+process) started at one-minute host load averages of 17.9 and 19.2 (the highest
+and fourth-highest window-start loads of the series); the other windows of those
+configurations were 77.5 to 85.5 and 73.3 to 80.0. Excluding those two, every
+configuration's windows lie within about 10% of each other (the widest, four
+processes with eight connections each, spans 10.4%). Two processes with sixteen connections in total are 20% faster than one
 process with eight. Four processes with thirty-two connections are about 5%
 faster than one, within the spread. Dividing eight connections across processes
 is slower than one process holding all eight.
@@ -134,7 +136,8 @@ so its reader budget is not the same aggregate. One process cannot take 32
 clients because a worker admits at most 16 clients and 384,000,000 budget bytes.
 
 One process with eight connections flattens between 8 and 16 clients: its pool
-is 87% busy and each publication waits 65 ms for connections. Two and four
+is 87% busy and each publication waits 59 to 71 ms for connections across the
+traced one-process windows (65 ms in t00). Two and four
 processes with eight connections each are within 5% of each other at 32
 clients (124 and 130 ops/s, publish p95 398 and 429 ms) while PostgreSQL uses
 5.1 and 7.3 cores and its WAL flush occupancy is 97% and 91% of the window.
@@ -210,8 +213,10 @@ not at 16.
    WAL** is the strongest candidate for the shared limit. Seventeen commits and
    187 execute calls per publication, 36 and 310 per rejection (scoped plus the
    asynchronous verify transaction), cost 53 to 98 ms of commit calls and 65 to 133 ms of
-   pool waiting per write at 16 clients, and keep WAL flush occupancy above 85%
-   from 16 clients upward whatever the process count. Three independent signals
+   pool waiting per write at 16 clients, and keep summed WAL fsync time above 85%
+   of the window in every configuration mean from 16 clients upward whatever the
+   process count (per window 80% to 104%; above 100% shows it is summed duration,
+   not occupancy). Three independent signals
    point the same way (occupancy, `WALWrite` lock samples, commit time that does
    not fall when connections are added), but causality is not proven by this
    fixture: confirming it needs an intervention, namely fewer commits per
@@ -222,13 +227,15 @@ not at 16.
    into the transactions that already write, and cut read-only round trips. Do
    not trade this for `synchronous_commit=off`.
 2. **Per-process SQL pool admission.** With eight connections, one process is
-   87% busy at 16 clients and spends 65 ms per publication waiting for a
-   connection, because each operation checks a connection out 15 times and holds
-   it about four times longer than the server executes. Raising the pool moved
+   87% busy at 16 clients and spends 59 to 71 ms per publication waiting for a
+   connection in the traced windows. Each operation checks a connection out 15
+   times and holds it about four times longer than the server executes; that
+   these two measured facts cause the wait is inferred, not tested. Raising the pool moved
    the limit (two processes with 16 connections, +20%) but not past item 1.
    Fewer checkouts per operation (item 1) is the code-side fix; the fixed-total
-   configurations show that splitting a small pool across processes is strictly
-   worse.
+   configurations show that splitting a small pool across processes is worse on
+   every configuration mean (not in every single window: one 2×4 window, 72.0,
+   exceeded one 1×8 window, 69.0).
 3. **RustFS PUT, 52 to 83 ms per 64 KiB object, plus a 2 ms read-back GET,** is
    on the synchronous critical path of every write (`DocumentPartTransfer.upload`,
    awaited by `DocumentUploadCoordinator` before preparation), so in this
@@ -240,8 +247,9 @@ not at 16.
    `S3BlobStoreProvider`) or the read-back GET. A controlled provider and client
    comparison is the next step before any provider-side change.
 4. **Process overhead.** At 4 and 8 clients one process beats four, worker CPU
-   per operation grows 2.6× from one to four processes, and four cold JVMs lose
-   18% on publication in their first quarter window. More replicas are
+   per operation grows 2.2× to 2.6× from one to four processes (2.57× at 4
+   clients, 2.42× at 8, 2.48× at 16 with eight connections each), and four cold
+   JVMs lose 18% on publication over the first 8 of 32 iterations per client. More replicas are
    justified only when client concurrency exceeds one process's reader and
    client limits (16 clients, 384,000,000 budget bytes) and the pool is raised.
 5. **Reader-slot refusal.** Under a fixed aggregate reader budget, splitting it
