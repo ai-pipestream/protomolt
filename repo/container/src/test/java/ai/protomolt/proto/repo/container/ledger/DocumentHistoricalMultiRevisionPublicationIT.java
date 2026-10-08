@@ -68,6 +68,7 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                         first.prepared().members().getFirst().placement(), second.prepared().members().getFirst().placement().drive().id(),
                         second.prepared().members().getFirst().placement());
                 verifyRetentionProjection(c, command, oldMember, oldHistory, newHistory, currentSecond, placements);
+                verifyOwnerCaptureFailure(c, command, oldMember, placements, currentSecond ? 1 : 2);
                 var resolutions = new java.util.concurrent.atomic.AtomicInteger();
                 try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, first.batch().policy(),
                         Map.of("old", DocumentPublicationCandidate.Mode.TYPED, "new", DocumentPublicationCandidate.Mode.TYPED),
@@ -120,6 +121,46 @@ class DocumentHistoricalMultiRevisionPublicationIT {
                 assertThat(newHistory.awaitDrained(Duration.ofSeconds(1))).isTrue();
                 oldHistory.release(); newHistory.release(); reads.fence(); reads.attestLocalQuiescence();
             }
+        }
+    }
+
+    private static void verifyOwnerCaptureFailure(Context c, DocumentPublicationCommand command,
+            DocumentPublicationMember oldMember, Map<UUID, DocumentUploadPlan.Placement> placements, int expectedCaptures)
+            throws Exception {
+        var repeated = new DocumentPublicationCommand(command.intent().toBuilder()
+                .setOperationId(UUID.randomUUID().toString()).addMembers(destination(oldMember, "repeat-old")).build());
+        var key = new RepositoryOperationLedger.Key("account", CALLER.principalName(), repeated.operationId());
+        var record = new DocumentPublicationPreparationRecord(key, repeated, DocumentPublicationSeeds.mint(key, repeated),
+                placements, Duration.ofMinutes(5), 0);
+        var modes = new HashMap<String, DocumentPublicationCandidate.Mode>();
+        repeated.intent().getMembersList().forEach(member -> modes.put(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+        var budget = new PayloadBudget(128L * 1024 * 1024);
+        var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
+        var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+        try {
+            try (var call = owner.beginInitial(CALLER, record, modes, UUID.randomUUID())) {
+                for (int failedAfter = 1; failedAfter <= expectedCaptures; failedAfter++) {
+                    int threshold = failedAfter;
+                    var cancelled = new RepositoryReadControl() {
+                        public boolean isCancelled() { return reads.outstandingReads() >= threshold; }
+                        public long remainingNanos() { return Long.MAX_VALUE; }
+                    };
+                    assertThatThrownBy(() -> call.captureSources(reads, cancelled))
+                            .isInstanceOfSatisfying(RepositoryException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    assertThat(reads.outstandingReads()).isEqualTo(threshold);
+                    assertThat(reads.releaseDrained(10)).isEqualTo(threshold);
+                    assertThat(reads.outstandingReads()).isZero();
+                }
+                call.captureSources(reads, RepositoryReadControl.NONE);
+                assertThat(reads.outstandingReads()).isEqualTo(expectedCaptures);
+            }
+        } finally {
+            owner.close();
+            assertThat(owner.detachClosed(Duration.ofSeconds(1), ignored -> CALLER, RepositoryReadControl.NONE)).isTrue();
+            assertThat(reads.outstandingReads()).isZero();
+            reads.fence(); reads.attestLocalQuiescence();
+            assertThat(budget.reservedBytes()).isZero();
         }
     }
 
