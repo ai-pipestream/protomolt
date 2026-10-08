@@ -72,9 +72,22 @@ class RepositoryInitialHistoricalAttemptsIT {
             var budget = new PayloadBudget(256L * 1024 * 1024);
             var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
             var incarnation = UUID.randomUUID();
+            assertThat(owner.inspectSelected(CALLER, record.command())).isEmpty();
             DocumentHistoricalAssessmentSources.Work held;
             DocumentAssessmentStartJournal.Started started;
             try (var call = owner.beginInitial(CALLER, record, modes, incarnation)) {
+                var beforeLookup = owner.drain();
+                long retainedBytes = budget.reservedBytes();
+                assertThat(owner.inspectSelected(CALLER, record.command())).contains(
+                        new RepositoryInstalledHistoricalAttempts.SelectedGeneration(call.identity(), true, false, false));
+                assertThat(owner.drain()).isEqualTo(beforeLookup);
+                assertThat(budget.reservedBytes()).isEqualTo(retainedBytes);
+                assertThatThrownBy(() -> owner.resume(CALLER, record.command())).hasMessageContaining("in use");
+                var changed = new DocumentPublicationCommand(record.command().intent().toBuilder()
+                        .setMembers(0, record.command().intent().getMembers(0).toBuilder().setMemberId("changed")).build());
+                assertThatThrownBy(() -> owner.inspectSelected(CALLER, changed)).hasMessageContaining("identity changed");
+                assertThatThrownBy(() -> owner.inspectSelected(new RepositoryCaller("principal", false,
+                        Set.of("account"), Set.of()), record.command())).hasMessageContaining("identity changed");
                 assertThat(count(c, record, "repository_execution_claims")).isZero();
                 assertThatThrownBy(() -> owner.beginInitial(CALLER, fresh(record), modes, UUID.randomUUID()))
                         .isInstanceOfSatisfying(RepositoryException.class,
@@ -87,6 +100,8 @@ class RepositoryInitialHistoricalAttemptsIT {
                 sources.close();
                 call.openExecution(CALLER, NONE);
                 started = call.start(LEASE, NONE);
+                assertThat(owner.inspectSelected(CALLER, record.command())).contains(
+                        new RepositoryInstalledHistoricalAttempts.SelectedGeneration(call.identity(), true, true, false));
             }
             try (held) {
                 try (var retry = owner.beginInitial(CALLER, record, modes, incarnation)) {
@@ -97,6 +112,8 @@ class RepositoryInitialHistoricalAttemptsIT {
                 assertThatThrownBy(() -> owner.beginInitial(CALLER, record, modes, UUID.randomUUID()))
                         .hasMessageContaining("identity changed");
                 owner.close();
+                assertThatThrownBy(() -> owner.inspectSelected(CALLER, record.command()))
+                        .hasMessageContaining("admission is closed");
                 assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isFalse();
                 assertThat(owner.drain().unresolved()).isEqualTo(1);
                 assertThat(count(c, record, "repository_preparation_capture_drains")).isZero();

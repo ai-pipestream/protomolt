@@ -14,6 +14,8 @@ import java.util.function.Function;
 /** Private historical ownership from proposal through execution. Does not enable public recovery. */
 final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     record Drain(int active, int unresolved) {}
+    /** Staleable local routing facts only; no borrow, SQL authority or retained resources. */
+    record SelectedGeneration(UUID identity, boolean borrowed, boolean attached, boolean disposalOnly) {}
     enum Retirement { NOT_PROVEN, RETAINED, RETIRED }
     /** A borrowed generation's local state, not authorization or evidence of a durable outcome. */
     record Progress(UUID identity, boolean disposalOnly, boolean sourcesAttached, boolean assessmentPrepared,
@@ -372,7 +374,21 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         }
     }
 
-    /** Resume before discovery or allocating another capture. The exact entry's plan remains fixed. */
+    synchronized Optional<SelectedGeneration> inspectSelected(RepositoryCaller caller, DocumentPublicationCommand command) {
+        if (closed) throw unavailable();
+        Objects.requireNonNull(caller); Objects.requireNonNull(command);
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        var entry = entries.get(key);
+        if (entry == null) return Optional.empty();
+        if (!entry.caller.equals(caller) || !entry.command.canonical().equals(command.canonical()))
+            throw conflict("Historical retry identity changed");
+        return Optional.of(new SelectedGeneration(entry.id, entry.borrowed,
+                entry.sources != null && (entry.plan != null || entry.initialAttempt != null),
+                entry.supersessionPending || entry.retirement != RetirementProof.NONE));
+    }
+
+    /** Borrow only the selected generation; takeover discovery need not wait for a prior borrower. */
     synchronized Optional<Attempt> resume(RepositoryCaller caller, DocumentPublicationCommand command) {
         if (closed) throw unavailable();
         Objects.requireNonNull(caller); Objects.requireNonNull(command);

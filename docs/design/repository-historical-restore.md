@@ -890,12 +890,41 @@ Closing the ordinary pinned plan leaves SQL release to the reader lifecycle afte
 actual drain, as in ordinary publication.
 
 The public driver still needs accepted-call routing and its tests. It must observe
-authorized terminal replay before host selection, resume an existing local entry
+authorized terminal replay before host selection, inspect an existing local entry
 before allocating a capture, and use explicit host coordinator authority for cold
 successor recovery. Branch before the ordinary operation-wide guard so historical
 provider work cannot prevent another generation from taking over. The outer
 accepted call and owned attempt lifetimes must cover shutdown and worker drain.
 No new default coordinator, provider, schema or credential fallback is permitted.
+
+`inspectSelected` returns only a staleable local generation ID and borrowed,
+attached and disposal state. It neither borrows the entry nor changes capacity,
+retention or SQL. Exact caller identity and canonical command are checked before
+revealing local state. Discovery and the eventual mutation still require their
+existing authority and fences; this snapshot cannot authorize either one.
+
+Apply the following routing order:
+
+1. Authorize exact command/mode terminal replay. A terminal discovery status alone
+   cannot deliver a receipt; reread through the authorized replay boundary.
+2. Preserve any local proposal with uncertain reservation or installation. Resume
+   that exact proposal if free; report in-use conflict while it is borrowed.
+3. For an attached current generation and an `EXPIRED_BOUND` observation, call
+   `beginSuccessor` with the observed local generation ID. A borrowed predecessor
+   is allowed here: its workers stay retained while the successor fences it.
+4. Resume other eligible local entries if free. Never bypass a busy local entry
+   by pretending the host has restarted.
+5. With no local entry, use initial admission only for `ABSENT`. Cold recovery
+   requires an expired bound candidate or the existing qualified unactivated
+   candidate. `LIVE`, incomplete journals, absent owners, unbound claims, local
+   drain and exhausted generations do not grant cold takeover authority.
+
+The selected route can change between lookup and mutation. `resume`,
+`beginSuccessor` and the SQL transitions must recheck identity and reject stale
+decisions. Tests must retain a borrowed predecessor through actual successor
+reservation, then prove that its mutation is refused and its resources remain
+protected until disposal. Also retain uncertain proposals across retries and
+refuse wrong callers or altered commands before disclosing busy state.
 
 #### End-to-end acceptance
 

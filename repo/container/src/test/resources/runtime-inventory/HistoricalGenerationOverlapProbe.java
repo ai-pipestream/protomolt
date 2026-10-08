@@ -51,12 +51,26 @@ final class HistoricalGenerationOverlapProbe implements AutoCloseable {
         var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
                 .inspect(coordinator, oldPlan.next().key(), command.sha256(), RepositoryReadControl.NONE);
         require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND, "actual old claim and owner expired");
-        try (var next = attempts.beginSuccessor(coordinator, caller, oldId, command, modes, observed,
-                Duration.ofMinutes(2), timeouts)) {
-            newId = next.identity();
-            require(!newId.equals(oldId), "separate generation identity");
-            require(next.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
-                    == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "reserve successor while old Work held");
+        try (var oldBorrow = attempts.resume(caller, command).orElseThrow()) {
+            var selected = attempts.inspectSelected(caller, command).orElseThrow();
+            require(selected.identity().equals(oldId) && selected.borrowed() && selected.attached() && !selected.disposalOnly(),
+                    "read-only routing identifies the exact retained predecessor without a new capture");
+            try (var next = attempts.beginSuccessor(coordinator, caller, selected.identity(), command, modes, observed,
+                    Duration.ofMinutes(2), timeouts)) {
+                newId = next.identity();
+                require(!newId.equals(oldId), "separate generation identity");
+                require(attempts.drain().active() == 2, "predecessor and successor remain independently borrowed");
+                try {
+                    oldBorrow.start(Duration.ofMinutes(1), RepositoryReadControl.NONE);
+                    throw new AssertionError("superseded borrowed predecessor remained mutable");
+                } catch (RepositoryException refused) {
+                    require(refused.code() == RepositoryException.Code.CONFLICT
+                                    && refused.getMessage().contains("disposal only"),
+                            "borrowed predecessor is retained solely for disposal");
+                }
+                require(next.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
+                        == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "reserve successor while old Work held");
+            }
         }
         RepositorySuccessorInstall.Plan plan;
         try (var next = attempts.resume(caller, command).orElseThrow()) {
