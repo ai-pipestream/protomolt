@@ -42,6 +42,12 @@ final class DocumentPublicationRejections {
         if (!key.account().equals(command.intent().getAccountId()) || !key.operationId().equals(command.operationId()))
             throw new IllegalArgumentException("Decision owner differs from command scope");
         return tx.inTransaction(em -> {
+            // Match claimed mutation order without requiring a live claim before terminal replay.
+            if (owner.executionClaim().isPresent()) em.createNativeQuery("""
+                    SELECT claim_token FROM repository_execution_claims
+                    WHERE account_id=:a AND principal=:p AND operation_id=:o FOR UPDATE
+                    """).setParameter("a", key.account()).setParameter("p", key.principal())
+                    .setParameter("o", key.operationId()).getResultList();
             var rows = em.createNativeQuery("""
                     SELECT owner_generation FROM repository_operation_owners
                     WHERE account_id=:account AND principal=:principal AND operation_id=:operation FOR UPDATE
