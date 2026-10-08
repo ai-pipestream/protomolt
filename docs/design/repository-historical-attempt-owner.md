@@ -1538,3 +1538,27 @@ required, and host binding, nonce and quiescence evidence remain immutable.
 Active registration still requires an ACTIVE host. Public SQL callers cannot be
 allowed to manufacture LOCAL_DRAIN evidence; this is the same trusted lifecycle
 boundary as existing local attestation.
+
+#### Verified host termination receipt
+
+The internal `ReaderHostTermination` operation uses a verifier configured by
+trusted Java host composition. No verifier is installed by default. The verifier
+must check execution, host, boot, proof format and attestation, including all
+workers that can perform reads. Verification runs before the SQL transaction and
+also runs on replay. Unsupported or unproven evidence fails explicitly.
+
+V113 stores one immutable receipt per execution and rejects reuse of an issuer's
+attestation ID across executions. Recording requires the exact FENCED execution;
+receipt creation and the TERMINATED transition commit together. Exact retries
+return the original receipt identity. Conflicting evidence cannot replace it.
+The transaction touches the host and receipt, without scanning readers.
+
+The test verifier observes a real managed child JVM with no subprocess workers
+or database sessions. This qualifies receipt behavior, not remote host termination.
+Production verification and process-restart driver integration remain unfinished.
+
+Termination does not change reader state or release pins. The next operation must
+check the durable receipt and exact reader registration nonce plus host binding.
+A Java receipt value is data, not a cleanup capability. Local-only readers and
+LOCAL_DRAIN provenance need separate treatment; neither can be rewritten as
+external evidence. Public historical routing remains disabled.
