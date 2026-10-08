@@ -27,3 +27,18 @@ retirement suites passed in 44 seconds, exit 0, with no failures or skips.
 Sol found no blockers. This demonstrates the corrected lock acquisition, not two
 concurrent terminal decisions. The source fixture uses synthetic provider
 observations; these tests establish SQL behavior, not provider durability.
+
+## Expired-lease replay
+
+At base 6243a7515, the second test asserts a terminal rejection exists, waits for
+both owner and claim leases to expire using the PostgreSQL clock, checks their
+expiry, and invokes cancellation again. The identical observation is returned.
+No lease timestamps or protection guards are changed by the test.
+
+The focused class passed in 15 seconds: 2 tests, zero failures, errors or skips,
+Gradle exit 0. Reports and tested source hashes are in `expired-replay/`.
+Sol reviewed the final assertions and found no blocker.
+
+```sh
+./gradlew :protomolt-repo-container:test --tests '*RepositoryHistoricalDecisionLockIT' --max-workers=2 --console=plain
+```
