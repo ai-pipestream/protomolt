@@ -4,29 +4,29 @@ CHECK_OK restore.reader_incarnations.active :: restored ACTIVE incarnations=0 (r
 CHECK_OK restore.reader_incarnations.fenced :: restored FENCED incarnations=0 (restored verbatim, none revived)
 CHECK_OK restore.reader_incarnations.unknown :: restored UNKNOWN incarnations=0 (restored verbatim, none revived)
 CHECK_OK restore.reader_incarnations.quiesced :: restored QUIESCED incarnations=2 (restored verbatim, none revived)
-CHECK_OK restore.backend_profile :: managed_backend_profiles row equals recorded identity for generation rehearsal-gen-71e0d415-45ba-42f5-8460-877877b36f0c
+CHECK_OK restore.backend_profile :: managed_backend_profiles row equals recorded identity for generation rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b
 CHECK_OK restore.sequences :: sequence values={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
 CHECK_OK restore.schema_catalog :: catalog digests=12
 CHECK_OK restore.migration_level :: flyway level V119
-CHECK_OK restore.xid_past_stored :: current=1648 maxStored=1083
+CHECK_OK restore.xid_past_stored :: current=1647 maxStored=1083
 CHECK_OK restore.fresh_incarnation :: recovered host registered 2 new ACTIVE incarnation(s); restored states unchanged
 CHECK_OK restore.raw.alpha-v1.fragment_count :: fragments=1 expected=1
-CHECK_OK restore.raw.alpha-v1.fragment0 :: ordinal=0 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 size=319
+CHECK_OK restore.raw.alpha-v1.fragment0 :: ordinal=0 sha256=6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4 size=319
 CHECK_OK restore.raw.alpha-v1.publication_revision :: publicationRevision=1
-CHECK_OK restore.validated.alpha-v1.document :: document bytes equal recorded, sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816
-CHECK_OK restore.validated.alpha-v1.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v1.document :: document bytes equal recorded, sha256=6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4
+CHECK_OK restore.validated.alpha-v1.bindings :: policy=7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5 profile=protomolt-retained-schema-admission/v1
 CHECK_OK restore.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
 CHECK_OK restore.raw.alpha-v2.fragment_count :: fragments=1 expected=1
-CHECK_OK restore.raw.alpha-v2.fragment0 :: ordinal=0 sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 size=326
+CHECK_OK restore.raw.alpha-v2.fragment0 :: ordinal=0 sha256=57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac size=326
 CHECK_OK restore.raw.alpha-v2.publication_revision :: publicationRevision=2
-CHECK_OK restore.validated.alpha-v2.document :: document bytes equal recorded, sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108
-CHECK_OK restore.validated.alpha-v2.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v2.document :: document bytes equal recorded, sha256=57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac
+CHECK_OK restore.validated.alpha-v2.bindings :: policy=7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5 profile=protomolt-retained-schema-admission/v1
 CHECK_OK restore.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
 CHECK_OK restore.raw.beta-v1.fragment_count :: fragments=1 expected=1
-CHECK_OK restore.raw.beta-v1.fragment0 :: ordinal=0 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 size=291
+CHECK_OK restore.raw.beta-v1.fragment0 :: ordinal=0 sha256=203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685 size=291
 CHECK_OK restore.raw.beta-v1.publication_revision :: publicationRevision=3
-CHECK_OK restore.validated.beta-v1.document :: document bytes equal recorded, sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9
-CHECK_OK restore.validated.beta-v1.bindings :: policy=1d60f0d120e75ef2b240fc8c958485249c369abc0e788401306af7abddb02ed0 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.beta-v1.document :: document bytes equal recorded, sha256=203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685
+CHECK_OK restore.validated.beta-v1.bindings :: policy=21cc239fb48b9bbb98198b7027bb5b1d6d21f956c4062bbe8b859c957bd53228 profile=protomolt-retained-schema-admission/v1
 CHECK_OK restore.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
 CHECK_OK restore.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
 CHECK_OK restore.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
@@ -52,13 +52,13 @@ CHECK_OK restore.materialized.beta-v1.nested.descriptor_identity :: retained des
 CHECK_OK restore.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
 CHECK_OK restore.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
 CHECK_OK restore.materialized.beta-v1.nested.selection_identity :: ordinal=0
-CHECK_OK restore.provider.ffe668dff5e6 :: bucket=rehearsal-alpha-d8525a9c key=rehearsal-pipeline/documents/rehearsal-alpha-d8525a9c/194f18ce-ebe3-3fac-82ba-63131cc7948c/attempts/0876fba4-d928-43bd-b481-7b6edd359284/part-0 version=1a09dbb4-e020-475b-91e0-9d7f2da59ba4 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 etag="12b47ea5b64b53815c4a51e557ef8fe5"
-CHECK_OK restore.provider.ee6e0d5f9833 :: bucket=rehearsal-alpha-d8525a9c key=rehearsal-pipeline/documents/rehearsal-alpha-d8525a9c/194f18ce-ebe3-3fac-82ba-63131cc7948c/attempts/03794775-0832-498e-a392-ec507f9aa615/part-0 version=c6308780-d365-45ac-902a-0e409b2e4a1e sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 etag="91938f6a3c4310ddcb16958b4ee2859f"
-CHECK_OK restore.provider.f83f5c9a61bc :: bucket=rehearsal-beta-d8525a9c key=rehearsal-pipeline/documents/rehearsal-beta-d8525a9c/b651b6a4-c74a-37f2-b750-09a62d3f006c/attempts/413eee14-5ed5-4629-8413-dd466687794c/part-0 version=a497dd65-8113-42d2-8062-cadcce8700e4 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 etag="e9a8a43fa2814bc6e263b7b9f730c246"
+CHECK_OK restore.provider.ab478d894820 :: bucket=rehearsal-alpha-61cddf1c key=rehearsal-pipeline/documents/rehearsal-alpha-61cddf1c/108524ce-4c53-309f-b56b-c7eab90ce620/attempts/c57ee2ee-f9ac-47bf-9c33-b1a22c5bb37a/part-0 version=312f4c08-171e-41c6-9417-5baab68a1019 sha256=6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4 etag="0792a809b1187fe919ac36760c796835"
+CHECK_OK restore.provider.97ae6bd252e7 :: bucket=rehearsal-alpha-61cddf1c key=rehearsal-pipeline/documents/rehearsal-alpha-61cddf1c/108524ce-4c53-309f-b56b-c7eab90ce620/attempts/92ab366c-72ba-453c-9a39-b8ac8c32ba41/part-0 version=1e7eddb5-4ad1-4a0f-bcfa-19dd038e4624 sha256=57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac etag="481efa2b7f00fdae9504015a21a1cbc6"
+CHECK_OK restore.provider.d1bf1f3ca380 :: bucket=rehearsal-beta-61cddf1c key=rehearsal-pipeline/documents/rehearsal-beta-61cddf1c/52694ba3-49f5-3a69-a828-b41dfa31dc3e/attempts/d2959964-26f5-40d1-b809-9f56bb9194a1/part-0 version=ba878fde-7e9e-45e7-9414-3f0e986bff22 sha256=203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685 etag="6c1b9c6d6b7c7974c79e016bc7e6d03b"
 CHECK_OK restore.provider.count :: objects=3
-CHECK_OK restore.replay.alpha-v1 :: receipt byte-equal, revision=61cd5137-4965-4cd4-bcdd-0af7b3bfea60
-CHECK_OK restore.replay.alpha-v2 :: receipt byte-equal, revision=a9e3f4b0-59a9-4d48-a92b-2149249e2c62
-CHECK_OK restore.replay.beta-v1 :: receipt byte-equal, revision=82fda98a-60f4-4ee5-85d3-041d72ec32bd
+CHECK_OK restore.replay.alpha-v1 :: receipt byte-equal, revision=130cff64-f95d-43bd-ab50-d60adacbd76d
+CHECK_OK restore.replay.alpha-v2 :: receipt byte-equal, revision=0867a6cf-eda7-403b-8910-160c1547bbf3
+CHECK_OK restore.replay.beta-v1 :: receipt byte-equal, revision=47526413-a77d-4c94-8248-7a093fd3f35e
 CHECK_OK restore.access.alpha-v1.member :: granted member reads alpha-v1
 CHECK_OK restore.access.alpha-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
 CHECK_OK restore.access.alpha-v1.outsider :: foreign account denied
@@ -86,28 +86,28 @@ CHECK_OK after-write.typed_without_registry_refused :: typed publication with no
 CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Record :: artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce
 CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Attachment :: artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
 CHECK_OK after-write.registry_definitions :: two retained definitions rebuilt: [type.test/protomolt.rehearsal.Record, type.test/protomolt.rehearsal.Attachment]
-CHECK_OK after-write.new_revision :: revision=71fe7739-4a6c-494f-ac96-873342c4c764 mutation=4 > restored sequence 3
+CHECK_OK after-write.new_revision :: revision=0be99ed5-bfd7-4efa-96cf-089cfad4c6af mutation=4 > restored sequence 3
 CHECK_OK after-write.rebuilt_registry_used :: resolutions=1
 CHECK_OK after-write.readable :: new revision readable
 CHECK_OK after-write.sequences_advanced :: document sequence 4 > restored 3
 CHECK_OK after-write.old_bindings_intact :: restored object bindings unchanged by the new revision
 CHECK_OK after-write.raw.alpha-v1.fragment_count :: fragments=1 expected=1
-CHECK_OK after-write.raw.alpha-v1.fragment0 :: ordinal=0 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 size=319
+CHECK_OK after-write.raw.alpha-v1.fragment0 :: ordinal=0 sha256=6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4 size=319
 CHECK_OK after-write.raw.alpha-v1.publication_revision :: publicationRevision=1
-CHECK_OK after-write.validated.alpha-v1.document :: document bytes equal recorded, sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816
-CHECK_OK after-write.validated.alpha-v1.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v1.document :: document bytes equal recorded, sha256=6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4
+CHECK_OK after-write.validated.alpha-v1.bindings :: policy=7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5 profile=protomolt-retained-schema-admission/v1
 CHECK_OK after-write.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
 CHECK_OK after-write.raw.alpha-v2.fragment_count :: fragments=1 expected=1
-CHECK_OK after-write.raw.alpha-v2.fragment0 :: ordinal=0 sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 size=326
+CHECK_OK after-write.raw.alpha-v2.fragment0 :: ordinal=0 sha256=57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac size=326
 CHECK_OK after-write.raw.alpha-v2.publication_revision :: publicationRevision=2
-CHECK_OK after-write.validated.alpha-v2.document :: document bytes equal recorded, sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108
-CHECK_OK after-write.validated.alpha-v2.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v2.document :: document bytes equal recorded, sha256=57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac
+CHECK_OK after-write.validated.alpha-v2.bindings :: policy=7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5 profile=protomolt-retained-schema-admission/v1
 CHECK_OK after-write.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
 CHECK_OK after-write.raw.beta-v1.fragment_count :: fragments=1 expected=1
-CHECK_OK after-write.raw.beta-v1.fragment0 :: ordinal=0 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 size=291
+CHECK_OK after-write.raw.beta-v1.fragment0 :: ordinal=0 sha256=203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685 size=291
 CHECK_OK after-write.raw.beta-v1.publication_revision :: publicationRevision=3
-CHECK_OK after-write.validated.beta-v1.document :: document bytes equal recorded, sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9
-CHECK_OK after-write.validated.beta-v1.bindings :: policy=1d60f0d120e75ef2b240fc8c958485249c369abc0e788401306af7abddb02ed0 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.beta-v1.document :: document bytes equal recorded, sha256=203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685
+CHECK_OK after-write.validated.beta-v1.bindings :: policy=21cc239fb48b9bbb98198b7027bb5b1d6d21f956c4062bbe8b859c957bd53228 profile=protomolt-retained-schema-admission/v1
 CHECK_OK after-write.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
 CHECK_OK after-write.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
 CHECK_OK after-write.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1

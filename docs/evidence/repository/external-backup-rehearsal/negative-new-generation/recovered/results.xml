@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="recovered-new-generation" tests="7" failures="0" errors="0" skipped="0">
-  <testcase classname="recovered-new-generation" name="new-generation.distinct" timestamp="2026-10-08T11:49:09.175954764Z"><system-out>generation=rehearsal-other-6bd38ad1-f027-4de2-b598-c5fccc5b85e3</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.host_started" timestamp="2026-10-08T11:49:11.094527893Z"><system-out>a new generation binds freely at the recorded endpoint</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.history_refused.alpha-v1" timestamp="2026-10-08T11:49:11.235167123Z"><system-out>readRaw -&gt; FAILED_PRECONDITION</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.history_refused.alpha-v2" timestamp="2026-10-08T11:49:11.256550203Z"><system-out>readRaw -&gt; FAILED_PRECONDITION</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.history_refused.beta-v1" timestamp="2026-10-08T11:49:11.279125105Z"><system-out>readRaw -&gt; FAILED_PRECONDITION</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.schema.no_live_lookup" timestamp="2026-10-08T11:49:11.315015951Z"><system-out>live schema resolution attempts=0</system-out></testcase>
-  <testcase classname="recovered-new-generation" name="new-generation.not_ready" timestamp="2026-10-08T11:49:11.315169101Z"><system-out>READY is only written by a fully verified host</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.distinct" timestamp="2026-10-08T12:24:10.404430754Z"><system-out>generation=rehearsal-other-1ed6a5e0-02bc-45e2-9757-58df201548ce</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.host_started" timestamp="2026-10-08T12:24:12.404165584Z"><system-out>a new generation binds freely at the recorded endpoint</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.history_refused.alpha-v1" timestamp="2026-10-08T12:24:12.528626817Z"><system-out>readRaw -&gt; FAILED_PRECONDITION (original generation not configured on this host)</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.history_refused.alpha-v2" timestamp="2026-10-08T12:24:12.542535404Z"><system-out>readRaw -&gt; FAILED_PRECONDITION (original generation not configured on this host)</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.history_refused.beta-v1" timestamp="2026-10-08T12:24:12.557926223Z"><system-out>readRaw -&gt; FAILED_PRECONDITION (original generation not configured on this host)</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.schema.no_live_lookup" timestamp="2026-10-08T12:24:12.627760510Z"><system-out>live schema resolution attempts=0</system-out></testcase>
+  <testcase classname="recovered-new-generation" name="new-generation.not_ready" timestamp="2026-10-08T12:24:12.627940070Z"><system-out>READY is only written by a fully verified host</system-out></testcase>
 </testsuite>

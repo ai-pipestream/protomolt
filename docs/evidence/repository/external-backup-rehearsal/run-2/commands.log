@@ -1,94 +1,94 @@
-2026-10-08T11:47:47.546556312Z exit=0 $ id -u
+2026-10-08T12:22:49.585222038Z exit=0 $ id -u
   stdout: 1000
-2026-10-08T11:47:47.548844305Z exit=0 $ id -g
+2026-10-08T12:22:49.586851458Z exit=0 $ id -g
   stdout: 1000
-2026-10-08T11:47:47.563893545Z exit=0 $ docker version --format {{.Server.Version}}
+2026-10-08T12:22:49.600502779Z exit=0 $ docker version --format {{.Server.Version}}
   stdout: 29.8.1
-2026-10-08T11:47:47.593967539Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+2026-10-08T12:22:49.629080251Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
   stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-2026-10-08T11:47:47.614533775Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+2026-10-08T12:22:49.651715452Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
   stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
-2026-10-08T11:47:47.659713716Z exit=0 $ docker network create protomolt-rehearsal-f06636400-9ea78107-net
-  stdout: 81787289d0d677d05b0e686579b94b4be36f8bcbb2a565ab26b54ca44b21161d
-2026-10-08T11:47:47.674495180Z exit=0 $ docker volume create protomolt-rehearsal-f06636400-9ea78107-src-pg-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-pg-data
-2026-10-08T11:47:47.690083740Z exit=0 $ docker volume create protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data
-2026-10-08T11:47:47.903270690Z exit=0 $ docker run -d --name protomolt-rehearsal-f06636400-9ea78107-src-pg --network protomolt-rehearsal-f06636400-9ea78107-net -p 127.0.0.1:0:5432 -v protomolt-rehearsal-f06636400-9ea78107-src-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
-  stdout: 862fcc9a26ae8f47f76c2605a11e7f96b5901be9fe33037640eb03cabe941bed
-2026-10-08T11:47:47.917922419Z exit=0 $ docker port protomolt-rehearsal-f06636400-9ea78107-src-pg 5432/tcp
-  stdout: 127.0.0.1:33013
-2026-10-08T11:47:47.953985010Z exit=2 $ docker exec protomolt-rehearsal-f06636400-9ea78107-src-pg pg_isready -U repo -d repo
+2026-10-08T12:22:49.692454008Z exit=0 $ docker network create protomolt-rehearsal-871a9cdb8-5ce26995-net
+  stdout: c02404a5b7ba2c11c3e9a7a35b0a84371501b1408d46c492ac2551578448bd00
+2026-10-08T12:22:49.707561010Z exit=0 $ docker volume create protomolt-rehearsal-871a9cdb8-5ce26995-src-pg-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg-data
+2026-10-08T12:22:49.720184699Z exit=0 $ docker volume create protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data
+2026-10-08T12:22:49.912232772Z exit=0 $ docker run -d --name protomolt-rehearsal-871a9cdb8-5ce26995-src-pg --network protomolt-rehearsal-871a9cdb8-5ce26995-net -p 127.0.0.1:0:5432 -v protomolt-rehearsal-871a9cdb8-5ce26995-src-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: 404c43287c4bf7c52b715dcf85830d19e998ea6e6bc4b2f8e290c7ab3a06c908
+2026-10-08T12:22:49.928942233Z exit=0 $ docker port protomolt-rehearsal-871a9cdb8-5ce26995-src-pg 5432/tcp
+  stdout: 127.0.0.1:33027
+2026-10-08T12:22:49.967379119Z exit=2 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-src-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - no response
-2026-10-08T11:47:48.487507551Z exit=0 $ docker exec protomolt-rehearsal-f06636400-9ea78107-src-pg pg_isready -U repo -d repo
+2026-10-08T12:22:50.501394263Z exit=0 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-src-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - accepting connections
-2026-10-08T11:47:49.026960158Z exit=0 $ docker exec protomolt-rehearsal-f06636400-9ea78107-src-pg pg_isready -U repo -d repo
+2026-10-08T12:22:51.036342441Z exit=0 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-src-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - accepting connections
-2026-10-08T11:47:49.241884242Z exit=0 $ docker run -d --name protomolt-rehearsal-f06636400-9ea78107-src-rustfs --network protomolt-rehearsal-f06636400-9ea78107-net -p 127.0.0.1:33425:9000 -v protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-ebd7336a -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
-  stdout: 6ec4fb697b74cbf84986eb0ce9383ddeed2c0af9bc86f2b807d15000acabd2e9
-2026-10-08T11:47:49.293094910Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+2026-10-08T12:22:51.258274906Z exit=0 $ docker run -d --name protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs --network protomolt-rehearsal-871a9cdb8-5ce26995-net -p 127.0.0.1:44867:9000 -v protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-74b985f0 -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: 92b864949176f3906f855c37e8c2e01b65f69c1e86ef94084a15c967349af6c0
+2026-10-08T12:22:51.304790110Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
   stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-2026-10-08T11:47:49.324589478Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+2026-10-08T12:22:51.334698628Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
   stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
-2026-10-08T11:48:00.428281935Z note: RepositoryBackupRehearsalSeedHost exit=0 log=seed-host.log
-2026-10-08T11:48:01.132569487Z exit=0 $ docker run --rm --network protomolt-rehearsal-f06636400-9ea78107-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/run-2/backup/sql:/out postgres:18-alpine pg_dump -h protomolt-rehearsal-f06636400-9ea78107-src-pg -U repo -d repo --format=custom --no-owner --no-privileges -f /out/ledger.dump
-2026-10-08T11:48:01.462284943Z exit=0 $ docker stop -t 60 protomolt-rehearsal-f06636400-9ea78107-src-pg
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-pg
-2026-10-08T11:48:01.479180182Z exit=0 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-pg --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
-  stdout: exited 0 2026-10-08T11:48:01.273711648Z
-2026-10-08T11:48:01.668314097Z exit=0 $ docker stop -t 60 protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-2026-10-08T11:48:01.680450522Z exit=0 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-rustfs --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
-  stdout: exited 0 2026-10-08T11:48:01.510613004Z
-2026-10-08T11:48:02.131884442Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data:/data:ro -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/run-2/backup/provider:/out postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -cf /out/rustfs-data.tar . && chown 1000:1000 /out/rustfs-data.tar
-2026-10-08T11:48:02.175771280Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+2026-10-08T12:23:02.379725955Z note: RepositoryBackupRehearsalSeedHost exit=0 log=seed-host.log
+2026-10-08T12:23:03.074839577Z exit=0 $ docker run --rm --network protomolt-rehearsal-871a9cdb8-5ce26995-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-backup-rehearsal-fix/repo/container/build/backup-rehearsal/2026-10-08T12-22-20.696520057Z/run-2/backup/sql:/out postgres:18-alpine pg_dump -h protomolt-rehearsal-871a9cdb8-5ce26995-src-pg -U repo -d repo --format=custom --no-owner --no-privileges -f /out/ledger.dump
+2026-10-08T12:23:03.455647598Z exit=0 $ docker stop -t 60 protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+2026-10-08T12:23:03.470617381Z exit=0 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-pg --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-08T12:23:03.263090714Z
+2026-10-08T12:23:03.697970150Z exit=0 $ docker stop -t 60 protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+2026-10-08T12:23:03.711752098Z exit=0 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-08T12:23:03.502679519Z
+2026-10-08T12:23:04.185725774Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data:/data:ro -v /work/worktrees/protomolt/external-backup-rehearsal-fix/repo/container/build/backup-rehearsal/2026-10-08T12-22-20.696520057Z/run-2/backup/provider:/out postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -cf /out/rustfs-data.tar . && chown 1000:1000 /out/rustfs-data.tar
+2026-10-08T12:23:04.224978913Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
   stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-2026-10-08T11:48:02.209247854Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+2026-10-08T12:23:04.246995013Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
   stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
-2026-10-08T11:48:02.352955382Z exit=0 $ docker rm -f protomolt-rehearsal-f06636400-9ea78107-src-pg
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-pg
-2026-10-08T11:48:02.379753265Z exit=1 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-pg
+2026-10-08T12:23:04.384260867Z exit=0 $ docker rm -f protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+2026-10-08T12:23:04.403694677Z exit=1 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
   stdout: []
-  stderr: error: no such object: protomolt-rehearsal-f06636400-9ea78107-src-pg
-2026-10-08T11:48:02.519853496Z exit=0 $ docker rm -f protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-2026-10-08T11:48:02.539246134Z exit=1 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-rustfs
+  stderr: error: no such object: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+2026-10-08T12:23:04.529665333Z exit=0 $ docker rm -f protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+2026-10-08T12:23:04.547858799Z exit=1 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
   stdout: []
-  stderr: error: no such object: protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-2026-10-08T11:48:02.557446359Z exit=1 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-pg --format {{.Id}}
-  stderr: error: no such object: protomolt-rehearsal-f06636400-9ea78107-src-pg
-2026-10-08T11:48:02.574808620Z exit=1 $ docker inspect protomolt-rehearsal-f06636400-9ea78107-src-rustfs --format {{.Id}}
-  stderr: error: no such object: protomolt-rehearsal-f06636400-9ea78107-src-rustfs
-2026-10-08T11:48:03.051126967Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
-  stdout: 5a1a47a25fdc1e13d68e499a43ee21239a3237a3e5801039114a8648072a300c
-2026-10-08T11:48:03.070923658Z exit=0 $ docker volume create protomolt-rehearsal-f06636400-9ea78107-rst-pg-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-pg-data
-2026-10-08T11:48:03.089297992Z exit=0 $ docker volume create protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data
-2026-10-08T11:48:03.543370418Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-rst-pg-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
-2026-10-08T11:48:04.020307404Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
-2026-10-08T11:48:04.487405676Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data:/data -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/run-2/backup/provider:/in:ro postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -xf /in/rustfs-data.tar
-2026-10-08T11:48:04.700714838Z exit=0 $ docker run -d --name protomolt-rehearsal-f06636400-9ea78107-rst-rustfs --network protomolt-rehearsal-f06636400-9ea78107-net -p 127.0.0.1:33425:9000 -v protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-ebd7336a -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
-  stdout: 15f6092dbcce87cf95a9cedd5ac7d7d8dc45b4f1bb4c0cb336f7024966b094db
-2026-10-08T11:48:04.937807736Z exit=0 $ docker run -d --name protomolt-rehearsal-f06636400-9ea78107-rst-pg --network protomolt-rehearsal-f06636400-9ea78107-net -p 127.0.0.1:0:5432 -v protomolt-rehearsal-f06636400-9ea78107-rst-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
-  stdout: d7ee19eff1541e3300e934b5c6c1ff0635b0dd0fd06ebef31a8a38ea1f9e4baf
-2026-10-08T11:48:04.954454014Z exit=0 $ docker port protomolt-rehearsal-f06636400-9ea78107-rst-pg 5432/tcp
-  stdout: 127.0.0.1:33014
-2026-10-08T11:48:04.995038610Z exit=2 $ docker exec protomolt-rehearsal-f06636400-9ea78107-rst-pg pg_isready -U repo -d repo
+  stderr: error: no such object: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+2026-10-08T12:23:04.565824865Z exit=1 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-pg --format {{.Id}}
+  stderr: error: no such object: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg
+2026-10-08T12:23:04.584217036Z exit=1 $ docker inspect protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs --format {{.Id}}
+  stderr: error: no such object: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs
+2026-10-08T12:23:05.030377845Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: e83541efbf9a5fe56926117f14203fd2d4fda920e9685139e49b1653757fab3c
+2026-10-08T12:23:05.047966858Z exit=0 $ docker volume create protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data
+2026-10-08T12:23:05.065853815Z exit=0 $ docker volume create protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data
+2026-10-08T12:23:05.529214491Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-08T12:23:05.996629721Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-08T12:23:06.463244067Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data:/data -v /work/worktrees/protomolt/external-backup-rehearsal-fix/repo/container/build/backup-rehearsal/2026-10-08T12-22-20.696520057Z/run-2/backup/provider:/in:ro postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -xf /in/rustfs-data.tar
+2026-10-08T12:23:06.680191039Z exit=0 $ docker run -d --name protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs --network protomolt-rehearsal-871a9cdb8-5ce26995-net -p 127.0.0.1:44867:9000 -v protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-74b985f0 -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: faafa635f6bbeec18ba541703008093dfb4c4bb7189866522d501a371f9e6151
+2026-10-08T12:23:06.906069472Z exit=0 $ docker run -d --name protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg --network protomolt-rehearsal-871a9cdb8-5ce26995-net -p 127.0.0.1:0:5432 -v protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: 996b75a1ec27e754ef8c0383c2062e13aaaff288b7e32c6343aa717d8e4d8c27
+2026-10-08T12:23:06.920994340Z exit=0 $ docker port protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg 5432/tcp
+  stdout: 127.0.0.1:33028
+2026-10-08T12:23:06.958839788Z exit=2 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - no response
-2026-10-08T11:48:05.528073550Z exit=0 $ docker exec protomolt-rehearsal-f06636400-9ea78107-rst-pg pg_isready -U repo -d repo
+2026-10-08T12:23:07.490165720Z exit=0 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - accepting connections
-2026-10-08T11:48:06.069217464Z exit=0 $ docker exec protomolt-rehearsal-f06636400-9ea78107-rst-pg pg_isready -U repo -d repo
+2026-10-08T12:23:08.031461755Z exit=0 $ docker exec protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg pg_isready -U repo -d repo
   stdout: /var/run/postgresql:5432 - accepting connections
-2026-10-08T11:48:08.112033567Z exit=0 $ docker run --rm --network protomolt-rehearsal-f06636400-9ea78107-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/run-2/backup/sql:/in:ro postgres:18-alpine pg_restore -h protomolt-rehearsal-f06636400-9ea78107-rst-pg -U repo -d repo --exit-on-error --no-owner --no-privileges /in/ledger.dump
-2026-10-08T11:48:13.529406828Z note: RepositoryBackupRehearsalRecoveredHost exit=0 log=recovered-host.log
-2026-10-08T11:48:13.982162155Z exit=0 $ docker run --rm -v protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
-  stdout: 5a1a47a25fdc1e13d68e499a43ee21239a3237a3e5801039114a8648072a300c
-2026-10-08T11:48:13.999352261Z exit=0 $ docker logs protomolt-rehearsal-f06636400-9ea78107-rst-rustfs
+2026-10-08T12:23:10.032978352Z exit=0 $ docker run --rm --network protomolt-rehearsal-871a9cdb8-5ce26995-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-backup-rehearsal-fix/repo/container/build/backup-rehearsal/2026-10-08T12-22-20.696520057Z/run-2/backup/sql:/in:ro postgres:18-alpine pg_restore -h protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg -U repo -d repo --exit-on-error --no-owner --no-privileges /in/ledger.dump
+2026-10-08T12:23:15.529756791Z note: RepositoryBackupRehearsalRecoveredHost exit=0 log=recovered-host.log
+2026-10-08T12:23:15.989416493Z exit=0 $ docker run --rm -v protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: e83541efbf9a5fe56926117f14203fd2d4fda920e9685139e49b1653757fab3c
+2026-10-08T12:23:16.008375245Z exit=0 $ docker logs protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs
   stdout: Initializing data directories: /data
           Initializing log directory: /logs
           Starting: /usr/bin/rustfs /data
-2026-10-08T11:48:14.017443820Z exit=0 $ docker logs protomolt-rehearsal-f06636400-9ea78107-rst-pg
+2026-10-08T12:23:16.022602225Z exit=0 $ docker logs protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg
   stdout: The files belonging to this database system will be owned by user "postgres".
           This user must also own the server process.
           
@@ -114,50 +114,50 @@
           
               pg_ctl -D /var/lib/postgresql/18/docker -l logfile start
           
-          waiting for server to start....2026-10-08 11:48:05.432 UTC [52] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
-          2026-10-08 11:48:05.438 UTC [52] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
-          2026-10-08 11:48:05.456 UTC [58] LOG:  database system was shut down at 2026-10-08 11:48:05 UTC
-          2026-10-08 11:48:05.463 UTC [52] LOG:  database system is ready to accept connections
+          waiting for server to start....2026-10-08 12:23:07.397 UTC [52] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 12:23:07.403 UTC [52] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 12:23:07.419 UTC [58] LOG:  database system was shut down at 2026-10-08 12:23:07 UTC
+          2026-10-08 12:23:07.427 UTC [52] LOG:  database system is ready to accept connections
            done
           server started
-          2026-10-08 11:48:05.525 UTC [74] FATAL:  database "repo" does not exist
+          2026-10-08 12:23:07.488 UTC [73] FATAL:  database "repo" does not exist
           CREATE DATABASE
           
           
           /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
           
-          waiting for server to shut down....2026-10-08 11:48:05.568 UTC [52] LOG:  received fast shutdown request
-          2026-10-08 11:48:05.574 UTC [52] LOG:  aborting any active transactions
-          2026-10-08 11:48:05.575 UTC [52] LOG:  background worker "logical replication launcher" (PID 61) exited with exit code 1
-          2026-10-08 11:48:05.575 UTC [56] LOG:  shutting down
-          2026-10-08 11:48:05.580 UTC [56] LOG:  checkpoint starting: shutdown immediate
-          2026-10-08 11:48:05.657 UTC [56] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.025 s, sync=0.026 s, total=0.083 s; sync files=303, longest=0.006 s, average=0.001 s; distance=4362 kB, estimate=4362 kB; lsn=0/1BA8858, redo lsn=0/1BA8858
-          2026-10-08 11:48:05.678 UTC [52] LOG:  database system is shut down
+          waiting for server to shut down....2026-10-08 12:23:07.524 UTC [52] LOG:  received fast shutdown request
+          2026-10-08 12:23:07.530 UTC [52] LOG:  aborting any active transactions
+          2026-10-08 12:23:07.531 UTC [52] LOG:  background worker "logical replication launcher" (PID 61) exited with exit code 1
+          2026-10-08 12:23:07.531 UTC [56] LOG:  shutting down
+          2026-10-08 12:23:07.536 UTC [56] LOG:  checkpoint starting: shutdown immediate
+          2026-10-08 12:23:07.606 UTC [56] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.017 s, sync=0.031 s, total=0.076 s; sync files=303, longest=0.006 s, average=0.001 s; distance=4362 kB, estimate=4362 kB; lsn=0/1BA8858, redo lsn=0/1BA8858
+          2026-10-08 12:23:07.623 UTC [52] LOG:  database system is shut down
            done
           server stopped
           
           PostgreSQL init process complete; ready for start up.
   stderr: sh: locale: not found
-          2026-10-08 11:48:05.153 UTC [46] WARNING:  no usable system locales were found
+          2026-10-08 12:23:07.106 UTC [46] WARNING:  no usable system locales were found
           initdb: warning: enabling "trust" authentication for local connections
           initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
-          2026-10-08 11:48:05.789 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
-          2026-10-08 11:48:05.789 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
-          2026-10-08 11:48:05.789 UTC [1] LOG:  listening on IPv6 address "::", port 5432
-          2026-10-08 11:48:05.800 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
-          2026-10-08 11:48:05.812 UTC [82] LOG:  database system was shut down at 2026-10-08 11:48:05 UTC
-          2026-10-08 11:48:05.818 UTC [1] LOG:  database system is ready to accept connections
-2026-10-08T11:48:14.380746289Z exit=0 $ docker rm -f protomolt-rehearsal-f06636400-9ea78107-rst-pg
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-pg
-2026-10-08T11:48:14.759255827Z exit=0 $ docker rm -f protomolt-rehearsal-f06636400-9ea78107-rst-rustfs
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-rustfs
-2026-10-08T11:48:14.776179549Z exit=0 $ docker volume rm -f protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-rustfs-data
-2026-10-08T11:48:14.808992990Z exit=0 $ docker volume rm -f protomolt-rehearsal-f06636400-9ea78107-rst-pg-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-rst-pg-data
-2026-10-08T11:48:14.827799460Z exit=0 $ docker volume rm -f protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-rustfs-data
-2026-10-08T11:48:14.856265505Z exit=0 $ docker volume rm -f protomolt-rehearsal-f06636400-9ea78107-src-pg-data
-  stdout: protomolt-rehearsal-f06636400-9ea78107-src-pg-data
-2026-10-08T11:48:14.998976170Z exit=0 $ docker network rm protomolt-rehearsal-f06636400-9ea78107-net
-  stdout: protomolt-rehearsal-f06636400-9ea78107-net
+          2026-10-08 12:23:07.644 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 12:23:07.644 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+          2026-10-08 12:23:07.644 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+          2026-10-08 12:23:07.655 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 12:23:07.666 UTC [81] LOG:  database system was shut down at 2026-10-08 12:23:07 UTC
+          2026-10-08 12:23:07.672 UTC [1] LOG:  database system is ready to accept connections
+2026-10-08T12:23:16.413362185Z exit=0 $ docker rm -f protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg
+2026-10-08T12:23:16.798343784Z exit=0 $ docker rm -f protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs
+2026-10-08T12:23:16.814776602Z exit=0 $ docker volume rm -f protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-rustfs-data
+2026-10-08T12:23:16.846054859Z exit=0 $ docker volume rm -f protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-rst-pg-data
+2026-10-08T12:23:16.859232094Z exit=0 $ docker volume rm -f protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-rustfs-data
+2026-10-08T12:23:16.893680812Z exit=0 $ docker volume rm -f protomolt-rehearsal-871a9cdb8-5ce26995-src-pg-data
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-src-pg-data
+2026-10-08T12:23:17.061496325Z exit=0 $ docker network rm protomolt-rehearsal-871a9cdb8-5ce26995-net
+  stdout: protomolt-rehearsal-871a9cdb8-5ce26995-net

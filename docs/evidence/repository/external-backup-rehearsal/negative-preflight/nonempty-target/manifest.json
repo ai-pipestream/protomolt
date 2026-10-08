@@ -1,6 +1,6 @@
 {
   "format": "protomolt-repository-backup-rehearsal/v2",
-  "createdAt": "2026-10-08T11:47:34.756038704Z",
+  "createdAt": "2026-10-08T12:22:36.588547105Z",
   "required": [
     "sql/ledger.dump",
     "provider/rustfs-data.tar",
@@ -10,91 +10,91 @@
   ],
   "components": {
     "catalog/fingerprints.json": {
-      "sha256": "f6bb6610fb96f62d2d8f05d45e73148b4cf80ee6dcfaf65d8e1efb01594b6d7e",
-      "size": 6154
+      "size": 6288,
+      "sha256": "7211cf1b8ffd527489fa392be9e25c5d026d3edd782173041723c7fd93ae20f6"
     },
     "identities/document-alpha-v1.pb": {
-      "sha256": "ae41233164e4866f6704d8cc984d8252b9abe0904d2440b31ec03d01afa119d4",
-      "size": 319
+      "size": 319,
+      "sha256": "dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e"
     },
     "identities/document-alpha-v2.pb": {
-      "sha256": "755ebfe2d562985fb21a14b9f8253d0226d3627ac342fa24bdc423b07a520ba6",
-      "size": 326
+      "size": 326,
+      "sha256": "fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3"
     },
     "identities/document-beta-v1.pb": {
-      "sha256": "9f1261d8ae94a56763660b3546eaf52a3b687b0fa9e588870e08300debf2928e",
-      "size": 291
+      "size": 291,
+      "sha256": "f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e"
     },
     "identities/identities.json": {
-      "sha256": "b55a5348bc94199b8872f55986ef2f533afdf375a6eb3c355c7accc16ed92987",
-      "size": 20944
+      "size": 20944,
+      "sha256": "49116f4310bb82692ea6d651457ff482e006ca291ce082c624cc4f2370ce3d4a"
     },
     "identities/markers.log": {
-      "sha256": "70a033f4ec8376ac726ff9a5e75f95802bf2270f208dbe0af866baf5dbaab159",
-      "size": 11371
+      "size": 11370,
+      "sha256": "7e618d9a587429ed0f912e5383ff8f22239b69429d964e627af57cbb3578a46a"
     },
     "identities/pending-intent.pb": {
-      "sha256": "7428f1fb8f4052fcbceff9e954c1308d1d8743cc56db652e3809d73b81588b3d",
-      "size": 394
+      "size": 394,
+      "sha256": "886079c66d2cf1d8252bdbd910358f7ba68a72255b8d020139987c7ed6127019"
     },
     "identities/receipt-alpha-v1.pb": {
-      "sha256": "ffad80d4e9a546eb4d6c4e8d4338cb2949ef9c0a32b801bd620bac13f572b045",
-      "size": 270
+      "size": 270,
+      "sha256": "661042abf23ef9912f70ee6304cd4ae2774cff5f9f4be9f82e49b66fb378b953"
     },
     "identities/receipt-alpha-v2.pb": {
-      "sha256": "3a5bc405a16427192cb9a370f9f1885e7be0902c807218dac26ff026c2f32847",
-      "size": 270
+      "size": 270,
+      "sha256": "4af9f0b2eaea503be6aa802d7b69c9a5e3927cec5a6a7b2454a3acb69f162c0e"
     },
     "identities/receipt-beta-v1.pb": {
-      "sha256": "0b806ba577bca429fcd9460f96958538af20f51cff2911dc3378400d7e7687c4",
-      "size": 268
+      "size": 268,
+      "sha256": "29cc90f61373d9eb59579331174b98f640573419c4f4ce054554ea4ab0412a22"
     },
     "identities/request-alpha-v1.pb": {
-      "sha256": "89667e9ade8946db9d52b559d79dded1080dc0febb97fc5cea503bec94fc6738",
-      "size": 766
+      "size": 766,
+      "sha256": "d0225ea705ef7d63d87e856a26d5decbc941ef73183a8a2ec08738290e4947a0"
     },
     "identities/request-alpha-v2.pb": {
-      "sha256": "8b50071616d95557abc4084f806327ee367ae04233ee1512094a1a8cb763786d",
-      "size": 753
+      "size": 753,
+      "sha256": "0d0cbda877574b4d03921f05e4e918c64c43d2bd5b3fd9c32e1721805581cfcc"
     },
     "identities/request-beta-v1.pb": {
-      "sha256": "8d341fccda20153c8170071ad7512d907ccb6ae245339f146e53df66d9658c4d",
-      "size": 714
+      "size": 714,
+      "sha256": "0dc1c6a335c972eabd97c57c885e8abf8abc1ceb2bdf5d2d5e48d1c81b70e0e5"
     },
     "identities/seed-results.xml": {
-      "sha256": "c27abb26b43b7c2de733b50f40c2ea96d3cdf0badf367dac3acf26d59e036f85",
-      "size": 21003
+      "size": 21002,
+      "sha256": "13792432febef340322f71f09debae5e8caa76974dad58f80cd4ad5aa3edd4ed"
     },
     "provider/rustfs-data.tar": {
-      "sha256": "525f662cd684c0a369ec5c9401c38a2ec4c136765e843924d2fcd1b84a74819e",
-      "size": 159232
+      "size": 164352,
+      "sha256": "233c4ddcd5f629fa9a03a4b52d92810d58a5af68a6dde8d79a8b01b52a1131b5"
     },
     "schema/catalog.tsv": {
-      "sha256": "f399449aad068ed5c2d3aa50e37c1b48959fcc9328ef24b066651509da90ab28",
-      "size": 1150
+      "size": 1150,
+      "sha256": "aea27ec1495b30955009e0f5453f9f95a4abc10e9c3abf74c5c79338189561d7"
     },
     "sql/ledger.dump": {
-      "sha256": "ffa7c92e1ac11b91642929e00bfccc4b24ad4aed196f0fcf7293e54cd0a4463e",
-      "size": 818027
+      "size": 818040,
+      "sha256": "e1e769547bf087a779b00c6a932b4ed16486dbb824551528679c75c689cbcfaf"
     }
   },
   "images": {
-    "rustfs": {
-      "tag": "rustfs/rustfs:1.0.0-beta.11-preview.1",
-      "id": "sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b"
-    },
     "postgres": {
       "tag": "postgres:18-alpine",
       "id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+    },
+    "rustfs": {
+      "tag": "rustfs/rustfs:1.0.0-beta.11-preview.1",
+      "id": "sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b"
     }
   },
   "backend": {
+    "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
     "region": "us-east-1",
     "pathStyle": true,
-    "providerPort": 40221,
+    "providerPort": 46207,
     "realm": "rehearsal-realm",
-    "endpoint": "http://127.0.0.1:40221",
-    "generation": "rehearsal-gen-e11b002a-637d-47ac-9568-2949ef22457c"
+    "endpoint": "http://127.0.0.1:46207"
   },
   "database": {
     "migrationLevel": 119,
@@ -200,20 +200,20 @@
     "repository_successor_installs": 2
   },
   "stopped": {
-    "rustfs": {
-      "finishedAt": "2026-10-08T11:47:33.977481566Z",
-      "status": "exited",
-      "exitCode": "0"
-    },
     "postgres": {
-      "finishedAt": "2026-10-08T11:47:33.724405513Z",
       "status": "exited",
-      "exitCode": "0"
+      "exitCode": "0",
+      "finishedAt": "2026-10-08T12:22:35.650127993Z"
+    },
+    "rustfs": {
+      "status": "exited",
+      "exitCode": "0",
+      "finishedAt": "2026-10-08T12:22:35.885276857Z"
     }
   },
   "catalog": {
-    "maxStoredXid": 1083,
     "xidColumns": 22,
-    "tables": 92
+    "tables": 92,
+    "maxStoredXid": 1083
   }
 }

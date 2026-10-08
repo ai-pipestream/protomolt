@@ -1,1 +1,9 @@
-CHECK_OK identity-gap.version_id_not_preserved :: GET-old/PUT-new into a fresh provider issued version 3541c405-9838-455b-ae2c-332c1622a573 for the key recorded under version c309ca5e-79eb-4129-bcca-46de9032f9ea; a copied object cannot satisfy the recorded identity
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:46207
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-fac20628d-058b693a-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK identity-gap.get_recorded_version :: restored volume serves the recorded version 7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3 with sha256 dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e
+CHECK_OK identity-gap.version_id_not_preserved :: the same bytes (sha256 dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e) put into a fresh provider were issued version 213cdfb6-2dd7-4340-931b-b48af410ff0a, not the recorded 7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3; a GET by the recorded version on the fresh provider -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)

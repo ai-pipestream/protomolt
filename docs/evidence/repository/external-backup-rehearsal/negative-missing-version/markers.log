@@ -1,10 +1,10 @@
-CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:40221
-CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-7f13dc815-5ac26aec-rst-pg
-CHECK_OK restore.xid_epoch :: next xid 1645 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:46207
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-151a184fa-dcdf4a4b-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
 CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
 CHECK_OK restore.migration_level :: V119
 CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
-CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, lineageWithoutInstallEdge=0, lineageWithoutCertifiedAnchor=0, certificateWithoutSealedHeader=0, preparationWithoutAnyState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
-CHECK_OK missing-version.injected :: recorded version c309ca5e-79eb-4129-bcca-46de9032f9ea of revision alpha-v1's CORE deleted on the disposable restored provider; a newer latest version exists
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK missing-version.injected :: recorded version 7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3 of revision alpha-v1's CORE deleted on the disposable restored provider; a newer latest version exists
 CHECK_OK missing-version.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_MISSING_VERSION_OK; no READY advertised
 CHECK_OK missing-version.original_backup_untouched :: run-1 backup set unchanged

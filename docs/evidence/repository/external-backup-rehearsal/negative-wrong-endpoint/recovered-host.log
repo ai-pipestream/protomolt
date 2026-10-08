@@ -1,22 +1,22 @@
 [main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
 [main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
-[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@30c15d8b
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@2d3379b4
 [main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
 [main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
 [main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
-[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.053s)
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.050s)
 [main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
 [main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
 [main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
-Oct 08, 2026 7:49:01 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+Oct 08, 2026 8:24:02 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
 INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
-Oct 08, 2026 7:49:01 AM org.hibernate.Version logVersion
+Oct 08, 2026 8:24:02 AM org.hibernate.Version logVersion
 INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
-Oct 08, 2026 7:49:01 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+Oct 08, 2026 8:24:03 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
 WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
-Oct 08, 2026 7:49:01 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+Oct 08, 2026 8:24:03 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
 INFO: HHH10001005: Database info:
-	Database JDBC URL [jdbc:postgresql://127.0.0.1:33019/repo]
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33033/repo]
 	Database driver: PostgreSQL JDBC Driver
 	Database dialect: PostgreSQLDialect
 	Database version: 18.6
@@ -27,7 +27,7 @@ INFO: HHH10001005: Database info:
 	Pool: DataSourceConnectionProvider
 	Minimum pool size: undefined/unknown
 	Maximum pool size: undefined/unknown
-Oct 08, 2026 7:49:02 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+Oct 08, 2026 8:24:03 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
 INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
 [main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
 [main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.

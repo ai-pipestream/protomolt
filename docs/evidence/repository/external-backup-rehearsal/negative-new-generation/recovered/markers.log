@@ -1,7 +1,7 @@
-CHECK_OK new-generation.distinct :: generation=rehearsal-other-6bd38ad1-f027-4de2-b598-c5fccc5b85e3
+CHECK_OK new-generation.distinct :: generation=rehearsal-other-1ed6a5e0-02bc-45e2-9757-58df201548ce
 CHECK_OK new-generation.host_started :: a new generation binds freely at the recorded endpoint
-CHECK_OK new-generation.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION
-CHECK_OK new-generation.history_refused.alpha-v2 :: readRaw -> FAILED_PRECONDITION
-CHECK_OK new-generation.history_refused.beta-v1 :: readRaw -> FAILED_PRECONDITION
+CHECK_OK new-generation.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
+CHECK_OK new-generation.history_refused.alpha-v2 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
+CHECK_OK new-generation.history_refused.beta-v1 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
 CHECK_OK new-generation.schema.no_live_lookup :: live schema resolution attempts=0
 CHECK_OK new-generation.not_ready :: READY is only written by a fully verified host

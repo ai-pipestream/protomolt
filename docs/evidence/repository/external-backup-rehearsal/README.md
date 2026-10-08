@@ -1,7 +1,8 @@
 # Isolated repository backup and recovery rehearsal
 
 Base: `4f4d66bffe0025783df178b82a35212424faabf6` (`agent/historical-cleanup-fairness`, V119).
-Branch: `agent/repository-backup-rehearsal`. Date: 2026-10-08.
+Branch: `agent/repository-backup-rehearsal`. Date: 2026-10-08. Archived run: commit
+`f698103f1` with a clean tree (`environment.txt`, `driver-sources.tsv`, `host-sources.tsv`).
 
 Two complete clean-room rehearsals restored a QUIESCED backup of a seeded repository
 (PostgreSQL 18 ledger plus a pinned RustFS volume) into fresh stores and verified it in a
@@ -41,14 +42,16 @@ flock -w 600 /tmp/protomolt-repository-qualification.lock \
 
 ## Result
 
-Final run (`gradle-run.log`, `junit-results.xml`): lock acquired 2026-10-08T11:47:15Z,
-BUILD SUCCESSFUL in 2m18s; suite time 135.7s.
+Final run (`gradle-run.log`, `junit-results.xml`): lock acquired 2026-10-08T12:22:18Z,
+BUILD SUCCESSFUL in 2m23s; suite time 140.7s.
 
 | Suite | Tests | Failures | Errors | Skipped |
 |---|---|---|---|---|
 | `RepositoryBackupRehearsalIT` (JUnit, driver) | 12 | 0 | 0 | 0 |
+| run-1 driver markers (`run-1/markers.log`) | 21 | 0 | 0 | 0 |
 | run-1 seed host (`run-1/backup/identities/seed-results.xml`) | 92 | 0 | 0 | 0 |
 | run-1 recovered host (`run-1/recovered/results.xml`, READY) | 137 | 0 | 0 | 0 |
+| run-2 driver markers | 21 | 0 | 0 | 0 |
 | run-2 seed host | 92 | 0 | 0 | 0 |
 | run-2 recovered host (READY) | 137 | 0 | 0 | 0 |
 | negative recovered hosts (7 cases that compose a host) | 73 | 0 | 0 | 0 |
@@ -63,9 +66,14 @@ the driver's expectation that one V118 certificate exists, when every managed pu
 journals its own (four exist); attempt 2 (11:33Z) passed 9 of 12, failing on the
 mixed-capture refusal text (size differs before the digest is compared) and on the two
 descriptor cases, whose observed classifications are recorded in the findings below;
-attempt 3 (11:41Z) passed 11 of 12, failing only the corrupt-descriptor root expectation.
-No timeout was raised and no assertion was weakened; the three expectations were replaced
-by the observed behavior and the one real gap is reported as finding 1.
+attempt 3 (11:41Z) passed 11 of 12, failing only the corrupt-descriptor root expectation;
+attempt 4 (11:47Z, commit `bbff47177`) passed 12 of 12 and was reviewed by Sol; attempt 5
+(12:17Z) failed in the driver on renamed invariant keys after the review fixes; attempt 6
+(12:22Z, commit `f698103f1`) is the archived run. No timeout was raised. Three early
+expectations were replaced by the observed behavior (the certificate count, the mixed-set
+refusal text, the per-occurrence materialization shape) and the DataLoss acceptance in the
+corrupt-descriptor case records a classification difference (finding 1) rather than hiding
+it; after the review the negative cases require the observed outcome classes.
 
 ## Consistency boundary
 
