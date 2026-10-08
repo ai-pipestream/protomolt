@@ -23,7 +23,8 @@ resources until drainage. Publication acknowledgement loss preserves one durable
 receipt across library and authenticated gRPC retries without new provider or schema
 work. Altered retries and invalid identities are refused; cleanup authority failure
 and SQL pin-release rollback retain ownership and permit subsequent cleanup.
-Deadline, recovery-journal and revocation/policy checks remain before exposing the
+Explicit gRPC deadlines and orderly service admission close now retain actual
+producer resources until drainage. Recovery-journal and revocation/policy checks remain before exposing the
 host factory; see the explicit [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks).
 START reconciliation retains an exact attempt identity and requires current
 authority before restoring the original handle's CREATE permission. See
@@ -46,6 +47,7 @@ Recent evidence:
 - [Historical public replay refusals](../evidence/repository/2026-10-08-historical-public-replay-refusals/README.md)
 - [Historical cleanup fairness and authority retry](../evidence/repository/2026-10-08-historical-cleanup-fairness/README.md)
 - [Historical public SQL cleanup rollback](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md)
+- [Historical public deadline and service close](../evidence/repository/2026-10-08-historical-public-transport-stop/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

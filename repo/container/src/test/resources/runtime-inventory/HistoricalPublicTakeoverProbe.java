@@ -102,7 +102,7 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
     void exerciseRemoteCancellation(Tx tx, DocumentPublicationRuntime runtime, DocumentReadLedger reads,
             DocumentPublicationRepository remote, RepositoryCaller caller, PublishDocumentRequest request,
             ai.protomolt.proto.repo.service.DocumentPublicationGrpcService service, PayloadBudget delivery,
-            CountDownLatch serverCancelled) throws Exception {
+            CountDownLatch serverCancelled, boolean deadline) throws Exception {
         var command = new DocumentPublicationCommand(request.getIntent());
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         var cancelled = new AtomicBoolean();
@@ -112,15 +112,17 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
         };
         var attempts = runtime.withHistoricalAttempts(value -> value);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var call = executor.submit(() -> remote.publishDocument(caller, request, control));
+            var call = executor.submit(() -> remote.publishDocument(caller, request, deadline ? RepositoryReadControl.NONE : control));
             try {
                 require(entered.await(15, TimeUnit.SECONDS), "authenticated historical RPC reached real PUT");
-                cancelled.set(true);
+                if (!deadline) cancelled.set(true);
                 try {
-                    call.get(5, TimeUnit.SECONDS);
+                    call.get(15, TimeUnit.SECONDS);
                     throw new AssertionError("Cancelled historical RPC returned success");
                 } catch (ExecutionException failure) {
-                    require(cancelled(failure), "remote client reports cancellation");
+                    require(failure.getCause() instanceof RepositoryException refusal && refusal.code()
+                                    == (deadline ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.CANCELLED),
+                            "remote client reports the expected RPC termination: " + failure.getCause());
                 }
                 require(serverCancelled.await(5, TimeUnit.SECONDS), "client cancellation reaches server context");
                 require(!service.awaitIdle(java.time.Duration.ZERO) && delivery.reservedBytes() > 0
@@ -149,6 +151,48 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
                     stopped = runtime.shutdownStep(java.time.Duration.ofSeconds(1));
                 require(stopped && attempts.drain().unresolved() == 0 && reads.outstandingReads() == 0,
                         "cancelled RPC shutdown returns all generations and captures");
+            } finally { release.countDown(); }
+        }
+    }
+
+    void exerciseTransportClose(Tx tx, DocumentPublicationRuntime runtime, DocumentReadLedger reads,
+            DocumentPublicationRepository remote, RepositoryCaller caller, PublishDocumentRequest request,
+            ai.protomolt.proto.repo.service.DocumentPublicationGrpcService service, PayloadBudget delivery) throws Exception {
+        var command = new DocumentPublicationCommand(request.getIntent());
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        var attempts = runtime.withHistoricalAttempts(value -> value);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var call = executor.submit(() -> remote.publishDocument(caller, request, RepositoryReadControl.NONE));
+            try {
+                require(entered.await(15, TimeUnit.SECONDS), "accepted RPC completed real PUT before transport close");
+                service.close();
+                runtime.close();
+                require(!service.awaitIdle(java.time.Duration.ZERO) && !runtime.shutdownStep(java.time.Duration.ZERO)
+                                && !call.isDone() && delivery.reservedBytes() > 0
+                                && attempts.drain().active() == 1 && reads.outstandingReads() > 0,
+                        "orderly close retains accepted producer, delivery reservation and historical captures");
+                try {
+                    remote.publishDocument(caller, request, RepositoryReadControl.NONE);
+                    throw new AssertionError("Closed transport accepted another RPC");
+                } catch (RepositoryException refusal) {
+                    require(refusal.code() == RepositoryException.Code.UNAVAILABLE, "closed transport refuses new admission");
+                }
+                require(count(tx, key, "document_revision_commits") == 0 && count(tx, key, "document_assessment_owners") == 0,
+                        "held accepted RPC has not reached assessment or commit");
+                release.countDown();
+                var result = call.get(15, TimeUnit.SECONDS);
+                DocumentPublicationResponseValidator.requireValid(command, caller.principalName(), result);
+                require(result.hasCommitted() && count(tx, key, "document_revision_commits") == 1
+                                && count(tx, key, "document_assessment_owners") == 1
+                                && Boolean.TRUE.equals(attempt(tx, writes.getFirst())[2]),
+                        "accepted RPC verifies its upload and commits exactly once during orderly close");
+                require(service.awaitIdle(java.time.Duration.ofSeconds(15)) && delivery.reservedBytes() == 0,
+                        "completed producer and delivery release transport resources");
+                boolean stopped = false;
+                for (int pass = 0; pass < 16 && !stopped; pass++)
+                    stopped = runtime.shutdownStep(java.time.Duration.ofSeconds(1));
+                require(stopped && attempts.drain().unresolved() == 0 && reads.outstandingReads() == 0,
+                        "orderly transport close drains all historical captures and generations");
             } finally { release.countDown(); }
         }
     }

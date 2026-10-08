@@ -29,6 +29,8 @@ final class HistoricalPublicDispatchProbe {
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cancel");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "shutdown");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-cancel");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-deadline");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-close");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup-sql");
     }
@@ -37,7 +39,7 @@ final class HistoricalPublicDispatchProbe {
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
         long baseline = budget.reservedBytes();
-        boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.equals("rpc-cancel");
+        boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-");
         var readerId = UUID.randomUUID();
         var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {
@@ -145,9 +147,14 @@ final class HistoricalPublicDispatchProbe {
                     int resolvedBeforeRetry = resolutions.get();
                     int selectedBeforeRetry = selections.get(), putsBeforeRetry = takeover.completedPuts();
                     if (stoppingCase) {
-                        if (phase.equals("rpc-cancel")) withTransport(repository, caller, 1,
+                        if (phase.equals("rpc-cancel") || phase.equals("rpc-deadline")) withTransport(repository, caller, 1,
+                                phase.equals("rpc-deadline") ? Duration.ofSeconds(10) : Duration.ofSeconds(60),
                                 (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseRemoteCancellation(
-                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery, serverCancelled));
+                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery, serverCancelled,
+                                        phase.equals("rpc-deadline")));
+                        else if (phase.equals("rpc-close")) withTransport(repository, caller, 1,
+                                (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseTransportClose(
+                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery));
                         else takeover.exerciseStop(tx, runtime, reads, repository, caller, request.build(), phase.equals("cancel"));
                         continue;
                     } else if (phase.equals("takeover") && !remote) {
@@ -295,6 +302,11 @@ final class HistoricalPublicDispatchProbe {
 
     private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
             int transportCapacity, TransportAction action) throws Exception {
+        withTransport(repository, caller, transportCapacity, Duration.ofSeconds(60), action);
+    }
+
+    private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
+            int transportCapacity, Duration timeout, TransportAction action) throws Exception {
         String token = "historical-fixture-" + UUID.randomUUID();
         var credential = caller.credentialBinding().orElseThrow();
         var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(
@@ -322,7 +334,7 @@ final class HistoricalPublicDispatchProbe {
                 var stub = DocumentPublicationServiceGrpc.newFutureStub(channel)
                         .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
                 var remote = new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(
-                        caller, stub, clientBudget, Duration.ofSeconds(60), 2);
+                        caller, stub, clientBudget, timeout, 2);
                 action.run(remote, service, delivery, serverCancelled);
             } finally {
                 channel.shutdownNow(); require(channel.awaitTermination(10, TimeUnit.SECONDS), "historical channel drains");

@@ -1012,7 +1012,12 @@ not prove that facade routing carries the same identity, control and cleanup rul
   Library cancellation and orderly close, plus cancellation through the remote
   client and authenticated in-process gRPC service, now pass. The transport test
   proves server-side capacity remains occupied after the client returns CANCELLED.
-  Explicit deadline and transport orderly-close cases remain.
+  An explicit client gRPC deadline now reports DEADLINE_EXCEEDED while server
+  capacity, delivery bytes and historical captures remain held until the actual
+  producer exits. Orderly service admission close refuses new RPCs but permits
+  the accepted call to commit once before service/runtime drainage. These are
+  authenticated in-process transport cases; they do not qualify network listener
+  shutdown or socket disconnects. See [deadline and close evidence](../evidence/repository/2026-10-08-historical-public-transport-stop/README.md).
 - Negative identity and intent: change modes, canonical command or destination
   condition under an existing operation identity; reject before selector, schema
   resolution or provider work. Cover uncertain local proposals and corrupt journal
