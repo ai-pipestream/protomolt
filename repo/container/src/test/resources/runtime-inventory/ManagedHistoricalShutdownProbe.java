@@ -17,14 +17,15 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-/** Holds an actual Redis PUT reply while a managed historical host cancels and drains. */
+/** Holds an actual Redis read/write reply while a managed historical host cancels and drains. */
 public final class ManagedHistoricalShutdownProbe {
     public static void main(String[] args) throws Exception {
-        for (boolean remote : new boolean[] {false, true}) run(Path.of(args[0]), remote);
+        for (boolean read : new boolean[] {false, true})
+            for (boolean remote : new boolean[] {false, true}) run(Path.of(args[0]), remote, read);
     }
 
-    private static void run(Path bundle, boolean remote) throws Exception {
-        var gate = new BoundedPublicationShutdownProbe.PutGate();
+    private static void run(Path bundle, boolean remote, boolean read) throws Exception {
+        var gate = new ManagedHistoricalWorkerGate(read);
         var closes = new AtomicInteger();
         var real = new RedisBlobStoreProvider();
         BlobStoreProvider provider = new BlobStoreProvider() {
@@ -72,6 +73,8 @@ public final class ManagedHistoricalShutdownProbe {
                 var source = host.publicationRepository().publishDocument(caller, fixture.request(), RepositoryReadControl.NONE);
                 require(source.hasCommitted(), "real typed source committed before shutdown scenario");
                 var request = ManagedHistoricalHostProbe.historical(tx, caller, fixture.request(), source.getCommitted().getMembers(0));
+                gate.source(request.getIntent().getMembers(0).getPartsList().stream().filter(DocumentPublicationPart::hasHistoricalReuse)
+                        .findFirst().orElseThrow().getHistoricalReuse().getObject());
                 var publisher = host.publicationRepository();
                 var cancelled = new AtomicBoolean();
                 var control = new RepositoryReadControl() {
@@ -105,7 +108,7 @@ public final class ManagedHistoricalShutdownProbe {
                         publication = rpcResult;
                     } else publication = executor.submit(() -> publisher.publishDocument(caller, request, control));
                     try {
-                        require(gate.entered.await(10, TimeUnit.SECONDS), "historical publication reached actual Redis PUT reply");
+                        require(gate.entered.await(10, TimeUnit.SECONDS), "historical publication reached actual selected Redis reply");
                         gate.verifyBytes();
                         var pins = pins(tx, identity);
                         require(!pins.isEmpty(), "historical source has live pins before cancellation");
@@ -120,13 +123,15 @@ public final class ManagedHistoricalShutdownProbe {
                         catch (RepositoryDrainTimeoutException expected) {
                             require(remote && expected.getMessage().equals("Publication RPCs still active; shared resources retained"), "RPC close retains active call");
                         } catch (IllegalStateException expected) {
-                            require(!remote && expected.getMessage().equals("Native publication resources still active; shared resources retained"), "library close retains active work");
+                            require((!remote || read) && expected.getMessage().equals("Native publication resources still active; shared resources retained"), "close retains active provider work");
                         }
                         require(closes.get() == 0 && gate.exited.getCount() == 1, "real provider stays open until worker exit");
                         require(pins(tx, identity).equals(pins), "timed-out close preserves exact historical source pins");
                         require(hostState(tx, identity).equals("ACTIVE"), "live host cannot attest termination");
-                        if (remote) require(!service.awaitIdle(Duration.ZERO), "client cancellation does not release server producer");
-                        else require(!publication.isDone(), "library worker remains held");
+                        if (!read) {
+                            if (remote) require(!service.awaitIdle(Duration.ZERO), "client cancellation does not release server producer");
+                            else require(!publication.isDone(), "library worker remains held");
+                        }
                         try (var connection = host.ledgerDataSource().getConnection(); var statement = connection.createStatement();
                              var result = statement.executeQuery("SELECT 1")) { require(result.next(), "SQL remains open for drain"); }
                         assertUnassessed(tx, request);
@@ -157,7 +162,7 @@ public final class ManagedHistoricalShutdownProbe {
         } finally {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-        System.out.println("MANAGED_HISTORICAL_HELD_PUT_" + (remote ? "RPC" : "LIBRARY") + "_OK");
+        System.out.println("MANAGED_HISTORICAL_HELD_" + (read ? "GET_" : "PUT_") + (remote ? "RPC" : "LIBRARY") + "_OK");
     }
 
     private static List<String> pins(Tx tx, ReaderHostOptions host) {

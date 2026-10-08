@@ -1134,10 +1134,12 @@ A new historical publication now refuses an unavailable source generation with
 `FAILED_PRECONDITION` through both hosted boundaries, with no current-backend
 substitution. See [unavailable source evidence](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md).
 Hosted cancellation and timed close now retain exact source pins and shared resources
-while a real Redis PUT reply is held. Repeated close after actual worker exit quiesces
+while a real Redis PUT or selected historical GET reply is held. Repeated close after actual worker exit quiesces
 the reader and fences the host. See [held-provider evidence](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md).
+The [held historical read evidence](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
+also distinguishes caller cancellation from the lifetime of the actual read worker.
 Next qualify unavailable upload placements during recovery and close during held
-schema loads and historical reads. Multi-backend operation, deployed recovery and performance remain
+schema loads. Multi-backend operation, deployed recovery and performance remain
 unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)

@@ -31,9 +31,9 @@ Cold hosted recovery now passes all three crash boundaries through the full S3
 host after correcting retained-plan budget accounting. A new historical publication
 refuses unavailable source generations through both hosted boundaries without falling
 back to the mounted backend. Hosted library/gRPC cancellation now retains exact
-historical pins and resources while a real PUT reply is held, then drains on repeated
-close. Unavailable recovered upload placements and other held-work phases (schema
-load and historical GET) still need service-level qualification; see the
+historical pins and resources while a real PUT or selected historical GET reply is
+held, then drains on repeated close. Unavailable recovered upload placements and
+held schema loads still need service-level qualification; see the
 [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
 and [next integration](repository-historical-restore.md#next-managed-host-integration).
 START reconciliation retains an exact attempt identity and requires current
@@ -49,6 +49,7 @@ fairness and progressive hydration remain requirements of the full goal.
 
 Recent evidence:
 
+- [Managed historical shutdown during a provider read](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
 - [Managed historical shutdown with a held provider reply](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md)
 - [Unavailable historical source generation](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md)
 - [Managed historical cold recovery](../evidence/repository/2026-10-08-managed-historical-cold/README.md)
