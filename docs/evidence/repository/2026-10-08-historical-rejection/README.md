@@ -27,3 +27,16 @@ the separately qualified cancellation lock-order fix, which is integrated afterw
 ```sh
 ./gradlew :protomolt-repo-container:admissionStorageTest --max-workers=2 --console=plain
 ```
+
+## Combined cancellation fix
+
+At a8c719c9f, after integrating the reviewed cancellation lock-order fix and
+expired-lease replay test, the command below passed in 1m35s, exit 0. The 13 SQL
+tests and one real-provider aggregate had zero failures, errors or skips. Reports
+are archived in `combined/`. The full storage gate above tested the rejection
+implementation before this separate cancellation fix; it is not a full-gate claim
+for the combined head.
+
+```sh
+./gradlew :protomolt-repo-container:test --tests '*RepositoryHistoricalDecisionLockIT' --tests '*RepositoryHistoricalInstalledCancellationIT' --tests '*RepositoryHistoricalAttemptRetirementIT' :protomolt-repo-container:admissionHistoricalRuntimeTest --tests '*HistoricalRuntimeQualificationTest.initialOwner' --max-workers=2 --console=plain
+```
