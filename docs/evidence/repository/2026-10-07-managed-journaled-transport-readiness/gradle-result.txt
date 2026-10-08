@@ -7,3 +7,13 @@ BUILD SUCCESSFUL in 10m 24s
 
 JUnit: one test, zero failures, zero errors, zero skipped; duration 619.119 seconds.
 See local-pass.xml for the complete result.
+
+Follow-up command (15-minute scenario-1 test retention):
+./gradlew :protomolt-repo-container:admissionStorageTest --tests ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest.observedAssessmentAndSqlRunTogetherOnProductionJars -PtestJdk=25 --max-workers=2 --console=plain --rerun
+
+Captured terminal result:
+BUILD SUCCESSFUL in 10m 20s
+174 actionable tasks: 4 executed, 170 up-to-date
+
+JUnit: one test, zero failures, zero errors, zero skipped; duration 617.621 seconds.
+See local-pass-after-retention.xml for the complete result.
