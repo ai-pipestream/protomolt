@@ -19,6 +19,39 @@ class RepositoryHistoricalDecisionLockIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
 
+    @Test void terminalCancellationReplaysAfterClaimAndOwnerExpire() throws Exception {
+        var lease = Duration.ofSeconds(5);
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, lease); var work = rig.sources().work()) {
+            var command = rig.record().command();
+            var modes = DocumentPublicationModesJournal.encode(command,
+                    java.util.Map.of(command.intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED));
+            var admission = RepositoryOperationLedger.prepareHistoricalAdmission(rig.record().key(), command,
+                    rig.record().seeds().ownerNonce(), lease, work);
+            var owner = c.tx().inTransaction(em -> {
+                RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                DocumentPublicationModesJournal.insert(em, rig.claim(), rig.record(), modes);
+                return admission.apply(em, rig.claim()).owner().orElseThrow();
+            });
+            var decisions = new DocumentPublicationRejections(c.tx());
+            var result = decisions.cancel(CALLER, owner, command, RepositoryReadControl.NONE);
+            assertThat(result.state()).isEqualTo(DocumentPublicationReplay.State.TERMINATED);
+            assertThat(result.rejection()).isPresent();
+            c.tx().withTimeouts(new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(10))).inTransaction(em -> {
+                em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0, extract(epoch FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:id
+                        """).setParameter("id", command.operationId()).getSingleResult();
+                assertThat(em.createNativeQuery("""
+                        SELECT c.lease_until<=clock_timestamp() AND o.lease_until<=clock_timestamp()
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:id
+                        """).setParameter("id", command.operationId()).getSingleResult()).isEqualTo(true);
+            });
+            assertThat(decisions.cancel(CALLER, owner, command, RepositoryReadControl.NONE)).isEqualTo(result);
+        }
+    }
+
     @Test void cancellationWaitsForClaimWithoutHoldingOwner() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofMinutes(5));
              var work = rig.sources().work();
