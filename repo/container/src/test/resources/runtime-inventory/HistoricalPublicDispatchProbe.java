@@ -54,12 +54,12 @@ final class HistoricalPublicDispatchProbe {
                 "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
              var takeover = new HistoricalPublicTakeoverProbe(opened)) {
             // This phase observes actual provider calls without holding their replies.
-            if (phase.equals("publication")) takeover.close();
+            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start")) takeover.close();
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
                         return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover")
-                                || phase.equals("publication") || stoppingCase ? takeover.opened() : opened);
+                                || phase.equals("publication") || phase.equals("normal") || phase.equals("start") || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
                     phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
@@ -125,6 +125,10 @@ final class HistoricalPublicDispatchProbe {
                             throw new AssertionError("Public historical call did not lose its " + phase + " acknowledgement");
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
+                    if (phase.equals("start")) {
+                        replayRefusals(repository, caller, request.build(), selections, resolutions, takeover, true);
+                        System.out.println("HISTORICAL_PUBLIC_PENDING_REPLAY_REFUSALS_LIBRARY_GRPC_OK");
+                    }
                     byte[] durableBytes = phase.equals("publication") ? tx.readOnly(em ->
                             (byte[]) em.createNativeQuery("SELECT result_bytes FROM repository_operation_success"
                                             + " WHERE account_id=:a AND principal=:p AND operation_id=:o")
@@ -147,6 +151,10 @@ final class HistoricalPublicDispatchProbe {
                     else exercise(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
                     if (phase.equals("create")) require(resolvedBeforeRetry > 0 && resolutions.get() == resolvedBeforeRetry,
                             "public CREATE retry reuses retained assessment without schema resolution");
+                    if (phase.equals("normal") && !remote) {
+                        replayRefusals(repository, caller, request.build(), selections, resolutions, takeover, false);
+                        System.out.println("HISTORICAL_PUBLIC_REPLAY_REFUSALS_LIBRARY_GRPC_OK");
+                    }
                     if (phase.equals("publication")) {
                         require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE)
                                         .getCommitted().equals(durablePublication), "library receipt equals the original SQL commit receipt");
@@ -197,6 +205,21 @@ final class HistoricalPublicDispatchProbe {
         int selected = selections.get(), resolved = resolutions.get();
         require(repository.publishDocument(caller, request, RepositoryReadControl.NONE).equals(result), "exact retry returns same receipt");
         require(selections.get() == selected && resolutions.get() == resolved, "terminal replay performs no selection or resolution");
+    }
+
+    private static void replayRefusals(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+            AtomicInteger selections, AtomicInteger resolutions, HistoricalPublicTakeoverProbe provider, boolean pending) throws Exception {
+        int selected = selections.get(), resolved = resolutions.get(), puts = provider.completedPuts();
+        HistoricalPublicReplayRefusalProbe.intent(repository, caller, request, pending);
+        withTransport(repository, caller, 4, (remoteRepository, service, delivery, serverCancelled) ->
+                HistoricalPublicReplayRefusalProbe.intent(remoteRepository, caller, request, pending));
+        for (var unauthorized : HistoricalPublicReplayRefusalProbe.unauthorized(caller)) {
+            HistoricalPublicReplayRefusalProbe.refuse(repository, unauthorized.caller(), request, unauthorized.code());
+            withTransport(repository, unauthorized.caller(), 2, (remoteRepository, service, delivery, serverCancelled) ->
+                    HistoricalPublicReplayRefusalProbe.refuse(remoteRepository, unauthorized.caller(), request, unauthorized.code()));
+        }
+        require(selected == selections.get() && resolved == resolutions.get() && puts == provider.completedPuts(),
+                "negative public replays perform no selection, schema resolution or PUT");
     }
 
     static void transport(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,

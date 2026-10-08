@@ -1012,6 +1012,15 @@ not prove that facade routing carries the same identity, control and cleanup rul
   condition under an existing operation identity; reject before selector, schema
   resolution or provider work. Cover uncertain local proposals and corrupt journal
   contents without treating corruption as permission for initial admission.
+  Terminal replay and an uncertain START acknowledgement now have library and
+  authenticated in-process gRPC cases for changed destination condition, changed
+  historical object identity, changed mode, missing account bindings and invalid
+  credential generation. Refused retries leave the original operation usable and
+  perform no placement selection, schema resolution or PUT. Changed intent maps
+  to public CONFLICT rather than exposing the private ledger exception. Pending
+  mode changes return CONFLICT; terminal fixed-mode changes return
+  FAILED_PRECONDITION. Uncertain reservation/install proposals and corrupted
+  persisted journals still need public-route qualification.
 - Current authorization and policy: revoke source READ, destination WRITE or
   credential generation, or change admission policy between capture and commit.
   Prove both SQL orderings through public dispatch, including authorized replay

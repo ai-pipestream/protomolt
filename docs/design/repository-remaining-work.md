@@ -41,6 +41,7 @@ Recent evidence:
 - [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)
 - [Historical public cancellation and shutdown](../evidence/repository/2026-10-08-historical-public-stop/README.md)
 - [Historical public publication acknowledgement loss](../evidence/repository/2026-10-08-historical-public-publication-ack/README.md)
+- [Historical public replay refusals](../evidence/repository/2026-10-08-historical-public-replay-refusals/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)
