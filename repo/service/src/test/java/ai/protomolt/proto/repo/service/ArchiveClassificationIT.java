@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the HTTP door identifies without any declaration, ClassifyEntry
  * re-resolves after the fact, and the per-state counts are exact.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveClassificationIT {
 
     @Container

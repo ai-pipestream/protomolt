@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (revalidating on read), and a relay that dies mid-flight leaves the row
  * PENDING for the restarted relay to publish - at-least-once recovery.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class EventRelayIT {
 
     @Container

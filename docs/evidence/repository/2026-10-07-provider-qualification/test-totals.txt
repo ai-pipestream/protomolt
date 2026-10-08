@@ -1,0 +1,8 @@
+repo/blob/spi: tests=7 failures=0 errors=0 skipped=0
+repo/blob/s3: tests=73 failures=0 errors=0 skipped=0
+repo/blob/redis: tests=54 failures=0 errors=0 skipped=0
+repo/blob/cache: tests=5 failures=0 errors=0 skipped=0
+repo/blob/grpc: tests=11 failures=0 errors=0 skipped=0
+repo/spi: tests=40 failures=0 errors=0 skipped=0
+repo/codec: tests=51 failures=0 errors=0 skipped=0
+repo/publication/grpc: no test sources (task no-op)

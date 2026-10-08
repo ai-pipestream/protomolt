@@ -58,7 +58,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * publishes them to the topic where a consumer using
  * {@link ProtoMoltProtobufDeserializer} reads and revalidates them.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaEventingIT {
 
     @Container

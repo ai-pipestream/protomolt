@@ -1,0 +1,19 @@
+row: redis-published-consumer-probe
+metadata-mode: gradle-module
+allowed-provider-families: [redis-sdk]
+
+declared:
+ai.pipestream:protomolt-repo-blob-redis:0.1.0-provider-qualification-abba0c2b9
+ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9
+
+resolved:
+:repository-published-consumer:unspecified
+ai.pipestream:protomolt-repo-blob-redis:0.1.0-provider-qualification-abba0c2b9
+ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9
+com.google.code.gson:gson:2.14.0
+com.google.errorprone:error_prone_annotations:2.48.0
+org.apache.commons:commons-pool2:2.13.1
+org.json:json:20260719
+org.slf4j:slf4j-api:1.7.36
+redis.clients.authentication:redis-authx-core:0.1.1-beta2
+redis.clients:jedis:8.0.1

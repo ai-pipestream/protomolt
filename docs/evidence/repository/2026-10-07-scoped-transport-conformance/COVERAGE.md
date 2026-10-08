@@ -69,3 +69,12 @@ The planned harness exists and is green on unmodified production code:
 No production defect was demonstrated by these cases; every change required
 during bring-up was inside the new harness itself. Details and commands are in
 [README.md](README.md) in this directory.
+
+## Repair (2026-10-07)
+
+| Matrix scenario | Library | gRPC (in-process) |
+| --- | --- | --- |
+| Exact provisioned identity (principal, issuer, credential ID, generation, no process authority) reaches the repository on every scoped invocation, including refusals | All scenarios via `Host.publish` | All scenarios via `Host.publish` |
+| Same-principal substituted key accepted by the repository is still detected; wrong issuer/ID/generation/principal/authority fail the check | `IDENTITY_SUBSTITUTION_LIBRARY` | `IDENTITY_SUBSTITUTION_GRPC` (plus mapper substitution refused by the production adapter) |
+
+Results: [repair/README.md](repair/README.md).

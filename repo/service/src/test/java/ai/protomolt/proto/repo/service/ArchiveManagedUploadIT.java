@@ -44,8 +44,18 @@ class ArchiveManagedUploadIT {
         ledger = new ArchiveLedger(tx);
         drives = new DriveLedger(tx);
         var providers = BlobStores.discover();
-        var options = Map.of("endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(),
-                "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(), "path-style", "true", "conditional-writes", "false");
+        var options = Map.ofEntries(
+                Map.entry("endpoint", S3.getEndpoint().toString()),
+                Map.entry("region", S3.getRegion()),
+                Map.entry("access-key", S3.getAccessKey()),
+                Map.entry("secret-key", S3.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000"));
         opened = providers.open("s3", options);
         opened.ensureNamespace("managed-archive");
         new ManagedBackendLedger(tx).bind("original", new ManagedBackendLedger.Profile(providers.managedIdentity("s3", options), "original-realm"));

@@ -1,0 +1,477 @@
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractProto
+> Task :protomolt-asset-proto:extractProto
+> Task :protomolt-protobuf-validation:processProtoResources
+> Task :protomolt-protobuf-validation:processResources
+> Task :protomolt-cel:compileJava FROM-CACHE
+> Task :protomolt-formats:compileJava FROM-CACHE
+> Task :protomolt-asset-proto:extractIncludeProto
+> Task :protomolt-asset-proto:generateProto FROM-CACHE
+> Task :protomolt-protobuf-validation:extractIncludeProto
+> Task :protomolt-descriptors:compileJava FROM-CACHE
+> Task :protomolt-protobuf-validation:generateProto FROM-CACHE
+> Task :protomolt-sources:compileJava FROM-CACHE
+> Task :protomolt-compat:compileJava FROM-CACHE
+> Task :protomolt-helpers:compileJava FROM-CACHE
+> Task :protomolt-compat:processResources NO-SOURCE
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-helpers:processResources NO-SOURCE
+> Task :protomolt-kafka-serde:protobufDummy UP-TO-DATE
+> Task :protomolt-kafka-wire:processResources NO-SOURCE
+> Task :protomolt-mapper:processResources NO-SOURCE
+> Task :protomolt-mapper-cel:processResources NO-SOURCE
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:compileJava FROM-CACHE
+> Task :protomolt-protobuf-metadata:extractProto
+> Task :protomolt-protobuf-metadata:processProtoResources
+> Task :protomolt-protobuf-metadata:processResources
+> Task :protomolt-protobuf-quality:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-quality:extractProto
+> Task :protomolt-protobuf-quality:processProtoResources
+> Task :protomolt-protobuf-quality:processResources
+> Task :protomolt-schema-confluent:processResources NO-SOURCE
+> Task :protomolt-sources:processResources NO-SOURCE
+> Task :protomolt-asset-proto:compileJava FROM-CACHE
+> Task :protomolt-kafka-wire:compileJava FROM-CACHE
+> Task :protomolt-mapper:compileJava FROM-CACHE
+> Task :protomolt-mapper-cel:compileJava FROM-CACHE
+> Task :protomolt-protobuf-metadata:extractIncludeProto
+> Task :protomolt-protobuf-metadata:generateProto FROM-CACHE
+> Task :protomolt-kafka-serde:extractIncludeProto
+> Task :protomolt-kafka-serde:extractProto
+> Task :protomolt-kafka-serde:generateProto NO-SOURCE
+> Task :protomolt-protobuf-metadata:compileJava FROM-CACHE
+> Task :protomolt-schema-confluent:compileJava FROM-CACHE
+> Task :protomolt-protobuf-validation-protovalidate:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-quality:extractIncludeProto
+> Task :protomolt-protobuf-quality:generateProto FROM-CACHE
+> Task :protomolt-protobuf-validation-protovalidate:extractIncludeProto
+> Task :protomolt-protobuf-validation-protovalidate:extractProto
+> Task :protomolt-protobuf-quality:compileJava FROM-CACHE
+> Task :protomolt-protobuf-validation-protovalidate:generateProto FROM-CACHE
+> Task :protomolt-kafka-serde:compileJava FROM-CACHE
+> Task :protomolt-asset-proto:processProtoResources
+> Task :protomolt-asset-proto:processResources
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto
+> Task :protomolt-repo-proto:extractProto
+> Task :protomolt-protobuf-validation-protovalidate:compileJava FROM-CACHE
+> Task :protomolt-repo-blob-spi:compileJava FROM-CACHE
+> Task :protomolt-repo-proto:generateProto FROM-CACHE
+> Task :protomolt-repo-container:processResources
+> Task :protomolt-http-json:compileJava FROM-CACHE
+> Task :protomolt-http-jsonschema:protobufDummy UP-TO-DATE
+> Task :protomolt-http-jsonschema:extractIncludeProto
+> Task :protomolt-http-jsonschema:extractProto
+> Task :protomolt-http-jsonschema:generateProto NO-SOURCE
+> Task :protomolt-http-jsonschema:compileJava FROM-CACHE
+> Task :protomolt-actions:compileJava FROM-CACHE
+> Task :protomolt-actions:processResources NO-SOURCE
+> Task :protomolt-actions:classes UP-TO-DATE
+> Task :protomolt-actions:jar
+> Task :protomolt-asset-characterize:compileJava FROM-CACHE
+> Task :protomolt-asset-bridge:compileJava FROM-CACHE
+> Task :protomolt-asset-bridge:processResources NO-SOURCE
+> Task :protomolt-asset-bridge:classes UP-TO-DATE
+> Task :protomolt-asset-bridge:jar
+> Task :protomolt-asset-characterize:processResources
+> Task :protomolt-asset-characterize:classes
+> Task :protomolt-asset-characterize:jar
+> Task :protomolt-asset-proto:classes
+> Task :protomolt-asset-proto:jar
+> Task :protomolt-protobuf-types:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-types:extractIncludeProto
+> Task :protomolt-protobuf-types:extractProto
+> Task :protomolt-protobuf-types:generateProto FROM-CACHE
+> Task :protomolt-protobuf-types:compileJava FROM-CACHE
+> Task :protomolt-repo-proto:compileJava FROM-CACHE
+> Task :protomolt-authz:compileJava FROM-CACHE
+> Task :protomolt-repo-codec:compileJava FROM-CACHE
+> Task :protomolt-repo-spi:compileJava FROM-CACHE
+> Task :protomolt-authz:processResources NO-SOURCE
+> Task :protomolt-authz:classes UP-TO-DATE
+> Task :protomolt-authz:jar
+> Task :protomolt-authz-grpc:compileJava FROM-CACHE
+> Task :protomolt-authz-grpc:processResources NO-SOURCE
+> Task :protomolt-authz-grpc:classes UP-TO-DATE
+> Task :protomolt-authz-grpc:jar
+> Task :protomolt-cel:classes UP-TO-DATE
+> Task :protomolt-cel:jar
+> Task :protomolt-compat:classes UP-TO-DATE
+> Task :protomolt-compat:jar
+> Task :protomolt-grpc-channel-policy:compileJava FROM-CACHE
+> Task :protomolt-composer:compileJava FROM-CACHE
+> Task :protomolt-composer:processResources NO-SOURCE
+> Task :protomolt-composer:classes UP-TO-DATE
+> Task :protomolt-composer:jar
+> Task :protomolt-descriptors:classes UP-TO-DATE
+> Task :protomolt-descriptors:jar
+> Task :protomolt-formats:classes UP-TO-DATE
+> Task :protomolt-formats:jar
+> Task :protomolt-grpc-channel-policy:processResources NO-SOURCE
+> Task :protomolt-grpc-channel-policy:classes UP-TO-DATE
+> Task :protomolt-grpc-channel-policy:jar
+> Task :protomolt-grpc-service-profile:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-admission:compileJava FROM-CACHE
+> Task :protomolt-grpc-service-profile:extractIncludeProto
+> Task :protomolt-grpc-service-profile:extractProto
+> Task :protomolt-grpc-service-profile:generateProto FROM-CACHE
+> Task :protomolt-grpc-service-profile:compileJava FROM-CACHE
+> Task :protomolt-grpc-service-profile:processProtoResources
+> Task :protomolt-grpc-service-profile:processResources
+> Task :protomolt-grpc-service-profile:classes
+> Task :protomolt-grpc-service-profile:jar
+> Task :protomolt-grpc-workflow:protobufDummy UP-TO-DATE
+> Task :protomolt-http-jsonschema:processProtoResources
+> Task :protomolt-http-jsonschema:processResources NO-SOURCE
+> Task :protomolt-inference-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-inference-proto:extractProto
+> Task :protomolt-inference-proto:processProtoResources
+> Task :protomolt-inference-proto:processResources
+> Task :protomolt-protobuf-llm:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-llm:extractProto
+> Task :protomolt-protobuf-llm:processProtoResources
+> Task :protomolt-protobuf-llm:processResources
+> Task :protomolt-protobuf-prompt:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-prompt:extractProto
+> Task :protomolt-protobuf-prompt:processProtoResources
+> Task :protomolt-protobuf-prompt:processResources
+> Task :protomolt-repo-container:compileJava FROM-CACHE
+> Task :protomolt-repo-container:classes
+> Task :protomolt-grpc-workflow:extractIncludeProto
+> Task :protomolt-grpc-workflow:extractProto
+> Task :protomolt-grpc-workflow:generateProto FROM-CACHE
+> Task :protomolt-repo-container:jar
+> Task :protomolt-inference-proto:extractIncludeProto
+> Task :protomolt-protobuf-llm:extractIncludeProto
+> Task :protomolt-inference-proto:generateProto FROM-CACHE
+> Task :protomolt-protobuf-llm:generateProto FROM-CACHE
+> Task :protomolt-protobuf-llm:compileJava FROM-CACHE
+> Task :protomolt-grpc-workflow:processProtoResources
+> Task :protomolt-grpc-workflow:processResources
+> Task :protomolt-helpers:classes UP-TO-DATE
+> Task :protomolt-helpers:jar
+> Task :protomolt-http-json:processResources NO-SOURCE
+> Task :protomolt-http-json:classes UP-TO-DATE
+> Task :protomolt-http-json:jar
+> Task :protomolt-http-jsonschema:classes UP-TO-DATE
+> Task :protomolt-http-jsonschema:jar
+> Task :protomolt-kafka-serde:processProtoResources
+> Task :protomolt-kafka-serde:processResources NO-SOURCE
+> Task :protomolt-kafka-serde:classes UP-TO-DATE
+> Task :protomolt-kafka-serde:jar
+> Task :protomolt-kafka-wire:classes UP-TO-DATE
+> Task :protomolt-kafka-wire:jar
+> Task :protomolt-mapper:classes UP-TO-DATE
+> Task :protomolt-protobuf-prompt:extractIncludeProto
+> Task :protomolt-mapper:jar
+> Task :protomolt-mapper-cel:classes UP-TO-DATE
+> Task :protomolt-protobuf-prompt:generateProto FROM-CACHE
+> Task :protomolt-mapper-cel:jar
+> Task :protomolt-protobuf-llm:classes
+> Task :protomolt-protobuf-llm:jar
+> Task :protomolt-protobuf-metadata:classes
+> Task :protomolt-protobuf-metadata:jar
+> Task :protomolt-protobuf-quality:classes
+> Task :protomolt-protobuf-quality:jar
+> Task :protomolt-protobuf-prompt:compileJava FROM-CACHE
+> Task :protomolt-protobuf-types:processProtoResources
+> Task :protomolt-protobuf-prompt:classes
+> Task :protomolt-protobuf-prompt:jar
+> Task :protomolt-protobuf-types:processResources
+> Task :protomolt-protobuf-types:classes
+> Task :protomolt-protobuf-types:jar
+> Task :protomolt-protobuf-validation:classes
+> Task :protomolt-protobuf-validation:jar
+> Task :protomolt-protobuf-validation-protovalidate:processProtoResources
+> Task :protomolt-protobuf-validation-protovalidate:processResources
+> Task :protomolt-protobuf-validation-protovalidate:classes
+> Task :protomolt-inference-proto:compileJava FROM-CACHE
+> Task :protomolt-protobuf-validation-protovalidate:jar
+> Task :protomolt-inference-proto:classes
+> Task :protomolt-grpc-workflow:compileJava FROM-CACHE
+> Task :protomolt-grpc-workflow:classes
+> Task :protomolt-inference-proto:jar
+> Task :protomolt-grpc-workflow:jar
+> Task :protomolt-repo-admission:processResources NO-SOURCE
+> Task :protomolt-repo-admission:classes UP-TO-DATE
+> Task :protomolt-registry:compileJava FROM-CACHE
+> Task :protomolt-registry:processResources
+> Task :protomolt-registry:classes
+> Task :protomolt-registry:jar
+> Task :protomolt-repo-blob-cache:compileJava FROM-CACHE
+> Task :protomolt-repo-blob-cache:processResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:classes UP-TO-DATE
+> Task :protomolt-repo-admission:jar
+> Task :protomolt-repo-blob-cache:jar
+> Task :protomolt-repo-blob-redis:compileJava FROM-CACHE
+> Task :protomolt-repo-blob-grpc:compileJava FROM-CACHE
+> Task :protomolt-repo-blob-grpc:processResources NO-SOURCE
+> Task :protomolt-repo-blob-grpc:classes UP-TO-DATE
+> Task :protomolt-repo-blob-redis:processResources
+> Task :protomolt-repo-blob-redis:classes
+> Task :protomolt-repo-blob-redis:jar
+> Task :protomolt-repo-blob-grpc:jar
+> Task :protomolt-repo-blob-spi:processResources NO-SOURCE
+> Task :protomolt-repo-blob-spi:classes UP-TO-DATE
+> Task :protomolt-repo-blob-spi:jar
+> Task :protomolt-repo-codec:processResources NO-SOURCE
+> Task :protomolt-repo-codec:classes UP-TO-DATE
+> Task :protomolt-repo-codec:jar
+> Task :protomolt-repo-blob-s3:compileJava FROM-CACHE
+> Task :protomolt-repo-blob-s3:processResources
+> Task :protomolt-repo-blob-s3:classes
+> Task :protomolt-repo-blob-s3:jar
+> Task :protomolt-repo-schema-registry:compileJava FROM-CACHE
+> Task :protomolt-schema-registry-git:compileJava FROM-CACHE
+> Task :protomolt-repo-container:processTestResources
+> Task :protomolt-repo-engine:compileJava FROM-CACHE
+> Task :protomolt-repo-proto:generateCompilerIdentity
+> Task :protomolt-repo-engine:processResources NO-SOURCE
+> Task :protomolt-repo-engine:classes UP-TO-DATE
+> Task :protomolt-repo-engine:jar
+> Task :protomolt-repo-proto:processProtoResources
+> Task :protomolt-repo-proto:processResources
+> Task :protomolt-repo-proto:classes
+> Task :protomolt-repo-service:compileJava FROM-CACHE
+> Task :protomolt-repo-proto:jar
+> Task :protomolt-repo-schema-registry:processResources NO-SOURCE
+> Task :protomolt-repo-schema-registry:classes UP-TO-DATE
+> Task :protomolt-repo-schema-registry:jar
+> Task :protomolt-repo-service:processResources NO-SOURCE
+> Task :protomolt-repo-service:classes UP-TO-DATE
+> Task :protomolt-repo-service:jar
+> Task :protomolt-repo-spi:processResources NO-SOURCE
+> Task :protomolt-repo-spi:classes UP-TO-DATE
+> Task :protomolt-repo-spi:jar
+> Task :protomolt-schema-confluent:classes UP-TO-DATE
+> Task :protomolt-schema-confluent:jar
+> Task :protomolt-schema-registry-git:processResources
+> Task :protomolt-schema-registry-git:classes
+> Task :protomolt-schema-registry-git:jar
+> Task :protomolt-sources:classes UP-TO-DATE
+> Task :protomolt-sources:jar
+> Task :protomolt-receipt:protobufDummy UP-TO-DATE
+> Task :protomolt-receipt:extractIncludeProto
+> Task :protomolt-receipt:extractProto
+> Task :protomolt-receipt:generateProto FROM-CACHE
+> Task :protomolt-receipt:compileJava FROM-CACHE
+> Task :protomolt-grpc-service-contract:compileJava FROM-CACHE
+> Task :protomolt-search-index-spi:protobufDummy UP-TO-DATE
+> Task :protomolt-search-index-spi:extractIncludeProto
+> Task :protomolt-search-index-spi:extractProto
+> Task :protomolt-search-index-spi:generateProto FROM-CACHE
+> Task :protomolt-search-index-spi:compileJava FROM-CACHE
+> Task :protomolt-actions-schema:compileJava FROM-CACHE
+> Task :protomolt-actions-schema:processResources
+> Task :protomolt-actions-schema:classes
+> Task :protomolt-actions-schema:jar
+> Task :protomolt-asset-catalog:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metric:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metric:extractProto
+> Task :protomolt-protobuf-metric:processProtoResources
+> Task :protomolt-protobuf-metric:processResources
+> Task :protomolt-search-index-spi:processProtoResources
+> Task :protomolt-search-index-spi:processResources
+> Task :protomolt-asset-catalog:extractIncludeProto
+> Task :protomolt-asset-catalog:extractProto
+> Task :protomolt-asset-catalog:generateProto FROM-CACHE
+> Task :protomolt-protobuf-metric:extractIncludeProto
+> Task :protomolt-protobuf-metric:generateProto FROM-CACHE
+> Task :protomolt-protobuf-metric:compileJava FROM-CACHE
+> Task :protomolt-asset-catalog:compileJava FROM-CACHE
+> Task :protomolt-asset-catalog:processProtoResources
+> Task :protomolt-asset-catalog:processResources
+> Task :protomolt-asset-catalog:classes
+> Task :protomolt-asset-catalog:jar
+> Task :protomolt-emit:compileJava FROM-CACHE
+> Task :protomolt-emit:processResources NO-SOURCE
+> Task :protomolt-emit:classes UP-TO-DATE
+> Task :protomolt-emit:jar
+> Task :protomolt-emit-parquet:compileJava FROM-CACHE
+> Task :protomolt-emit-parquet:processResources NO-SOURCE
+> Task :protomolt-emit-parquet:classes UP-TO-DATE
+> Task :protomolt-emit-parquet:jar
+> Task :protomolt-grpc-invoke:compileJava FROM-CACHE
+> Task :protomolt-grpc-invoke:processResources NO-SOURCE
+> Task :protomolt-grpc-invoke:classes UP-TO-DATE
+> Task :protomolt-grpc-invoke:jar
+> Task :protomolt-grpc-service-contract:processResources
+> Task :protomolt-grpc-service-contract:classes
+> Task :protomolt-grpc-service-contract:jar
+> Task :protomolt-inference-spi:compileJava FROM-CACHE
+> Task :protomolt-inference-service:compileJava FROM-CACHE
+> Task :protomolt-inference-service:processResources NO-SOURCE
+> Task :protomolt-inference-service:classes UP-TO-DATE
+> Task :protomolt-inference-service:jar
+> Task :protomolt-inference-spi:processResources NO-SOURCE
+> Task :protomolt-inference-spi:classes UP-TO-DATE
+> Task :protomolt-inference-spi:jar
+> Task :protomolt-inference-structured:protobufDummy UP-TO-DATE
+> Task :protomolt-inference-structured:extractIncludeProto
+> Task :protomolt-inference-structured:extractProto
+> Task :protomolt-inference-structured:generateProto NO-SOURCE
+> Task :protomolt-inference-structured:compileJava FROM-CACHE
+> Task :protomolt-inference-structured:processProtoResources
+> Task :protomolt-inference-structured:processResources NO-SOURCE
+> Task :protomolt-inference-structured:classes UP-TO-DATE
+> Task :protomolt-inference-structured:jar
+> Task :protomolt-projection:protobufDummy UP-TO-DATE
+> Task :protomolt-projection:extractIncludeProto
+> Task :protomolt-projection:extractProto
+> Task :protomolt-projection:generateProto FROM-CACHE
+> Task :protomolt-projection:compileJava FROM-CACHE
+> Task :protomolt-projection:processProtoResources
+> Task :protomolt-projection:processResources
+> Task :protomolt-projection:classes
+> Task :protomolt-projection:jar
+> Task :protomolt-protobuf-metric:classes
+> Task :protomolt-protobuf-metric:jar
+> Task :protomolt-receipt:processProtoResources
+> Task :protomolt-receipt:processResources
+> Task :protomolt-receipt:classes
+> Task :protomolt-receipt:jar
+> Task :protomolt-registry-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-registry-proto:extractIncludeProto
+> Task :protomolt-registry-proto:extractProto
+> Task :protomolt-registry-proto:generateProto FROM-CACHE
+> Task :protomolt-registry-proto:compileJava FROM-CACHE
+> Task :protomolt-registry-proto:processProtoResources
+> Task :protomolt-registry-proto:processResources
+> Task :protomolt-registry-proto:classes
+> Task :protomolt-registry-proto:jar
+> Task :protomolt-registry-service:compileJava FROM-CACHE
+> Task :protomolt-registry-service:processResources NO-SOURCE
+> Task :protomolt-registry-service:classes UP-TO-DATE
+> Task :protomolt-registry-service:jar
+> Task :protomolt-shapes:compileJava FROM-CACHE
+> Task :protomolt-workflow:compileJava FROM-CACHE
+> Task :protomolt-repo-service:compileTestJava
+> Task :protomolt-repo-service:processTestResources NO-SOURCE
+> Task :protomolt-repo-service:testClasses
+> Task :protomolt-search-index-spi:classes
+> Task :protomolt-search-index-spi:jar
+> Task :protomolt-shapes:processResources NO-SOURCE
+> Task :protomolt-shapes:classes UP-TO-DATE
+> Task :protomolt-shapes:jar
+> Task :protomolt-workflow:processResources NO-SOURCE
+> Task :protomolt-workflow:classes UP-TO-DATE
+> Task :protomolt-workflow:jar
+
+> Task :protomolt-repo-container:compileTestJava
+Note: /tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/base-wt/repo/container/src/test/java/ai/protomolt/proto/repo/container/lifecycle/KafkaPurgeQueueTest.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :protomolt-repo-container:testClasses
+
+> Task :protomolt-repo-service:test
+
+ArchiveDeletionFailureIT > boundReadsUseOriginalBackendIdentityAndNeverTheCurrentDrive() FAILED
+    org.hibernate.exception.ConstraintViolationException at ArchiveDeletionFailureIT.java:122
+        Caused by: org.postgresql.util.PSQLException at ArchiveDeletionFailureIT.java:122
+
+9 tests completed, 1 failed
+
+> Task :protomolt-repo-service:test FAILED
+
+> Task :protomolt-repo-container:test
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [1] "malformed" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [2] "member-order" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [3] "unknown-field" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [4] "operation-id" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [5] "wrong-account" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [6] "invalid-intent" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentOperationCommandsIT > refusesUnsupportedOrCorruptStoredCommands(String) > [8] "version" FAILED
+    java.lang.IllegalArgumentException at DocumentOperationCommandsIT.java:84
+
+DocumentRevisionSchemaArtifactsIT > wrongAccountPrincipalOrGenerationCannotBorrowTheWriteFence() FAILED
+    java.lang.AssertionError at DocumentRevisionSchemaArtifactsIT.java:103
+
+DocumentRevisionSchemaAssetsIT > wrongScopeAndGenerationCannotUseCurrentOwnerFence() FAILED
+    java.lang.AssertionError at DocumentRevisionSchemaAssetsIT.java:126
+
+DocumentRevisionSchemaEvidenceIT > rawFragmentHashSizeOrdinalAndSupportedPartAreChecked() FAILED
+    java.lang.AssertionError at DocumentRevisionSchemaEvidenceIT.java:60
+
+RepositoryCoordinatorHandoffIT > exactRetryAfterSuccessorExpiryDoesNotRenewOrOpenExecution(boolean) > [2] true FAILED
+    org.hibernate.exception.SQLGrammarException at RepositoryCoordinatorHandoffIT.java:28
+        Caused by: org.postgresql.util.PSQLException at RepositoryCoordinatorHandoffIT.java:28
+
+RepositoryCoordinatorSupersessionIT > upgradesExistingReservationsBeforeSupersession(boolean) > [1] false FAILED
+    org.hibernate.exception.SQLGrammarException at RepositoryCoordinatorSupersessionIT.java:31
+        Caused by: org.postgresql.util.PSQLException at RepositoryCoordinatorSupersessionIT.java:31
+
+RepositoryCoordinatorSupersessionIT > upgradesExistingReservationsBeforeSupersession(boolean) > [2] true FAILED
+    org.hibernate.exception.SQLGrammarException at RepositoryCoordinatorSupersessionIT.java:31
+        Caused by: org.postgresql.util.PSQLException at RepositoryCoordinatorSupersessionIT.java:31
+
+RepositorySuccessorActivationIT > exactRetryKeepsLeasesAndRejectsChangedPlan(int) > [2] 95 FAILED
+    org.hibernate.exception.SQLGrammarException at RepositorySuccessorActivationIT.java:214
+        Caused by: org.postgresql.util.PSQLException at RepositorySuccessorActivationIT.java:214
+
+RepositorySuccessorActivationIT > exactRetryKeepsLeasesAndRejectsChangedPlan(int) > [3] 96 FAILED
+    org.hibernate.exception.SQLGrammarException at RepositorySuccessorActivationIT.java:214
+        Caused by: org.postgresql.util.PSQLException at RepositorySuccessorActivationIT.java:214
+
+RepositorySuccessorInstallIT > migrationChecksAlreadyInstalledModes(boolean) > [1] false FAILED
+    org.hibernate.exception.SQLGrammarException at RepositorySuccessorInstallIT.java:39
+        Caused by: org.postgresql.util.PSQLException at RepositorySuccessorInstallIT.java:39
+
+RepositorySuccessorInstallIT > migrationChecksAlreadyInstalledModes(boolean) > [2] true FAILED
+    org.hibernate.exception.SQLGrammarException at RepositorySuccessorInstallIT.java:39
+        Caused by: org.postgresql.util.PSQLException at RepositorySuccessorInstallIT.java:39
+
+89 tests completed, 17 failed
+
+> Task :protomolt-repo-container:test FAILED
+
+[Incubating] Problems report is available at: file:///tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/base-wt/build/reports/problems/problems-report.html
+
+FAILURE: Build completed with 2 failures.
+
+1: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':protomolt-repo-service:test'.
+> There were failing tests. See the report at: file:///tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/base-wt/repo/service/build/reports/tests/test/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+==============================================================================
+
+2: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':protomolt-repo-container:test'.
+> There were failing tests. See the report at: file:///tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/base-wt/repo/container/build/reports/tests/test/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+==============================================================================
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 3m 9s
+239 actionable tasks: 158 executed, 81 from cache

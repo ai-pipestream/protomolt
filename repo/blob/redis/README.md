@@ -18,8 +18,9 @@ Redis Cluster is not supported by this implementation.
 
 ## Create-only physical keys
 
-Optional `write-policy=create-only` selects a separate physical layout with backend
-identity `redis/v3`. The default `replace` retains `redis/v2` and its existing keys.
+The required `write-policy` option is `replace` or `create-only`. `create-only`
+selects a separate physical layout with backend identity `redis/v3`; `replace`
+retains `redis/v2` and its existing keys.
 The v3 key prefix is `protomolt:redis:v3-create-only:`; each following component
 uses the same canonical encoding as v2. Identical endpoint, configured prefix,
 namespace and logical key do not alias between policies. There is no automatic

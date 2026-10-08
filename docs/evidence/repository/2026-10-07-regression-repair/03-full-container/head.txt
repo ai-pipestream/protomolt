@@ -1,0 +1,13 @@
+HEAD=ad28648c8a522b826fd9828fb05278e1de926415
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentNativePublicationFixture.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentOperationCommandsIT.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaArtifactsIT.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaAssetsIT.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentRevisionSchemaEvidenceIT.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/LegacyPublicationPreparationFixture.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryCoordinatorHandoffIT.java
+ M repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/RepositorySuccessorInstallIT.java
+ M repo/service/src/test/java/ai/protomolt/proto/repo/service/ArchiveDeletionFailureIT.java
+CMD: ./gradlew :protomolt-repo-container:test --max-workers=2 --console=plain
+Wed Oct  7 11:40:05 AM UTC 2026
+Wed Oct  7 12:02:51 PM UTC 2026

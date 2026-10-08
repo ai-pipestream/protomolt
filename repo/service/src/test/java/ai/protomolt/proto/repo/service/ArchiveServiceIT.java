@@ -71,7 +71,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * counters, tombstoned rendition deletion, pruning, and both versioning
  * policies.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveServiceIT {
 
     @Container
@@ -345,10 +345,18 @@ class ArchiveServiceIT {
         alias.driveId = java.util.UUID.randomUUID(); alias.accountId = account; alias.name = "alias-" + unique;
         alias.bucket = drive.bucket; alias.prefix = "unrelated-prefix"; alias.driveType = "CUSTOM";
         services.driveLedger().insert(alias);
-        try (var provider = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.of(
-                "endpoint", LOCALSTACK.getEndpoint().toString(), "region", LOCALSTACK.getRegion(),
-                "access-key", LOCALSTACK.getAccessKey(), "secret-key", LOCALSTACK.getSecretKey(),
-                "path-style", "true", "conditional-writes", "true"))) {
+        try (var provider = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.ofEntries(
+                java.util.Map.entry("endpoint", LOCALSTACK.getEndpoint().toString()),
+                java.util.Map.entry("region", LOCALSTACK.getRegion()),
+                java.util.Map.entry("access-key", LOCALSTACK.getAccessKey()),
+                java.util.Map.entry("secret-key", LOCALSTACK.getSecretKey()),
+                java.util.Map.entry("path-style", "true"),
+                java.util.Map.entry("conditional-writes", "true"),
+                java.util.Map.entry("credentials-mode", "static"),
+                java.util.Map.entry("api-call-timeout-ms", "300000"),
+                java.util.Map.entry("api-attempt-timeout-ms", "60000"),
+                java.util.Map.entry("connection-timeout-ms", "10000"),
+                java.util.Map.entry("socket-timeout-ms", "60000")))) {
             var local = new ai.protomolt.proto.repo.engine.BlobOperations(provider.store(), services.driveLedger());
             var documents = services.services().stream().filter(DocumentGrpcService.class::isInstance)
                     .map(DocumentGrpcService.class::cast).findFirst().orElseThrow().repository();

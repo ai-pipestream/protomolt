@@ -9,9 +9,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class S3ProviderTest {
     private static Map<String, String> options() {
-        return new HashMap<>(Map.of("endpoint", "http://127.0.0.1:1", "region", "us-east-1",
-                "access-key", "test", "secret-key", "test-secret", "path-style", "true",
-                "conditional-writes", "false"));
+        return new HashMap<>(Map.ofEntries(
+                Map.entry("endpoint", "http://127.0.0.1:1"),
+                Map.entry("region", "us-east-1"),
+                Map.entry("access-key", "test"),
+                Map.entry("secret-key", "test-secret"),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
     }
 
     @Test void discoveryAndOpeningDoNotContactTheEndpoint() throws Exception {
@@ -36,6 +45,16 @@ class S3ProviderTest {
         credentialUrl.put("endpoint", "http://user:secret@localhost");
         assertThatThrownBy(() -> providers.open("s3", credentialUrl))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("secret");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"credentials-mode", "api-call-timeout-ms",
+            "api-attempt-timeout-ms", "connection-timeout-ms", "socket-timeout-ms", "region", "path-style"})
+    void everyOptionIsRequiredWithNoDefault(String key) {
+        var options = options();
+        options.remove(key);
+        assertThatThrownBy(() -> BlobStores.discover().open("s3", options))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Missing S3 option: " + key);
     }
 
     @Test void explicitDefaultChainDoesNotResolveCredentialsDuringAcquisition() throws Exception {

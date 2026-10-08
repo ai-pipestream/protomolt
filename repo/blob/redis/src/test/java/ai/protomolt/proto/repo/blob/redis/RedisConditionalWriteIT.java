@@ -30,7 +30,7 @@ class RedisConditionalWriteIT {
                 ai.protomolt.proto.repo.blob.spi.BlobCapability.AUTHORITATIVE_CONDITIONAL_READ);
         try (var opened = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("redis", Map.of(
                 "uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
-                "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", UUID.randomUUID().toString()), capabilities)) {
+                "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", UUID.randomUUID().toString(), "write-policy", "replace"), capabilities)) {
             var result = opened.store().conditionalPut(spec(), new byte[]{4}, BlobStore.WriteCondition.absent());
             var read = opened.store().getForUpdate("namespace", "key");
             assertThat(read.data()).containsExactly(4);

@@ -24,8 +24,9 @@ class RepositoryCoordinatorHandoffIT {
             var initial = input(c); var incarnation = UUID.randomUUID();
             var value = new DocumentPublicationPreparationRecord(initial.key(), initial.command(), initial.seeds(),
                     initial.placements(), Duration.ofSeconds(1), 0);
-            var claim = new DocumentPublicationPreparationJournal(c.tx(), new PayloadBudget(64_000_000))
-                    .acquireInitial(CALLER, value, UUID.randomUUID(), incarnation, NONE);
+            // A V95 schema is seeded by its own era's preparation writer, never the V103+ journal.
+            var claim = LegacyPublicationPreparationFixture.acquireInitial(c.tx(), new PayloadBudget(64_000_000), CALLER, value,
+                    UUID.randomUUID(), incarnation, NONE);
             RepositoryCoordinatorDrain.begin(c.tx(), CALLER, claim, incarnation, NONE);
             var identity = new RepositoryCoordinatorDrain.Identity(claim.key(), claim.commandSha256(), 1, claim.token(), incarnation);
             RepositoryCoordinatorLocalDrain.record(c.tx(), CALLER, identity, NONE);
@@ -34,11 +35,22 @@ class RepositoryCoordinatorHandoffIT {
                     .hasStackTraceContaining("expired predecessor");
             c.tx().readOnly(em -> em.createNativeQuery("SELECT pg_sleep(1.1)").getSingleResult());
             var stamp = RepositoryCoordinatorHandoff.reserve(c.tx(), CALLER, proposal, NONE);
+            var legacyState = retainedState(c, value.key().operationId());
+            assertThat(((Number) legacyState[6]).longValue()).isEqualTo(1);
             if (migrateExisting) {
+                assertThat(LegacyPublicationPreparationFixture.schemaVersion(c.tx())).isEqualTo(95);
                 var schema = c.pool().getSchema();
                 org.flywaydb.core.Flyway.configure().dataSource(c.pool().getJdbcUrl(), c.pool().getUsername(), c.pool().getPassword())
                         .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
+                assertThat(LegacyPublicationPreparationFixture.schemaVersion(c.tx()))
+                        .isGreaterThanOrEqualTo(LegacyPublicationPreparationFixture.HISTORY_SETS_VERSION);
+                // V103 deliberately leaves existing preparations unindexed: migration invents no history set.
+                assertThat(count(c, "repository_preparation_history_sets")).isZero();
             }
+            // Migration keeps the stored claim/owner identity, leases and preparation row intact.
+            Object[] migratedState = retainedState(c, value.key().operationId());
+            assertThat(migratedState).containsExactly(legacyState);
+            assertThat(((Number) migratedState[6]).longValue()).isEqualTo(1);
             var reservation = c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
                     SELECT kind,predecessor_remote_state,successor_token,successor_incarnation,recorded_at
                     FROM repository_coordinator_reservations WHERE operation_id=:o
@@ -292,5 +304,20 @@ class RepositoryCoordinatorHandoffIT {
             }
             assertThat(budget.reservedBytes()).isZero();
         }
+    }
+
+    /** Stable scalar/hex snapshot of the claim, owner lease and exact preparation bytes across migration. */
+    private static Object[] retainedState(Context c, UUID operation) {
+        return c.tx().readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT c.claim_epoch,c.claim_token,c.lease_until,o.owner_generation,o.owner_token,o.lease_until,
+                 (SELECT count(*) FROM repository_publication_preparations p WHERE p.operation_id=c.operation_id),
+                 p.account_id::text,p.principal,p.operation_id::text,p.predecessor_generation,p.owner_nonce::text,
+                 p.command_codec,p.command_version,encode(p.command_bytes,'hex'),encode(p.command_sha256,'hex'),
+                 encode(p.preparation_bytes,'hex'),encode(p.preparation_sha256,'hex')
+                FROM repository_execution_claims c
+                LEFT JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                JOIN repository_publication_preparations p USING(account_id,principal,operation_id)
+                WHERE c.operation_id=:o
+                """).setParameter("o", operation).getSingleResult());
     }
 }
