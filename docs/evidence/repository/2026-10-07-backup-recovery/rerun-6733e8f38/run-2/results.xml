@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="rehearsal" tests="17" failures="0" errors="0" skipped="0">
+  <testcase classname="rehearsal" name="source.started" timestamp="2026-10-08T15:37:04.011563572Z"><system-out>postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:38003</system-out></testcase>
+  <testcase classname="rehearsal" name="seed.exit" timestamp="2026-10-08T15:37:10.207197736Z"><system-out>seed host exit=0</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.quiescent" timestamp="2026-10-08T15:37:10.213985731Z"><system-out>client backends other than the capture connection: []</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.pg_dump" timestamp="2026-10-08T15:37:11.210149991Z"><system-out>exit=0 stderr=</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.stopped" timestamp="2026-10-08T15:37:11.819626327Z"><system-out>postgres {exitCode=0, status=exited, finishedAt=2026-10-08T15:37:11.369477726Z}; rustfs {exitCode=0, status=exited, finishedAt=2026-10-08T15:37:11.614260038Z}</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.provider_archive" timestamp="2026-10-08T15:37:12.278215159Z"><system-out>exit=0 stderr=</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.sealed" timestamp="2026-10-08T15:37:12.382964861Z"><system-out>components=16 manifest sha256=d68b7fde71923763a337915b94814c303a48fec7e217d16f80fd3b48fdd42eff</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.preflight" timestamp="2026-10-08T15:37:12.384381350Z"><system-out>sealed set verifies</system-out></testcase>
+  <testcase classname="rehearsal" name="source.unreachable" timestamp="2026-10-08T15:37:12.751904684Z"><system-out>source containers removed; database refuses connections; provider port 38003 free</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.provider_identity" timestamp="2026-10-08T15:37:15.400015380Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:38003</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.pg_restore" timestamp="2026-10-08T15:37:18.930162200Z"><system-out>exit=0 into new database protomolt-recovery-16cb7617f-4cf5387b-rst-pg</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.xid_epoch" timestamp="2026-10-08T15:37:18.965670894Z"><system-out>next xid 1580 &gt; max stored xid8 1012 (no advancement needed)</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.sequences" timestamp="2026-10-08T15:37:18.966370948Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.migration_level" timestamp="2026-10-08T15:37:18.967003594Z"><system-out>V111</system-out></testcase>
+  <testcase classname="rehearsal" name="recovered.exit" timestamp="2026-10-08T15:37:24.030970221Z"><system-out>recovered host exit=0 READY=true</system-out></testcase>
+  <testcase classname="rehearsal" name="source.volume_untouched" timestamp="2026-10-08T15:37:25.180300435Z"><system-out>source provider volume digest unchanged 261fff9224077aaa5883e09bb4f057f1d681617520ad846990dac4d32d34c89a</system-out></testcase>
+  <testcase classname="rehearsal" name="backup.untouched" timestamp="2026-10-08T15:37:25.182001251Z"><system-out>backup components unchanged after restore and verification</system-out></testcase>
+</testsuite>
