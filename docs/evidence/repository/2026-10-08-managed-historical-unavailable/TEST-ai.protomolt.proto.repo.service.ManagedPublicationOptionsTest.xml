@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-08T08:34:42.926Z" hostname="krick" time="0.046">
+  <properties/>
+  <testcase name="deliveryCapacityCannotExcludeValidMaximumRequestsAtConstruction()" classname="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" time="0.03"/>
+  <testcase name="historicalPublicationRequiresExplicitCapacityAndRecoveryAuthority()" classname="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" time="0.008"/>
+  <testcase name="libraryOptionsDoNotInferRecoveryOrTransportAuthority()" classname="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

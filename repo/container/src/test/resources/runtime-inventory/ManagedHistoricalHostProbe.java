@@ -72,6 +72,8 @@ public final class ManagedHistoricalHostProbe {
                     var initial = host.publicationRepository().publishDocument(caller, fixture.request(), RepositoryReadControl.NONE);
                     require(initial.hasCommitted(), "ordinary publication still works with either option");
                     var request = historical(tx, caller, fixture.request(), initial.getCommitted().getMembers(0));
+                    if (enabled) ManagedHistoricalUnavailableProbe.run(config, bundle, git, definition,
+                            tx, caller, request, remoteFirst);
                     recoveryKey.set(new DocumentPublicationCommand(request.getIntent()));
                     int before = resolutions.get();
                     String name = "managed-historical-" + UUID.randomUUID();

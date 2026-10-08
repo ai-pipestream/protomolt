@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
 import ai.protomolt.proto.repo.container.ledger.SqlTimeouts;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.engine.DocumentPartReader;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.Objects;
@@ -169,7 +170,8 @@ final class ManagedDocumentServices {
     private static void requireOriginal(String generation, ManagedBackendLedger.Profile profile,
             String original, ManagedBackendLedger.Profile selected) {
         if (!generation.equals(original) || !profile.equals(selected))
-            throw new IllegalStateException("Original document backend is not configured on this host");
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Original document backend is unavailable");
     }
 
     private ai.protomolt.proto.repo.v1.PublishDocumentResponse publish(

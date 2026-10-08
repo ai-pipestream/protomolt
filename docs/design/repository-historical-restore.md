@@ -1130,8 +1130,11 @@ and installed crash boundaries, with exact public retries and both hosted reader
 drained. Preparation retains its actual encoded plan allowance rather than a fixed
 16 MiB reservation that exceeded the host budget during activation. See
 [managed cold evidence](../evidence/repository/2026-10-08-managed-historical-cold/README.md).
-Next qualify unavailable retained backend identity and close while historical work
-is held. Multi-backend operation, deployed recovery and performance remain
+A new historical publication now refuses an unavailable source generation with
+`FAILED_PRECONDITION` through both hosted boundaries, with no current-backend
+substitution. See [unavailable source evidence](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md).
+Next qualify unavailable upload placements during recovery and close while historical
+work is held. Multi-backend operation, deployed recovery and performance remain
 unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)

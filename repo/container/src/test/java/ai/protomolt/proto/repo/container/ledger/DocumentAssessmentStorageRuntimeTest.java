@@ -24,7 +24,8 @@ class DocumentAssessmentStorageRuntimeTest {
 
     @Test void managedHistoricalHostBinding() throws Exception {
         boundedPublicHostBinding("ManagedHistoricalHostProbe", "MANAGED_HISTORICAL_ENABLED_LIBRARY_OK", "MANAGED_HISTORICAL_ENABLED_RPC_OK",
-                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK", "MANAGED_HISTORICAL_DISABLED_RPC_OK");
+                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK", "MANAGED_HISTORICAL_DISABLED_RPC_OK",
+                "MANAGED_HISTORICAL_UNAVAILABLE_LIBRARY_OK", "MANAGED_HISTORICAL_UNAVAILABLE_RPC_OK");
     }
 
     private void boundedPublicHostBinding(String probe, String... markers) throws Exception {
