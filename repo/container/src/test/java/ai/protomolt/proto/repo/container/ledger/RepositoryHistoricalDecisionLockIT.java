@@ -4,7 +4,6 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import java.time.Duration;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -53,6 +52,14 @@ class RepositoryHistoricalDecisionLockIT {
     }
 
     @Test void cancellationWaitsForClaimWithoutHoldingOwner() throws Exception {
+        competingCancellations(1);
+    }
+
+    @Test void concurrentCancellationsReturnOneReceipt() throws Exception {
+        competingCancellations(2);
+    }
+
+    private void competingCancellations(int contenders) throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofMinutes(5));
              var work = rig.sources().work();
              var workers = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -67,12 +74,12 @@ class RepositoryHistoricalDecisionLockIT {
                 DocumentPublicationModesJournal.insert(em, rig.claim(), rig.record(), modes);
                 return admission.apply(em, rig.claim()).owner().orElseThrow();
             });
-            var cancelled = new AtomicReference<Future<DocumentPublicationReplay.Observation>>();
+            var cancelled = new java.util.ArrayList<Future<DocumentPublicationReplay.Observation>>();
             c.tx().withTimeouts(new SqlTimeouts(Duration.ofSeconds(10), Duration.ofSeconds(10))).inTransaction(em -> {
                 int holder = ((Number) em.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
                 em.createNativeQuery("SELECT claim_token FROM repository_execution_claims WHERE operation_id=:o FOR UPDATE")
                         .setParameter("o", key.operationId()).getSingleResult();
-                cancelled.set(workers.submit(() -> new DocumentPublicationRejections(c.tx().withTimeouts(
+                for (int i = 0; i < contenders; i++) cancelled.add(workers.submit(() -> new DocumentPublicationRejections(c.tx().withTimeouts(
                         new SqlTimeouts(Duration.ofSeconds(10), Duration.ofSeconds(10))))
                         .cancel(CALLER, owner, command, RepositoryReadControl.NONE)));
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -80,19 +87,32 @@ class RepositoryHistoricalDecisionLockIT {
                 while (System.nanoTime() < deadline) {
                     em.createNativeQuery("SELECT pg_stat_clear_snapshot()").getSingleResult();
                     blocked = ((Number) em.createNativeQuery("""
-                            SELECT count(*) FROM pg_stat_activity
-                            WHERE :holder=ANY(pg_blocking_pids(pid))
-                            """).setParameter("holder", holder).getSingleResult()).longValue() == 1;
+                            WITH RECURSIVE waiting(pid) AS (
+                                SELECT pid FROM pg_stat_activity WHERE :holder=ANY(pg_blocking_pids(pid))
+                                UNION
+                                SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))
+                            ) SELECT count(*) FROM waiting
+                            """).setParameter("holder", holder).getSingleResult()).longValue() == contenders;
                     if (blocked) break;
                     java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
                 }
-                assertThat(blocked).as("cancellation is waiting for the held claim").isTrue();
+                assertThat(blocked).as("all cancellation transactions are waiting for the held claim").isTrue();
                 // A claim-first decision must leave the owner available while waiting.
                 em.createNativeQuery("SELECT owner_token FROM repository_operation_owners WHERE operation_id=:o FOR UPDATE NOWAIT")
                         .setParameter("o", key.operationId()).getSingleResult();
             });
-            var result = cancelled.get().get(5, TimeUnit.SECONDS);
+            var result = cancelled.getFirst().get(5, TimeUnit.SECONDS);
             assertThat(result.state()).isEqualTo(DocumentPublicationReplay.State.TERMINATED);
+            assertThat(result.rejection()).isPresent();
+            for (var contender : cancelled) assertThat(contender.get(5, TimeUnit.SECONDS)).isEqualTo(result);
+            c.tx().readOnly(em -> {
+                assertThat(((Number) em.createNativeQuery("""
+                        SELECT count(*) FROM repository_operation_rejection
+                        WHERE account_id=:a AND principal=:p AND operation_id=:o
+                        """).setParameter("a", key.account()).setParameter("p", key.principal())
+                        .setParameter("o", key.operationId()).getSingleResult()).longValue()).isEqualTo(1);
+                return null;
+            });
             assertThat(new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, command, RepositoryReadControl.NONE))
                     .isEqualTo(result);
         }

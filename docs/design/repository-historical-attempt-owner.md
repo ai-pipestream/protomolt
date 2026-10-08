@@ -1283,3 +1283,9 @@ with the provider reader closed. Credential revocation after retirement prevents
 client delivery while authorized recovery preserves the original receipt. See
 `docs/evidence/repository/2026-10-08-successor-rejection-delivery/`.
 Revocation during a pending decision remains separate acceptance work.
+
+Concurrent cancellation is qualified with PostgreSQL transactions waiting
+on the same claim. Both return one durable rejection. The owner lock remains
+available while cancellation waits. See
+`docs/evidence/repository/2026-10-08-terminal-decision-contention/`.
+This does not establish assessment-rejection versus cancellation ordering.
