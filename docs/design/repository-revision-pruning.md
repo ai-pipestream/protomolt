@@ -139,6 +139,38 @@ from inserting an unclassified preparation after a coverage check. Choose and te
 the database-enforced coverage/version barrier before enabling deletion; do not put
 an unbounded scan of every command blob on each prune request.
 
+The reviewed approach is canonical coverage certification, not header existence
+alone. V103 does not decode protobuf: an internally consistent empty or unrelated
+root set can still omit the command's actual sources. The private Java journal
+must require `DocumentPreparationHistoryRoots.coverage` to return EXACT before
+writing a certificate in the same transaction. Bind that certificate to preparation
+identity, preparation digest, command digest, root count/digest and verifier version.
+A deferred new-preparation constraint must require both the certificate and sealed
+header. This is still planned; no certificate is currently written.
+
+This proof relies on the trusted repository handler. Direct table DML using the
+backend database role is privileged administration, not a supported publication
+API. SQL checks identity, atomicity and relational invariants; it cannot attest
+that Java decoded protobuf, and a same-role writer can forge a marker. Document
+this boundary rather than describing the marker as independently verified evidence.
+Supporting untrusted direct SQL publication would require a separate privilege
+boundary or a database-side decoder.
+
+Track pre-certification preparations in an account-indexed unresolved ledger,
+populated once during migration. Reconcile bounded batches with the existing
+preparation codec and digest checks. For live roots, require canonical coverage;
+for released roots, use `DocumentPreparationRootReleases.requireReleased` to verify
+the exact terminal receipt, canonical roots and qualified capture drains. Missing
+headers, false empty sets, mismatched digests or absent release evidence stay
+unresolved. Do not invent roots or infer release from expiry. Clear an unresolved
+entry only in the transaction that records its verified certificate.
+
+Avoid an account counter lock held across document or physical-origin locks. A
+READ COMMITTED indexed unresolved check is combined with the source document's
+exclusive fence: new committed preparations must certify atomically, and any new
+source root must acquire that same source fence. The reconciliation protocol and
+future-writer guard need race tests before this becomes pruning authorization.
+
 Shared physical objects and schema artifacts survive until their last live owner
 releases them. Current revisions, archive references, reads, assessments and staged
 schema claims remain independent owners. A pruned source's immutable provenance
@@ -232,6 +264,14 @@ on read-pin and preparation-root INSERTs. Both read scopes are covered because a
 CURRENT pin can survive a pointer move. [PostgreSQL evidence](../evidence/repository/2026-10-08-history-acquisition-fence/README.md)
 covers both transaction orderings and complete registration rollback. This does
 not establish a pruned-state check, release live references or permit deletion.
+
+V117 applies the same acquisition fence to assessment source-slot INSERTs. It
+resolves both REUSE and HISTORICAL_REUSE through the immutable source revision,
+including REUSE's absent source_node. [Assessment fence evidence](../evidence/repository/2026-10-08-assessment-source-fence/README.md)
+covers both orderings, transaction rollback and successful retry. Committed slots
+still retain their sources until qualified release. Canonical preparation coverage
+certification is the next activation prerequisite; a sealed V103 header alone is
+not sufficient.
 
 Sol reviewed the source obligations and this design on 2026-10-08. The review
 supports preserving audit identities, splitting schema payloads, and avoiding the
