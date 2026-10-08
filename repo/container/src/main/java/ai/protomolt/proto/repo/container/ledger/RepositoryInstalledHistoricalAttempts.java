@@ -15,6 +15,10 @@ import java.util.function.Function;
 final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
     record Drain(int active, int unresolved) {}
     enum Retirement { NOT_PROVEN, RETAINED, RETIRED }
+    /** A borrowed generation's local state, not authorization or evidence of a durable outcome. */
+    record Progress(UUID identity, boolean disposalOnly, boolean sourcesAttached, boolean assessmentPrepared,
+            Optional<DocumentHistoricalExecution.Progress> execution,
+            Optional<DocumentAssessmentCreation.Created> acknowledgedCreation) {}
     private enum RetirementProof { NONE, TERMINAL, FENCED }
     private final Tx tx;
     private final PayloadBudget budget;
@@ -328,6 +332,13 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         private boolean ended;
         private Attempt(Entry entry) { this.entry = entry; }
         synchronized UUID identity() { requireActive(RepositoryReadControl.NONE); return entry.id; }
+        synchronized Progress progress(RepositoryReadControl control) {
+            requireActive(control);
+            return new Progress(entry.id, entry.supersessionPending || entry.retirement != RetirementProof.NONE,
+                    entry.sources != null, entry.assessment != null,
+                    entry.execution == null ? Optional.empty() : Optional.of(entry.execution.progress()),
+                    Optional.ofNullable(entry.stage));
+        }
         private void requireActive(RepositoryReadControl control) {
             if (ended) throw new IllegalStateException("Historical attempt call is closed");
             Objects.requireNonNull(control).check();

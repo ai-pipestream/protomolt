@@ -1186,3 +1186,30 @@ The evidence directories are under `docs/evidence/repository/`. Remaining cases
 include successor provider faults and expiry, destination-only revocation,
 cancellation after verification and SQL timeout in a later callback.
 Managed public routing and transport parity remain unfinished.
+
+### Retained progress for managed dispatch
+
+The managed driver needs local progress before choosing an action on a borrowed
+attempt. `Attempt.progress` distinguishes attached sources, retained assessment,
+execution state, acknowledged CREATE and disposal-only ownership. The execution
+snapshot distinguishes an attempted START, observed START coordinates and a
+positively acknowledged INSERT. Loading coordinates after a lost reply does not
+grant CREATE authority. CREATE and publication attempt flags retain their existing
+mutation boundaries; an acknowledged CREATE is recorded only after success or
+positive reconciliation.
+
+These immutable snapshots guide local routing only. They neither establish a live
+claim nor authorize source reads, publication or receipt delivery. Each action
+still checks its own authority and durable bindings. In particular, publication
+attempted does not mean committed; the driver must observe the durable receipt.
+A failed START can leave attempted true even when no insert committed. A later
+successful insert can establish acknowledgement; loading an existing START cannot.
+The PostgreSQL and packaged-provider checks are recorded in
+`docs/evidence/repository/2026-10-08-historical-progress/`.
+
+Before adding public dispatch, integrate the historical owner with runtime shutdown
+and qualify that lifecycle independently. Historical validation rejection also
+needs a complete terminal decision path: the current private owner prepares and
+retains assessments but does not expose that complete rejection flow. Preserve the
+public historical restriction until rejection, cold recovery and library/transport
+acceptance cases are complete.

@@ -23,11 +23,23 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentHistoricalSuccessorBinding successor;
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
+    private boolean startAttempted;
+    private DocumentAssessmentStartJournal.Started observedStart;
     private boolean assessmentCreateAttempted;
     private AttemptedCreate attemptedCreate;
     private boolean publicationAttempted;
     private boolean closed;
     private boolean successorAttachmentVerified;
+
+    /** Local routing facts only; none replace current authority or durable receipt checks. */
+    record Progress(boolean closed, boolean startAttempted, Optional<DocumentAssessmentStartJournal.Started> observedStart,
+            Optional<DocumentAssessmentStartJournal.Started> acknowledgedStart,
+            boolean createAttempted, boolean publicationAttempted) {}
+
+    synchronized Progress progress() {
+        return new Progress(closed, startAttempted, Optional.ofNullable(observedStart), Optional.ofNullable(acknowledgedStart),
+                assessmentCreateAttempted, publicationAttempted);
+    }
 
     /** Exact original proposal, retained even when CREATE's transaction reply is lost. */
     private record AttemptedCreate(DocumentAssessmentCreation.Created stage,
@@ -164,14 +176,18 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
-        var result = mutate(caller, control, em -> successor == null
-                ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), retention, control)
-                : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), retention, control));
+        var result = mutate(caller, control, em -> {
+            startAttempted = true;
+            return successor == null
+                    ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), retention, control)
+                    : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), retention, control);
+        });
         // Only a positively acknowledged INSERT grants this handle CREATE authority.
         // Loading coordinates after an uncertain acknowledgement is reconciliation-only.
         if (result.inserted()) acknowledgedStart = result.started();
         else if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start changed");
+        observedStart = result.started();
         return result.started();
     }
 

@@ -104,6 +104,11 @@ final class HistoricalInitialOwnerProbe {
             try (var request = attempts.resume(caller, command).orElseThrow()) {
                 request.openExecution(coordinator, RepositoryReadControl.NONE);
                 require(request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE).equals(started), "initial START survives separate calls");
+                var progress = request.progress(RepositoryReadControl.NONE);
+                require(progress.sourcesAttached() && progress.assessmentPrepared() && !progress.disposalOnly(),
+                        "initial retry retains source and assessment phases");
+                require(progress.execution().orElseThrow().acknowledgedStart().orElseThrow().equals(started)
+                        && progress.acknowledgedCreation().isEmpty(), "START acknowledgement survives borrowing");
                 if (fault == null) request.createAssessment(selections, observation, new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
                 else {
                     fault.arm(started.assessment());
@@ -112,6 +117,10 @@ final class HistoricalInitialOwnerProbe {
                         throw new AssertionError("Initial CREATE did not lose its reply");
                     } catch (RuntimeException failure) { fault.requireFailure(failure); }
                 }
+                require(request.progress(RepositoryReadControl.NONE).execution().orElseThrow().createAttempted(),
+                        "CREATE attempt remains visible even after a lost reply");
+                require(request.progress(RepositoryReadControl.NONE).acknowledgedCreation().isPresent() == (fault == null),
+                        "only acknowledged CREATE is reported as available");
             }
             if (fault != null) {
                 try (var request = attempts.resume(caller, command).orElseThrow()) {
@@ -124,12 +133,16 @@ final class HistoricalInitialOwnerProbe {
                     var reconciled = request.reconcileAssessment(selections, observation, RepositoryReadControl.NONE).orElseThrow();
                     require(reconciled.assessment().equals(started.assessment()) && reconciled.retainUntil().equals(started.retainUntil()),
                             "initial reconciliation keeps exact START coordinates");
+                    require(request.progress(RepositoryReadControl.NONE).acknowledgedCreation().orElseThrow().equals(reconciled),
+                            "reconciliation updates retained CREATE progress");
                 }
             }
             DocumentPublicationResult result;
             try (var request = attempts.resume(caller, command).orElseThrow()) {
                 result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
                         new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                require(request.progress(RepositoryReadControl.NONE).execution().orElseThrow().publicationAttempted(),
+                        "publication attempt remains visible for durable replay");
             }
             require(result.getOwnerGeneration() == 1, "receipt belongs to initial generation");
             HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);

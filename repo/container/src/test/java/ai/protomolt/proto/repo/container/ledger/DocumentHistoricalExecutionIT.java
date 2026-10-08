@@ -145,6 +145,9 @@ class DocumentHistoricalExecutionIT {
                             }
                         } else accepted = registration.historicalExecution(CALLER, candidateOwner, requestedModes, NONE);
                         try (var execution = accepted) {
+                            assertThat(execution.progress().startAttempted()).isFalse();
+                            assertThat(execution.progress().observedStart()).isEmpty();
+                            assertThat(execution.progress().acknowledgedStart()).isEmpty();
                             var retention = Duration.ofMinutes(5);
                             if (variant.equals("start-rollback") || variant.equals("start-lost-ack")) {
                                 startFault.set(true);
@@ -155,6 +158,9 @@ class DocumentHistoricalExecutionIT {
                                         "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:o")
                                         .setParameter("o", command.operationId()).getSingleResult()).longValue());
                                 assertThat(count).isEqualTo(variant.equals("start-lost-ack") ? 1 : 0);
+                                assertThat(execution.progress().startAttempted()).isTrue();
+                                assertThat(execution.progress().observedStart()).isEmpty();
+                                assertThat(execution.progress().acknowledgedStart()).isEmpty();
                             }
                             DocumentAssessmentStartJournal.Started started;
                             if (variant.equals("start-concurrent")) {
@@ -169,6 +175,13 @@ class DocumentHistoricalExecutionIT {
                                 }
                             } else started = execution.start(CALLER, retention, NONE);
                             assertThat(execution.start(CALLER, retention, NONE)).isEqualTo(started);
+                            assertThat(execution.progress().observedStart()).contains(started);
+                            assertThat(execution.progress().createAttempted()).isFalse();
+                            assertThat(execution.progress().publicationAttempted()).isFalse();
+                            if (variant.equals("start-lost-ack"))
+                                assertThat(execution.progress().acknowledgedStart()).isEmpty();
+                            else if (!variant.equals("start-concurrent"))
+                                assertThat(execution.progress().acknowledgedStart()).contains(started);
                             if (variant.equals("start-lost-ack")) assertThat(started.assessment()).isEqualTo(proposedStart.get());
                             if (variant.equals("start-rollback")) assertThat(started.assessment()).isNotEqualTo(proposedStart.get());
                             if (variant.equals("start-retention"))
