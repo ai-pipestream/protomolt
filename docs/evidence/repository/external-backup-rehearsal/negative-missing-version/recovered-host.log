@@ -1,0 +1,46 @@
+CHECK_OK missing-version.provider_version_absent :: GET recorded version -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+CHECK_OK missing-version.latest_differs :: a newer latest version exists under the same key: a50147a7-24c8-44a4-993c-3cb002730d8e
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@e041f0c
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.050s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 7:48:32 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 7:48:32 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 7:48:32 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 7:48:32 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33016/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 7:48:33 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK missing-version.raw_refused :: readRaw(alpha-v1) -> DATA_LOSS
+CHECK_OK missing-version.validated_refused :: readValidated(alpha-v1) -> DATA_LOSS
+CHECK_OK missing-version.materialized_refused.1 :: readMaterialized(alpha-v1) -> DATA_LOSS; the newer version was not substituted
+CHECK_OK missing-version.materialized_refused.3 :: readMaterialized(alpha-v1) -> DATA_LOSS; the newer version was not substituted
+CHECK_OK missing-version.unaffected.alpha-v2 :: unaffected revision still reads byte-equal
+CHECK_OK missing-version.unaffected.beta-v1 :: unaffected revision still reads byte-equal
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK missing-version.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK missing-version.not_ready :: READY is only written by a fully verified host
+REPOSITORY_BACKUP_REHEARSAL_RECOVERED_MISSING_VERSION_OK

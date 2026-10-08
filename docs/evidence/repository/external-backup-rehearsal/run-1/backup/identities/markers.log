@@ -1,0 +1,92 @@
+CHECK_OK seed.drive.rehearsal-alpha-747b145a :: drive=f84ef705-a945-32c1-bcfb-4d183168449b bucket=rehearsal-alpha-747b145a
+CHECK_OK seed.drive.rehearsal-beta-747b145a :: drive=d7c7be83-bcaa-3d91-8d8b-b2893b6aca49 bucket=rehearsal-beta-747b145a
+CHECK_OK seed.publish.alpha-v1 :: committed revision 4a01d3d1-4f7d-42aa-9b96-9083b0542b27
+CHECK_OK seed.replay.alpha-v1.live :: receipt replay while live
+CHECK_OK seed.publish.alpha-v2 :: committed revision a5c5a106-865b-4976-8890-b2e8de66b85d
+CHECK_OK seed.publish.alpha-v2.identity :: same address, new revision, distinct data, mutation 1 -> 2
+CHECK_OK seed.publish.beta-v1 :: committed revision 500c0bfc-7449-4d60-92a2-1e191f90b9c5
+CHECK_OK seed.schema.live_resolution_used :: registry resolutions=3
+CHECK_OK seed.ledger.evidence_artifact.alpha-v1.Record :: evidence references the retained artifact ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce for type.test/protomolt.rehearsal.Record
+CHECK_OK seed.ledger.evidence_artifact.alpha-v1.Attachment :: evidence references the retained artifact d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 for type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.ledger.occurrences.alpha-v1 :: root and nested Any occurrences retained: 2
+CHECK_OK seed.ledger.evidence_artifact.alpha-v2.Record :: evidence references the retained artifact ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce for type.test/protomolt.rehearsal.Record
+CHECK_OK seed.ledger.evidence_artifact.alpha-v2.Attachment :: evidence references the retained artifact d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 for type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.ledger.occurrences.alpha-v2 :: root and nested Any occurrences retained: 2
+CHECK_OK seed.ledger.evidence_artifact.beta-v1.Record :: evidence references the retained artifact ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce for type.test/protomolt.rehearsal.Record
+CHECK_OK seed.ledger.evidence_artifact.beta-v1.Attachment :: evidence references the retained artifact d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 for type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.ledger.occurrences.beta-v1 :: root and nested Any occurrences retained: 2
+CHECK_OK seed.pending.initial_certified :: journal preparation generation 0 certified atomically (V118), unresolved cleared
+CHECK_OK seed.pending.first_successor_lineage :: generation 1 install edge verified by V119 lineage: VERIFIED_SUCCESSOR
+CHECK_OK seed.pending.chain :: certificate@0, lineage@1, unresolved@2, installs@1,2, no execution, no success: publication_preparations=[0, 1, 2] preparation_coverage_certificates=[0] preparation_coverage_lineage=[1] preparation_coverage_unresolved=[2] successor_installs=[1, 2] successor_executions=[] operation_success=[]
+CHECK_OK seed.pending.budget_released :: preparation reservations released
+CHECK_OK seed.pending.replay_pending :: exact replay observes PENDING
+CHECK_OK seed.ledger.provider_versions :: document objects=3, every one verified with a provider version id
+CHECK_OK seed.ledger.catalog.Record :: catalog holds the retained descriptor artifact ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce; entries=12
+CHECK_OK seed.ledger.catalog.Attachment :: catalog holds the retained descriptor artifact d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412; entries=12
+CHECK_OK seed.schema.resolver_drained :: live resolver closed before historical verification
+CHECK_OK seed.raw.alpha-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.alpha-v1.fragment0 :: ordinal=0 sha256=ae41233164e4866f6704d8cc984d8252b9abe0904d2440b31ec03d01afa119d4 size=319
+CHECK_OK seed.raw.alpha-v1.publication_revision :: publicationRevision=1
+CHECK_OK seed.validated.alpha-v1.document :: document bytes equal recorded, sha256=ae41233164e4866f6704d8cc984d8252b9abe0904d2440b31ec03d01afa119d4
+CHECK_OK seed.validated.alpha-v1.bindings :: policy=6b1955db6253b627508f608ea06a1ec2fe571dfa377b956934b3e4d108e37cf3 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.raw.alpha-v2.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.alpha-v2.fragment0 :: ordinal=0 sha256=755ebfe2d562985fb21a14b9f8253d0226d3627ac342fa24bdc423b07a520ba6 size=326
+CHECK_OK seed.raw.alpha-v2.publication_revision :: publicationRevision=2
+CHECK_OK seed.validated.alpha-v2.document :: document bytes equal recorded, sha256=755ebfe2d562985fb21a14b9f8253d0226d3627ac342fa24bdc423b07a520ba6
+CHECK_OK seed.validated.alpha-v2.bindings :: policy=6b1955db6253b627508f608ea06a1ec2fe571dfa377b956934b3e4d108e37cf3 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.raw.beta-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.beta-v1.fragment0 :: ordinal=0 sha256=9f1261d8ae94a56763660b3546eaf52a3b687b0fa9e588870e08300debf2928e size=291
+CHECK_OK seed.raw.beta-v1.publication_revision :: publicationRevision=3
+CHECK_OK seed.validated.beta-v1.document :: document bytes equal recorded, sha256=9f1261d8ae94a56763660b3546eaf52a3b687b0fa9e588870e08300debf2928e
+CHECK_OK seed.validated.beta-v1.bindings :: policy=2308b230a2f2f882122243a70393c9fccc65bd009e6fdfaa75379ccc4eab8924 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK seed.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.alpha-v1.root.offline_decode :: decoded=alpha-v1 files=6 steps=1
+CHECK_OK seed.materialized.alpha-v1.root.selection_identity :: ordinal=0
+CHECK_OK seed.materialized.alpha-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.materialized.alpha-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.alpha-v1.nested.offline_decode :: decoded=attachment-one files=1 steps=3
+CHECK_OK seed.materialized.alpha-v1.nested.selection_identity :: ordinal=0
+CHECK_OK seed.materialized.alpha-v2.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK seed.materialized.alpha-v2.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.alpha-v2.root.offline_decode :: decoded=alpha-v2 files=6 steps=1
+CHECK_OK seed.materialized.alpha-v2.root.selection_identity :: ordinal=0
+CHECK_OK seed.materialized.alpha-v2.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.materialized.alpha-v2.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.alpha-v2.nested.offline_decode :: decoded=attachment-two files=1 steps=3
+CHECK_OK seed.materialized.alpha-v2.nested.selection_identity :: ordinal=0
+CHECK_OK seed.materialized.beta-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK seed.materialized.beta-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.beta-v1.root.offline_decode :: decoded=beta-v1 files=6 steps=1
+CHECK_OK seed.materialized.beta-v1.root.selection_identity :: ordinal=0
+CHECK_OK seed.materialized.beta-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK seed.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK seed.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
+CHECK_OK seed.materialized.beta-v1.nested.selection_identity :: ordinal=0
+CHECK_OK seed.replay.alpha-v1 :: receipt byte-equal, revision=4a01d3d1-4f7d-42aa-9b96-9083b0542b27
+CHECK_OK seed.replay.alpha-v2 :: receipt byte-equal, revision=a5c5a106-865b-4976-8890-b2e8de66b85d
+CHECK_OK seed.replay.beta-v1 :: receipt byte-equal, revision=500c0bfc-7449-4d60-92a2-1e191f90b9c5
+CHECK_OK seed.access.alpha-v1.member :: granted member reads alpha-v1
+CHECK_OK seed.access.alpha-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK seed.access.alpha-v1.outsider :: foreign account denied
+CHECK_OK seed.access.alpha-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK seed.access.alpha-v2.member :: granted member reads alpha-v2
+CHECK_OK seed.access.alpha-v2.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK seed.access.alpha-v2.outsider :: foreign account denied
+CHECK_OK seed.access.alpha-v2.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK seed.access.beta-v1.member :: granted member reads beta-v1
+CHECK_OK seed.access.beta-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK seed.access.beta-v1.outsider :: foreign account denied
+CHECK_OK seed.access.beta-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK seed.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK seed.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK seed.provider.89cb67ac0c56 :: bucket=rehearsal-alpha-747b145a key=rehearsal-pipeline/documents/rehearsal-alpha-747b145a/485624be-a20c-3a40-a516-52ed3d45ab4e/attempts/634401bc-2977-4bdc-ba00-189a868c3961/part-0 version=c309ca5e-79eb-4129-bcca-46de9032f9ea sha256=ae41233164e4866f6704d8cc984d8252b9abe0904d2440b31ec03d01afa119d4 etag="0b6215258829453a20b54a512d5c54a9"
+CHECK_OK seed.provider.04e8d37d8221 :: bucket=rehearsal-alpha-747b145a key=rehearsal-pipeline/documents/rehearsal-alpha-747b145a/485624be-a20c-3a40-a516-52ed3d45ab4e/attempts/786f4263-f7c4-4b33-96be-76c78418efd8/part-0 version=3543be81-fad3-4cf5-a712-8452c4fe9a60 sha256=755ebfe2d562985fb21a14b9f8253d0226d3627ac342fa24bdc423b07a520ba6 etag="abcd72059d1d4ab2eb3d42ea4c9a0b49"
+CHECK_OK seed.provider.d14e746156a5 :: bucket=rehearsal-beta-747b145a key=rehearsal-pipeline/documents/rehearsal-beta-747b145a/90b20e1e-a749-3635-b8f9-8e15e168118f/attempts/912c5c2c-54cb-4924-a522-61e7210937a1/part-0 version=27cfbb2f-cc65-43dc-a742-a17688ac2070 sha256=9f1261d8ae94a56763660b3546eaf52a3b687b0fa9e588870e08300debf2928e etag="5f14dd7a742e5bd763c46e2c1fe9aa8e"
+CHECK_OK seed.provider.count :: objects=3
+CHECK_OK seed.schema.no_live_lookup_for_history :: registry resolutions unchanged at 3
+CHECK_OK seed.registry_deleted :: git schema registry directory removed: /tmp/rehearsal-seed-registry-11754079294974768244
+CHECK_OK seed.host.incarnations_closed :: no ACTIVE reader incarnation after close: {ACTIVE=0, FENCED=0, UNKNOWN=0, QUIESCED=2}

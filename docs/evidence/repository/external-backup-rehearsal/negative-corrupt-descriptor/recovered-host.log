@@ -1,0 +1,54 @@
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@165b8a71
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.043s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 7:48:42 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 7:48:42 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 7:48:42 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 7:48:42 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33017/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 7:48:42 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.alpha-v1 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.alpha-v1 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.alpha-v1 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.alpha-v1.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.alpha-v1.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.alpha-v2 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.alpha-v2 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.alpha-v2 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.alpha-v2.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.alpha-v2.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.beta-v1 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.beta-v1 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.beta-v1 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.beta-v1.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.beta-v1.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.live_registry_never_consulted :: armed live registry with the correct definition: resolutions=0
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK corrupt-descriptor.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK corrupt-descriptor.not_ready :: READY is only written by a fully verified host
+REPOSITORY_BACKUP_REHEARSAL_RECOVERED_CORRUPT_DESCRIPTOR_OK

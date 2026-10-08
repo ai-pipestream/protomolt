@@ -1,0 +1,10 @@
+CHECK_OK missing-version.provider_version_absent :: GET recorded version -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+CHECK_OK missing-version.latest_differs :: a newer latest version exists under the same key: a50147a7-24c8-44a4-993c-3cb002730d8e
+CHECK_OK missing-version.raw_refused :: readRaw(alpha-v1) -> DATA_LOSS
+CHECK_OK missing-version.validated_refused :: readValidated(alpha-v1) -> DATA_LOSS
+CHECK_OK missing-version.materialized_refused.1 :: readMaterialized(alpha-v1) -> DATA_LOSS; the newer version was not substituted
+CHECK_OK missing-version.materialized_refused.3 :: readMaterialized(alpha-v1) -> DATA_LOSS; the newer version was not substituted
+CHECK_OK missing-version.unaffected.alpha-v2 :: unaffected revision still reads byte-equal
+CHECK_OK missing-version.unaffected.beta-v1 :: unaffected revision still reads byte-equal
+CHECK_OK missing-version.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK missing-version.not_ready :: READY is only written by a fully verified host

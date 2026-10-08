@@ -1,0 +1,107 @@
+2026-10-08T11:48:45.846364568Z exit=0 $ id -u
+  stdout: 1000
+2026-10-08T11:48:45.848250121Z exit=0 $ id -g
+  stdout: 1000
+2026-10-08T11:48:45.863509408Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-08T11:48:45.886219085Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T11:48:45.902334860Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T11:48:46.178989502Z exit=0 $ docker network create protomolt-rehearsal-c994f6d66-b9c8671a-net
+  stdout: dfa4608dfd795bf30583c05cf9ad9c2450eb59ad7e3a9ba15e84fbcd3d1202be
+2026-10-08T11:48:46.192447736Z exit=0 $ docker volume create protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data
+2026-10-08T11:48:46.204756397Z exit=0 $ docker volume create protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data
+2026-10-08T11:48:46.661170278Z exit=0 $ docker run --rm -v protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-08T11:48:47.142175141Z exit=0 $ docker run --rm -v protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-08T11:48:47.621085726Z exit=0 $ docker run --rm -v protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data:/data -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/negative-missing-descriptor/backup-copy/provider:/in:ro postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -xf /in/rustfs-data.tar
+2026-10-08T11:48:47.836903839Z exit=0 $ docker run -d --name protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs --network protomolt-rehearsal-c994f6d66-b9c8671a-net -p 127.0.0.1:40221:9000 -v protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-cf987e96 -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: 32e39e7ae32e48f53f286a197d11a7b6aaacbd848f1f7d2afbf69cdbd668e647
+2026-10-08T11:48:48.059381597Z exit=0 $ docker run -d --name protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg --network protomolt-rehearsal-c994f6d66-b9c8671a-net -p 127.0.0.1:0:5432 -v protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: 559a8c05ff30179546992eac8fbe1119fb98d473268030118c8df2c7a7bc3876
+2026-10-08T11:48:48.074199330Z exit=0 $ docker port protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg 5432/tcp
+  stdout: 127.0.0.1:33018
+2026-10-08T11:48:48.112520339Z exit=2 $ docker exec protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - no response
+2026-10-08T11:48:48.661260227Z exit=0 $ docker exec protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-08T11:48:49.198534328Z exit=0 $ docker exec protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-08T11:48:51.213778967Z exit=0 $ docker run --rm --network protomolt-rehearsal-c994f6d66-b9c8671a-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T11-47-18.498264706Z/negative-missing-descriptor/backup-copy/sql:/in:ro postgres:18-alpine pg_restore -h protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg -U repo -d repo --exit-on-error --no-owner --no-privileges /in/ledger.dump
+2026-10-08T11:48:51.311012970Z note: missing-descriptor: artifact d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 rows deleted with referential and immutability triggers disabled on the disposable copy
+2026-10-08T11:48:54.659503477Z note: RepositoryBackupRehearsalRecoveredHost exit=0 log=recovered-host.log
+2026-10-08T11:48:54.671926654Z exit=0 $ docker logs protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs
+  stdout: Initializing data directories: /data
+          Initializing log directory: /logs
+          Starting: /usr/bin/rustfs /data
+2026-10-08T11:48:54.681753996Z exit=0 $ docker logs protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg
+  stdout: The files belonging to this database system will be owned by user "postgres".
+          This user must also own the server process.
+          
+          The database cluster will be initialized with locale "en_US.utf8".
+          The default database encoding has accordingly been set to "UTF8".
+          The default text search configuration will be set to "english".
+          
+          Data page checksums are enabled.
+          
+          fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok
+          creating subdirectories ... ok
+          selecting dynamic shared memory implementation ... posix
+          selecting default "max_connections" ... 100
+          selecting default "shared_buffers" ... 128MB
+          selecting default time zone ... UTC
+          creating configuration files ... ok
+          running bootstrap script ... ok
+          performing post-bootstrap initialization ... ok
+          syncing data to disk ... ok
+          
+          
+          Success. You can now start the database server using:
+          
+              pg_ctl -D /var/lib/postgresql/18/docker -l logfile start
+          
+          waiting for server to start....2026-10-08 11:48:48.542 UTC [52] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 11:48:48.547 UTC [52] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 11:48:48.564 UTC [58] LOG:  database system was shut down at 2026-10-08 11:48:48 UTC
+          2026-10-08 11:48:48.570 UTC [52] LOG:  database system is ready to accept connections
+           done
+          server started
+          2026-10-08 11:48:48.658 UTC [74] FATAL:  database "repo" does not exist
+          CREATE DATABASE
+          
+          
+          /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+          
+          waiting for server to shut down....2026-10-08 11:48:48.676 UTC [52] LOG:  received fast shutdown request
+          2026-10-08 11:48:48.682 UTC [52] LOG:  aborting any active transactions
+          2026-10-08 11:48:48.683 UTC [52] LOG:  background worker "logical replication launcher" (PID 61) exited with exit code 1
+          2026-10-08 11:48:48.683 UTC [56] LOG:  shutting down
+          2026-10-08 11:48:48.688 UTC [56] LOG:  checkpoint starting: shutdown immediate
+          2026-10-08 11:48:48.757 UTC [56] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.017 s, sync=0.031 s, total=0.074 s; sync files=303, longest=0.006 s, average=0.001 s; distance=4362 kB, estimate=4362 kB; lsn=0/1BA8858, redo lsn=0/1BA8858
+          2026-10-08 11:48:48.772 UTC [52] LOG:  database system is shut down
+           done
+          server stopped
+          
+          PostgreSQL init process complete; ready for start up.
+  stderr: sh: locale: not found
+          2026-10-08 11:48:48.259 UTC [46] WARNING:  no usable system locales were found
+          initdb: warning: enabling "trust" authentication for local connections
+          initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+          2026-10-08 11:48:48.795 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 11:48:48.796 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+          2026-10-08 11:48:48.796 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+          2026-10-08 11:48:48.806 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 11:48:48.817 UTC [82] LOG:  database system was shut down at 2026-10-08 11:48:48 UTC
+          2026-10-08 11:48:48.823 UTC [1] LOG:  database system is ready to accept connections
+2026-10-08T11:48:55.065020443Z exit=0 $ docker rm -f protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg
+2026-10-08T11:48:55.448122118Z exit=0 $ docker rm -f protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs
+2026-10-08T11:48:55.464447870Z exit=0 $ docker volume rm -f protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-rustfs-data
+2026-10-08T11:48:55.501700380Z exit=0 $ docker volume rm -f protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-rst-pg-data
+2026-10-08T11:48:55.688096241Z exit=0 $ docker network rm protomolt-rehearsal-c994f6d66-b9c8671a-net
+  stdout: protomolt-rehearsal-c994f6d66-b9c8671a-net

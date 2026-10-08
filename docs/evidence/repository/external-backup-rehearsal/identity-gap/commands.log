@@ -1,0 +1,26 @@
+2026-10-08T11:49:28.241176769Z exit=0 $ id -u
+  stdout: 1000
+2026-10-08T11:49:28.243594838Z exit=0 $ id -g
+  stdout: 1000
+2026-10-08T11:49:28.257364350Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-08T11:49:28.285188742Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T11:49:28.307539571Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T11:49:28.345447970Z exit=0 $ docker network create protomolt-rehearsal-678387b87-85216110-net
+  stdout: 51f85919ea2c78645cf32902b0a25d0c77f7fbbc4f1953273cff1f6b8f69deaf
+2026-10-08T11:49:28.359038253Z exit=0 $ docker volume create protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+  stdout: protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+2026-10-08T11:49:28.578142697Z exit=0 $ docker run -d --name protomolt-rehearsal-678387b87-85216110-fresh-rustfs --network protomolt-rehearsal-678387b87-85216110-net -p 127.0.0.1:38225:9000 -v protomolt-rehearsal-678387b87-85216110-fresh-rustfs:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=rehearsal-2d6e7a7c -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: 6c774aafc89af3c68095bc63a2182319222a2e1c74edd829fcd22d029286545d
+2026-10-08T11:49:33.702642656Z exit=0 $ docker logs protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+  stdout: Initializing data directories: /data
+          Initializing log directory: /logs
+          Starting: /usr/bin/rustfs /data
+2026-10-08T11:49:34.051111993Z exit=0 $ docker rm -f protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+  stdout: protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+2026-10-08T11:49:34.066066074Z exit=0 $ docker volume rm -f protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+  stdout: protomolt-rehearsal-678387b87-85216110-fresh-rustfs
+2026-10-08T11:49:34.215677930Z exit=0 $ docker network rm protomolt-rehearsal-678387b87-85216110-net
+  stdout: protomolt-rehearsal-678387b87-85216110-net

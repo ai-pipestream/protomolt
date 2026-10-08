@@ -1,0 +1,20 @@
+CHECK_OK source.started :: postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:40221
+CHECK_OK seed.exit :: seed host exit=0 with REPOSITORY_BACKUP_REHEARSAL_SEED_OK
+CHECK_OK capture.quiescent :: no other client backend; in-flight work={activeReaderIncarnations=0, documentReadPins=0, stagingPartAttempts=0} (journal rows are durable state, not process activity)
+CHECK_OK capture.catalog_fingerprinted :: tables=92 V119 xid8 columns=22 maxStoredXid=1083 coverage invariants hold: {certifiedAndUnresolved=0, lineageAndUnresolved=0, lineageWithoutInstallEdge=0, lineageWithoutCertifiedAnchor=0, certificateWithoutSealedHeader=0, preparationWithoutAnyState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK capture.pg_dump :: exit=0 bytes=818027
+CHECK_OK capture.stopped :: postgres {finishedAt=2026-10-08T11:47:33.724405513Z, status=exited, exitCode=0}; rustfs {finishedAt=2026-10-08T11:47:33.977481566Z, status=exited, exitCode=0}
+CHECK_OK capture.provider_archive :: stopped RustFS volume archived, bytes=159232
+CHECK_OK capture.sealed :: components=17 manifest sha256=92b7602fdf1dbde7bd8ac66c5cf0fb5b4420cc21caa9826e6c644f6ae9c9189d
+CHECK_OK capture.preflight :: sealed set verifies
+CHECK_OK source.unreachable :: source containers removed; database refuses connections; provider port 40221 free
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:40221
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-88a34b751-d190e6a8-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1645 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, lineageWithoutInstallEdge=0, lineageWithoutCertifiedAnchor=0, certificateWithoutSealedHeader=0, preparationWithoutAnyState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK recovered.exit :: recovered host exit=0, READY written after verification
+CHECK_OK source.volume_untouched :: source provider volume digest unchanged 6f3d66a085a5df871ff35a822a66196348a08c50911d386d605e896569832cd7
+CHECK_OK backup.untouched :: backup components unchanged after restore and verification

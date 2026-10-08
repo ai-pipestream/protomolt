@@ -1,0 +1,204 @@
+CHECK_OK restore.row_counts :: every base table's row count equals the seed record after close: tables=92
+CHECK_OK restore.row_counts_manifest :: row counts equal the sealed manifest
+CHECK_OK restore.reader_incarnations.active :: restored ACTIVE incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.fenced :: restored FENCED incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.unknown :: restored UNKNOWN incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.quiesced :: restored QUIESCED incarnations=2 (restored verbatim, none revived)
+CHECK_OK restore.backend_profile :: managed_backend_profiles row equals recorded identity for generation rehearsal-gen-71e0d415-45ba-42f5-8460-877877b36f0c
+CHECK_OK restore.sequences :: sequence values={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.schema_catalog :: catalog digests=12
+CHECK_OK restore.migration_level :: flyway level V119
+CHECK_OK restore.xid_past_stored :: current=1648 maxStored=1083
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@1d2adfbe
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.057s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 7:48:08 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 7:48:08 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 7:48:08 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 7:48:08 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33014/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 7:48:09 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@5855b0ed
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.018s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 7:48:09 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 7:48:09 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 7:48:09 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33014/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 7:48:09 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+CHECK_OK restore.fresh_incarnation :: recovered host registered 2 new ACTIVE incarnation(s); restored states unchanged
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK restore.raw.alpha-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.alpha-v1.fragment0 :: ordinal=0 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 size=319
+CHECK_OK restore.raw.alpha-v1.publication_revision :: publicationRevision=1
+CHECK_OK restore.validated.alpha-v1.document :: document bytes equal recorded, sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816
+CHECK_OK restore.validated.alpha-v1.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.raw.alpha-v2.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.alpha-v2.fragment0 :: ordinal=0 sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 size=326
+CHECK_OK restore.raw.alpha-v2.publication_revision :: publicationRevision=2
+CHECK_OK restore.validated.alpha-v2.document :: document bytes equal recorded, sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108
+CHECK_OK restore.validated.alpha-v2.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.raw.beta-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.beta-v1.fragment0 :: ordinal=0 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 size=291
+CHECK_OK restore.raw.beta-v1.publication_revision :: publicationRevision=3
+CHECK_OK restore.validated.beta-v1.document :: document bytes equal recorded, sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9
+CHECK_OK restore.validated.beta-v1.bindings :: policy=1d60f0d120e75ef2b240fc8c958485249c369abc0e788401306af7abddb02ed0 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v1.root.offline_decode :: decoded=alpha-v1 files=6 steps=1
+CHECK_OK restore.materialized.alpha-v1.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.alpha-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v1.nested.offline_decode :: decoded=attachment-one files=1 steps=3
+CHECK_OK restore.materialized.alpha-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v2.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.alpha-v2.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v2.root.offline_decode :: decoded=alpha-v2 files=6 steps=1
+CHECK_OK restore.materialized.alpha-v2.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v2.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.alpha-v2.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v2.nested.offline_decode :: decoded=attachment-two files=1 steps=3
+CHECK_OK restore.materialized.alpha-v2.nested.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.beta-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.beta-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.beta-v1.root.offline_decode :: decoded=beta-v1 files=6 steps=1
+CHECK_OK restore.materialized.beta-v1.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.beta-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
+CHECK_OK restore.materialized.beta-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.provider.ffe668dff5e6 :: bucket=rehearsal-alpha-d8525a9c key=rehearsal-pipeline/documents/rehearsal-alpha-d8525a9c/194f18ce-ebe3-3fac-82ba-63131cc7948c/attempts/0876fba4-d928-43bd-b481-7b6edd359284/part-0 version=1a09dbb4-e020-475b-91e0-9d7f2da59ba4 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 etag="12b47ea5b64b53815c4a51e557ef8fe5"
+CHECK_OK restore.provider.ee6e0d5f9833 :: bucket=rehearsal-alpha-d8525a9c key=rehearsal-pipeline/documents/rehearsal-alpha-d8525a9c/194f18ce-ebe3-3fac-82ba-63131cc7948c/attempts/03794775-0832-498e-a392-ec507f9aa615/part-0 version=c6308780-d365-45ac-902a-0e409b2e4a1e sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 etag="91938f6a3c4310ddcb16958b4ee2859f"
+CHECK_OK restore.provider.f83f5c9a61bc :: bucket=rehearsal-beta-d8525a9c key=rehearsal-pipeline/documents/rehearsal-beta-d8525a9c/b651b6a4-c74a-37f2-b750-09a62d3f006c/attempts/413eee14-5ed5-4629-8413-dd466687794c/part-0 version=a497dd65-8113-42d2-8062-cadcce8700e4 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 etag="e9a8a43fa2814bc6e263b7b9f730c246"
+CHECK_OK restore.provider.count :: objects=3
+CHECK_OK restore.replay.alpha-v1 :: receipt byte-equal, revision=61cd5137-4965-4cd4-bcdd-0af7b3bfea60
+CHECK_OK restore.replay.alpha-v2 :: receipt byte-equal, revision=a9e3f4b0-59a9-4d48-a92b-2149249e2c62
+CHECK_OK restore.replay.beta-v1 :: receipt byte-equal, revision=82fda98a-60f4-4ee5-85d3-041d72ec32bd
+CHECK_OK restore.access.alpha-v1.member :: granted member reads alpha-v1
+CHECK_OK restore.access.alpha-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.alpha-v1.outsider :: foreign account denied
+CHECK_OK restore.access.alpha-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access.alpha-v2.member :: granted member reads alpha-v2
+CHECK_OK restore.access.alpha-v2.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.alpha-v2.outsider :: foreign account denied
+CHECK_OK restore.access.alpha-v2.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access.beta-v1.member :: granted member reads beta-v1
+CHECK_OK restore.access.beta-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.beta-v1.outsider :: foreign account denied
+CHECK_OK restore.access.beta-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access_matrix_unchanged :: matrix={member.alpha-v1=OK, stranger.alpha-v1=NOT_FOUND, outsider.alpha-v1=NOT_FOUND, cross-account-member.alpha-v1=NOT_FOUND, member.alpha-v2=OK, stranger.alpha-v2=NOT_FOUND, outsider.alpha-v2=NOT_FOUND, cross-account-member.alpha-v2=NOT_FOUND, member.beta-v1=OK, stranger.beta-v1=NOT_FOUND, outsider.beta-v1=NOT_FOUND, cross-account-member.beta-v1=NOT_FOUND}
+CHECK_OK restore.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK restore.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK restore.pending.command_identity :: recorded command digest reproduced from the persisted intent
+CHECK_OK restore.pending.chain_identity :: V118/V119 rows, install edges (including install_xid) and generations equal the seed record: publication_preparations=[0, 1, 2] preparation_coverage_certificates=[0] preparation_coverage_lineage=[1] preparation_coverage_unresolved=[2] successor_installs=[1, 2] successor_executions=[] operation_success=[]
+CHECK_OK restore.pending.replay_pending :: exact replay still observes PENDING; no result was invented
+CHECK_OK restore.pending.discovery :: recovery discovery observes INSTALLED_NOT_ACTIVATED with the installed successor; leases restored verbatim and expired
+CHECK_OK restore.pending.lineage_verifiable :: generation 2 verified against the restored install edge (VERIFIED_SUCCESSOR): depth 2, no header, no execution; a new transaction never equals a restored install_xid
+CHECK_OK restore.pending.recoverable_not_executed :: a third successor installed on the restored catalog; still unresolved, unexecuted and PENDING
+CHECK_OK restore.pending.budget_released :: verification released its reservations
+CHECK_OK restore.schema.no_live_lookup :: live schema resolution attempts during historical verification=0
+CHECK_OK after-write.typed_without_registry_refused :: typed publication with no registry -> IllegalStateException: Recovered host attempted live schema resolution; no registry is configured
+CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Record :: artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce
+CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Attachment :: artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK after-write.registry_definitions :: two retained definitions rebuilt: [type.test/protomolt.rehearsal.Record, type.test/protomolt.rehearsal.Attachment]
+CHECK_OK after-write.new_revision :: revision=71fe7739-4a6c-494f-ac96-873342c4c764 mutation=4 > restored sequence 3
+CHECK_OK after-write.rebuilt_registry_used :: resolutions=1
+CHECK_OK after-write.readable :: new revision readable
+CHECK_OK after-write.sequences_advanced :: document sequence 4 > restored 3
+CHECK_OK after-write.old_bindings_intact :: restored object bindings unchanged by the new revision
+CHECK_OK after-write.raw.alpha-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.alpha-v1.fragment0 :: ordinal=0 sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816 size=319
+CHECK_OK after-write.raw.alpha-v1.publication_revision :: publicationRevision=1
+CHECK_OK after-write.validated.alpha-v1.document :: document bytes equal recorded, sha256=7bb3bc9b88ba10e8e8484789806403774dff3c98a1c5732a198e5dce7d8a8816
+CHECK_OK after-write.validated.alpha-v1.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.raw.alpha-v2.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.alpha-v2.fragment0 :: ordinal=0 sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108 size=326
+CHECK_OK after-write.raw.alpha-v2.publication_revision :: publicationRevision=2
+CHECK_OK after-write.validated.alpha-v2.document :: document bytes equal recorded, sha256=bee32ed7c95033d2de2b803d6729eee3e6a2af0200195d922c112960d3280108
+CHECK_OK after-write.validated.alpha-v2.bindings :: policy=8f1a0f35db3ec756bc6ab86b2d5d857e550125c318c7d97b186e393eeff8ab5e profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.raw.beta-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.beta-v1.fragment0 :: ordinal=0 sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9 size=291
+CHECK_OK after-write.raw.beta-v1.publication_revision :: publicationRevision=3
+CHECK_OK after-write.validated.beta-v1.document :: document bytes equal recorded, sha256=cc59fb38ad933304dd465b704628184fed03950e8ccba54bfd2ba51d0457b0d9
+CHECK_OK after-write.validated.beta-v1.bindings :: policy=1d60f0d120e75ef2b240fc8c958485249c369abc0e788401306af7abddb02ed0 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v1.root.offline_decode :: decoded=alpha-v1 files=6 steps=1
+CHECK_OK after-write.materialized.alpha-v1.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.alpha-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v1.nested.offline_decode :: decoded=attachment-one files=1 steps=3
+CHECK_OK after-write.materialized.alpha-v1.nested.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v2.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.alpha-v2.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v2.root.offline_decode :: decoded=alpha-v2 files=6 steps=1
+CHECK_OK after-write.materialized.alpha-v2.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v2.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.alpha-v2.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v2.nested.offline_decode :: decoded=attachment-two files=1 steps=3
+CHECK_OK after-write.materialized.alpha-v2.nested.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.beta-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.beta-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.beta-v1.root.offline_decode :: decoded=beta-v1 files=6 steps=1
+CHECK_OK after-write.materialized.beta-v1.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.beta-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
+CHECK_OK after-write.materialized.beta-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.ready :: recovered host advertised ready after verification
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+CHECK_OK verify.not_ready :: READY is only written by a fully verified host
+REPOSITORY_BACKUP_REHEARSAL_RECOVERED_VERIFY_OK
