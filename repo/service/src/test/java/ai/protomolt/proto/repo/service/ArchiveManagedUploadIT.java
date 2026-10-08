@@ -57,7 +57,15 @@ class ArchiveManagedUploadIT {
                 Map.entry("connection-timeout-ms", "10000"),
                 Map.entry("socket-timeout-ms", "60000"));
         opened = providers.open("s3", options);
-        opened.ensureNamespace("managed-archive");
+        // Deliberately an unversioned namespace, created outside the provisioner (which would
+        // enable versioning): the corruption case below overwrites published bytes in place,
+        // which only an unversioned bucket allows, so the published-length bound is the guard.
+        try (var client = software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(S3.getEndpoint())
+                .region(software.amazon.awssdk.regions.Region.of(S3.getRegion())).forcePathStyle(true)
+                .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey()))).build()) {
+            client.createBucket(b -> b.bucket("managed-archive"));
+        }
         new ManagedBackendLedger(tx).bind("original", new ManagedBackendLedger.Profile(providers.managedIdentity("s3", options), "original-realm"));
         var drive = new DriveRecord();
         drive.driveId = UUID.randomUUID();
@@ -128,7 +136,7 @@ class ArchiveManagedUploadIT {
             assertThat(bounded.get()).isEqualTo(1);
             assertThat(unbounded.get()).isZero();
             assertThat(limit.get()).isEqualTo(rendition.getSizeBytes());
-            // This fixture uses an unversioned namespace. Replace real provider
+            // This fixture's namespace is unversioned on purpose. Replace real provider
             // bytes to simulate corruption after publication, not a fake GET.
             byte[] oversized = new byte[(int) rendition.getSizeBytes() + 1];
             opened.store().put(new BlobStore.PutSpec("managed-archive", rendition.getObjectKey(), "text/plain", Map.of(),

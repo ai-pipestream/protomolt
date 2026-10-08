@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  * run the negative cases on disposable copies. Evidence is archived under the output directory.
  */
 public final class RecoveryRehearsal {
-    record Options(Path out, int runs, boolean keep, boolean negatives, Path bundle) {}
+    record Options(Path out, int runs, boolean keep, boolean negatives, Path bundle, long xidBurn) {}
 
     public static void main(String[] args) throws Exception {
         var options = parse(args);
@@ -37,7 +37,9 @@ public final class RecoveryRehearsal {
             var directory = options.out().resolve("run-" + run);
             var outcome = new LinkedHashMap<String, Object>();
             try {
-                var backup = positiveRun(directory, options, outcome);
+                // The second run seeds after consuming transaction ids, so the restore must take the
+                // pg_resetwal branch; the first run covers the no-advancement branch.
+                var backup = positiveRun(directory, options, outcome, run == 2 ? options.xidBurn() : 0);
                 if (firstBackup == null) firstBackup = backup;
                 outcome.put("passed", true);
             } catch (RuntimeException failure) {
@@ -79,7 +81,7 @@ public final class RecoveryRehearsal {
     }
 
     static Options parse(String[] args) {
-        Path out = null; int runs = 2; boolean keep = false; boolean negatives = true;
+        Path out = null; int runs = 2; boolean keep = false; boolean negatives = true; long xidBurn = 8192;
         Path bundle = System.getProperty("protomolt.recovery.bundle") == null ? null : Path.of(System.getProperty("protomolt.recovery.bundle"));
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -88,14 +90,16 @@ public final class RecoveryRehearsal {
                 case "--bundle" -> bundle = Path.of(args[++i]);
                 case "--keep" -> keep = true;
                 case "--skip-negatives" -> negatives = false;
-                default -> throw new RehearsalFailure("Unknown option " + args[i] + " (expected --out DIR [--runs N] [--bundle DIR] [--keep] [--skip-negatives])");
+                case "--xid-burn" -> xidBurn = Long.parseLong(args[++i]);
+                default -> throw new RehearsalFailure("Unknown option " + args[i] + " (expected --out DIR [--runs N] [--bundle DIR] [--keep] [--skip-negatives] [--xid-burn N])");
             }
         }
         if (out == null) throw new RehearsalFailure("--out DIR is required");
         if (bundle == null) throw new RehearsalFailure("--bundle DIR (admission transport runtime inventory) is required");
         if (runs < 1) throw new RehearsalFailure("--runs must be positive");
+        if (xidBurn < 0 || xidBurn > 1_000_000) throw new RehearsalFailure("--xid-burn must be between 0 and 1000000");
         if (Files.exists(out) && !isEmptyDirectory(out)) throw new RehearsalFailure("Output directory must be new or empty: " + out);
-        return new Options(out.toAbsolutePath(), runs, keep, negatives, bundle.toAbsolutePath());
+        return new Options(out.toAbsolutePath(), runs, keep, negatives, bundle.toAbsolutePath(), xidBurn);
     }
 
     static boolean isEmptyDirectory(Path path) {
@@ -160,7 +164,7 @@ public final class RecoveryRehearsal {
         } catch (IOException | InterruptedException failure) { throw new RehearsalFailure("Cannot run " + mainClass, failure); }
     }
 
-    static Path positiveRun(Path directory, Options options, Map<String, Object> outcome) {
+    static Path positiveRun(Path directory, Options options, Map<String, Object> outcome, long xidBurn) {
         var run = open(directory, "rehearsal");
         var checks = run.checks();
         var containers = run.containers();
@@ -179,6 +183,14 @@ public final class RecoveryRehearsal {
             checks.pass("source.started", "postgres " + Containers.POSTGRES_IMAGE + " image=" + containers.imageId(Containers.POSTGRES_IMAGE)
                     + "; rustfs " + Containers.RUSTFS_IMAGE + " image=" + containers.imageId(Containers.RUSTFS_IMAGE) + " endpoint=" + sourceFs.endpoint());
 
+            if (xidBurn > 0) {
+                try (var ledger = new Ledger(sourceDb.jdbcUrl(), sourceDb.user(), sourceDb.password())) {
+                    long before = ledger.currentXid();
+                    ledger.burnTransactions(xidBurn);
+                    long after = ledger.currentXid();
+                    checks.require(after >= before + xidBurn, "source.xid_burn", "consumed " + xidBurn + " transaction ids before seeding: " + before + " -> " + after);
+                }
+            }
             // 1. Seed through production paths; the seed host records identities into the backup set.
             var env = hostEnvironment(run, sourceDb, sourceFs.endpoint(), generation, realm, options);
             env.put("PROTOMOLT_RECOVERY_IDENTITIES", backup.resolve("identities").toString());
@@ -227,6 +239,9 @@ public final class RecoveryRehearsal {
 
             // 4. Restore into new resources and 5./6. verify in a fresh host.
             var restored = restore(run, directory.resolve("restore"), backup, options, checks);
+            checks.require(restored.xidAdvanced() == (xidBurn > 0), "restore.xid_branch",
+                    xidBurn > 0 ? "seeded xid8 values exceeded the fresh cluster; pg_resetwal advancement branch executed"
+                            : "fresh cluster already past the stored xid8 values; no advancement branch");
             env = hostEnvironment(run, restored.postgres(), restored.provider().endpoint(), generation, realm, options);
             env.put("PROTOMOLT_RECOVERY_IDENTITIES", backup.resolve("identities").toString());
             env.put("PROTOMOLT_RECOVERY_MANIFEST", BackupSet.manifest(backup).toString());
@@ -277,7 +292,7 @@ public final class RecoveryRehearsal {
         if (!extract.ok()) throw new RehearsalFailure("Provider volume extraction failed: " + extract.stderr());
         var provider = containers.startRustFs("rst-rustfs", fsVolume, port, run.s3Access(), run.s3Secret());
         checks.require(provider.endpoint().equals(Json.string(backend, "endpoint")), "restore.provider_identity", "restored provider at recorded endpoint " + provider.endpoint());
-        var postgres = containers.startPostgres("rst-pg", dbVolume, Json.string(database, "user"), run.dbPassword(), Json.string(database, "name"));
+        Containers.Postgres postgres = containers.startPostgres("rst-pg", dbVolume, Json.string(database, "user"), run.dbPassword(), Json.string(database, "name"));
         var restoreResult = containers.pgRestore(postgres, backup.resolve("sql/ledger.dump"));
         if (!restoreResult.ok() || restoreResult.stderr().contains("ERROR") || restoreResult.stderr().contains("WARNING"))
             throw new RehearsalFailure("pg_restore reported problems: exit=" + restoreResult.exitCode() + " stderr=" + restoreResult.stderr());
@@ -291,6 +306,9 @@ public final class RecoveryRehearsal {
                 var reset = containers.pgResetXid(dbVolume, epoch, Math.max(xid, 3));
                 if (!reset.ok()) throw new RehearsalFailure("pg_resetwal failed: " + reset.stderr());
                 run.shell().run(List.of("docker", "start", postgres.container())).require("docker start");
+                // Docker may publish a different ephemeral host port after a restart; resolve it again.
+                postgres = new Containers.Postgres(postgres.container(), postgres.volume(), containers.mappedPort(postgres.container(), "5432/tcp"),
+                        postgres.database(), postgres.user(), postgres.password());
                 containers.awaitPostgres(postgres);
                 advanced = true;
             }

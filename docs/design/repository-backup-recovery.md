@@ -37,13 +37,16 @@ Every bucket the drives reference (`documents/...`, `archive/...`,
 `.protomolt-managed`) with all object versions. SQL pins exact version ids and
 etags, so the restore must preserve version ids byte for byte.
 
-Bucket versioning is an operator qualification, not something the host does:
-`S3NamespaceProvisioner.ensureNamespace` creates a missing drive bucket without
-versioning, S3 then returns no version id, and the ledger records `provider_version`
-as NULL (the first rehearsal attempt showed exactly this). Such objects are only
-protected by never-reused keys. This procedure requires drives bound to buckets
-created with versioning enabled, which the seed host does explicitly and the
-restore verifies by reading every recorded version id.
+Bucket versioning is provisioned by the host, not left to the operator:
+`S3NamespaceProvisioner.ensureNamespace` creates a missing drive bucket, enables
+versioning on it (or on an existing bucket that does not report it) and refuses
+the namespace unless S3 reports versioning ENABLED. Before this change the
+provisioner created unversioned buckets, S3 returned no version id, and the
+ledger recorded `provider_version` as NULL (the first rehearsal attempt showed
+exactly this); such objects were protected only by never-reused keys. The seed
+host now creates its drives through the ordinary provisioning path and verifies
+through the plain S3 API that both buckets report versioning ENABLED, and the
+restore reads every committed object by its recorded version id.
 
 Qualified provider: `rustfs/rustfs:1.0.0-beta.11-preview.1` (the same pin as
 `AssessmentStorageBackend`), single volume `/data`, `RUSTFS_VOLUMES=/data`, Linux
@@ -139,7 +142,12 @@ nothing and leaves the backup directory and the source volumes byte-identical
    column is compared with `pg_current_xact_id()`. If the restored cluster is
    not strictly past it, the container is stopped, `pg_resetwal -x` (and `-e`
    for a nonzero epoch) advances the counter, the container restarts, and the
-   check is repeated. The evidence records whether this step was needed.
+   check is repeated. Both branches are exercised on every invocation: the
+   first positive run seeds on a fresh cluster and needs no advancement; the
+   second consumes `--xid-burn` (default 8192) transaction ids before seeding,
+   so its stored `xid8` values exceed what the restored cluster allocates and
+   the advancement must run. The harness asserts which branch ran in each case
+   and the recovered host verifies all content afterwards either way.
 5. Sequence check: both sequences are read and must equal the manifest values.
 6. The recovered host is a fresh JVM on the production JARs only (no test
    framework on the classpath), with a `ManagedSchemaAccess` that throws on any

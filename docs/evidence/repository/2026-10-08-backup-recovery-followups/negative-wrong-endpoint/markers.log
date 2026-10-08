@@ -1,0 +1,8 @@
+CHECK_OK restore.provider_identity :: restored provider at recorded endpoint http://127.0.0.1:37169
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-recovery-453561719-6823e59d-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1580 > max stored xid8 1012 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}
+CHECK_OK restore.migration_level :: V111
+CHECK_OK wrong-endpoint.observed :: recovered host exit=0 marker=RECOVERED_HOST_WRONG_ENDPOINT_OK
+CHECK_OK wrong-endpoint.not_ready :: no READY advertised
+CHECK_OK wrong-endpoint.original_backup_untouched :: original backup set unchanged
