@@ -63,6 +63,13 @@ final class ManagedDocumentServices {
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
             ManagedSchemaAccess schemas, Journaled journaled, BoundedDocumentProfile boundedDocuments) {
+        this(tx, drives, generation, profile, backing, deliverEvents, access, schemas, journaled,
+                boundedDocuments, null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
+            ManagedSchemaAccess schemas, Journaled journaled, BoundedDocumentProfile boundedDocuments, UUID hostExecution) {
         Objects.requireNonNull(backing);
         managedDrain = journaled != null;
         if (managedDrain) Objects.requireNonNull(schemas, "Managed journaled publication requires owned schema access");
@@ -84,7 +91,15 @@ final class ManagedDocumentServices {
             requireOriginal(generation, profile, original, selected);
             return backing.store();
         }, 16, 8L * 1024 * 1024, budget);
-        var ledger = new DocumentReadLedger(bounded, UUID.randomUUID(), 32);
+        // Neither object has escaped and the reader starts no provider work during construction.
+        final DocumentReadLedger ledger;
+        try {
+            ledger = hostExecution == null ? new DocumentReadLedger(bounded, UUID.randomUUID(), 32)
+                    : new DocumentReadLedger(bounded, UUID.randomUUID(), hostExecution, 32);
+        } catch (RuntimeException | Error failure) {
+            reader.close();
+            throw failure;
+        }
         try {
             history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
             var responses = access == null ? null : new PayloadBudget(access.responseBudgetBytes());

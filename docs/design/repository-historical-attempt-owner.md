@@ -1606,3 +1606,32 @@ This fixture archive read is not a new public recovery endpoint.
 The proof covers the managed test writer and its SQL sessions. Production host
 verification, deployment wiring, broader crash phases and public routing remain
 unfinished. These runs are correctness evidence, not load-performance results.
+
+#### Service composition of host-bound readers
+
+`RepoServices` now has named hosted builders accepting `ReaderHostOptions`
+(execution UUID, host identity and boot identity). These values come from trusted
+supervisor configuration, never a document request. Existing builders retain
+local-only registration. Full managed composition binds its archive and document
+readers to the same execution; bounded profiles bind only the reader they mount.
+No protobuf contract changes are involved.
+
+Host registration precedes provider construction and reader registration. A
+supplied identity cannot fall back to local-only registration. Only an acknowledged
+fresh registration is fenced by startup cleanup: a duplicate or an uncertain
+registration reply must not fence a possibly live execution owned elsewhere.
+The supervisor retains the identity and handles uncertain startup separately.
+Replacement startup always requires a fresh execution UUID.
+
+Clean shutdown drains and locally attests the readers before fencing the execution
+and releasing the database. Fencing does not claim termination and writes no host
+termination receipt. Its SQL wait is bounded by the remaining release-phase budget,
+with a five-second cap. A failed fence retains shared resources for close retry.
+These SQL limits do not establish a network or connection-pool deadline.
+
+Focused qualification covers full managed composition over PostgreSQL and
+LocalStack, duplicate startup, partial construction, local drain, a held host-row
+lock followed by close retry, and the bounded Redis archive profile. Hosted bounded
+document publication still needs its production-bundle qualification. Supervisor
+provisioning, remote termination verification, bounded reader discovery and load
+qualification remain separate work; these builders alone do not complete recovery.

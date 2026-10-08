@@ -88,6 +88,8 @@ import java.util.concurrent.TimeUnit;
  * unary gRPC API.
  */
 public final class RepoServices implements AutoCloseable {
+    private final ReaderHostOptions readerHost;
+    private boolean readerHostFenced;
 
     private static final Logger LOG = LoggerFactory.getLogger(RepoServices.class);
 
@@ -177,6 +179,17 @@ public final class RepoServices implements AutoCloseable {
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded, ManagedDocumentServices.Journaled journaled,
             BoundedDocumentProfile boundedDocuments) {
+        this(config, bridges, providers, historicalAccess, schemaAccess, bounded, journaled, boundedDocuments, null);
+    }
+
+    RepoServices(RepoServiceConfig config, BridgeEngine bridges,
+            ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
+            ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded, ManagedDocumentServices.Journaled journaled,
+            BoundedDocumentProfile boundedDocuments, ReaderHostOptions readerHost) {
+        this.readerHost = readerHost;
+        if (readerHost != null && !config.managedStorage().retentionQualified())
+            throw new IllegalArgumentException("Host-bound readers require qualified managed storage");
+        Tx registeredHostTx = null;
         this.boundedDocuments=boundedDocuments;
         if (boundedDocuments != null) {
             boundedDocuments.validate(config);
@@ -209,6 +222,13 @@ public final class RepoServices implements AutoCloseable {
                 throw new IllegalArgumentException(RepoServiceConfig.ENV_REPO_API_TOKEN + " is required for TCP repository storage");
             this.database = owned.add(new LedgerDatabase(config.ledger()));
             this.tx = new Tx(database.entityManagerFactory());
+            if (readerHost != null) {
+                ai.protomolt.proto.repo.container.ledger.ReaderHostExecutions.register(tx,
+                        readerHost.execution(), readerHost.hostIdentity(), readerHost.bootIdentity());
+                // Only an acknowledged fresh registration belongs to this constructor.
+                // A duplicate or uncertain reply must not fence another live execution.
+                registeredHostTx = tx;
+            }
             this.documentLedger = new DocumentLedger(tx);
             String selectedDriveProvider = RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE.equals(config.blobStore())
                     ? "s3" : config.blobStore();
@@ -322,7 +342,8 @@ public final class RepoServices implements AutoCloseable {
                 this.rawIngestion = bounded != null || boundedDocuments != null ? null : new ai.protomolt.proto.repo.engine.RawIngestionOperations(documents, documentLedger,
                         driveLedger, blobStore, generation, managedCapabilities);
                 this.managedArchive = startingArchive = boundedDocuments != null ? null : new ManagedArchiveServices(tx, archiveLedger, blobStore,
-                        managedCapabilities, generation, profile, reclaimer);
+                        managedCapabilities, generation, profile, reclaimer,
+                        readerHost == null ? null : readerHost.execution());
             } else {
                 this.rawIngestion = null;
                 this.rawRecovery = null;
@@ -354,7 +375,8 @@ public final class RepoServices implements AutoCloseable {
             // after this component acquires its durable lifecycle identity.
             this.managedDocuments = generation == null || bounded != null ? null : new ManagedDocumentServices(tx, driveLedger,
                     generation, new ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger(tx).find(generation).orElseThrow(),
-                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess, journaled, boundedDocuments);
+                    java.util.Objects.requireNonNull(selectedBacking).handle(), config.kafkaEnabled(), historicalAccess, schemaAccess, journaled, boundedDocuments,
+                    readerHost == null ? null : readerHost.execution());
         } catch (RuntimeException | Error failure) {
             if (archiveIngress != null) archiveIngress.close();
             if (archiveAdmission != null) archiveAdmission.close();
@@ -374,6 +396,10 @@ public final class RepoServices implements AutoCloseable {
                     if (cleanup != failure) failure.addSuppressed(cleanup);
                 }
             }
+            if (registeredHostTx != null) {
+                try { fenceReaderHost(registeredHostTx, java.time.Duration.ofSeconds(5)); }
+                catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            }
             try { owned.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
@@ -387,6 +413,41 @@ public final class RepoServices implements AutoCloseable {
      */
     public static RepoServices build(RepoServiceConfig config) {
         return new RepoServices(config);
+    }
+
+    /**
+     * Builds managed storage with readers bound to one trusted supervisor execution.
+     * History, schema access and journaled publication are optional; publication
+     * requires schema access. A failed or uncertain registration never falls back
+     * to local-only readers. The supervisor must retain the supplied identity for
+     * recovery and use a fresh execution UUID for every replacement startup.
+     * This host cannot attest its own termination. Schema ownership transfers only
+     * on successful construction, as in the corresponding local-only builders.
+     */
+    public static RepoServices buildHosted(RepoServiceConfig config, BridgeEngine bridges,
+            HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess,
+            ManagedPublicationOptions publication, ReaderHostOptions host) {
+        return new RepoServices(java.util.Objects.requireNonNull(config), java.util.Objects.requireNonNull(bridges),
+                ai.protomolt.proto.repo.blob.spi.BlobStores.discover(), historicalAccess, schemaAccess, null,
+                publication == null ? null : publication.journaled(), null, java.util.Objects.requireNonNull(host));
+    }
+
+    /** Bounded archive profile with the same supervisor identity rules as {@link #buildHosted}. */
+    public static RepoServices buildBoundedArchiveHosted(RepoServiceConfig config, BoundedArchiveOptions options,
+            ReaderHostOptions host) {
+        return new RepoServices(java.util.Objects.requireNonNull(config), BridgeEngine.standard(),
+                ai.protomolt.proto.repo.blob.spi.BlobStores.discover(), null, null,
+                java.util.Objects.requireNonNull(options).profile(), null, null, java.util.Objects.requireNonNull(host));
+    }
+
+    /** Bounded document profile with the same supervisor identity rules as {@link #buildHosted}. */
+    public static RepoServices buildBoundedDocumentsHosted(RepoServiceConfig config, BridgeEngine bridges,
+            HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess,
+            ManagedPublicationOptions publication, BoundedDocumentOptions options, ReaderHostOptions host) {
+        return new RepoServices(java.util.Objects.requireNonNull(config), java.util.Objects.requireNonNull(bridges),
+                ai.protomolt.proto.repo.blob.spi.BlobStores.discover(), historicalAccess,
+                java.util.Objects.requireNonNull(schemaAccess), null, java.util.Objects.requireNonNull(publication).journaled(),
+                java.util.Objects.requireNonNull(options).profile(), java.util.Objects.requireNonNull(host));
     }
 
     /**
@@ -907,6 +968,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private void releaseAfterWorkersStop(java.time.Duration timeout) {
+        long started = System.nanoTime();
         // Bounded admission is already closed. Keep transport/executor alive for
         // accepted calls; transport shutdown can otherwise forcibly cancel them.
         // A timeout retains every resource so the owner can retry draining.
@@ -919,12 +981,25 @@ public final class RepoServices implements AutoCloseable {
             awaitArchiveIdle(timeout);
             if (managedDocuments != null) managedDocuments.drain(timeout);
             if (managedArchive != null) managedArchive.reader.attestLocalQuiescence();
+            if (readerHost != null && !readerHostFenced) {
+                fenceReaderHost(tx, timeout.minusNanos(System.nanoTime() - started));
+                readerHostFenced = true;
+            }
             lifecycleThreads.clear();
             httpServers.clear();
             servers.clear();
             owned.close();
         });
         LOG.info("repo-service stopped");
+    }
+
+    private void fenceReaderHost(Tx transaction, java.time.Duration remaining) {
+        long milliseconds = Math.min(5000, remaining.toMillis());
+        if (milliseconds < 1)
+            throw new IllegalStateException("Reader host fence deadline expired; shared resources retained");
+        var limit = java.time.Duration.ofMillis(milliseconds);
+        var bounded = transaction.withTimeouts(new ai.protomolt.proto.repo.container.ledger.SqlTimeouts(limit, limit));
+        ai.protomolt.proto.repo.container.ledger.ReaderHostExecutions.fence(bounded, readerHost.execution());
     }
 
     private void awaitArchiveIdle(java.time.Duration timeout) {
