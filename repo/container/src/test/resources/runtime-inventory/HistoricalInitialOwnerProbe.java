@@ -96,27 +96,21 @@ final class HistoricalInitialOwnerProbe {
                      var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
                          require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload backend");
                          return new DocumentUploadCoordinator.Backend(profile.identity(), opened);
-                     }, 2, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)))) {
+                     }, 2, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)));
+                     var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()),
+                                 "historical preparation reads the exact original backend");
+                         return provider.store();
+                     }, 4, 4_000_000, budget)) {
                     admitted = request.stageUploads(uploads, bodies, Map.of(), RepositoryReadControl.NONE);
                     var replay = request.stageUploads(uploads, bodies, Map.of(), RepositoryReadControl.NONE);
                     require(replay.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()
                             .equals(admitted.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()),
                             "historical upload replay retains verified selections");
                     require(uploads.providerActivity().active() == 0, "historical upload workers exited");
-                }
-                started = request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE);
-                var ordinary = new HashMap<Integer, ByteString>();
-                var declared = command.intent().getMembers(0);
-                for (int ordinal = 0; ordinal < declared.getPartsCount(); ordinal++)
-                    if (!declared.getParts(ordinal).hasHistoricalReuse() && !declared.getParts(ordinal).hasEmpty())
-                        ordinary.put(ordinal, fragments.get(ordinal));
-                var providerReads = new java.util.concurrent.atomic.AtomicInteger();
-                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
-                    require(generation.equals(placement.generation()), "historical reader uses original backend generation");
-                    require(profile.equals(provider.profile()), "historical reader uses original provider profile");
-                    return provider.store();
-                }, 4, 4_000_000, budget)) {
-                    request.prepareAssessmentFromReader(policy, Map.of("a", ordinary),
+                    started = request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE);
+                    var providerReads = new java.util.concurrent.atomic.AtomicInteger();
+                    var composed = request.stageAndPrepareAssessment(uploads, bodies, Map.of(), reads, reader, policy,
                             Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
                             (member, occurrence) -> freshDefinition,
                             new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(),
@@ -124,6 +118,11 @@ final class HistoricalInitialOwnerProbe {
                                 providerReads.incrementAndGet();
                                 return reader.readHistorical(captured, ordinal, control);
                             }, RepositoryReadControl.NONE);
+                    require(composed.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()
+                            .equals(admitted.members().stream().map(DocumentUploadCoordinator.StagedMember::selection).toList()),
+                            "owned historical preparation retains exact verified upload selections");
+                    require(request.progress(RepositoryReadControl.NONE).assessmentPrepared(),
+                            "owned assessment transfers to the original retained attempt");
                     require(providerReads.get() > 0, "initial owner prepares historical fragments from provider");
                     reader.close();
                     require(reader.awaitIdle(Duration.ofSeconds(1)), "historical provider work exits before reader closure");
@@ -179,6 +178,7 @@ final class HistoricalInitialOwnerProbe {
                 }
             }
             if (reject) {
+                reads.releaseDrained(32);
                 int heldReads = reads.outstandingReads();
                 var cancellation = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<DocumentPublicationReplay.Observation>>();
                 try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();

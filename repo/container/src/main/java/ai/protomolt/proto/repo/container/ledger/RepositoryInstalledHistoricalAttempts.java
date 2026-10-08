@@ -561,6 +561,22 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             entry.assessment = execution.prepareAssessment(entry.caller, policy, fragments, container, resolver,
                     limits, evaluatedAt, control);
         }
+
+        /** Install the owned assessment only after upload, input capture and delivery fences succeed. */
+        synchronized DocumentUploadCoordinator.Staged stageAndPrepareAssessment(DocumentUploadCoordinator uploads,
+                Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies, Map<String, String> attributes,
+                DocumentReadLedger reads, DocumentRetainedReader ordinaryReader, DocumentSchemaPolicies.Selection policy,
+                Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+                DocumentRevisionAssembly.Limits limits, Instant evaluatedAt,
+                DocumentHistoricalRetainedReader historicalReader, RepositoryReadControl control)
+                throws InvalidProtocolBufferException {
+            var execution = execution(control);
+            if (entry.assessment != null) throw conflict("Historical assessment is already retained");
+            var prepared = execution.stageAndPrepareAssessment(entry.caller, uploads, bodies, attributes, reads,
+                    ordinaryReader, policy, container, resolver, limits, evaluatedAt, entry.sources, historicalReader, control);
+            entry.assessment = prepared.assessment();
+            return prepared.staged();
+        }
         /** Read and assess under this attached generation; retain one owned fragment snapshot. */
         synchronized void prepareAssessmentFromReader(DocumentSchemaPolicies.Selection policy,
                 Map<String, Map<Integer, ByteString>> ordinary, Optional<DocumentSchemaAdmission.Definition> container,

@@ -241,6 +241,32 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         }
     }
 
+    DocumentHistoricalPublicationPreparation.Prepared stageAndPrepareAssessment(RepositoryCaller caller,
+            DocumentUploadCoordinator coordinator, Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies,
+            Map<String, String> attributes, DocumentReadLedger reads, DocumentRetainedReader ordinaryReader,
+            DocumentSchemaPolicies.Selection policy,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver, DocumentRevisionAssembly.Limits limits,
+            java.time.Instant evaluatedAt, DocumentHistoricalAssessmentSources sources,
+            DocumentHistoricalRetainedReader historicalReader, RepositoryReadControl control)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        DocumentHistoricalPublicationPreparation.Prepared result = null;
+        try (var child = forkTransfer(caller, control, coordinator.boundedAuthority(tx))) {
+            result = DocumentHistoricalPublicationPreparation.prepare(caller, owner, prepared,
+                    new DocumentOperationUploadAdmission(child.tx, drives), reads, ordinaryReader, coordinator,
+                    child.uploadAuthority(caller, control), bodies, attributes,
+                    (ordinary, active) -> prepareAssessmentFromReader(caller, policy, ordinary, container, resolver,
+                            limits, evaluatedAt, sources, historicalReader, active), control);
+        } catch (RuntimeException | Error failure) {
+            if (result != null) {
+                try { result.close(); }
+                catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+        return result;
+    }
+
     private DocumentUploadAuthority uploadAuthority(RepositoryCaller caller, RepositoryReadControl control) {
         return new DocumentUploadAuthority() {
             public DocumentOperationUploadAdmission.Admission admit() { return admitUploads(caller, control); }

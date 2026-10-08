@@ -882,7 +882,14 @@ transfer child: CREATE binds assessment identity to the original execution handl
 Retain the assessment in the attempt entry only after successful transfer; failed
 delivery must close it without leaving a closed assessment in the registry.
 
-The public driver still needs this composition and its tests. It must observe
+The internal retained attempt now composes this path through
+`DocumentHistoricalPublicationPreparation` and installs the assessment only after
+the owned callback and transfer-child cleanup succeed. Ordinary input cleanup
+attempts every batch release and the plan use, preserving the original failure.
+Closing the ordinary pinned plan leaves SQL release to the reader lifecycle after
+actual drain, as in ordinary publication.
+
+The public driver still needs accepted-call routing and its tests. It must observe
 authorized terminal replay before host selection, resume an existing local entry
 before allocating a capture, and use explicit host coordinator authority for cold
 successor recovery. Branch before the ordinary operation-wide guard so historical

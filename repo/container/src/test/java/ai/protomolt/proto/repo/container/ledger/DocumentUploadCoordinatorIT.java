@@ -1034,7 +1034,8 @@ class DocumentUploadCoordinatorIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "invalid-inputs", "wrong-operation", "wrong-owner", "lifecycle", "lifecycle-cancel"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "inputs-close", "invalid-inputs",
+            "invalid-inputs-close", "wrong-operation", "wrong-owner", "lifecycle", "lifecycle-cancel"})
     void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(String mode) throws Exception {
         boolean cancel = mode.equals("cancel") || mode.equals("lifecycle-cancel");
         boolean managedLifecycle = mode.startsWith("lifecycle");
@@ -1108,7 +1109,7 @@ class DocumentUploadCoordinatorIT {
                 2, 1024 * 1024, budget)) {
             DocumentRetainedReader retainedReader = reader;
             var lifecycle = new DocumentReadLifecycle(ledger, reader, 2);
-            if (mode.equals("inputs") || mode.equals("invalid-inputs") || mode.startsWith("wrong-")) {
+            if (mode.startsWith("inputs") || mode.startsWith("invalid-inputs") || mode.startsWith("wrong-")) {
                 var uploadBudget = new PayloadBudget(1024 * 1024);
                 var snapshotBudget = new PayloadBudget(1024 * 1024);
                 var bodies = Map.of(new DocumentUploadPayloads.Key("member", 0),
@@ -1129,18 +1130,32 @@ class DocumentUploadCoordinatorIT {
                                 fail("mismatched operation or owner returned inputs");
                             }
                         }).hasMessageContaining("differs from publication command or owner");
-                    } else if (mode.equals("invalid-inputs")) {
+                    } else if (mode.startsWith("invalid-inputs") || mode.equals("inputs-close")) {
                         // Corrupt only the returned batch shape after real provider reads.
+                        var closeFailure = new IllegalStateException("injected retained batch close failure");
                         DocumentRetainedReader wrongCount = (pinned, id, control) -> {
                             var actual = retainedReader.readRetained(pinned, id, control);
                             return new DocumentRetainedReader.Batch() {
-                                @Override public List<PartObject> parts() { return actual.parts().subList(0, 1); }
-                                @Override public void close() { actual.close(); }
+                                @Override public List<PartObject> parts() {
+                                    return mode.equals("inputs-close") ? actual.parts() : actual.parts().subList(0, 1);
+                                }
+                                @Override public void close() {
+                                    actual.close();
+                                    if (mode.endsWith("-close")) throw closeFailure;
+                                }
                             };
                         };
-                        assertThatThrownBy(() -> DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
-                                wrongCount, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
-                                .hasMessageContaining("wrong part count");
+                        var failure = catchThrowable(() -> {
+                            try (var inputs = DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
+                                    wrongCount, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                                assertThat(inputs.fragments().get("member")).containsOnlyKeys(0, 1, 3);
+                            }
+                        });
+                        if (mode.equals("inputs-close")) assertThat(failure).isSameAs(closeFailure);
+                        else {
+                            assertThat(failure).hasMessageContaining("wrong part count");
+                            if (mode.endsWith("-close")) assertThat(failure.getSuppressed()).containsExactly(closeFailure);
+                        }
                     } else {
                         try (var inputs = DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
                                 retainedReader, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
