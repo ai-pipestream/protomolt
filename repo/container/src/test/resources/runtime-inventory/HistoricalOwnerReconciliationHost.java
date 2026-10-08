@@ -11,6 +11,7 @@ public final class HistoricalOwnerReconciliationHost {
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
         var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
             case "initial-owner" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER;
+            case "cold-owner" -> HistoricalInstalledOwnerProbe.Check.COLD;
             case "self-supersession" -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
             case "overlap" -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
             case "takeover-first" -> HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST;
@@ -32,6 +33,7 @@ public final class HistoricalOwnerReconciliationHost {
         }
         System.out.println(switch (check) {
             case INITIAL_OWNER -> "HISTORICAL_INITIAL_OWNER_HOST_OK";
+            case COLD -> "HISTORICAL_COLD_OWNER_HOST_OK";
             case TAKEOVER_FIRST -> "HISTORICAL_TAKEOVER_FIRST_HOST_OK";
             case CLAIM_EXPIRES -> "HISTORICAL_CLAIM_EXPIRY_HOST_OK";
             case OVERLAP -> "HISTORICAL_GENERATION_OVERLAP_HOST_OK";

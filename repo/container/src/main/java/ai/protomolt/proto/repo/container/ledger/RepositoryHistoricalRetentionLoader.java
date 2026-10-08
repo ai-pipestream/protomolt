@@ -27,7 +27,6 @@ final class RepositoryHistoricalRetentionLoader {
                 || owner.generation() - 1 != previous.predecessorGeneration()
                 || !owner.nonce().equals(previous.seeds().ownerNonce())) throw inconsistent();
         var lease = budget.reserve(3L * DocumentPublicationPreparationCodec.MAX_BYTES);
-        boolean transferred = false;
         try {
             byte[] previousSha = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(previous));
             var captured = tx.inTransaction(em -> {
@@ -57,10 +56,13 @@ final class RepositoryHistoricalRetentionLoader {
                 return null;
             });
             control.check();
-            var loaded = new Loaded(record, lease);
-            transferred = true;
-            return loaded;
-        } finally { if (!transferred) lease.close(); }
+            // Decode scratch is temporary. Retain only the bounded encoded record size,
+            // with both reservations held during the ownership transfer.
+            var retained = budget.reserve(captured.size());
+            try {
+                return new Loaded(record, retained);
+            } catch (RuntimeException | Error failure) { retained.close(); throw failure; }
+        } finally { lease.close(); }
     }
 
     private record Anchor(long generation, String sha256, UUID nonce) {}

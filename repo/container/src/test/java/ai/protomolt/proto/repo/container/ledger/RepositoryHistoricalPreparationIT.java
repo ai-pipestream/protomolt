@@ -228,8 +228,8 @@ class RepositoryHistoricalPreparationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void freshOwnerRecoversExpiredUnactivatedReservationOrInstallation(boolean installed) throws Exception {
+    @ParameterizedTest @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void freshOwnerRecoversExpiredUnactivatedReservationOrInstallation(boolean installed, boolean cold) throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
             var modes = modes(rig); var observed = expired(c, rig, modes);
             var firstBudget = new PayloadBudget(256L * 1024 * 1024);
@@ -250,7 +250,10 @@ class RepositoryHistoricalPreparationIT {
             var budget = new PayloadBudget(256L * 1024 * 1024);
             var next = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
             try (var later = capture(c, rig)) {
-              try (var attempt = next.beginProposed(CALLER, rig.record(), modes, unactivated, LEASE, TIMEOUTS)) {
+              try (var attempt = cold
+                      ? next.beginColdProposed(CALLER, new DocumentPublicationCommand(rig.record().command().intent()),
+                              modes, unactivated, LEASE, TIMEOUTS)
+                      : next.beginProposed(CALLER, rig.record(), modes, unactivated, LEASE, TIMEOUTS)) {
                 assertThat(attempt.advancePreparation(CALLER, modes, Map.of(), NONE))
                         .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
                 assertThat(attempt.advancePreparation(CALLER, modes, Map.of(), NONE))
@@ -269,6 +272,56 @@ class RepositoryHistoricalPreparationIT {
               assertThat(next.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
             }
             assertThat(budget.reservedBytes()).isZero();
+            assertThat(rig.history().isReleased()).isFalse();
+        }
+    }
+
+    @Test void freshColdRegistriesRecoverAcrossMultipleInstalledSuccessors() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var fixedModes = modes(rig);
+            var observed = expired(c, rig, fixedModes);
+            var command = rig.record().command();
+            long originalGeneration = rig.record().predecessorGeneration();
+            for (int generation = 1; generation <= 3; generation++) {
+                var budget = new PayloadBudget(256L * 1024 * 1024);
+                var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
+                try {
+                    try (var attempt = owner.beginColdProposed(CALLER, new DocumentPublicationCommand(command.intent()),
+                            fixedModes, observed, Duration.ofSeconds(3), TIMEOUTS)) {
+                        assertThat(attempt.advancePreparation(CALLER, fixedModes, Map.of(), NONE))
+                                .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
+                        assertThat(attempt.advancePreparation(CALLER, fixedModes, Map.of(), NONE))
+                                .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
+                        var plan = attempt.installedPlan(CALLER, NONE);
+                        assertThat(plan.next().predecessorGeneration()).isEqualTo(originalGeneration + generation);
+                        if (generation == 3) {
+                            try (var sources = capture(c, rig)) {
+                                attempt.attachSources(sources.sources(), sources.sources().work(), NONE);
+                                attempt.openExecution(CALLER, NONE);
+                                assertThat(attempt.start(LEASE, NONE)).isNotNull();
+                                attempt.close();
+                                owner.close();
+                                assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                                assertThat(sources.history().isReleased()).isTrue();
+                            }
+                        }
+                    }
+                } finally {
+                    owner.close();
+                    assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                }
+                assertThat(budget.reservedBytes()).isZero();
+                assertThat(count(c, "repository_successor_installs")).isEqualTo(generation);
+                if (generation < 3) {
+                    waitExpired(c, rig);
+                    observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                            .inspect(CALLER, rig.record().key(), command.sha256(), NONE);
+                    assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.INSTALLED_NOT_ACTIVATED);
+                }
+            }
+            assertThat(count(c, "repository_coordinator_expirations")).isEqualTo(1);
+            assertThat(count(c, "repository_coordinator_supersessions")).isEqualTo(2);
+            assertThat(count(c, "repository_historical_activations")).isEqualTo(1);
             assertThat(rig.history().isReleased()).isFalse();
         }
     }

@@ -121,6 +121,11 @@ class RepositoryHistoricalRetentionLoaderIT {
             try (var loaded = loader(c, budget).load(CALLER, CALLER, reservation, owner(record), record, NONE)) {
                 assertThat(DocumentPublicationPreparationCodec.encode(loaded.record()))
                         .isEqualTo(DocumentPublicationPreparationCodec.encode(record));
+                assertThat(budget.reservedBytes()).isEqualTo(DocumentPublicationPreparationCodec.encode(record).size());
+                try (var available = budget.reserve(budget.capacity() - budget.reservedBytes())) {
+                    assertThat(budget.reservedBytes()).isEqualTo(budget.capacity());
+                    assertThat(loaded.record()).isNotNull();
+                }
             }
             assertThat(effects(c)).containsExactly(before);
             assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_successor_installs")).isZero();

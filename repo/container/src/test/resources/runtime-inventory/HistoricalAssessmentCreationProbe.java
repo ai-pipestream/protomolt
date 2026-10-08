@@ -12,7 +12,7 @@ import java.util.*;
 /** Real provider reads, production-JAR observation, and SQL CREATE of historical evidence. */
 public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
-        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, INITIAL_OWNER,
+        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, INITIAL_OWNER, OWNED_SCOPED_COLD,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
         SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
@@ -26,7 +26,7 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
             boolean reconciliationOnly) throws Exception {
         for (var scenario : Scenario.values()) {
-            if (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.OWNED_SCOPED_REJECTION) continue;
+            if (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.OWNED_SCOPED_REJECTION || scenario == Scenario.OWNED_SCOPED_COLD) continue;
             if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION || scenario == Scenario.OWNED_SCOPED_OVERLAP || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST || scenario == Scenario.OWNED_SCOPED_CLAIM_EXPIRES || scenario == Scenario.OWNED_SCOPED_TAKEOVER_FIRST) continue;
             if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
             if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
@@ -63,6 +63,11 @@ public final class HistoricalAssessmentCreationProbe {
     static void selfSupersession(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
         run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_SELF_SUPERSESSION, null, null, tx);
+    }
+
+    static void coldOwner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_COLD, null, null, tx);
     }
 
     static void overlappingGenerations(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
@@ -284,6 +289,7 @@ public final class HistoricalAssessmentCreationProbe {
                                 case OWNED_SCOPED_CLAIM_EXPIRES -> HistoricalInstalledOwnerProbe.Check.CLAIM_EXPIRES;
                                 case OWNED_SCOPED_TAKEOVER_FIRST -> HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST;
                                 case OWNED_SCOPED_REJECTION -> HistoricalInstalledOwnerProbe.Check.REJECTION;
+                                case OWNED_SCOPED_COLD -> HistoricalInstalledOwnerProbe.Check.COLD;
                                 default -> HistoricalInstalledOwnerProbe.Check.ORDINARY;
                             });
                     return;
@@ -642,7 +648,7 @@ public final class HistoricalAssessmentCreationProbe {
 
     private static boolean installedOwner(Scenario scenario) {
         return switch (scenario) {
-            case OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+            case OWNED_SCOPED_COLD, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
                     OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP, OWNED_SCOPED_COMMIT_WINS, OWNED_SCOPED_COMMIT_WINS_OLD_FIRST, OWNED_SCOPED_CLAIM_EXPIRES, OWNED_SCOPED_TAKEOVER_FIRST, OWNED_SCOPED_REJECTION -> true;
             default -> false;
         };

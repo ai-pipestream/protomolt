@@ -203,7 +203,9 @@ final class RepositoryHistoricalAttemptPreparation implements AutoCloseable {
                             if (!record.command().canonical().equals(command.canonical())
                                     || !record.key().equals(proposal.predecessor().key()))
                                 throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Recovered retention command differs");
-                            recoveredDigest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record));
+                            try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
+                                recoveredDigest = DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(record));
+                            }
                             recoveredRetention = anchor;
                         } catch (RuntimeException | Error failure) { anchor.close(); throw failure; }
                     }

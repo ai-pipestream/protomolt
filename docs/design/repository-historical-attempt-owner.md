@@ -1380,8 +1380,18 @@ Preparation owns the loaded anchor until disposal. A later local successor takes
 its own retained-anchor budget before the cold predecessor is disposed.
 
 SQL regression cases exercise uncertain reservation and installation replies,
-shutdown at each phase, admission capacity, changed retry inputs, and a cold
-generation followed by a local successor. These source fixtures use synthetic
-provider observations. Fresh-registry recovery across multiple successors, real
-provider execution after restart, separate-process recovery and transport parity
-remain required before public routing.
+shutdown at each phase, admission capacity, changed retry inputs, a cold
+generation followed by a local successor, and fresh registries across multiple
+unactivated installed successors. These source fixtures use synthetic provider
+observations.
+
+The real-provider cold-owner case covers mixed publication, receipt replay and
+retirement using PostgreSQL and LocalStack. The loader retains the actual encoded
+anchor size after decoding instead of keeping maximum decoding scratch through
+activation. Scratch and retained reservations overlap during transfer; digest
+encoding reserves its own temporary space. These budgets account for serialized
+payload sizes, not total JVM object overhead.
+
+The provider harness creates the predecessor and recovery entry in one JVM.
+Separate-process restart recovery and transport parity remain required before
+public routing.

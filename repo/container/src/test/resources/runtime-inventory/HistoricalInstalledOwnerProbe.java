@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
+        ORDINARY, COLD, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -72,7 +72,11 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner() || (check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST)) ? Duration.ofSeconds(30) : Duration.ofMinutes(2), timeouts)) {
+            var lease = (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner()
+                    || check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) ? Duration.ofSeconds(30) : Duration.ofMinutes(2);
+            try (var request = check == Check.COLD
+                    ? attempts.beginColdProposed(caller, new DocumentPublicationCommand(command.intent()), modes, observed, lease, timeouts)
+                    : attempts.beginProposed(caller, original, modes, observed, lease, timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -145,6 +149,7 @@ final class HistoricalInstalledOwnerProbe {
                 plan = overlap.takeOver(plan, modes, bodies, timeouts);
             }
             System.out.println("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
+            if (check == Check.COLD) System.out.println("SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK");
 
             return new Prepared(attempts, plan, budget, before, coordinator, overlap);
         } catch (Exception | Error failure) {
@@ -446,6 +451,7 @@ final class HistoricalInstalledOwnerProbe {
             }
         }
         if (check == Check.SELF_SUPERSESSION) System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK");
+        if (check == Check.COLD) System.out.println("SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK");
         System.out.println(fault == null ? "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK"
                 : "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK");
     }
