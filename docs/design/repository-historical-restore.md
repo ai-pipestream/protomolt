@@ -894,8 +894,10 @@ package-private runtime factory. It observes authorized terminal replay before
 host selection, inspects local entries before allocating a capture, and requires
 explicit host recovery authority. It branches before the ordinary operation-wide
 guard and uses the facade's accepted call through synchronous execution. Cold
-restart and takeover through this entry point still require qualification before
-the host factory becomes public. Existing public factories retain the historical
+restart now has authenticated in-process gRPC qualification at the initial,
+reserved and installed crash boundaries, with provider readback and original
+writer cleanup. Concurrent takeover and public failure-boundary qualification
+remain before the host factory becomes public. Existing public factories retain the historical
 execution guard. No default coordinator, provider, schema or credential fallback
 is supplied.
 

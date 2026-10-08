@@ -146,7 +146,7 @@ final class HistoricalPublicDispatchProbe {
         require(selections.get() == selected && resolutions.get() == resolved, "terminal replay performs no selection or resolution");
     }
 
-    private static void transport(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+    static void transport(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
             AtomicInteger selections, AtomicInteger resolutions, boolean rejected) throws Exception {
         String token = "historical-fixture-" + UUID.randomUUID();
         var credential = caller.credentialBinding().orElseThrow();

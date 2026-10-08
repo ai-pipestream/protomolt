@@ -123,56 +123,65 @@ public final class HistoricalColdRestartProbe {
                     .inspect(coordinator, key, command.sha256(), RepositoryReadControl.NONE);
             require(discovered.status() == expected, "fresh process discovers exact persisted phase");
             var budget = new PayloadBudget(128_000_000);
-            try (var prepared = HistoricalInstalledOwnerProbe.prepareCold(tx, caller, coordinator, command, uploads, budget)) {
-                var selector = member.getPartsList().stream().filter(DocumentPublicationPart::hasHistoricalReuse)
-                        .findFirst().orElseThrow().getHistoricalReuse();
-                var reads = new DocumentReadLedger(tx, UUID.randomUUID());
-                var history = reads.captureHistorical(caller, selector.getSource(), UUID.fromString(selector.getRevisionId()));
-                try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE);
-                     var accepted = sources.work()) {
-                    var fragments = new HashMap<Integer, ByteString>(uploads);
-                    int providerReads = 0;
-                    try (var use = history.use()) {
-                        for (var entry : use.plan().entries()) {
-                            var part = entry.part();
-                            require(part.binding().generation().equals("assessment-s3") && part.binding().profile().equals(provider.profile()),
-                                    "source uses exact retained backend identity");
-                            for (int i = 0; i < member.getPartsCount(); i++) {
-                                var declaration = member.getParts(i);
-                                if (!declaration.hasHistoricalReuse() || !declaration.getHistoricalReuse().getObject().getObjectId()
-                                        .equals(entry.objectId().toString())) continue;
-                                var bytes = provider.store().getBounded(part.binding().namespace(), part.part().key(),
-                                        part.part().providerVersion(), Math.toIntExact(part.part().size())).data();
-                                require(bytes.length == part.part().size() && ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(bytes)
-                                        .equals(part.part().sha256()), "fresh GET matches retained version checksum");
-                                fragments.put(i, ByteString.copyFrom(bytes)); providerReads++;
+            if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_PUBLIC_DISPATCH"))) {
+                HistoricalPublicColdDispatchProbe.run(tx, provider, caller, command, uploads, budget);
+                reclaimOriginalWriter(tx, coordinator, command, budget);
+            } else {
+                try (var prepared = HistoricalInstalledOwnerProbe.prepareCold(tx, caller, coordinator, command, uploads, budget)) {
+                    var selector = member.getPartsList().stream().filter(DocumentPublicationPart::hasHistoricalReuse)
+                            .findFirst().orElseThrow().getHistoricalReuse();
+                    var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+                    var history = reads.captureHistorical(caller, selector.getSource(), UUID.fromString(selector.getRevisionId()));
+                    try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE);
+                         var accepted = sources.work()) {
+                        var fragments = new HashMap<Integer, ByteString>(uploads);
+                        int providerReads = 0;
+                        try (var use = history.use()) {
+                            for (var entry : use.plan().entries()) {
+                                var part = entry.part();
+                                require(part.binding().generation().equals("assessment-s3") && part.binding().profile().equals(provider.profile()),
+                                        "source uses exact retained backend identity");
+                                for (int i = 0; i < member.getPartsCount(); i++) {
+                                    var declaration = member.getParts(i);
+                                    if (!declaration.hasHistoricalReuse() || !declaration.getHistoricalReuse().getObject().getObjectId()
+                                            .equals(entry.objectId().toString())) continue;
+                                    var bytes = provider.store().getBounded(part.binding().namespace(), part.part().key(),
+                                            part.part().providerVersion(), Math.toIntExact(part.part().size())).data();
+                                    require(bytes.length == part.part().size() && ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(bytes)
+                                            .equals(part.part().sha256()), "fresh GET matches retained version checksum");
+                                    fragments.put(i, ByteString.copyFrom(bytes)); providerReads++;
+                                }
                             }
                         }
+                        require(providerReads > 0 && fragments.size() == member.getPartsCount(), "all historical bytes read after restart");
+                        var resolutions = new AtomicInteger();
+                        var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
+                        DocumentPublicationCandidate.Resolver resolver = (selected, occurrence) -> {
+                            require(selected.getParts(occurrence.ordinal()).hasUpload(), "historical schemas must use retained descriptors");
+                            resolutions.incrementAndGet();
+                            return freshDefinition;
+                        };
+                        HistoricalInstalledOwnerProbe.run(tx, provider, caller, coordinator, prepared.plan().previous(), prepared,
+                                sources, accepted, new DocumentSchemaPolicies(tx).read("account", () -> {}), fragments,
+                                Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())), resolver,
+                                new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), budget, observation,
+                                null, database.dataSource(), HistoricalInstalledOwnerProbe.Check.COLD);
+                        require(resolutions.get() == 1, "only the resubmitted upload resolves a fresh schema");
+                    } finally {
+                        history.close();
+                        require(history.awaitDrained(Duration.ofSeconds(1)), "fresh history worker drains");
+                        history.release(); reads.fence(); reads.attestLocalQuiescence();
+                        require(reads.outstandingReads() == 0, "fresh process releases its reads");
                     }
-                    require(providerReads > 0 && fragments.size() == member.getPartsCount(), "all historical bytes read after restart");
-                    var resolutions = new AtomicInteger();
-                    var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
-                    DocumentPublicationCandidate.Resolver resolver = (selected, occurrence) -> {
-                        require(selected.getParts(occurrence.ordinal()).hasUpload(), "historical schemas must use retained descriptors");
-                        resolutions.incrementAndGet();
-                        return freshDefinition;
-                    };
-                    HistoricalInstalledOwnerProbe.run(tx, provider, caller, coordinator, prepared.plan().previous(), prepared,
-                            sources, accepted, new DocumentSchemaPolicies(tx).read("account", () -> {}), fragments,
-                            Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())), resolver,
-                            new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), budget, observation,
-                            null, database.dataSource(), HistoricalInstalledOwnerProbe.Check.COLD);
-                    require(resolutions.get() == 1, "only the resubmitted upload resolves a fresh schema");
-                } finally {
-                    history.close();
-                    require(history.awaitDrained(Duration.ofSeconds(1)), "fresh history worker drains");
-                    history.release(); reads.fence(); reads.attestLocalQuiescence();
-                    require(reads.outstandingReads() == 0, "fresh process releases its reads");
+                    reclaimOriginalWriter(tx, coordinator, prepared.plan().previous().command(), budget);
                 }
-                reclaimOriginalWriter(tx, coordinator, prepared.plan().previous(), budget);
             }
             require(budget.reservedBytes() == 0, "fresh process releases metadata");
             require(new DocumentPublicationReplay(tx).observe(caller, command).result().isPresent(), "durable restart receipt");
+            require(count(tx, "document_revision_commits", command.operationId()) == 1, "exactly one cold recovery publication");
+            require(count(tx, "document_assessment_owners", command.operationId()) == 1, "exactly one cold recovery assessment");
+            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == 2,
+                    "original and recovered generations each retain one START");
             require(count(tx, "repository_successor_installs", command.operationId()) == (phase.equals("installed") ? 2 : 1),
                     "fresh process installs exactly one successor");
             require(count(tx, "repository_coordinator_supersessions", command.operationId()) == (phase.equals("initial") ? 0 : 1),
@@ -184,12 +193,12 @@ public final class HistoricalColdRestartProbe {
     }
 
     private static void reclaimOriginalWriter(Tx tx, RepositoryCaller coordinator,
-            DocumentPublicationPreparationRecord predecessor, PayloadBudget budget) {
+            DocumentPublicationCommand command, PayloadBudget budget) {
         // Fixture-only archive read after publication: the reservation loader is no
         // longer usable after terminal retirement. Decode the immutable original
         // preparation with the same digest/command/nonce checks as runtime loading.
         try (var scratch = budget.reserve(3L * DocumentPublicationPreparationCodec.MAX_BYTES)) {
-            var key = predecessor.key();
+            var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), coordinator.principalName(), command.operationId());
             var rows = tx.readOnly(em -> em.createNativeQuery("""
                     SELECT p.preparation_bytes,p.preparation_sha256,p.owner_nonce,p.command_sha256,p.predecessor_generation
                     FROM repository_publication_preparations p JOIN repository_preparation_pin_batches b
@@ -202,7 +211,7 @@ public final class HistoricalColdRestartProbe {
             require(rows.size() == 1, "exact original retained preparation from SQL");
             var row = (Object[]) rows.getFirst();
             var original = DocumentPublicationPreparationJournal.decode(row, ((byte[]) row[0]).length, key,
-                    predecessor.command().sha256(), ((Number) row[4]).longValue());
+                    command.sha256(), ((Number) row[4]).longValue());
             require(original.predecessorGeneration() == 0, "fixture original retention is generation zero");
             reclaimWriter(tx, coordinator, original, budget);
         }

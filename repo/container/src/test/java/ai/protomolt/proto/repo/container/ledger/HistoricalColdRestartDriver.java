@@ -9,12 +9,18 @@ import static org.assertj.core.api.Assertions.*;
 /** The recovery JVM starts only after the exact writer process and its SQL sessions exit. */
 final class HistoricalColdRestartDriver {
     static void run(StorageRuntimeProbeCompiler.Compiled compiled, Map<String, String> environment, Path directory, String phase) throws Exception {
+        run(compiled, environment, directory, phase, false);
+    }
+
+    static void run(StorageRuntimeProbeCompiler.Compiled compiled, Map<String, String> environment, Path directory,
+            String phase, boolean publicDispatch) throws Exception {
         assertThat(phase).isIn("initial", "reserved", "installed");
         Files.createDirectories(directory);
         var shared = new HashMap<>(environment);
         shared.put("PROTOMOLT_TEST_COLD_REQUEST", directory.resolve("request.properties").toString());
         shared.put("PROTOMOLT_TEST_COLD_CREDENTIAL", UUID.randomUUID().toString());
         shared.put("PROTOMOLT_TEST_COLD_PHASE", phase);
+        shared.put("PROTOMOLT_TEST_COLD_PUBLIC_DISPATCH", Boolean.toString(publicDispatch));
         String application = "cold-writer-" + UUID.randomUUID();
         var hostIdentity = new ReaderHostTermination.Identity(UUID.randomUUID(), "cold-restart-driver", UUID.randomUUID().toString());
         shared.put("PROTOMOLT_TEST_COLD_HOST_EXECUTION", hostIdentity.execution().toString());
@@ -79,9 +85,11 @@ final class HistoricalColdRestartDriver {
             assertThat(Files.size(recoveryLog)).isLessThan(1_048_576);
             String output = Files.readString(recoveryLog);
             assertThat(recovery.exitValue()).as(output).isZero();
-            assertThat(output).contains("HISTORICAL_COLD_PROCESS_RESTART_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
-                    "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK",
+            assertThat(output).contains("HISTORICAL_COLD_PROCESS_RESTART_OK",
                     "HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK", "HISTORICAL_COLD_HOST_SUPERVISOR_OK");
+            if (publicDispatch) assertThat(output).contains("HISTORICAL_PUBLIC_COLD_DISPATCH_GRPC_OK");
+            else assertThat(output).contains("SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
+                    "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
             System.out.println("HISTORICAL_COLD_PROCESS_RESTART_OK " + phase);
         } finally { stop(recovery); }
     }
