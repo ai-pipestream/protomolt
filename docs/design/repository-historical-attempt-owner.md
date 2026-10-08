@@ -1270,3 +1270,10 @@ closed. Session cleanup and historical source retention are checked separately.
 See `docs/evidence/repository/2026-10-08-historical-rejection-reply/`.
 Restart recovery, successor rejection and decision races remain acceptance work.
 Public routing remains disabled.
+
+Successor rejection now passes with real PostgreSQL and LocalStack. The receipt
+identifies the replacement generation and assessment; no revision is published.
+Retry requires no provider read, and normal retirement releases the entry while
+preserving receipt replay. See
+`docs/evidence/repository/2026-10-08-successor-rejection/`.
+This does not establish restart recovery or concurrent rejection behavior.

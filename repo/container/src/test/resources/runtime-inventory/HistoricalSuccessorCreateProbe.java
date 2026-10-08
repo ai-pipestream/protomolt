@@ -20,7 +20,9 @@ final class HistoricalSuccessorCreateProbe {
         boolean mixed = command.intent().getMembers(0).getPartsList().stream().anyMatch(part -> part.hasUpload());
         Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container = mixed
                 ? Optional.of(ObservedAssessmentProbe.asset(ai.protomolt.proto.repo.v1.Document.getDescriptor())) : Optional.empty();
-        var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
+        var freshDefinition = check == HistoricalInstalledOwnerProbe.Check.REJECTION
+                ? ObservedAssessmentProbe.invalidSchema()
+                : ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
         DocumentPublicationCandidate.Resolver resolver = (member, occurrence) -> {
             require(mixed && member.getParts(occurrence.ordinal()).hasUpload(), "only resubmitted uploads resolve fresh schemas");
             return freshDefinition;

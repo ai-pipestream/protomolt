@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER;
+        ORDINARY, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
@@ -309,6 +309,40 @@ final class HistoricalInstalledOwnerProbe {
             }
             var found = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
+            if (check == Check.REJECTION) {
+                var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+                var placement = plan.next().placements().values().iterator().next();
+                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                    require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact successor backend");
+                    return provider.store();
+                }, 4, 4_000_000, budget); var call = runtime.enter();
+                     var request = attempts.resume(caller, command).orElseThrow()) {
+                    var result = request.rejectAssessment(selections, reads, reader, limits, observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                    var receipt = result.rejection().orElseThrow();
+                    require(result.state() == DocumentPublicationReplay.State.TERMINATED
+                            && receipt.getOwnerGeneration() == owner.generation() && owner.generation() > 1
+                            && receipt.getCommandSha256().equals(command.sha256())
+                            && receipt.getAssessment().getAssessmentId().equals(created.assessment().toString())
+                            && receipt.getAssessment().getManifestSha256().equals(created.manifestSha256()),
+                            "rejection identifies successor generation, command and assessment");
+                    reader.close();
+                    require(request.rejectAssessment(selections, reads, reader, limits, observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE).equals(result), "successor terminal replay needs no provider read");
+                    require(count(tx, "repository_operation_rejection", command.operationId()) == 1
+                            && count(tx, "document_revision_commits", command.operationId()) == 0,
+                            "one successor rejection and no publication");
+                    reads.releaseDrained(32);
+                    require(reads.outstandingReads() == 0, "successor rejection assessment sessions released");
+                    require(request.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                            == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "rejected successor retires normally");
+                    require(new DocumentPublicationReplay(tx).observe(caller, command).equals(result), "receipt survives successor retirement");
+                }
+                require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 0))
+                        && budget.reservedBytes() == before, "rejected successor releases entry and memory");
+                System.out.println("HISTORICAL_SUCCESSOR_REJECTION_OK");
+                return;
+            }
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 if (check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) {
