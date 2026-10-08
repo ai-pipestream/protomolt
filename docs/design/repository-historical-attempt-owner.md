@@ -1684,3 +1684,30 @@ A persistent failure can hold up later pins with a one-item limit. Larger bounde
 pages attempt other selected pins, and the existing global recovery cursor can
 advance across failures. This is a scheduling limitation, never a successful-drain
 result. Supervisor orchestration and load qualification remain open.
+
+#### One supervisor recovery page
+
+`ReaderHostRecovery.recoverPage` composes discovery, exact-reader quiescence and
+bounded cleanup as an internal Java operation. The caller supplies an existing
+termination receipt, cursor, reader limit, resource limit and operation control.
+The product of the limits cannot exceed 1,000. Each reader shares one resource
+budget across archive references, document references and assessment sessions.
+Only a zero selection across all three establishes that these resources are gone.
+
+The supervisor rechecks the exact registration and state before mutation. It
+preserves existing LOCAL_DRAIN evidence. If local shutdown wins after that check,
+the external-quiescence conflict is reported for retry. No SQL transaction spans
+readers or provider I/O. SQL and pool waits remain subject to the caller's bounded
+transactional configuration; cancellation checks occur between readers and before
+reporting a result, including an empty page.
+
+A failed reader does not prevent attempts on other readers in the bounded page.
+Failures throw `PageFailure`, preserving completed-reader counts, failed reader
+identities, exception causes and the scheduling cursor. Cancellation after an
+error preserves that error as a suppressed exception. Earlier committed cleanup
+survives cancellation. The next attempt rediscovers durable work. The cursor never
+proves completion; callers must revisit failures and late tombstones after each
+traversal. Capture and root release remain separately authorized operations.
+
+This is a callable supervisor step, not a background service or deployed verifier.
+It starts no threads and infers no termination from timeouts or disconnected hosts.

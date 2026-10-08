@@ -238,17 +238,22 @@ public final class HistoricalColdRestartProbe {
         } catch (RepositoryException expected) {
             require(expected.getMessage().contains("has not drained"), "root release failed for exact undrained capture");
         }
+        long recovered = 0;
+        boolean drained = false;
+        var recovery = new ReaderHostRecovery(tx);
+        for (int batch = 0; batch < 10001; batch++) {
+            var page = recovery.recoverPage(host, (UUID) identity[2], Optional.empty(), 1, 1, RepositoryReadControl.NONE);
+            require(page.recovered().size() == 1 && page.recovered().getFirst().reader().equals(reader),
+                    "supervisor discovers only the exact crashed reader");
+            var result = page.recovered().getFirst();
+            require(result.archivePins() == 0 && result.assessmentSessions() == 0, "crashed writer owns native document pins only");
+            if (result.readerResourcesDrained()) { drained = true; break; }
+            recovered += result.documentPins();
+        }
+        require(drained && recovered == pinned, "bounded supervisor drains exactly the crashed reader pins");
         var quiescence = new ReaderExternalQuiescence(tx);
         var receipt = quiescence.quiesce(reader, (UUID) identity[1], host, (UUID) identity[2]);
         require(quiescence.quiesce(reader, (UUID) identity[1], host, (UUID) identity[2]).equals(receipt), "reader receipt replays");
-        long recovered = 0;
-        var recovery = new DocumentReadRecovery(tx);
-        for (int batch = 0; batch < 10001; batch++) {
-            int count = recovery.recoverBatch(reader, 1);
-            if (count == 0) break;
-            recovered += count;
-        }
-        require(recovered == pinned, "bounded recovery removes exactly the crashed reader pins");
         var captures = tx.readOnly(em -> em.createNativeQuery("""
                 SELECT b.predecessor_generation,b.pins_sha256,o.claim_epoch,o.claim_token,o.incarnation
                 FROM repository_preparation_pin_batches b JOIN repository_preparation_pin_owners o
@@ -268,6 +273,7 @@ public final class HistoricalColdRestartProbe {
         require(count(tx, "repository_preparation_history_roots", record.key().operationId()) == 0, "historical preparation roots released");
         require(new DocumentPublicationReplay(tx).observe(coordinator, record.command()).result().isPresent(), "publication receipt remains after orphan cleanup");
         System.out.println("HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK");
+        System.out.println("HISTORICAL_COLD_HOST_SUPERVISOR_OK");
     }
 
     private static long count(Tx tx, String table, UUID operation) {

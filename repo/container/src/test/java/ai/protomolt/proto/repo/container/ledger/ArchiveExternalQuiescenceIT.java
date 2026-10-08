@@ -138,7 +138,7 @@ class ArchiveExternalQuiescenceIT {
         }
     }
 
-    private static void createArchiveVersion(Tx tx, UUID entry, UUID object) {
+    static void createArchiveVersion(Tx tx, UUID entry, UUID object) {
         tx.inTransaction(em -> {
             em.createNativeQuery("""
                     INSERT INTO archive_object_uploads(object_id,expected_size,content_type,lease_token,lease_until,state)
@@ -157,7 +157,7 @@ class ArchiveExternalQuiescenceIT {
         });
     }
 
-    private static void insertArchivePin(Tx tx, UUID pin, UUID reader, UUID entry, UUID object) {
+    static void insertArchivePin(Tx tx, UUID pin, UUID reader, UUID entry, UUID object) {
         tx.inTransaction(em -> {
             em.createNativeQuery("INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version) VALUES(:pin,:reader,:object,:entry,1)")
                     .setParameter("pin", pin).setParameter("reader", reader).setParameter("object", object)

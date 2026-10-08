@@ -31,7 +31,7 @@ class DocumentAssessmentReadSessionIT {
                     DocumentNativePublicationFixture.prepare(context, 1), DocumentNativePublicationFixture.Fault.NONE,
                     em -> {}).getMembers(0);
             var candidate = staged(local, new DocumentAssessmentRetentionFixture(local), 120, true);
-            UUID reader = UUID.randomUUID(), drainedReader = UUID.randomUUID(), foreign = reader(local);
+            UUID reader = new UUID(0, 1), drainedReader = new UUID(0, 2), foreign = reader(local);
             var ledger = new DocumentReadLedger(local, reader, host, 1);
             var drained = new DocumentReadLedger(local, drainedReader, host, 1);
             ledger.captureHistorical(new ai.protomolt.proto.repo.spi.RepositoryCaller("reader", true),
@@ -43,6 +43,12 @@ class DocumentAssessmentReadSessionIT {
             capture(local, candidate, UUID.randomUUID(), reader);
             capture(local, candidate, UUID.randomUUID(), drainedReader);
             capture(local, candidate, UUID.randomUUID(), foreign);
+            var entry = UUID.randomUUID();
+            var archive = new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger(local)
+                    .register(new ai.protomolt.proto.repo.container.archive.ArchiveObjectLedger.Location(
+                            entry, "account", "external-quiescence", "native-test", "bucket", "archive-" + UUID.randomUUID()));
+            ArchiveExternalQuiescenceIT.createArchiveVersion(local, entry, archive.objectId());
+            ArchiveExternalQuiescenceIT.insertArchivePin(local, UUID.randomUUID(), reader, entry, archive.objectId());
             var recovery = new DocumentReadRecovery(local);
             assertThatThrownBy(() -> recovery.recoverResourcesBatch(foreign, 1)).hasStackTraceContaining("quiescence");
             assertThatThrownBy(() -> recovery.recoverResourcesBatch(UUID.randomUUID(), 1)).hasStackTraceContaining("quiescence");
@@ -56,10 +62,19 @@ class DocumentAssessmentReadSessionIT {
                     "SELECT registration_nonce FROM repository_reader_incarnations WHERE incarnation=:id")
                     .setParameter("id", reader).getSingleResult());
             new ReaderExternalQuiescence(local).quiesce(reader, nonce, host, termination.id());
-            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(1, 0));
-            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(1, 0));
-            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(0, 1));
-            assertThat(recovery.recoverResourcesBatch(reader, 1).selected()).isZero();
+            var supervisor = new ReaderHostRecovery(local);
+            var expected = java.util.List.of(new ReaderHostRecovery.Recovered(reader, 1, 0, 0),
+                    new ReaderHostRecovery.Recovered(reader, 0, 1, 0),
+                    new ReaderHostRecovery.Recovered(reader, 0, 1, 0),
+                    new ReaderHostRecovery.Recovered(reader, 0, 0, 1),
+                    new ReaderHostRecovery.Recovered(reader, 0, 0, 0));
+            for (var result : expected) {
+                var page = supervisor.recoverPage(host, termination.id(), java.util.Optional.empty(), 1, 1,
+                        ai.protomolt.proto.repo.spi.RepositoryOperationControl.NONE);
+                assertThat(page.recovered()).containsExactly(result);
+                assertThat(page.recovered().getFirst().readerResourcesDrained())
+                        .isEqualTo(result.archivePins() + result.documentPins() + result.assessmentSessions() == 0);
+            }
             assertThat(recovery.recoverResourcesBatch(drainedReader, 1)).isEqualTo(new DocumentReadRecovery.Batch(0, 1));
             assertThat(local.<Object>readOnly(em -> em.createNativeQuery(
                     "SELECT quiescence_source FROM repository_reader_incarnations WHERE incarnation=:id")

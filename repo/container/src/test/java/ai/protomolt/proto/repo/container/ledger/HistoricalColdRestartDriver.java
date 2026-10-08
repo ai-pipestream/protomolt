@@ -80,7 +80,8 @@ final class HistoricalColdRestartDriver {
             String output = Files.readString(recoveryLog);
             assertThat(recovery.exitValue()).as(output).isZero();
             assertThat(output).contains("HISTORICAL_COLD_PROCESS_RESTART_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
-                    "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK", "HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK");
+                    "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK",
+                    "HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK", "HISTORICAL_COLD_HOST_SUPERVISOR_OK");
             System.out.println("HISTORICAL_COLD_PROCESS_RESTART_OK " + phase);
         } finally { stop(recovery); }
     }
