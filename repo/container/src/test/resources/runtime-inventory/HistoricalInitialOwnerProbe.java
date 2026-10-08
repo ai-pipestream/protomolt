@@ -194,7 +194,10 @@ final class HistoricalInitialOwnerProbe {
                 if (cleanup != primary) primary.addSuppressed(cleanup);
             }
         }
-        if (fault == null) HistoricalUploadFaultProbe.run(tx, caller, command, placement, revision, fragments, budget, database);
+        if (fault == null) {
+            HistoricalUploadFaultProbe.run(tx, caller, command, placement, revision, fragments, budget, database);
+            HistoricalRuntimeShutdownProbe.run(tx, provider, caller, command, placement, revision, budget);
+        }
         System.out.println(fault == null ? "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK" : "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
     }
     private static long count(Tx tx, RepositoryOperationLedger.Key key, String table) {

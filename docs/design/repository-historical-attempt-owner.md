@@ -1213,3 +1213,25 @@ needs a complete terminal decision path: the current private owner prepares and
 retains assessments but does not expose that complete rejection flow. Preserve the
 public historical restriction until rejection, cold recovery and library/transport
 acceptance cases are complete.
+
+### Historical runtime shutdown composition
+
+The package-private `DocumentPublicationRuntime.historicalJournaled` factory now
+owns a historical attempt registry alongside ordinary sessions. Existing public
+factories and the facade's historical restriction are unchanged. The supplied
+reader must implement historical, ordinary and assessment reads with one lifecycle.
+The host supplies the exact-operation drain authority independently of requests.
+
+For this composition, close stops outer admission first. Shutdown waits accepted
+calls, then closes and detaches all historical generations before closing nested
+provider admission, external workers and the shared reader. A failed authority
+lookup or incomplete detach leaves those resources available for a later shutdown
+pass. A held generation does not stop disposal of another ready generation.
+
+The private registry accessor does not itself enforce an accepted runtime scope.
+It is currently used only by qualification. The future dispatch implementation
+must enforce that scope around every registry operation, including initial slot
+reservation, so close cannot admit new requests through that internal path.
+The factory does not yet dispatch historical requests or perform cold recovery.
+Qualification is recorded under
+`docs/evidence/repository/2026-10-08-historical-runtime-shutdown/`.
