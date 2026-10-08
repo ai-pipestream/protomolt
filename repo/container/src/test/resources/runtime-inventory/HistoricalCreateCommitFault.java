@@ -17,6 +17,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     private final AtomicReference<RepositoryOperationLedger.Key> startKey = new AtomicReference<>();
     private final AtomicReference<UUID> proposedStart = new AtomicReference<>();
     private final AtomicReference<RepositoryOperationLedger.Owner> publication = new AtomicReference<>();
+    private final AtomicReference<RepositoryOperationLedger.Key> publicationKey = new AtomicReference<>();
     private final AtomicReference<UUID> verification = new AtomicReference<>();
     private record Rejection(RepositoryOperationLedger.Owner owner, UUID assessment) {}
     private final AtomicReference<Rejection> rejection = new AtomicReference<>();
@@ -98,19 +99,26 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
         }
     }
     void armPublication(RepositoryOperationLedger.Owner owner) {
-        if (assessment.get() != null || startKey.get() != null || !publication.compareAndSet(null, owner))
+        if (assessment.get() != null || startKey.get() != null || publicationKey.get() != null || !publication.compareAndSet(null, owner))
+            throw new IllegalStateException("Commit fault already armed");
+    }
+    void armPublication(RepositoryOperationLedger.Key key) {
+        if (assessment.get() != null || startKey.get() != null || publication.get() != null
+                || verification.get() != null || rejection.get() != null || !publicationKey.compareAndSet(null, key))
             throw new IllegalStateException("Commit fault already armed");
     }
     private boolean ownsPublication(Connection connection) throws SQLException {
         var owner = publication.get();
-        if (owner == null) return false;
+        var key = owner == null ? publicationKey.get() : owner.key();
+        if (key == null) return false;
         try (var statement = connection.prepareStatement("""
                 SELECT EXISTS(SELECT 1 FROM repository_operation_success
-                WHERE account_id=? AND principal=? AND operation_id=? AND owner_generation=?
-                  AND creation_xid=pg_current_xact_id_if_assigned())
-                """)) {
-            statement.setString(1, owner.key().account()); statement.setString(2, owner.key().principal());
-            statement.setObject(3, owner.key().operationId()); statement.setLong(4, owner.generation());
+                WHERE account_id=? AND principal=? AND operation_id=?
+                  AND creation_xid=pg_current_xact_id_if_assigned()
+                """ + (owner == null ? ")" : " AND owner_generation=?)"))) {
+            statement.setString(1, key.account()); statement.setString(2, key.principal());
+            statement.setObject(3, key.operationId());
+            if (owner != null) statement.setLong(4, owner.generation());
             try (var rows = statement.executeQuery()) { rows.next(); return rows.getBoolean(1); }
         }
     }

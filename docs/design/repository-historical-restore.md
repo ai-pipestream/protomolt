@@ -1019,6 +1019,10 @@ not prove that facade routing carries the same identity, control and cleanup rul
 - Publication acknowledgement loss: commit the real publication transaction and
   lose its reply. An exact public retry must recover the authorized durable receipt
   with one revision, no second PUT and no second assessment CREATE.
+  The library lost-acknowledgement path and library/gRPC terminal retries now have
+  a focused qualification case. It snapshots the SQL receipt before any retry and
+  compares both public paths directly with that receipt, including real provider
+  readback and single-commit/assessment counts.
 - Cleanup failure: fail a real pin or generation retirement step after terminal
   publication. Receipt delivery remains independent of cleanup; bounded maintenance
   reports the failure, retries it, and eventually returns capacity without dropping

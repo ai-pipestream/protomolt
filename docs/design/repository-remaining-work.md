@@ -19,8 +19,9 @@ historical selectors. The internal path covers committed and rejected receipts,
 START and CREATE acknowledgement loss, three cold-process crash boundaries, and
 concurrent takeover while an old provider reply remains held. Library cancellation,
 orderly shutdown and remote-client cancellation also retain actual workers and
-resources until drainage. Deadline, negative-identity, revocation/policy,
-publication-acknowledgement and cleanup-failure checks remain before exposing the
+resources until drainage. Publication acknowledgement loss preserves one durable
+receipt across library and authenticated gRPC retries without new provider or schema
+work. Deadline, negative-identity, revocation/policy and cleanup-failure checks remain before exposing the
 host factory; see the explicit [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks).
 START reconciliation retains an exact attempt identity and requires current
 authority before restoring the original handle's CREATE permission. See
@@ -39,6 +40,7 @@ Recent evidence:
 - [Historical cold-process dispatch](../evidence/repository/2026-10-08-historical-public-cold-restart/README.md)
 - [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)
 - [Historical public cancellation and shutdown](../evidence/repository/2026-10-08-historical-public-stop/README.md)
+- [Historical public publication acknowledgement loss](../evidence/repository/2026-10-08-historical-public-publication-ack/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

@@ -19,7 +19,7 @@ final class HistoricalPublicDispatchProbe {
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, javax.sql.DataSource database) throws Exception {
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "normal");
-        for (String phase : List.of("start", "create")) {
+        for (String phase : List.of("start", "create", "publication")) {
             try (var fault = new HistoricalCreateCommitFault(database, true)) {
                 run(fault.tx(), provider, caller, original, placement, source, fragments, budget, fault, phase);
             }
@@ -53,10 +53,13 @@ final class HistoricalPublicDispatchProbe {
                 "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
                 "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
              var takeover = new HistoricalPublicTakeoverProbe(opened)) {
+            // This phase observes actual provider calls without holding their replies.
+            if (phase.equals("publication")) takeover.close();
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
-                        return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover") || stoppingCase ? takeover.opened() : opened);
+                        return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover")
+                                || phase.equals("publication") || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
                     phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
@@ -114,13 +117,22 @@ final class HistoricalPublicDispatchProbe {
                                 .setRevisionOrdinal(ordinal).setContent(fragments.get(ordinal)));
                     if (phase.equals("start")) fault.armStart(new RepositoryOperationLedger.Key(command.intent().getAccountId(),
                             caller.principalName(), command.operationId()));
+                    if (phase.equals("publication")) fault.armPublication(new RepositoryOperationLedger.Key(command.intent().getAccountId(),
+                            caller.principalName(), command.operationId()));
                     if (fault != null) {
                         try {
                             repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
                             throw new AssertionError("Public historical call did not lose its " + phase + " acknowledgement");
                         } catch (RuntimeException failure) { fault.requireFailure(failure); }
                     }
+                    byte[] durableBytes = phase.equals("publication") ? tx.readOnly(em ->
+                            (byte[]) em.createNativeQuery("SELECT result_bytes FROM repository_operation_success"
+                                            + " WHERE account_id=:a AND principal=:p AND operation_id=:o")
+                                    .setParameter("a", command.intent().getAccountId()).setParameter("p", caller.principalName())
+                                    .setParameter("o", command.operationId()).getSingleResult()) : null;
+                    var durablePublication = durableBytes == null ? null : DocumentPublicationResult.parseFrom(durableBytes);
                     int resolvedBeforeRetry = resolutions.get();
+                    int selectedBeforeRetry = selections.get(), putsBeforeRetry = takeover.completedPuts();
                     if (stoppingCase) {
                         if (phase.equals("rpc-cancel")) withTransport(repository, caller, 1,
                                 (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseRemoteCancellation(
@@ -135,6 +147,28 @@ final class HistoricalPublicDispatchProbe {
                     else exercise(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
                     if (phase.equals("create")) require(resolvedBeforeRetry > 0 && resolutions.get() == resolvedBeforeRetry,
                             "public CREATE retry reuses retained assessment without schema resolution");
+                    if (phase.equals("publication")) {
+                        require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE)
+                                        .getCommitted().equals(durablePublication), "library receipt equals the original SQL commit receipt");
+                        withTransport(repository, caller, 2, (remoteRepository, service, delivery, serverCancelled) -> {
+                            var received = remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
+                            require(received.getCommitted().equals(durablePublication), "gRPC receipt equals the original SQL commit receipt");
+                            require(remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(received),
+                                    "gRPC exact replay preserves the original SQL receipt");
+                        });
+                        require(putsBeforeRetry == 1 && takeover.completedPuts() == putsBeforeRetry
+                                        && selectedBeforeRetry == selections.get() && resolvedBeforeRetry > 0
+                                        && resolvedBeforeRetry == resolutions.get(),
+                                "lost publication reply replays through library and gRPC without provider or schema work");
+                        for (String table : List.of("repository_operation_success", "document_revision_commits", "document_assessment_owners"))
+                            require(tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table
+                                            + " WHERE account_id=:a AND principal=:p AND operation_id=:o")
+                                    .setParameter("a", command.intent().getAccountId()).setParameter("p", caller.principalName())
+                                    .setParameter("o", command.operationId()).getSingleResult()).longValue()) == 1,
+                                    "lost publication reply preserves exactly one row in " + table);
+                        HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
+                                repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
+                    }
                     runtime.tick();
                     require(runtime.withHistoricalAttempts(attempts -> attempts.drain().unresolved()) == 0,
                             "completed public operation releases its generation slot");
