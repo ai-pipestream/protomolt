@@ -154,7 +154,10 @@ From the traced run, one process, 16 clients, window t00
 Outside the operation scopes the window also recorded 579 commits: one
 `DocumentReadPins.finish` per read from the maintenance tick (256), one
 `DocumentSelectedAttemptLedger.verifyBatch` per upload from the observation
-flusher (256) and 67 `DocumentAssessmentReadProtection.finish`. Publication
+flusher (256, each with eight queries and two updates in its own transaction)
+and 67 `DocumentAssessmentReadProtection.finish`. A publication therefore costs
+16 scoped plus 1 asynchronous commit and 177 scoped plus 10 asynchronous
+execute calls; a rejection 35 plus 1 and 300 plus 10. Publication
 commits by completion site: `DocumentOperationUploadAdmission.captureReads` ×2,
 `DocumentPublicationModesJournal.requireObservedModes` ×2,
 `DocumentPublicationReplay.observe` ×2, `DocumentSelectedAttemptLedger.renewOwnerAndSelections` ×2,
@@ -179,7 +182,8 @@ the measured window therefore approximates flush occupancy; it is a sum of call
 durations, not a lock-hold measurement. That occupancy rose with offered load
 and not with process count: 0.55 to 0.64 at 4 clients, 0.73 to 0.84 at 8, 0.86
 to 0.94 at 16, 0.91 to 0.97 at 32. Reading the counters again after a 1.2 s
-settle changed the totals by less than 0.1%. Mean `commit()` call time in the
+settle changed the series total by 0.01% and no single window by more than
+0.41%. Mean `commit()` call time in the
 traced run was 3.3 ms with one process, 3.7 ms with two and 3.2 ms with four.
 Sampled client-backend states agree: at one process 36% of client-backend samples were waiting on
 `LWLock/WALWrite` and 11% on `IO/WalSync`; at four processes with 32 connections
@@ -188,15 +192,18 @@ Sampled client-backend states agree: at one process 36% of client-backend sample
 
 Worker CPU for the same 16-client throughput was 2.8 cores with one process,
 5.4 with two and 7.3 with four (window delta, exact per-process CPU). RustFS
-used 0.1 to 0.4 cores; its PUT latency for one 64 KiB object grew from 52 to
-63 ms at 4 clients to 75 to 83 ms at 32 and did not depend on process count.
+used 0.1 to 0.4 cores; its mean PUT latency for one 64 KiB object (PUT only;
+the read-back GET adds about 2 ms) grew from 52 to 63 ms at 4 clients to 75 to
+83 ms at 32. Offered load was the larger effect; process count also mattered at
+low load (52, 57 and 63 ms for one, two and four processes at 4 clients) and
+not at 16.
 
 ## Bottleneck assessment
 
 1. **Transaction and round-trip count per operation against a synchronous
-   WAL** is the strongest candidate for the shared limit. Sixteen scoped commits
-   plus one asynchronous verify commit and 177 execute calls per publication (35
-   and 300 per rejection) cost 53 to 98 ms of commit calls and 65 to 133 ms of
+   WAL** is the strongest candidate for the shared limit. Seventeen commits and
+   187 execute calls per publication, 36 and 310 per rejection (scoped plus the
+   asynchronous verify transaction), cost 53 to 98 ms of commit calls and 65 to 133 ms of
    pool waiting per write at 16 clients, and keep WAL flush occupancy above 85%
    from 16 clients upward whatever the process count. Three independent signals
    point the same way (occupancy, `WALWrite` lock samples, commit time that does
@@ -216,8 +223,8 @@ used 0.1 to 0.4 cores; its PUT latency for one 64 KiB object grew from 52 to
    Fewer checkouts per operation (item 1) is the code-side fix; the fixed-total
    configurations show that splitting a small pool across processes is strictly
    worse.
-3. **RustFS PUT plus read-back, 52 to 83 ms per 64 KiB object,** is on the
-   synchronous critical path of every write (`DocumentPartTransfer.upload`,
+3. **RustFS PUT, 52 to 83 ms per 64 KiB object, plus a 2 ms read-back GET,** is
+   on the synchronous critical path of every write (`DocumentPartTransfer.upload`,
    awaited by `DocumentUploadCoordinator` before preparation), so in this
    closed-loop workload it reduces throughput as well as adding a quarter of
    publication latency. RustFS CPU stayed at 0.1 to 0.4 cores, which does not

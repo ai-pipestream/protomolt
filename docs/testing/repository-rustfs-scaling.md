@@ -150,10 +150,14 @@ java docs/evidence/repository/external-rustfs-scaling/RepositoryScalingReport.ja
 ```
 
 Label inputs as `<label>=<dir>`; a bare archive directory named `raw` takes its
-parent's name. The analyzer recounts every window's operations, refuses recorded
-failures, durable-count mismatches and duplicate inputs, and writes `windows.csv`,
-`configs.csv` (with the number of distinct runs per configuration), `workers.csv`
-(PIDs and per-process work), `warmup.csv` and, for traced runs, `trace-sites.csv`. Throughput is measured operations divided by inclusive window time
+parent's name. The analyzer recounts every window's operations and refuses
+recorded failures, durable-count mismatches, two inputs whose complete raw
+content is identical, and inputs whose `source-identity.txt` differ (pooled runs
+must come from the same artifacts, probe, sampler and images). It writes
+`windows.csv`, `configs.csv` (keyed by every workload setting, with the number of
+distinct runs per configuration), `workers.csv` (PIDs and per-process work),
+`warmup.csv` (first versus last eight iterations; needs at least sixteen measured
+iterations per client) and, for traced runs, `trace-sites.csv`. Throughput is measured operations divided by inclusive window time
 (which contains the receipt replays and parent polling); latency percentiles are
 nearest-rank over individual measured operations. Each write's timed value ends
 before its receipt replay; the replay is inside the window but has no row of its

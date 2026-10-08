@@ -24,8 +24,14 @@ import java.util.stream.*;
  * database counters use the settled delta, which spans the 1.2 s statistics settle.
  */
 class RepositoryScalingReport {
-    record Key(int replicas, int pool, int clients, int heap, String journaled, String sampleMillis) {
-        String csv() { return journaled + "," + replicas + "," + pool + "," + clients + "," + heap + "," + sampleMillis; }
+    /** Every workload setting that distinguishes a configuration; pooled rows share all of them. */
+    record Key(int replicas, int pool, int clients, int heap, String journaled, String sampleMillis,
+            String payloadBytes, int iterations, String readSlots, String readHandles, String budgetBytes) {
+        static final String HEADER = "journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,payload_bytes,iterations_per_client,total_read_slots,total_read_handles,total_budget_bytes";
+        String csv() {
+            return journaled + "," + replicas + "," + pool + "," + clients + "," + heap + "," + sampleMillis + "," + payloadBytes + ","
+                    + iterations + "," + readSlots + "," + readHandles + "," + budgetBytes;
+        }
     }
     static final List<String> KINDS = List.of("read", "publish", "reject");
     static final class Window {
@@ -47,6 +53,7 @@ class RepositoryScalingReport {
         Files.createDirectories(out);
         var windows = new ArrayList<Window>();
         var seen = new HashMap<String, String>();
+        String sources = null, sourcesLabel = null;
         for (String argument : Arrays.copyOfRange(args, 1, args.length)) {
             String label; Path root;
             int eq = argument.indexOf('=');
@@ -59,6 +66,10 @@ class RepositoryScalingReport {
             if (seen.containsKey(identity)) throw new IllegalArgumentException("Duplicate raw input: " + label + " repeats " + seen.get(identity));
             if (seen.containsValue(label)) throw new IllegalArgumentException("Duplicate run label: " + label);
             seen.put(identity, label);
+            // Pooled runs must come from the same artifacts, probe, sampler and images.
+            String identityText = Files.readString(root.resolve("source-identity.txt"));
+            if (sources == null) { sources = identityText; sourcesLabel = label; }
+            else if (!sources.equals(identityText)) throw new IllegalArgumentException("source-identity.txt of " + label + " differs from " + sourcesLabel);
             windows.addAll(read(root, label));
         }
         writeWindows(out, windows);
@@ -69,14 +80,20 @@ class RepositoryScalingReport {
         System.out.println("runs=" + seen.size() + " windows=" + windows.size() + " output=" + out);
     }
 
+    /** Content hash of every file under the raw directory, so no retained file can change unnoticed. */
     static String identity(Path root) throws Exception {
         var digest = MessageDigest.getInstance("SHA-256");
-        for (String name : List.of("environment.txt", "windows.csv", "processes.csv")) digest.update(Files.readAllBytes(root.resolve(name)));
+        try (var files = Files.walk(root)) {
+            for (var file : files.filter(Files::isRegularFile).sorted().toList()) {
+                digest.update(root.relativize(file).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update(Files.readAllBytes(file));
+            }
+        }
         return HexFormat.of().formatHex(digest.digest());
     }
 
     static void writeWindows(Path out, List<Window> windows) throws Exception {
-        var text = new StringBuilder("run,window,journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,operations,inclusive_s,ops_per_s,"
+        var text = new StringBuilder("run,window," + Key.HEADER + ",operations,inclusive_s,ops_per_s,"
                 + "read_p50_ms,read_p95_ms,read_p99_ms,publish_p50_ms,publish_p95_ms,publish_p99_ms,reject_p50_ms,reject_p95_ms,reject_p99_ms,"
                 + "sql_connections_total,pool_busy_fraction,sql_acquire_mean_ms,sql_acquire_total_s,sql_acquisitions_per_iteration,"
                 + "sql_usage_total_s,statement_exec_total_s,statement_calls,statements_per_iteration,"
@@ -117,7 +134,7 @@ class RepositoryScalingReport {
     }
 
     static void writeConfigs(Path out, List<Window> windows) throws Exception {
-        var configs = new StringBuilder("journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,runs,windows,operations,"
+        var configs = new StringBuilder(Key.HEADER + ",runs,windows,operations,"
                 + "ops_per_s_min,ops_per_s_mean,ops_per_s_max,read_p50_ms,read_p95_ms,read_p99_ms,publish_p50_ms,publish_p95_ms,publish_p99_ms,"
                 + "reject_p50_ms,reject_p95_ms,reject_p99_ms,pool_busy_fraction_mean,sql_acquire_mean_ms,db_commits_per_iteration_mean,"
                 + "wal_fsync_share_of_settled_span_mean,wal_fsync_share_of_window_mean,provider_put_mean_ms,postgres_cores_mean,rustfs_cores_mean,worker_cores_mean,host_busy_cores_mean\n");
@@ -154,17 +171,22 @@ class RepositoryScalingReport {
         Files.writeString(out.resolve("workers.csv"), workers);
     }
 
-    /** Within-window trend: cold-process effects show as a gap between the first and last eight iterations. */
+    /**
+     * Within-window trend: cold-process effects show as a gap between the first and last
+     * eight iterations of each client. Needs at least sixteen measured iterations per
+     * client so the two buckets do not overlap; shorter runs get no rows.
+     */
     static void writeWarmup(Path out, List<Window> windows) throws Exception {
-        var text = new StringBuilder("journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,kind,first8_mean_ms,last8_mean_ms,first8_over_last8\n");
+        var text = new StringBuilder(Key.HEADER + ",kind,first8_mean_ms,last8_mean_ms,first8_over_last8\n");
         var grouped = new TreeMap<String, List<Window>>();
-        for (var w : windows) grouped.computeIfAbsent(w.key.csv(), k -> new ArrayList<>()).add(w);
+        for (var w : windows) if (w.key.iterations >= 16) grouped.computeIfAbsent(w.key.csv(), k -> new ArrayList<>()).add(w);
         for (var entry : grouped.entrySet()) {
+            int iterations = entry.getValue().get(0).key.iterations;
             for (String kind : KINDS) {
                 var early = new ArrayList<Long>(); var late = new ArrayList<Long>();
                 for (var w : entry.getValue()) for (long[] sample : w.byIteration.get(kind)) {
                     if (sample[0] < 8) early.add(sample[1]);
-                    else if (sample[0] >= 24) late.add(sample[1]);
+                    else if (sample[0] >= iterations - 8) late.add(sample[1]);
                 }
                 if (early.isEmpty() || late.isEmpty()) continue;
                 double first = early.stream().mapToLong(Long::longValue).average().orElseThrow() / 1e6;
@@ -206,7 +228,9 @@ class RepositoryScalingReport {
             int eq = line.indexOf('='); if (eq > 0) environment.put(line.substring(0, eq), line.substring(eq + 1));
         }
         int clients = Integer.parseInt(environment.get("clients"));
-        String journaled = environment.get("journaled"), sampleMillis = environment.getOrDefault("sample_millis", "25");
+        String journaled = environment.get("journaled"), sampleMillis = environment.get("sample_millis");
+        if (sampleMillis == null) throw new IllegalStateException("environment.txt has no sample_millis; raw directory predates the scaling sampler: " + root);
+        int iterations = Integer.parseInt(environment.get("iterations_per_client"));
         boolean traced = environment.get("trace").equals("true");
         var rows = Files.readAllLines(root.resolve("windows.csv"));
         var plan = rows.subList(1, rows.size());
@@ -222,7 +246,9 @@ class RepositoryScalingReport {
             var w = new Window();
             w.run = label; w.name = row[0];
             int replicas = Integer.parseInt(row[1]);
-            w.key = new Key(replicas, Integer.parseInt(row[2]), clients, Integer.parseInt(row[6]), journaled, sampleMillis);
+            w.key = new Key(replicas, Integer.parseInt(row[2]), clients, Integer.parseInt(row[6]), journaled, sampleMillis,
+                    environment.get("payload_string_bytes"), iterations, environment.get("total_read_slots"),
+                    environment.get("total_read_handles"), environment.get("total_payload_budget_bytes"));
             w.operations = Long.parseLong(row[4]); w.nanos = Long.parseLong(row[5]);
             if (Integer.parseInt(row[3]) * replicas != clients) throw new IllegalStateException("Client split mismatch: " + w.name);
             for (String kind : KINDS) { w.latency.put(kind, new ArrayList<>()); w.byIteration.put(kind, new ArrayList<>()); }
