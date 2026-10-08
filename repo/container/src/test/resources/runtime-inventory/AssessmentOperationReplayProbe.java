@@ -14,6 +14,11 @@ import java.util.*;
 /** Real provider bytes and retained SQL evidence, with no live assessment or registry during replay. */
 public final class AssessmentOperationReplayProbe {
     private static final DocumentRevisionAssembly.Limits LIMITS = new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
+    // Scenario 1's fresh-process reader runs after the replay host (90s cap),
+    // aggregate host (210s), restart host (75s), and rejected-reader host (30s).
+    // Keep evidence for 15m across those bounded phases and cold process startup;
+    // the operation-owner lease still expires after 60s.
+    private static final Duration REJECTED_EVIDENCE_RESTART_RETENTION = Duration.ofMinutes(15);
     static DocumentSchemaPolicies.Selection run(Tx tx, AssessmentProviderProbe provider, DocumentSchemaPolicies.Selection policy,
             DocumentAssessmentRuntimeObserver.Observation observation, javax.sql.DataSource database,
             List<DocumentPublicationMember> rejectionTargets) throws Exception {
@@ -116,8 +121,10 @@ public final class AssessmentOperationReplayProbe {
                     new RepositorySchemaArtifacts(tx).stage(owner, command, List.copyOf(evidence.artifacts(() -> {}).values()), () -> {});
                     if (mode == 4 || mode >= 6) return JournaledAssessmentProbe.createWithLostAcknowledgment(tx, database, caller, owner,
                             command, prepared, selected, evidence, budget, mode == 8);
+                    Duration retention = mode == 1 ? REJECTED_EVIDENCE_RESTART_RETENTION
+                            : Duration.ofSeconds(mode == 2 ? 20 : 300);
                     return new DocumentAssessmentCreation(tx, drives).create(caller, owner, prepared, selected, evidence, UUID.randomUUID(),
-                            Instant.now().plusSeconds(mode == 2 ? 20 : 300).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
+                            Instant.now().plus(retention).truncatedTo(java.time.temporal.ChronoUnit.MICROS), budget, () -> {});
                 });
             }
             require(budget.reservedBytes() == 0, "original assessment closed");

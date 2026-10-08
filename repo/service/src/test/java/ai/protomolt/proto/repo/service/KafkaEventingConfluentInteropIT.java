@@ -84,7 +84,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *     {@code RepoServices} -> {@code EventRelay.newProducer}) is exercised end to end.</li>
  * </ul>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaEventingConfluentInteropIT {
 
     @Container

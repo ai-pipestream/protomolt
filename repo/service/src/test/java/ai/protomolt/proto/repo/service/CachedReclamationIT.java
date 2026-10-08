@@ -26,10 +26,20 @@ class CachedReclamationIT {
 
     @BeforeAll static void boot() {
         var providers = BlobStores.discover();
-        backing = providers.open("s3", Map.of("endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(),
-                "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(), "path-style", "true", "conditional-writes", "false"));
+        backing = providers.open("s3", Map.ofEntries(
+                Map.entry("endpoint", S3.getEndpoint().toString()),
+                Map.entry("region", S3.getRegion()),
+                Map.entry("access-key", S3.getAccessKey()),
+                Map.entry("secret-key", S3.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
         cache = providers.open("redis", Map.of("uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
-                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "reclamation:"));
+                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "reclamation:", "write-policy", "replace"));
         backing.ensureNamespace(BUCKET);
         cache.ensureNamespace(BUCKET);
         composed = new CachingBlobStore(backing.store(), cache.store(), 0, 1024);

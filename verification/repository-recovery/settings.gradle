@@ -1,0 +1,22 @@
+// Standalone composite build: it consumes the candidate's production modules
+// from the enclosing checkout without touching the root settings.
+pluginManagement {
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'repository-recovery'
+
+dependencyResolutionManagement {
+    versionCatalogs {
+        libs { from(files('../../gradle/libs.versions.toml')) }
+    }
+}
+
+includeBuild('../..') { name = 'protomolt' }

@@ -17,6 +17,9 @@ public final class BoundedDocumentPublicFactoryProbe {
     public static void run(Path bundle) throws Exception {
         for (boolean hosted:new boolean[]{false,true}) for (boolean rpc:new boolean[]{false,true}) {
             var identity=hosted ? new ReaderHostOptions(UUID.randomUUID(),"bounded-public-consumer",UUID.randomUUID().toString()) : null;
+            String mode=(hosted ? "hosted-" : "")+(rpc ? "rpc" : "library");
+            long started = System.nanoTime();
+            phase(mode, "factory-start", started);
             var config=new RepoServiceConfig(0,new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                     System.getenv("PROTOMOLT_TEST_USER"),System.getenv("PROTOMOLT_TEST_PASSWORD")),
                     "http://127.0.0.1:1","us-east-1","unused","unused","public-bounded",0,
@@ -39,19 +42,25 @@ public final class BoundedDocumentPublicFactoryProbe {
                 var publication=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
                         (account,principal,operation) -> caller);
                 if (rpc) publication=publication.withTransport(new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
+                phase(mode, "factory-ready", started);
                 try {
+                    phase(mode, "consumer-start", started);
                     BoundedDocumentPublicConsumer.run(config,schemas,publication,caller,host -> {
                         if (identity!=null) assertHost(database,identity,"ACTIVE","ACTIVE");
+                        phase(mode, "fixture-prepare-start", started);
                         var fixture=BoundedDocumentHostProbe.prepare(host,new Tx(database.entityManagerFactory()));
+                        phase(mode, "fixture-prepared", started);
                         return new BoundedDocumentPublicConsumer.Fixture(fixture.request(),fixture.document());
                     },rpc,identity);
                     if (identity!=null) assertHost(database,identity,"FENCED","QUIESCED");
+                    phase(mode, "consumer-complete", started);
                 } finally { schemas.close(); }
             } finally {
                 try (var paths=Files.walk(directory)) {
                     for (var path:paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
                 }
             }
+            phase(mode, "factory-closed", started);
         }
     }
 
@@ -71,5 +80,11 @@ public final class BoundedDocumentPublicFactoryProbe {
                 throw new AssertionError("Clean close must retain local drain provenance");
             return null;
         });
+    }
+
+    private static void phase(String mode, String name, long started) {
+        System.out.printf("PHASE name=factory-%s-%s elapsed_ms=%d%n", mode, name,
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        System.out.flush();
     }
 }

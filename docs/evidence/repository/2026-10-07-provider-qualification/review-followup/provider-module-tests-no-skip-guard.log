@@ -1,0 +1,98 @@
+> Task :protomolt-repo-blob-s3:processResources
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractProto
+> Task :protomolt-protobuf-validation:processProtoResources
+> Task :protomolt-protobuf-validation:processResources
+> Task :protomolt-repo-blob-spi:compileJava
+> Task :protomolt-asset-proto:extractIncludeProto
+> Task :protomolt-asset-proto:extractProto
+> Task :protomolt-repo-blob-s3:compileJava
+> Task :protomolt-repo-blob-s3:classes
+> Task :protomolt-repo-blob-s3:jar
+> Task :protomolt-asset-proto:generateProto
+> Task :protomolt-formats:compileJava
+> Task :protomolt-cel:compileJava
+> Task :protomolt-asset-proto:processProtoResources
+> Task :protomolt-asset-proto:processResources
+> Task :protomolt-cel:classes
+> Task :protomolt-cel:jar
+> Task :protomolt-protobuf-validation:extractIncludeProto
+> Task :protomolt-protobuf-validation:generateProto
+> Task :protomolt-descriptors:compileJava
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-descriptors:classes
+> Task :protomolt-descriptors:jar
+> Task :protomolt-formats:classes
+> Task :protomolt-formats:jar
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractIncludeProto
+> Task :protomolt-protobuf-metadata:extractProto
+> Task :protomolt-protobuf-metadata:generateProto
+> Task :protomolt-protobuf-metadata:compileJava
+> Task :protomolt-protobuf-metadata:processProtoResources
+> Task :protomolt-protobuf-metadata:processResources
+> Task :protomolt-protobuf-metadata:classes
+> Task :protomolt-protobuf-metadata:jar
+> Task :protomolt-repo-blob-s3:checkRuntimeBoundaries
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto
+> Task :protomolt-repo-proto:extractProto
+> Task :protomolt-protobuf-validation:compileJava
+> Task :protomolt-repo-proto:generateProto
+> Task :protomolt-protobuf-validation:classes
+> Task :protomolt-protobuf-validation:jar
+> Task :protomolt-repo-blob-s3:processTestResources NO-SOURCE
+> Task :protomolt-repo-blob-spi:processResources NO-SOURCE
+> Task :protomolt-repo-blob-spi:classes
+> Task :protomolt-repo-blob-spi:jar
+> Task :protomolt-repo-codec:processResources NO-SOURCE
+> Task :protomolt-repo-proto:generateCompilerIdentity
+> Task :protomolt-repo-proto:processProtoResources
+> Task :protomolt-repo-proto:processResources
+
+> Task :protomolt-repo-blob-redis:compileJava
+Note: /tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/review-wt/repo/blob/redis/src/main/java/ai/protomolt/proto/repo/blob/redis/RedisBlobStore.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :protomolt-repo-blob-redis:processResources
+> Task :protomolt-repo-blob-redis:classes
+> Task :protomolt-repo-blob-redis:jar
+> Task :protomolt-repo-blob-redis:checkRuntimeBoundaries
+> Task :protomolt-repo-blob-redis:processTestResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:checkRuntimeBoundaries
+> Task :protomolt-repo-blob-cache:compileJava
+> Task :protomolt-repo-blob-cache:processResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:classes
+> Task :protomolt-asset-proto:compileJava
+> Task :protomolt-asset-proto:classes
+> Task :protomolt-asset-proto:jar
+> Task :protomolt-repo-blob-cache:compileTestJava
+> Task :protomolt-repo-blob-cache:processTestResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:testClasses
+> Task :protomolt-repo-proto:compileJava
+> Task :protomolt-repo-codec:compileJava
+> Task :protomolt-repo-blob-s3:compileTestJava
+> Task :protomolt-repo-blob-s3:testClasses
+> Task :protomolt-repo-codec:classes
+> Task :protomolt-repo-codec:jar
+> Task :protomolt-repo-proto:classes
+> Task :protomolt-repo-proto:jar
+> Task :protomolt-repo-blob-cache:test
+> Task :protomolt-repo-blob-redis:compileTestJava
+> Task :protomolt-repo-blob-redis:testClasses
+> Task :protomolt-repo-blob-s3:test
+> Task :protomolt-repo-blob-redis:test
+
+[Incubating] Problems report is available at: file:///tmp/claude-1000/-work-worktrees/f3c09d36-b17e-52ac-a5ce-3dce6b1adda5/scratchpad/review-wt/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 33s
+55 actionable tasks: 55 executed

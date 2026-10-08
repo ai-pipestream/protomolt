@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Actual conditional-write qualification against the deployment-pinned RustFS image. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RustFsConditionalBlobStoreIT {
     private static final String BUCKET = "conditional-it";
 
@@ -56,10 +56,18 @@ class RustFsConditionalBlobStoreIT {
                 .httpClient(UrlConnectionHttpClient.create())
                 .forcePathStyle(true).build();
         client.createBucket(builder -> builder.bucket(BUCKET));
-        handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.of(
-                "endpoint", "http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000),
-                "region", "us-east-1", "access-key", "conditional-test",
-                "secret-key", "conditional-test-secret", "path-style", "true", "conditional-writes", "true"));
+        handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.ofEntries(
+                java.util.Map.entry("endpoint", "http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000)),
+                java.util.Map.entry("region", "us-east-1"),
+                java.util.Map.entry("access-key", "conditional-test"),
+                java.util.Map.entry("secret-key", "conditional-test-secret"),
+                java.util.Map.entry("path-style", "true"),
+                java.util.Map.entry("conditional-writes", "true"),
+                java.util.Map.entry("credentials-mode", "static"),
+                java.util.Map.entry("api-call-timeout-ms", "300000"),
+                java.util.Map.entry("api-attempt-timeout-ms", "60000"),
+                java.util.Map.entry("connection-timeout-ms", "10000"),
+                java.util.Map.entry("socket-timeout-ms", "60000")));
         store = (S3BlobStore) handle.store();
     }
 

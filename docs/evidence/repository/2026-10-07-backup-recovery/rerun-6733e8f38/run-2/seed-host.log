@@ -1,0 +1,249 @@
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@774698ab
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table "public"."flyway_schema_history" does not exist yet
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 111 migrations (execution time 00:00.032s)
+[main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "public"."flyway_schema_history" ...
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": << Empty Schema >>
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "1 - initial schema"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "2 - drive provider config"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "3 - document purges"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "4 - document events outbox"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "5 - document purges relayed at"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "6 - archive"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "7 - archive classification"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "8 - document mutation revision"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "9 - purge admission generation"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "10 - managed raw objects"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "11 - managed backend profiles"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "12 - archive mutation revisions"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "13 - archive retained set revision"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "14 - archive object bindings"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "15 - archive upload admission"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "16 - archive version object references"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "17 - provider backend identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "18 - archive object recovery"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "19 - archive mutation admission"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "20 - archive mutation observations"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "21 - document part attempt admission"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "22 - document part publication"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "23 - document key reservations"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "24 - abandoned document attempt cleanup"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "25 - repository physical locations"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "26 - repository retention bridge"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "27 - repository retirement"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "28 - archive reader pins"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "29 - shared archive reader locks"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "30 - archive read calls"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "31 - reader incarnation fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "32 - reader local quiescence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "33 - archive reader recovery order"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "34 - repository operation admission"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "35 - repository operation write fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "36 - operation bound document attempts"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "37 - document revision lock batches"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "38 - document revision projection"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "39 - document revision retention"
+[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "40 - document operation selections"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "41 - document admission lock modes"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "42 - document operation selection history"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "43 - selected document attempt writes"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "44 - document reader pins"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "45 - document reader batch release"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "46 - document reader quiescent recovery"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "47 - document reader recovery discovery"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "48 - repository schema artifact staging"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "49 - repository operation recovery fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "50 - repository schema replaced claim release"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "51 - document event recording"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "52 - independent document publication"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "53 - native document coordinates"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "54 - revision physical lookup"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "55 - document revision schema references"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "56 - document revision schema evidence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "57 - document revision schema assets"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "58 - document schema policy catalog"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "59 - document schema policy publication fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "60 - document schema retention manifest"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "61 - document schema admission binding"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "62 - document schema container role"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "63 - document historical read pins"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "64 - repository operation rejection"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "65 - repository retention lock set"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "66 - document assessment staging"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "67 - document assessment artifacts"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "68 - document assessment roots"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "69 - document assessment slot snapshots"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "70 - shared repository retention set"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "71 - document assessment read sessions"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "72 - document assessment read release"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "73 - document assessment read identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "74 - reader registration identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "75 - nonnegative archive statistics"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "76 - admission rejection assessment binding"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "77 - rejected assessment read authority"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "78 - repository execution claims"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "79 - repository claim mutation fences"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "80 - single call execution claim fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "81 - private publication preparations"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "82 - private publication modes"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "83 - private assessment start"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "84 - journaled owner mode guards"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "85 - pre owner registration abandonment"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "86 - historical assessment provenance"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "87 - historical assessment snapshot version"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "88 - revision retention inventory indexes"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "89 - private coordinator bindings"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "90 - coordinator admission drain"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "91 - coordinator local drain"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "92 - graceful coordinator handoff"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "93 - atomic successor generation"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "94 - successor execution identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "95 - undrained coordinator execution fence"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "96 - coordinator reservation identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "97 - expired coordinator reservation"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "98 - unactivated coordinator supersession"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "99 - repository credential authority"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "100 - repository creation grants"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "101 - preserve successor publication modes"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "102 - freeze archive version metadata"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "103 - publication preparation history roots"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "104 - preparation source pin batches"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "105 - preparation pin capture owners"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "106 - captured document pin identity"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "107 - preparation capture drains"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "108 - preparation capture admission closure"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "109 - historical successor activation"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "110 - historical recovery limit decisions"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "111 - preparation root release"
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 111 migrations to schema "public", now at version v111 (execution time 00:00.389s)
+Oct 08, 2026 11:37:05 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 11:37:05 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33091/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@5305f936
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 111 migrations (execution time 00:00.015s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 111
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 11:37:06 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33091/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 11:37:06 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-pipeline (id=55dcf704-2c0f-31d9-b297-779d8a490be8, bucket=recovery-pipeline-4559fa9f, prefix='recovery-pipeline')
+[main] INFO ai.protomolt.proto.repo.engine.DriveProvisioner - Created drive recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-archive (id=8cdfb64a-8106-326e-b23b-7b04e0ceec39, bucket=recovery-archive-4559fa9f, prefix='recovery-archive')
+CHECK_OK seed.drive :: drive=55dcf704-2c0f-31d9-b297-779d8a490be8 bucket=recovery-pipeline-4559fa9f
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK seed.publish.v1 :: committed revision 11a676a5-2f65-4f82-ad84-d98b8d3bc670
+CHECK_OK seed.replay.v1.live :: receipt replay while live
+CHECK_OK seed.publish.v2 :: committed revision 751db4d1-de8b-427e-a589-540e4fb6fdee
+CHECK_OK seed.publish.v2.identity :: same address, new revision, mutation 1 -> 2
+CHECK_OK seed.publish.distinct_data :: revision payloads differ
+CHECK_OK seed.schema.live_resolution_used :: registry resolutions=2
+CHECK_OK seed.archive.versions :: versions 1 and 2 committed
+CHECK_OK seed.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/original/writes/0b1bd7d5-0751-4919-bf9c-0cd96a2a5085/6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5
+CHECK_OK seed.archive.dedup :: identical content did not create a version
+CHECK_OK seed.ledger.provider_versions :: document objects=2 archive objects=4
+CHECK_OK seed.ledger.archive_sharing :: three physical objects across four version references
+CHECK_OK seed.ledger.catalog :: catalog holds the retained descriptor artifact; entries=4
+CHECK_OK seed.ledger.evidence_artifact :: evidence references the retained artifact
+CHECK_OK seed.schema.resolver_drained :: live resolver closed before historical verification
+CHECK_OK seed.raw.v1.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.v1.fragment0 :: ordinal=0 sha256=c1e8a45851948624121b470f6ef81e1522120e7f7d2ba33919833de1e0bcfaa8 size=239
+CHECK_OK seed.raw.v1.publication_revision :: publicationRevision=1
+CHECK_OK seed.validated.v1.document :: document bytes equal recorded, sha256=c1e8a45851948624121b470f6ef81e1522120e7f7d2ba33919833de1e0bcfaa8
+CHECK_OK seed.validated.v1.bindings :: policy=c8fa81a6a3ce15907d1a610abc7f82655af7437f30807b10e13c030e9222d881 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.raw.v2.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.v2.fragment0 :: ordinal=0 sha256=33a0324e8971b31b8763dfb572aa26f042f975ca54df86aaced39a6dcf734e31 size=246
+CHECK_OK seed.raw.v2.publication_revision :: publicationRevision=2
+CHECK_OK seed.validated.v2.document :: document bytes equal recorded, sha256=33a0324e8971b31b8763dfb572aa26f042f975ca54df86aaced39a6dcf734e31
+CHECK_OK seed.validated.v2.bindings :: policy=c8fa81a6a3ce15907d1a610abc7f82655af7437f30807b10e13c030e9222d881 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.materialized.descriptor_identity :: retained descriptor artifact sha256=40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588
+CHECK_OK seed.materialized.tool_identity :: admission runtime repository-recovery-rehearsal/1
+CHECK_OK seed.materialized.offline_decode :: label=rehearsal-v1 files=5 imports retained
+CHECK_OK seed.materialized.selection_identity :: ordinal=0
+CHECK_OK seed.archive.v1.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK seed.archive.v1.manifest :: frozen metadata snapshot title=Quarterly report
+CHECK_OK seed.archive.v2.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK seed.archive.v2.manifest :: frozen metadata snapshot title=Revised report
+CHECK_OK seed.archive.versions :: versions=[2, 1]
+CHECK_OK seed.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/original/writes/0b1bd7d5-0751-4919-bf9c-0cd96a2a5085/6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5
+CHECK_OK seed.archive.stats :: entries=1 versions=2 retainedBytes=92
+CHECK_OK seed.replay.v1 :: receipt byte-equal, revision=11a676a5-2f65-4f82-ad84-d98b8d3bc670
+CHECK_OK seed.replay.v2 :: receipt byte-equal, revision=751db4d1-de8b-427e-a589-540e4fb6fdee
+CHECK_OK seed.replay.archive_dedup :: deduplicated=true version=2
+CHECK_OK seed.access.member :: member reads both revisions
+CHECK_OK seed.access.revoked_public :: public grant revoked by revision 2 applies to revision 1: NOT_FOUND
+CHECK_OK seed.access.outsider :: foreign account denied
+CHECK_OK seed.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK seed.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK seed.provider.4944d287a1e2 :: bucket=recovery-pipeline-4559fa9f key=recovery-pipeline/documents/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/93bd0b56-43fb-3dbc-bb9d-74b94c6d6090/attempts/7bfe949a-120a-4da8-9c88-6e158a48abff/part-0 version=81b6dc18-13e0-4d96-84a4-fc7d4ed723aa sha256=c1e8a45851948624121b470f6ef81e1522120e7f7d2ba33919833de1e0bcfaa8 etag="bf1e5c77813daaf95713b9eea27419aa"
+CHECK_OK seed.provider.99e75a01f9c3 :: bucket=recovery-pipeline-4559fa9f key=recovery-pipeline/documents/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/93bd0b56-43fb-3dbc-bb9d-74b94c6d6090/attempts/aa942037-c5ba-44a4-a1f3-6f8940d9510f/part-0 version=6ddcd700-1a70-4750-88a1-de14d696b4e6 sha256=33a0324e8971b31b8763dfb572aa26f042f975ca54df86aaced39a6dcf734e31 etag="8a716ce85e3b3c8bd5688808a0c9634f"
+CHECK_OK seed.provider.b319d00426e8 :: bucket=recovery-archive-4559fa9f key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/markdown/writes/86f808c2-f72a-42dc-a70d-22d2e5f4fdd4/04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d version=6e89fa8a-f6f1-41ce-820c-98ca18f4bddc sha256=04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d etag="a4d1c5ae1e2b525dc20dc6cafe2055fa"
+CHECK_OK seed.provider.a935d69d76b8 :: bucket=recovery-archive-4559fa9f key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/original/writes/0b1bd7d5-0751-4919-bf9c-0cd96a2a5085/6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5 version=c3b21857-3f39-43e1-a5c6-517a53a1301e sha256=6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5 etag="bce574a846934fafcbef70ec22f41d62"
+CHECK_OK seed.provider.f3102f32cd45 :: bucket=recovery-archive-4559fa9f key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/markdown/writes/e612615a-ceaf-44c3-b875-4361308313f7/0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc version=d5b7b755-5d7d-4d57-848e-5d75c770a130 sha256=0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc etag="ab8d98c564c09941a815b7e52495cf77"
+CHECK_OK seed.provider.a935d69d76b8 :: bucket=recovery-archive-4559fa9f key=recovery-archive/archive/recovery-account-2ecc4aaa-df68-438a-95ba-ff8f4559fa9f/recovery-docs/90576ab3-a69d-3868-a5ab-dcb79458e4e0/original/writes/0b1bd7d5-0751-4919-bf9c-0cd96a2a5085/6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5 version=c3b21857-3f39-43e1-a5c6-517a53a1301e sha256=6e78a4dbf516dac4847031e2d2aebf1304524d89a9edee2bef64ff0b6a94d2c5 etag="bce574a846934fafcbef70ec22f41d62"
+CHECK_OK seed.provider.count :: objects=6
+CHECK_OK seed.schema.no_live_lookup_for_history :: registry resolutions unchanged at 2
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+CHECK_OK seed.registry_deleted :: git schema registry directory removed: /tmp/recovery-seed-registry-14220720799734548449
+RECOVERY_SEED_OK

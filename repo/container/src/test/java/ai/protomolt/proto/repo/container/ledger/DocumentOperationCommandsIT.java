@@ -81,13 +81,49 @@ class DocumentOperationCommandsIT {
                 default -> throw new AssertionError(fault);
             }
             var key = new RepositoryOperationLedger.Key(account, "principal", UUID.randomUUID());
-            new RepositoryOperationLedger(c.tx()).admit(key, new RepositoryOperationLedger.EncodedCommand(codec, version, bytes),
-                    UUID.randomUUID(), Duration.ofMinutes(5));
+            var encoded = new RepositoryOperationLedger.EncodedCommand(codec, version, bytes);
+            if (fault.equals("codec")) {
+                new RepositoryOperationLedger(c.tx()).admit(key, encoded, UUID.randomUUID(), Duration.ofMinutes(5));
+            } else {
+                // Publication-codec rows only enter through typed admission, which canonicalizes and
+                // refuses every one of these payloads; the corruption fixture bypasses it on purpose.
+                assertThatThrownBy(() -> new RepositoryOperationLedger(c.tx()).admit(key, encoded, UUID.randomUUID(), Duration.ofMinutes(5)))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("typed command admission");
+                seedCorruptStoredCommand(c, key, encoded);
+            }
+            long stored = c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM repository_operations WHERE account_id=:a AND principal=:p AND operation_id=:o")
+                    .setParameter("a", key.account()).setParameter("p", key.principal()).setParameter("o", key.operationId())
+                    .getSingleResult()).longValue());
+            assertThat(stored).as("stored row reaches the loader's own check").isEqualTo(1);
             var code = fault.equals("codec") || fault.equals("version") ? RepositoryException.Code.UNSUPPORTED : RepositoryException.Code.DATA_LOSS;
             assertThatThrownBy(() -> new DocumentOperationCommands(c.tx()).load(new RepositoryCaller("principal", true),
                     key.account(), key.operationId(), RepositoryReadControl.NONE))
                     .isInstanceOfSatisfying(RepositoryException.class, failure -> assertThat(failure.code()).isEqualTo(code));
         }
+    }
+
+    /**
+     * Corruption fixture: writes a stored command row directly, as damaged or foreign persisted
+     * state would appear. Only the digest-consistency constraint is satisfied; no production
+     * admission or validation path is relaxed to produce such a row.
+     */
+    private static void seedCorruptStoredCommand(DocumentNativePublicationFixture.Context c, RepositoryOperationLedger.Key key,
+            RepositoryOperationLedger.EncodedCommand encoded) {
+        c.tx().inTransaction(em -> {
+            em.createNativeQuery("""
+                    INSERT INTO repository_operations(account_id,principal,operation_id,command_codec,command_version,command,command_sha256)
+                    VALUES(:account,:principal,:operation,:codec,:version,:bytes,sha256(:bytes))
+                    """).setParameter("account", key.account()).setParameter("principal", key.principal())
+                    .setParameter("operation", key.operationId()).setParameter("codec", encoded.codec())
+                    .setParameter("version", encoded.version()).setParameter("bytes", encoded.bytes().toByteArray()).executeUpdate();
+            em.createNativeQuery("""
+                    INSERT INTO repository_operation_owners(account_id,principal,operation_id,owner_token,owner_generation,lease_until)
+                    VALUES(:account,:principal,:operation,:nonce,1,clock_timestamp()+interval '5 minutes')
+                    """).setParameter("account", key.account()).setParameter("principal", key.principal())
+                    .setParameter("operation", key.operationId()).setParameter("nonce", UUID.randomUUID()).executeUpdate();
+            return null;
+        });
     }
 
     @Test void scopesReadsToAuthenticatedPrincipalAndChecksCancellation() {

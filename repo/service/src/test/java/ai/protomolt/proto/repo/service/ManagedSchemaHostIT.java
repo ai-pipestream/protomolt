@@ -241,9 +241,18 @@ class ManagedSchemaHostIT {
     private static Work prepare(RepoServices host, Tx tx, String generation, boolean typed) throws Exception {
         String account = "account-" + UUID.randomUUID();
         String namespace = "schema-" + UUID.randomUUID();
-        try (var backing = BlobStores.discover().open("s3", Map.of("endpoint", STORAGE.getEndpoint().toString(),
-                "region", STORAGE.getRegion(), "path-style", "true", "conditional-writes", "true",
-                "access-key", STORAGE.getAccessKey(), "secret-key", STORAGE.getSecretKey()))) { backing.ensureNamespace(namespace); }
+        try (var backing = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", STORAGE.getEndpoint().toString()),
+                Map.entry("region", STORAGE.getRegion()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "true"),
+                Map.entry("access-key", STORAGE.getAccessKey()),
+                Map.entry("secret-key", STORAGE.getSecretKey()),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")))) { backing.ensureNamespace(namespace); }
         var drive = new DriveRecord();
         drive.driveId = UUID.randomUUID(); drive.accountId = account; drive.name = "schema"; drive.driveType = "PIPELINE"; drive.bucket = namespace;
         host.driveLedger().insert(drive);
