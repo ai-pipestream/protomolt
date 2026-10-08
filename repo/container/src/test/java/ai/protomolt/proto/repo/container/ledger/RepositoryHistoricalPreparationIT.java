@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -80,6 +81,115 @@ class RepositoryHistoricalPreparationIT {
             }
             assertThat(budget.reservedBytes()).isZero();
             assertThatThrownBy(preparation::requireResolvedRetention).hasMessageContaining("closed");
+        }
+    }
+
+    @Test void coldRegistryAdmissionIsBoundedAndKeepsRetryIdentityBeforeSql() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var fixedModes = modes(rig);
+            var observed = expired(c, rig, fixedModes);
+            var command = rig.record().command();
+            var tiny = new PayloadBudget(1);
+            try (var refused = new RepositoryInstalledHistoricalAttempts(c.tx(), tiny, new DriveLedger(c.tx()), 1)) {
+                assertThatThrownBy(() -> refused.beginColdProposed(CALLER, command, fixedModes, observed, LEASE, TIMEOUTS))
+                        .isInstanceOf(PayloadBudget.CapacityExceededException.class);
+                assertThat(refused.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 0));
+                assertThat(tiny.reservedBytes()).isZero();
+            }
+            var budget = new PayloadBudget(256L * 1024 * 1024);
+            var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
+            try {
+                try (var attempt = owner.beginColdProposed(CALLER, command, fixedModes, observed, LEASE, TIMEOUTS)) {
+                    assertThatThrownBy(() -> attempt.installedPlan(CALLER, NONE))
+                            .hasMessageContaining("installation is not confirmed");
+                    assertThatThrownBy(() -> owner.beginColdProposed(CALLER, command, fixedModes, observed, LEASE, TIMEOUTS))
+                            .isInstanceOf(RepositoryException.class);
+                }
+                long retained = budget.reservedBytes();
+                assertThat(retained).isPositive();
+                var changedModes = Map.of(fixedModes.keySet().iterator().next(), DocumentPublicationCandidate.Mode.OPAQUE);
+                assertThatThrownBy(() -> owner.beginColdProposed(CALLER, command, changedModes, observed, LEASE, TIMEOUTS))
+                        .hasMessageContaining("retry identity changed");
+                assertThatThrownBy(() -> owner.beginColdProposed(CALLER, command, fixedModes, observed, LEASE.plusSeconds(1), TIMEOUTS))
+                        .hasMessageContaining("retry identity changed");
+                assertThatThrownBy(() -> owner.beginProposed(CALLER, rig.record(), fixedModes, observed, LEASE, TIMEOUTS))
+                        .hasMessageContaining("retry identity changed");
+                var another = new DocumentPublicationCommand(command.intent().toBuilder()
+                        .setOperationId(java.util.UUID.randomUUID().toString()).build());
+                assertThatThrownBy(() -> owner.beginColdProposed(CALLER, another, fixedModes, observed, LEASE, TIMEOUTS))
+                        .hasMessageContaining("capacity exhausted");
+                try (var retry = owner.beginColdProposed(CALLER, new DocumentPublicationCommand(command.intent()),
+                        fixedModes, null, LEASE, TIMEOUTS)) {
+                    assertThat(budget.reservedBytes()).isEqualTo(retained);
+                }
+                assertThat(count(c, "repository_coordinator_expirations")).isZero();
+                assertThat(count(c, "repository_successor_installs")).isZero();
+            } finally {
+                owner.close();
+                assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+            }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void coldInstalledGenerationCanPassOriginalAnchorToItsSuccessor() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
+            var fixedModes = modes(rig);
+            var observed = expired(c, rig, fixedModes);
+            var command = rig.record().command();
+            var budget = new PayloadBudget(256L * 1024 * 1024);
+            var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 2);
+            try (var oldSources = capture(c, rig)) {
+                try {
+                    java.util.UUID oldId;
+                    try (var old = owner.beginColdProposed(CALLER, command, fixedModes, observed, Duration.ofSeconds(3), TIMEOUTS)) {
+                        oldId = old.identity();
+                        old.advancePreparation(CALLER, fixedModes, Map.of(), NONE);
+                        old.advancePreparation(CALLER, fixedModes, Map.of(), NONE);
+                        old.attachSources(oldSources.sources(), oldSources.sources().work(), NONE);
+                        old.openExecution(CALLER, NONE);
+                    }
+                    waitExpired(c, rig);
+                    var expiredCold = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                            .inspect(CALLER, rig.record().key(), command.sha256(), NONE);
+                    assertThat(expiredCold.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND);
+                    try (var freshSources = capture(c, rig)) {
+                        java.util.UUID nextId;
+                        try (var next = owner.beginSuccessor(CALLER, CALLER, oldId, command,
+                                fixedModes, expiredCold, LEASE, TIMEOUTS)) {
+                            nextId = next.identity();
+                            assertThat(nextId).isNotEqualTo(oldId);
+                            assertThat(next.advancePreparation(CALLER, fixedModes, Map.of(), NONE))
+                                    .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
+                            assertThat(next.advancePreparation(CALLER, fixedModes, Map.of(), NONE))
+                                    .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.INSTALLED);
+                            next.attachSources(freshSources.sources(), freshSources.sources().work(), NONE);
+                            next.openExecution(CALLER, NONE);
+                            assertThat(next.start(LEASE, NONE)).isNotNull();
+                        }
+                        assertThat(owner.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 2));
+                        assertThat(oldSources.history().isReleased()).isFalse();
+                        try (var old = owner.resumeGeneration(CALLER, CALLER, command, oldId).orElseThrow()) {
+                            assertThat(old.retireFenced(CALLER, Duration.ZERO, NONE))
+                                    .isEqualTo(RepositoryInstalledHistoricalAttempts.Retirement.RETIRED);
+                        }
+                        assertThat(oldSources.history().isReleased()).isTrue();
+                        try (var next = owner.resume(CALLER, command).orElseThrow()) {
+                            assertThat(next.identity()).isEqualTo(nextId);
+                            assertThat(next.start(LEASE, NONE)).isNotNull();
+                        }
+                        assertThat(count(c, "repository_successor_installs")).isEqualTo(2);
+                        assertThat(count(c, "repository_historical_activations")).isEqualTo(2);
+                        owner.close();
+                        assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                        assertThat(freshSources.history().isReleased()).isTrue();
+                    }
+                } finally {
+                    owner.close();
+                    assertThat(owner.detachClosed(Duration.ZERO, ignored -> CALLER, NONE)).isTrue();
+                }
+            }
+            assertThat(budget.reservedBytes()).isZero();
         }
     }
 
@@ -163,8 +273,8 @@ class RepositoryHistoricalPreparationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void lostReservationOrInstallationReplyKeepsExactIdentityAcrossCalls(boolean installation) throws Exception {
+    @ParameterizedTest @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void lostReservationOrInstallationReplyKeepsExactIdentityAcrossCalls(boolean installation, boolean cold) throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
             var modes = modes(rig);
             var observed = expired(c, rig, modes);
@@ -184,7 +294,9 @@ class RepositoryHistoricalPreparationIT {
                     "hibernate.connection.datasource", fault, "hibernate.hbm2ddl.auto", "validate"))) {
                 var budget = new PayloadBudget(256L * 1024 * 1024);
                 var owner = new RepositoryInstalledHistoricalAttempts(new Tx(emf), budget, new DriveLedger(c.tx()), 1);
-                try (var attempt = owner.beginProposed(CALLER, rig.record(), modes, observed, LEASE, TIMEOUTS)) {
+                try (var attempt = cold
+                        ? owner.beginColdProposed(CALLER, rig.record().command(), modes, observed, LEASE, TIMEOUTS)
+                        : owner.beginProposed(CALLER, rig.record(), modes, observed, LEASE, TIMEOUTS)) {
                     if (installation) assertThat(attempt.advancePreparation(CALLER, modes, Map.of(), control))
                             .isEqualTo(RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
                     assertThatThrownBy(() -> attempt.advancePreparation(CALLER, modes, Map.of(), control))
@@ -205,7 +317,10 @@ class RepositoryHistoricalPreparationIT {
                         .inspect(CALLER, rig.record().key(), rig.record().command().sha256(), NONE);
                 var decodedRetention = DocumentPublicationPreparationCodec.decode(DocumentPublicationPreparationCodec.encode(rig.record()),
                         rig.record().key(), rig.record().command().sha256());
-                try (var retry = owner.beginProposed(CALLER, decodedRetention, modes, changedObservation, LEASE, TIMEOUTS)) {
+                try (var retry = cold
+                        ? owner.beginColdProposed(CALLER, new DocumentPublicationCommand(rig.record().command().intent()),
+                                modes, changedObservation, LEASE, TIMEOUTS)
+                        : owner.beginProposed(CALLER, decodedRetention, modes, changedObservation, LEASE, TIMEOUTS)) {
                     var next = retry.advancePreparation(CALLER, modes, Map.of(), NONE);
                     assertThat(next).isEqualTo(installation ? RepositoryHistoricalAttemptPreparation.Phase.INSTALLED
                             : RepositoryHistoricalAttemptPreparation.Phase.RESERVED);
@@ -238,13 +353,15 @@ class RepositoryHistoricalPreparationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {0, 1, 2})
-    void shutdownReleasesPreparationAtEveryPhaseWithoutInventingCaptureDrain(int phases) throws Exception {
+    @ParameterizedTest @CsvSource({"0,false", "1,false", "2,false", "0,true", "1,true", "2,true"})
+    void shutdownReleasesPreparationAtEveryPhaseWithoutInventingCaptureDrain(int phases, boolean cold) throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(2))) {
             var modes = modes(rig); var observed = expired(c, rig, modes);
             var budget = new PayloadBudget(256L * 1024 * 1024);
             var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
-            try (var attempt = owner.beginProposed(CALLER, rig.record(), modes, observed, LEASE, TIMEOUTS)) {
+            try (var attempt = cold
+                    ? owner.beginColdProposed(CALLER, rig.record().command(), modes, observed, LEASE, TIMEOUTS)
+                    : owner.beginProposed(CALLER, rig.record(), modes, observed, LEASE, TIMEOUTS)) {
                 for (int i = 0; i < phases; i++) attempt.advancePreparation(CALLER, modes, Map.of(), NONE);
                 assertThat(attempt.retireFenced(CALLER, Duration.ZERO, NONE))
                         .isEqualTo(RepositoryInstalledHistoricalAttempts.Retirement.NOT_PROVEN);

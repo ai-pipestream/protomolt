@@ -747,7 +747,8 @@ anchor. `RepositoryHistoricalRetentionLoader` now provides bounded anchor
 discovery under process authority and current execution-caller authorization.
 It follows persisted lineage, verifies preparation and capture identities, and
 returns a budgeted metadata lease. It creates no read pin or execution permit.
-The loader has SQL tests but no production call site as of a8ca11413.
+Cold preparation calls the loader after reserving recovery and loading the
+immediate predecessor. Public historical routing remains disabled.
 
 The remaining composition has an ordering constraint: `beginProposed` requires
 the original retention record, while the loader requires an established
@@ -759,8 +760,8 @@ anchor. It must preserve uncertain reservation identities and bound metadata
 memory before handing ownership to installed historical execution. No request
 may manufacture the missing original record from current schema metadata.
 
-The next implementation is a registry-owned cold proposal entry, allocated through
-an internal `beginColdProposed` operation. Keep the existing warm entry unchanged.
+The registry owns a cold proposal entry, allocated through the internal
+`beginColdProposed` operation. The existing warm entry remains available.
 Reserve entry capacity and metadata budget before SQL. Fix the execution caller,
 canonical command, modes, lease, SQL timeouts and discovery-derived proposal at
 creation. Local retry must find this entry before considering newer discovery.
@@ -1373,6 +1374,14 @@ They assert stable proposal/plan identity, no execution activation, no publicati
 for the recovery operation, and complete memory release. The corruption fixture
 disables triggers to represent damaged storage, not an allowed application write.
 
-This primitive has no cold registry entry yet. Registry capacity ownership,
-uncertain-reply qualification, multiple-successor composition and separate-process
-provider execution remain required before public routing.
+The registry now admits cold entries before SQL, accounts for command and mode
+memory, and fixes caller, command, modes, lease and SQL timeouts across calls.
+Preparation owns the loaded anchor until disposal. A later local successor takes
+its own retained-anchor budget before the cold predecessor is disposed.
+
+SQL regression cases exercise uncertain reservation and installation replies,
+shutdown at each phase, admission capacity, changed retry inputs, and a cold
+generation followed by a local successor. These source fixtures use synthetic
+provider observations. Fresh-registry recovery across multiple successors, real
+provider execution after restart, separate-process recovery and transport parity
+remain required before public routing.

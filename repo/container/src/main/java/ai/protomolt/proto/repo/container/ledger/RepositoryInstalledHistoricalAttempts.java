@@ -78,6 +78,16 @@ final class RepositoryInstalledHistoricalAttempts implements AutoCloseable {
             key = record.key(); command = record.command(); retentionDigest = digest;
             reservation = null; preparation = null; fingerprint = null;
         }
+        Entry(RepositoryCaller caller, DocumentPublicationCommand command,
+                RepositoryCoordinatorReservation.Proposal proposal, RepositoryHistoricalAttemptPreparation preparation,
+                PayloadBudget.Lease bytes) {
+            this.caller = caller; this.command = command; this.reservation = proposal;
+            this.preparation = preparation; this.bytes = bytes; key = proposal.predecessor().key();
+            retention = null; retentionDigest = null; fingerprint = null; initial = null;
+        }
+        DocumentPublicationPreparationRecord requireRetention() {
+            return retention != null ? retention : preparation.requireResolvedRetention();
+        }
         RepositoryCoordinatorReservation.Proposal reservation() {
             return preparation == null ? reservation : preparation.proposal();
         }
@@ -157,7 +167,7 @@ synchronized Attempt beginSuccessor(RepositoryCaller coordinator, RepositoryCall
         if (selected != null && predecessorId.equals(selected.predecessorId)) {
             if (!selected.caller.equals(caller) || !selected.command.canonical().equals(command.canonical()))
                 throw conflict("Historical successor retry identity changed");
-            return beginProposed(caller, selected.retention, modes, observed, lease, timeouts);
+            return beginProposed(caller, selected.requireRetention(), modes, observed, lease, timeouts);
         }
     var old = generations.get(predecessorId);
     if (old == null || selected != old || !old.key.equals(key) || !old.caller.equals(caller)
@@ -170,7 +180,7 @@ synchronized Attempt beginSuccessor(RepositoryCaller coordinator, RepositoryCall
     var source = Objects.requireNonNull(observed).candidate().orElseThrow(() ->
             conflict("Historical generation takeover requires an expired bound predecessor"));
     var expected = claimIdentity(old);
-    var previous = old.initial == null ? old.plan.next() : old.retention;
+    var previous = old.initial == null ? old.plan.next() : old.requireRetention();
     var expectedOwner = new RepositoryCoordinatorReservation.OwnerIdentity(
             Math.addExact(previous.predecessorGeneration(), 1), previous.seeds().ownerNonce());
     if (!expected.equals(source.predecessor()) || !expectedOwner.equals(source.owner()))
@@ -178,7 +188,7 @@ synchronized Attempt beginSuccessor(RepositoryCaller coordinator, RepositoryCall
     // Admission is memory-only and exclusive under this monitor. Rollback restores routing on refusal.
     entries.remove(key, old);
     try {
-        var successor = beginProposed(caller, old.retention, modes, observed, lease, timeouts);
+        var successor = beginProposed(caller, old.requireRetention(), modes, observed, lease, timeouts);
         successor.entry.predecessorId = old.id;
         old.supersessionPending = true;
         return successor;
@@ -222,7 +232,7 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         if (active >= capacity || existing == null && generations.size() >= capacity)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
         if (existing != null && existing.caller.equals(caller) && Objects.equals(existing.plan, plan)
-                && existing.retention.equals(retention)) {
+                && Objects.equals(existing.retention, retention)) {
             existing.borrowed = true; active++;
             return new Attempt(existing);
         }
@@ -267,7 +277,8 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
         var encodedModes = DocumentPublicationModesJournal.encode(command, requested);
         var existing = entries.get(key);
         if (existing != null) {
-            if (!existing.caller.equals(caller) || existing.preparation == null || !existing.preparation.matches(requested, lease, timeouts))
+            if (!existing.caller.equals(caller) || existing.preparation == null || existing.preparation.cold()
+                    || !existing.preparation.matches(requested, lease, timeouts))
                 throw conflict("Historical retry identity changed");
             if (!existing.retention.equals(retention)) {
                 try (var scratch = budget.reserve(DocumentPublicationPreparationCodec.MAX_BYTES)) {
@@ -307,6 +318,57 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
                 retain(entry); entry.borrowed = true; active++;
                 return new Attempt(entry);
             } catch (RuntimeException | Error failure) { bytes.close(); throw failure; }
+        }
+    }
+
+    /** Memory-only admission for a restarted host; the original anchor is loaded after reservation. */
+    synchronized Attempt beginColdProposed(RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<String, DocumentPublicationCandidate.Mode> modes,
+            RepositoryCoordinatorRecoveryDiscovery.Observation observed, Duration lease, SqlTimeouts timeouts) {
+        if (closed) throw unavailable();
+        Objects.requireNonNull(caller); Objects.requireNonNull(command); Objects.requireNonNull(lease); Objects.requireNonNull(timeouts);
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Historical recovery lease requires one second to one day");
+        var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (DocumentPreparationHistoryRoots.roots(command).isEmpty())
+            throw new IllegalArgumentException("Cold historical recovery requires historical sources");
+        var requested = Map.copyOf(modes);
+        var encodedModes = DocumentPublicationModesJournal.encode(command, requested);
+        var existing = entries.get(key);
+        if (existing != null) {
+            if (!existing.caller.equals(caller) || !existing.command.canonical().equals(command.canonical())
+                    || existing.preparation == null || !existing.preparation.cold()
+                    || !existing.preparation.matches(requested, lease, timeouts))
+                throw conflict("Cold historical retry identity changed");
+            return resume(caller, command).orElseThrow();
+        }
+        if (generations.size() >= capacity || active >= capacity)
+            throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Historical attempt capacity exhausted");
+        var bytes = budget.reserve((long) command.canonical().size() + command.intent().getSerializedSize() + encodedModes.length() * 2L);
+        RepositoryHistoricalAttemptPreparation preparation = null;
+        try {
+            Objects.requireNonNull(observed);
+            final RepositoryCoordinatorReservation.Proposal proposal;
+            if (observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND) {
+                var source = observed.candidate().orElseThrow();
+                proposal = new RepositoryCoordinatorReservation.ExpiredUnquiesced(source.predecessor(),
+                        UUID.randomUUID(), UUID.randomUUID(), lease, source.owner());
+            } else if (observed.unactivated().isPresent()) {
+                var source = observed.unactivated().orElseThrow();
+                proposal = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                        UUID.randomUUID(), UUID.randomUUID(), lease, source.owner(), source.preparationSha256(), source.installation());
+            } else throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Cold historical recovery state is not eligible: " + observed.status());
+            if (!proposal.predecessor().key().equals(key) || !proposal.predecessor().commandSha256().equals(command.sha256()))
+                throw conflict("Cold historical observation differs from command");
+            preparation = new RepositoryHistoricalAttemptPreparation(tx, budget, timeouts, proposal, command, requested, lease);
+            var entry = new Entry(caller, command, proposal, preparation, bytes);
+            retain(entry); entry.borrowed = true; active++;
+            return new Attempt(entry);
+        } catch (RuntimeException | Error failure) {
+            if (preparation != null) preparation.close();
+            bytes.close(); throw failure;
         }
     }
 
@@ -458,8 +520,8 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             work.references(entry.command, control::check);
             work.authorize(control);
             var activation = entry.initial == null
-                    ? new RepositoryHistoricalSuccessorActivation(tx, budget, entry.plan, entry.retention, sources, drives) : null;
-            var initial = entry.initial == null ? null : new RepositoryInitialHistoricalAttempt(tx, budget, entry.retention,
+                    ? new RepositoryHistoricalSuccessorActivation(tx, budget, entry.plan, entry.requireRetention(), sources, drives) : null;
+            var initial = entry.initial == null ? null : new RepositoryInitialHistoricalAttempt(tx, budget, entry.requireRetention(),
                     entry.initial.modes(), entry.initial.incarnation(), sources, work, entry.scopes, drives, control);
             control.check();
             entry.work = work; entry.histories = histories; entry.activation = activation; entry.initialAttempt = initial;
