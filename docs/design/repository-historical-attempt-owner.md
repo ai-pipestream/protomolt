@@ -1466,3 +1466,57 @@ not a generic proof for a remote host or an arbitrary reader incarnation.
 
 This section specifies an open boundary. No external quiescence transition or
 crashed-reader reclamation API is implemented or advertised by the restart tests.
+
+#### Proposed internal operations and transaction boundaries
+
+The next implementation slice adds internal Java/SQL lifecycle operations, not a
+public protobuf endpoint. Existing protobuf names, tags, imports and Any URLs stay
+unchanged. Treat this inventory as proposed until the implementation and tests land:
+
+| Operation | Change | Required behavior |
+| --- | --- | --- |
+| Register host execution | New | Persist a fresh execution UUID and immutable trusted host/boot identity; reject reuse and retain a permanent tombstone. |
+| Register reader | Extended | Atomically bind a fresh reader and registration nonce to an ACTIVE host execution before read admission. Keep unbound registration available for local-only readers, with no external reclamation claim. |
+| Require active reader | Extended | Reject admission if either reader or bound host execution is fenced; preserve existing local-reader behavior. |
+| Fence host execution | New | Stop reader registration and new read admission; do not imply existing provider work has stopped. |
+| Record verified termination | New | Persist exact trusted attestation and an immutable receipt; terminate one matching fenced execution without releasing any pins. |
+| Quiesce one bound reader | New | Match immutable registration and host termination receipt; record external provenance separately from LOCAL_DRAIN. |
+| Recover reader pins | Unchanged | Use existing bounded document/archive recovery only after durable quiescence. |
+| Drain preparation capture | Unchanged | Match the sealed capture identity and require its native pins/mirrors to be absent. |
+| Release preparation roots | Unchanged | Require all capture drains and exact terminal evidence; preserve receipt identity on retry. |
+
+Use a host-execution row with a forward-only ACTIVE/FENCED/TERMINATED lifecycle.
+Persist proof issuer, exact execution identity, evidence digest and attestation
+identity in a separate immutable record. The evidence digest records provenance;
+it is not itself proof verification. A configured trusted verifier must validate
+the evidence before a short transaction binds it to the expected fenced execution.
+Missing/unsupported verification is an explicit failure. Do not accept an arbitrary
+boolean or request-supplied digest as permission to reclaim another reader.
+
+Reader registration must hold a shared lock on its host execution through the
+atomic reader/binding insert. Termination takes the execution lock but does not
+scan or lock every reader. Discover bound readers in bounded pages afterward and
+quiesce them individually under the immutable termination receipt. This prevents
+an unbounded shutdown transaction and isolates contention to the affected host.
+Record bound versus local-only identity immutably in the reader's INSERT, such as
+an immutable nullable host-execution column. A later side-table insert must never
+temporarily expose a bound reader as local-only. External cleanup still fences
+each exact reader before its FENCED-to-QUIESCED transition; host termination alone
+does not bypass the reader state machine.
+
+Audit every read-admission and direct-write trigger before extending its guard.
+Use one lock order for bound admission: host execution, reader, then existing
+object/retention locks. Reading an immutable binding to find its host must not
+permit an unbound-reader fallback during a registration race. Missing or changed
+identity fails explicitly. An external reader-quiescence transaction may rely on
+an already permanent termination fact; it must not retain an execution write lock
+while waiting for reader or object locks. Local fencing/drain keeps its existing
+meaning and cannot overwrite an external attestation's provenance.
+
+Failure qualification must include two actual PostgreSQL schedules: registration
+commits before the fence and becomes eligible for later verified reclamation, or
+fencing wins and registration fails without a reader/binding row. Add the same
+ordering test for read admission, plus an unrelated execution that continues
+admitting readers while the target execution is held at the test barrier.
+No claim of horizontal scalability follows from those schedules alone; they
+establish the intended contention boundary for later load qualification.
