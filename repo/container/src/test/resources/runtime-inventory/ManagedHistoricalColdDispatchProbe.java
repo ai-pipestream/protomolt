@@ -85,6 +85,9 @@ final class ManagedHistoricalColdDispatchProbe {
                         var headers = new Metadata();
                         headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
                         var stub = plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
+                        if (ManagedHistoricalUnavailableUploadProbe.enabled()) {
+                            ManagedHistoricalUnavailableUploadProbe.run(tx, provider, caller, command, request.build(), host, stub, resolutions);
+                        } else {
                         var result = stub.publishDocument(request.build());
                         require(result.hasCommitted(), "managed cold recovery commits");
                         require(resolutions.get() == 1, "only resubmitted upload resolves a fresh schema");
@@ -105,6 +108,7 @@ final class ManagedHistoricalColdDispatchProbe {
                                     "managed retained validation includes the supplied parser shape");
                             read.authorizeDelivery(RepositoryReadControl.NONE);
                         }
+                        }
                     } finally { channel.shutdownNow(); require(channel.awaitTermination(5, TimeUnit.SECONDS), "managed cold channel drained"); }
                 }
                 require(closes.get() == 1, "managed cold host closes owned schema admission once");
@@ -122,7 +126,8 @@ final class ManagedHistoricalColdDispatchProbe {
         } finally {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-        System.out.println("HISTORICAL_MANAGED_COLD_DISPATCH_GRPC_OK");
+        System.out.println(ManagedHistoricalUnavailableUploadProbe.enabled()
+                ? "HISTORICAL_MANAGED_COLD_UNAVAILABLE_UPLOAD_OK" : "HISTORICAL_MANAGED_COLD_DISPATCH_GRPC_OK");
     }
 
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }

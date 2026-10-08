@@ -85,6 +85,11 @@ final class HistoricalColdRestartDriver {
             assertThat(Files.size(recoveryLog)).isLessThan(1_048_576);
             String output = Files.readString(recoveryLog);
             assertThat(recovery.exitValue()).as(output).isZero();
+            if ("true".equals(shared.get("PROTOMOLT_TEST_COLD_MISSING_UPLOAD"))) {
+                assertThat(output).contains("HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK", "HISTORICAL_MANAGED_COLD_UNAVAILABLE_UPLOAD_OK");
+                System.out.println("HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK " + phase);
+                return;
+            }
             assertThat(output).contains("HISTORICAL_COLD_PROCESS_RESTART_OK",
                     "HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK", "HISTORICAL_COLD_HOST_SUPERVISOR_OK");
             if ("true".equals(shared.get("PROTOMOLT_TEST_COLD_MANAGED_DISPATCH")))

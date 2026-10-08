@@ -34,7 +34,9 @@ back to the mounted backend. Hosted library/gRPC cancellation now retains exact
 historical pins and resources while a real PUT or selected historical GET reply is
 held, then drains on repeated close. A held real Git descriptor load also retains
 its worker and shared resources until drainage, without caching its late result.
-Unavailable recovered upload placements still need service-level qualification; see the
+Cold recovery now also refuses an unavailable original upload generation while its
+historical source remains readable; both boundaries preserve the saved placement
+and create no provider versions or publication results. See the
 [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
 and [next integration](repository-historical-restore.md#next-managed-host-integration).
 START reconciliation retains an exact attempt identity and requires current
@@ -50,6 +52,7 @@ fairness and progressive hydration remain requirements of the full goal.
 
 Recent evidence:
 
+- [Unavailable saved upload backend during cold recovery](../evidence/repository/2026-10-08-managed-cold-unavailable-upload/README.md)
 - [Managed historical shutdown during schema resolution](../evidence/repository/2026-10-08-managed-historical-schema-shutdown/README.md)
 - [Managed historical shutdown during a provider read](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
 - [Managed historical shutdown with a held provider reply](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md)

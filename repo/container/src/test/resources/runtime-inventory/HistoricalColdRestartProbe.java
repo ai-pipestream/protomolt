@@ -125,6 +125,13 @@ public final class HistoricalColdRestartProbe {
             var budget = new PayloadBudget(128_000_000);
             if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_MANAGED_DISPATCH"))) {
                 ManagedHistoricalColdDispatchProbe.run(tx, provider, caller, command, uploads);
+                if (ManagedHistoricalUnavailableUploadProbe.enabled()) {
+                    require(budget.reservedBytes() == 0, "negative recovery retains no local fixture metadata");
+                    require(new DocumentPublicationReplay(tx).observe(caller, command).result().isEmpty(), "missing upload backend cannot publish");
+                    observation.identity(() -> {});
+                    System.out.println("HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK");
+                    return;
+                }
                 reclaimOriginalWriter(tx, coordinator, command, budget);
             } else if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_PUBLIC_DISPATCH"))) {
                 HistoricalPublicColdDispatchProbe.run(tx, provider, caller, command, uploads, budget);

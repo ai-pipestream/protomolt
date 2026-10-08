@@ -258,10 +258,16 @@ public final class HistoricalAssessmentCreationProbe {
         System.out.println(lostAck ? "HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "HISTORICAL_ASSESSMENT_CREATE_OK");
     }
     private static void claimed(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
-            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement,
+            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement originalPlacement,
             DocumentReadLedger.PinnedHistory history, Map<Integer, ByteString> fragments, PayloadBudget budget,
             DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault, boolean mixed,
             javax.sql.DataSource contentionDatabase, javax.sql.DataSource database, Scenario scenario) throws Exception {
+        boolean missingUpload = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER && ManagedHistoricalUnavailableUploadProbe.enabled();
+        if (missingUpload) {
+            new ManagedBackendLedger(tx).bind(ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile());
+        }
+        var placement = missingUpload ? new DocumentUploadPlan.Placement(originalPlacement.drive(),
+                ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile()) : originalPlacement;
         boolean startFault = scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK;
         boolean installedOwner = installedOwner(scenario);
         boolean createFault = fault != null && !startFault;

@@ -1142,8 +1142,12 @@ A fresh Git descriptor load now has hosted library/gRPC cancellation and timed-c
 coverage: the actual resolver worker and shared resources remain owned until it exits,
 and the closed resolver does not cache its late result. See
 [held schema evidence](../evidence/repository/2026-10-08-managed-historical-schema-shutdown/README.md).
-Next qualify unavailable upload placements during recovery. Multi-backend operation,
-deployed recovery and performance remain
+Cold recovery with a mounted source generation and unavailable saved upload generation
+now refuses both public paths after actual successor activation, preserving journaled
+placement identity and the provider's object-version set. See
+[unavailable upload evidence](../evidence/repository/2026-10-08-managed-cold-unavailable-upload/README.md).
+The next full-goal work is atomic pruning with historical preparations included in
+liveness decisions. Multi-backend operation, deployed recovery and performance remain
 unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)

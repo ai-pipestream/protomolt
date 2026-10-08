@@ -37,6 +37,15 @@ public final class AssessmentProviderProbe implements AutoCloseable {
     }
     BlobStore store() { return store; }
     ManagedBackendLedger.Profile profile() { return profile; }
+    java.util.Set<String> versions() {
+        var result = new java.util.TreeSet<String>();
+        for (var page : client.listObjectVersionsPaginator(request -> request.bucket("namespace"))) {
+            for (var version : page.versions()) result.add("object:" + version.key() + ":" + version.versionId()
+                    + ":" + version.eTag() + ":" + version.size());
+            for (var marker : page.deleteMarkers()) result.add("delete:" + marker.key() + ":" + marker.versionId());
+        }
+        return java.util.Set.copyOf(result);
+    }
     @Override public void close() { client.close(); }
 
     void verifyReads(Tx tx, RepositoryOperationLedger.Owner owner, DocumentPublicationCommand command,
