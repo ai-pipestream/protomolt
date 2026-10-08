@@ -12,7 +12,7 @@ import java.util.Objects;
 
 /** Private bounded verification of retained preparation metadata. Grants no deletion or execution. */
 final class DocumentPreparationCoverageReconciliation {
-    enum Result { VERIFIED_LIVE, VERIFIED_RELEASED, ALREADY_CERTIFIED, UNKNOWN_ROOTS, PENDING_SUCCESSOR }
+    enum Result { VERIFIED_LIVE, VERIFIED_RELEASED, ALREADY_CERTIFIED, VERIFIED_SUCCESSOR, ALREADY_VERIFIED_SUCCESSOR, UNKNOWN_ROOTS, PENDING_SUCCESSOR }
     private final Tx tx;
     private final PayloadBudget budget;
 
@@ -65,12 +65,27 @@ final class DocumentPreparationCoverageReconciliation {
                 if (!MessageDigest.isEqual(digest, (byte[]) current[0]) || !MessageDigest.isEqual((byte[]) row[3], (byte[]) current[1])
                         || !record.seeds().ownerNonce().equals(current[2])) throw corrupt();
                 control.check();
-                if (exists(em, key, generation, "repository_preparation_coverage_certificates"))
-                    return Result.ALREADY_CERTIFIED;
-                if (!exists(em, key, generation, "repository_preparation_coverage_unresolved")) throw corrupt();
-                // Never infer a successor's retention from its generation or an activation receipt.
-                // Its immutable ancestry requires separate bounded verification.
-                if (exists(em, key, generation, "repository_successor_installs")) return Result.PENDING_SUCCESSOR;
+                var proofs = (Object[]) scope(em.createNativeQuery("""
+                        SELECT EXISTS(SELECT 1 FROM repository_preparation_coverage_certificates
+                          WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g),
+                         EXISTS(SELECT 1 FROM repository_preparation_coverage_lineage
+                          WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g),
+                         EXISTS(SELECT 1 FROM repository_preparation_coverage_unresolved
+                          WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g)
+                        """), key, generation).getSingleResult();
+                boolean certified = Boolean.TRUE.equals(proofs[0]), lineage = Boolean.TRUE.equals(proofs[1]);
+                boolean unresolved = Boolean.TRUE.equals(proofs[2]);
+                if (certified || lineage) {
+                    if (unresolved || (certified && lineage)) throw corrupt();
+                    return certified ? Result.ALREADY_CERTIFIED : Result.ALREADY_VERIFIED_SUCCESSOR;
+                }
+                if (!unresolved) throw corrupt();
+
+                // Installation and activation alone do not attest canonical ancestry.
+                if (exists(em, key, generation, "repository_successor_installs"))
+                    return DocumentPreparationCoverageLineage.certify(em, record, digest, control)
+                            ? Result.VERIFIED_SUCCESSOR : Result.PENDING_SUCCESSOR;
+
                 if (exists(em, key, generation, "repository_preparation_root_releases")) {
                     DocumentPreparationCoverageCertificates.certifyReleased(em, caller, record, digest, control);
                     control.check();

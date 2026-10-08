@@ -172,8 +172,16 @@ unresolved. Do not invent roots or infer release from expiry. Clear an unresolve
 entry only in the transaction that records its verified certificate. Successors
 need separate bounded lineage reconciliation through immutable install edges to
 the original verified root owner, including its exact release proof when released.
-An activation receipt alone does not replace that verification. Both ordinary and
-historical successors remain unresolved until this reconciliation is implemented.
+An activation receipt alone does not replace that verification. V119 now records a
+separate immutable lineage proof for install-only successors. The current canonical
+preparation is decoded, then claim, current preparation and previous preparation
+are locked in that order. Its exact V93 edge must match both preparation identities.
+The immediate predecessor must already have a root certificate or lineage proof;
+the inherited anchor, command, root fingerprint and depth must match. Each proof
+advances exactly one generation, with a maximum depth of 64. An unresolved
+predecessor keeps the successor unresolved. Missing both predecessor proof and
+unresolved marker is corruption. Proof insertion and unresolved deletion commit
+together. No root header, capture or execution right is created.
 
 `DocumentPreparationCoverageReconciliation` now verifies one retained root owner
 with a bounded decode reservation and explicit SQL timeouts. It rechecks immutable
@@ -188,8 +196,10 @@ cursor selection to inspect later entries. There is no silent skip.
 
 The final unresolved lookup covers the whole account, including other principals
 and keys before the cursor. Its result is an observation, not pruning authority:
-new work may commit afterward. Successor lineage certification, additional race
-qualification and the final pruning transaction remain required.
+new work may commit afterward. Additional lineage/release and concurrency
+qualification and the final pruning transaction remain required. A lineage proof
+attests canonical ancestry, not current live retention: root release may happen
+later and pruning must separately evaluate the remaining owners.
 
 Avoid an account counter lock held across document or physical-origin locks. A
 READ COMMITTED indexed unresolved check is combined with the source document's
