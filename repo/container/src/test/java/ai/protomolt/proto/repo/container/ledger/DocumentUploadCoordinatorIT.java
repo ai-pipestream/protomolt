@@ -60,6 +60,56 @@ class DocumentUploadCoordinatorIT {
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<UUID, DocumentUploadPlan.Placement> placements, UUID attempt) {}
 
+    @Test void deliveryAuthorityFailurePreservesVerifiedWritesForExactReplay() throws Exception {
+        var f=fixture(2,LEASE);
+        var puts=new java.util.concurrent.atomic.AtomicInteger();
+        var verified=new java.util.concurrent.atomic.AtomicInteger();
+        var delivered=new java.util.concurrent.atomic.AtomicInteger();
+        var store=intercept((method,args,call)->{
+            if(method.equals("put")) puts.incrementAndGet();
+            return call.call();
+        });
+        var budget=new PayloadBudget(1_000_000);
+        try(var coordinator=coordinator(store,budget,Duration.ofMillis(25))) {
+            var authority=new DocumentUploadAuthority() {
+                public DocumentOperationUploadAdmission.Admission admit() {
+                    return admission.admitOrReuseVerified(ADMIN,f.owner,f.prepared);
+                }
+                public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal=selections.isEmpty()?null:DocumentSelectedAttemptLedger.prepareRenewal(selections,LEASE);
+                    tx.inTransaction(em->{DocumentSelectedAttemptLedger.renewOwnerAndSelections(em,f.owner,renewal,LEASE);});
+                }
+                public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal=DocumentSelectedAttemptLedger.prepareRenewal(selections,LEASE);
+                    return tx.inTransaction(em->{return DocumentSelectedAttemptLedger.renew(em,f.owner,renewal);});
+                }
+                public void verify(DocumentSelectedAttemptLedger.Selected selection,List<DocumentSelectedAttemptLedger.Observation> rows) {
+                    var encoded=DocumentSelectedAttemptLedger.prepareVerification(rows);
+                    tx.inTransaction(em->{DocumentSelectedAttemptLedger.verifyBatch(em,f.owner,selection,encoded);});
+                    verified.addAndGet(rows.size());
+                }
+                public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections,Runnable active) {
+                    throw new AssertionError("Staging does not perform assessment preparation");
+                }
+                public void afterDrain() {
+                    assertThat(coordinator.providerActivity().active()).isZero();
+                    assertThat(verified.get()).isEqualTo(2);
+                    delivered.incrementAndGet();
+                    throw new IllegalStateException("injected delivery authority failure");
+                }
+            };
+            assertThatThrownBy(()->coordinator.stageAuthorized(f.prepared,f.bodies,Map.of(),()->{},authority))
+                    .hasMessageContaining("injected delivery authority failure");
+            assertThat(delivered.get()).isEqualTo(1);
+            assertThat(puts.get()).isEqualTo(2);
+            assertThat(budget.reservedBytes()).isZero();
+            var replay=coordinator.stage(ADMIN,f.owner,f.prepared,f.bodies,Map.of(),()->{});
+            assertThat(replay.members()).allSatisfy(member->assertThat(member.attempt().state()).isEqualTo("VERIFIED"));
+            assertThat(puts.get()).isEqualTo(2);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void exactVerifiedInitialRetryDoesNotWriteProviderAgain() throws Exception {
         var f = fixture(2, LEASE);
         var puts = new java.util.concurrent.atomic.AtomicInteger();

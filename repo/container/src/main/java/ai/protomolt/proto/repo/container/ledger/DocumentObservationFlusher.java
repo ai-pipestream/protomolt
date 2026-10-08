@@ -21,8 +21,11 @@ final class DocumentObservationFlusher {
         Pending(long arrived) { this.arrived = arrived; }
     }
 
-    private final DocumentSelectedAttemptLedger ledger;
-    private final RepositoryOperationLedger.Owner owner;
+    @FunctionalInterface interface Verifier {
+        /** Synchronous bounded SQL verification under the operation's complete authority. */
+        void verify(DocumentSelectedAttemptLedger.Selected selection, List<DocumentSelectedAttemptLedger.Observation> observations);
+    }
+    private final Verifier verifier;
     private final java.util.Set<DocumentSelectedAttemptLedger.Selected> allowed;
     private final long maxAge;
     private final Runnable check;
@@ -32,8 +35,12 @@ final class DocumentObservationFlusher {
 
     DocumentObservationFlusher(DocumentSelectedAttemptLedger ledger, RepositoryOperationLedger.Owner owner,
             List<DocumentSelectedAttemptLedger.Selected> selections, Duration maxAge, Runnable check, Consumer<Throwable> failed) {
-        this.ledger = ledger;
-        this.owner = owner;
+        this((selection, observations) -> ledger.verifyBatch(owner, selection, observations), selections, maxAge, check, failed);
+    }
+
+    DocumentObservationFlusher(Verifier verifier, List<DocumentSelectedAttemptLedger.Selected> selections,
+            Duration maxAge, Runnable check, Consumer<Throwable> failed) {
+        this.verifier = java.util.Objects.requireNonNull(verifier);
         this.allowed = java.util.Set.copyOf(selections);
         this.maxAge = maxAge.toNanos();
         this.check = check;
@@ -80,7 +87,7 @@ final class DocumentObservationFlusher {
                     // Aggregate pressure must flush even when no individual attempt has 256 rows.
                     if (tail || count >= LIMIT || remaining <= 0) {
                         check.run();
-                        ledger.verifyBatch(owner, oldest.getKey(), oldest.getValue().rows);
+                        verifier.verify(oldest.getKey(), List.copyOf(oldest.getValue().rows));
                         check.run();
                         count -= oldest.getValue().rows.size();
                         pending.remove(oldest.getKey());
