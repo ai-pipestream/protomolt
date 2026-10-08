@@ -11,10 +11,12 @@ import java.util.concurrent.atomic.*;
 
 /** Faults follow actual provider writes; no provider result is fabricated. */
 final class HistoricalUploadFaultProbe {
-    static void run(Tx tx, RepositoryCaller caller, DocumentPublicationCommand original,
+    static void run(Tx independent, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
-            Map<Integer, ByteString> fragments, PayloadBudget budget) throws Exception {
-        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply")) {
+            Map<Integer, ByteString> fragments, PayloadBudget budget, javax.sql.DataSource database) throws Exception {
+        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply")) {
+            try (var fault = mode.equals("lost-verification-reply") ? new HistoricalCreateCommitFault(database, true) : null) {
+            var tx = fault == null ? independent : fault.tx();
             var sourceId = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
             var current = new DocumentLedger(tx).findByNodeId(sourceId).orElseThrow();
             var member = original.intent().getMembers(0);
@@ -24,6 +26,7 @@ final class HistoricalUploadFaultProbe {
             var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
                     Map.of(placement.drive().id(), placement), Duration.ofMinutes(2), 0);
+            if (fault != null) fault.armVerification(record.seeds().attempts().get("a"));
             var security = tx.readOnly(em -> (String) em.createNativeQuery("SELECT security::text FROM documents WHERE node_id=:id")
                     .setParameter("id", sourceId).getSingleResult());
             long baseline = budget.reservedBytes();
@@ -84,6 +87,19 @@ final class HistoricalUploadFaultProbe {
                         var first = request.stageUploads(uploads, bodies, Map.of(), control);
                         var again = request.stageUploads(uploads, bodies, Map.of(), control);
                         require(first.members().getFirst().selection().equals(again.members().getFirst().selection()), "exact selection replay");
+                    } else if (fault != null) {
+                        try {
+                            request.stageUploads(uploads, bodies, Map.of(), control);
+                            throw new AssertionError("Lost SQL verification reply returned success");
+                        } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                        require(independent.readOnly(em -> ((Number) em.createNativeQuery("""
+                                SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:id AND verified
+                                """).setParameter("id", record.seeds().attempts().get("a")).getSingleResult()).longValue()) == 1,
+                                "independent transaction confirms verification committed");
+                        var again = request.stageUploads(uploads, bodies, Map.of(), control);
+                        require(again.members().size() == 1 && again.members().getFirst().selection().equals(
+                                new DocumentSelectedAttemptLedger.Selected("a", 1, record.seeds().attempts().get("a"),
+                                        record.seeds().uploadTokens().get("a"))), "lost acknowledgement replays exact attempt and token");
                     } else {
                         RuntimeException rejected = null;
                         try { request.stageUploads(uploads, bodies, Map.of(), control); }
@@ -114,7 +130,7 @@ final class HistoricalUploadFaultProbe {
                     long verified = tx.readOnly(em -> ((Number) em.createNativeQuery("""
                             SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:id AND verified
                             """).setParameter("id", record.seeds().attempts().get("a")).getSingleResult()).longValue());
-                    require(verified == (mode.equals("replay") ? 1 : 0), "late result cannot verify a rejected attempt");
+                    require(verified == (mode.equals("replay") || fault != null ? 1 : 0), "verification agrees with actual commit outcome");
                     require(tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_assessment_owners WHERE operation_id=:o")
                             .setParameter("o", key.operationId()).getSingleResult()).longValue()) == 0, "staging does not create an assessment");
                 }
@@ -133,6 +149,7 @@ final class HistoricalUploadFaultProbe {
                 }
             }
             System.out.println("HISTORICAL_UPLOAD_" + mode.toUpperCase(Locale.ROOT).replace('-', '_') + "_OK");
+            }
         }
     }
     private static boolean hasCode(Throwable failure, RepositoryException.Code code) {
