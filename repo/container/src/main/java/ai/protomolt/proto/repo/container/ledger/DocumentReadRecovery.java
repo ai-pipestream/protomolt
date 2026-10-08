@@ -17,6 +17,25 @@ public final class DocumentReadRecovery {
     /** Borrows the recovery worker's transactional view; does not own its pool. */
     public DocumentReadRecovery(Tx tx) { this.tx = Objects.requireNonNull(tx); }
 
+    /** Selected identities, not deletion counts; concurrent cleanup may finish some first. */
+    public record Batch(int documentPins, int assessmentSessions) {
+        public int selected() { return documentPins + assessmentSessions; }
+    }
+
+    /**
+     * Shares one limit across native document pins and assessment read sessions.
+     * Both lanes require durable quiescence, including empty selections. A zero
+     * total proves these two families drained; archive pins and preparation roots
+     * are separate. The lanes commit separately: if the second fails, the first
+     * may already have committed. Failures propagate and retry rediscovers work.
+     * Never constructs or adopts a live ledger for the old reader incarnation.
+     */
+    public Batch recoverResourcesBatch(UUID reader, int limit) {
+        int pins = recoverBatch(reader, limit);
+        int sessions = pins == limit ? 0 : new DocumentAssessmentReadRecovery(tx).recoverBatch(reader, limit - pins);
+        return new Batch(pins, sessions);
+    }
+
     /**
      * Returns the number of claims selected, not the number deleted: concurrent
      * recovery may select overlapping claims. Zero proves no remaining pins for

@@ -21,6 +21,55 @@ class DocumentAssessmentReadSessionIT {
     }
     @AfterAll static void close() { if (database != null) database.close(); }
 
+    @Test void externalRecoverySharesOneBudgetAndPreservesLocalDrainProvenance() throws Exception {
+        try (var context = DocumentNativePublicationFixture.context(POSTGRES);
+             var child = new ReaderHostTerminationIT.ManagedChild()) {
+            var local = context.tx();
+            var host = child.identity.execution();
+            ReaderHostExecutions.register(local, host, child.identity.host(), child.identity.boot());
+            var published = DocumentNativePublicationFixture.publish(context,
+                    DocumentNativePublicationFixture.prepare(context, 1), DocumentNativePublicationFixture.Fault.NONE,
+                    em -> {}).getMembers(0);
+            var candidate = staged(local, new DocumentAssessmentRetentionFixture(local), 120, true);
+            UUID reader = UUID.randomUUID(), drainedReader = UUID.randomUUID(), foreign = reader(local);
+            var ledger = new DocumentReadLedger(local, reader, host, 1);
+            var drained = new DocumentReadLedger(local, drainedReader, host, 1);
+            ledger.captureHistorical(new ai.protomolt.proto.repo.spi.RepositoryCaller("reader", true),
+                    published.getAddress(), UUID.fromString(published.getRevisionId())).close();
+            // The native fixture publishes two parts, each retained by a separate pin.
+            assertThat(local.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:id")
+                    .setParameter("id", reader).getSingleResult()).longValue())).isEqualTo(2);
+            capture(local, candidate, UUID.randomUUID(), reader);
+            capture(local, candidate, UUID.randomUUID(), drainedReader);
+            capture(local, candidate, UUID.randomUUID(), foreign);
+            var recovery = new DocumentReadRecovery(local);
+            assertThatThrownBy(() -> recovery.recoverResourcesBatch(foreign, 1)).hasStackTraceContaining("quiescence");
+            assertThatThrownBy(() -> recovery.recoverResourcesBatch(UUID.randomUUID(), 1)).hasStackTraceContaining("quiescence");
+            for (int invalid : new int[]{0, -1, 10001})
+                assertThatThrownBy(() -> recovery.recoverResourcesBatch(reader, invalid)).isInstanceOf(IllegalArgumentException.class);
+            drained.fence(); drained.attestLocalQuiescence(); // Synthetic SQL fixture, no provider workers.
+            ReaderHostExecutions.fence(local, host); child.stop();
+            var termination = new ReaderHostTermination(local, java.util.Map.of("managed-child", child::verify))
+                    .record(child.identity, child.proof());
+            var nonce = local.readOnly(em -> (UUID) em.createNativeQuery(
+                    "SELECT registration_nonce FROM repository_reader_incarnations WHERE incarnation=:id")
+                    .setParameter("id", reader).getSingleResult());
+            new ReaderExternalQuiescence(local).quiesce(reader, nonce, host, termination.id());
+            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(1, 0));
+            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(1, 0));
+            assertThat(recovery.recoverResourcesBatch(reader, 1)).isEqualTo(new DocumentReadRecovery.Batch(0, 1));
+            assertThat(recovery.recoverResourcesBatch(reader, 1).selected()).isZero();
+            assertThat(recovery.recoverResourcesBatch(drainedReader, 1)).isEqualTo(new DocumentReadRecovery.Batch(0, 1));
+            assertThat(local.<Object>readOnly(em -> em.createNativeQuery(
+                    "SELECT quiescence_source FROM repository_reader_incarnations WHERE incarnation=:id")
+                    .setParameter("id", drainedReader).getSingleResult())).isEqualTo("LOCAL_DRAIN");
+            assertThat(local.<Long>readOnly(em -> ((Number) em.createNativeQuery(
+                    "SELECT count(*) FROM document_assessment_read_sessions WHERE reader_incarnation=:id")
+                    .setParameter("id", foreign).getSingleResult()).longValue())).isEqualTo(1);
+        }
+    }
+
     @Test void shutdownSharesOneBudgetAcrossDocumentPinsAndAssessmentSessions() throws Exception {
         try (var context = DocumentNativePublicationFixture.context(POSTGRES);
                 var providerReader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {

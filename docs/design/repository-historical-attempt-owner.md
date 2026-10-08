@@ -1656,3 +1656,31 @@ behind its previous cursor. Tests cover PostgreSQL UUID ordering across Java's
 signed comparison boundary and a late tombstone after an empty page. Discovery is
 an internal scheduling primitive; an automatic supervisor and bounded cleanup of
 all associated pin/session families still require implementation and qualification.
+
+#### Exact reader pin and assessment-session cleanup
+
+`ArchiveReadRecovery.recoverReaderBatch(reader, limit)` is a new internal Java
+operation. It requires READ COMMITTED and permanent reader quiescence even when
+no archive pins remain. V115 replaces the reader-only pin index with a covering
+`(reader_incarnation, pin_id)` index for ordered pages. Each selected pin uses the
+existing release function in a separate short transaction. Failures remain visible;
+other selected pins are attempted and earlier commits survive a later failure.
+The global archive recovery cursor and behavior are unchanged.
+
+`DocumentReadRecovery.recoverResourcesBatch(reader, limit)` exposes the existing
+document-pin plus assessment-session cleanup with one shared limit and category
+counts. Native shutdown reuses this operation. Both lanes require quiescence and
+commit separately. A failure in the assessment lane does not roll back completed
+document-pin cleanup. Retrying discovers the remaining durable work.
+
+Counts represent selected identities, including concurrent releases. Zero from
+both the archive and combined document/assessment operations establishes drainage
+of these families for an already-quiesced reader. It does not authorize capture
+drain, preparation-root release, or provider-object reclamation. Local drain
+provenance remains unchanged. No protobuf names, fields or imports changed.
+
+Exact archive recovery starts with the lowest remaining pin UUID on each call.
+A persistent failure can hold up later pins with a one-item limit. Larger bounded
+pages attempt other selected pins, and the existing global recovery cursor can
+advance across failures. This is a scheduling limitation, never a successful-drain
+result. Supervisor orchestration and load qualification remain open.

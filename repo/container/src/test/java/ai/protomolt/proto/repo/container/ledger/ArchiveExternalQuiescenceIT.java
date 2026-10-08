@@ -38,8 +38,10 @@ class ArchiveExternalQuiescenceIT {
             // Direct native SQL exercises the database pin guard and mirror trigger. These
             // synthetic rows establish SQL retention only, not provider bytes or reads.
             UUID targetPin = UUID.randomUUID(), foreignReader = UUID.randomUUID(), foreignPin = UUID.randomUUID();
+            UUID secondTargetPin = UUID.randomUUID();
             ReaderRegistration.register(c.tx(), foreignReader);
             insertArchivePin(c.tx(), targetPin, reader, entry, binding.objectId());
+            insertArchivePin(c.tx(), secondTargetPin, reader, entry, binding.objectId());
             insertArchivePin(c.tx(), foreignPin, foreignReader, entry, binding.objectId());
             assertPinAndMirror(c.tx(), targetPin, 1);
             assertPinAndMirror(c.tx(), foreignPin, 1);
@@ -76,10 +78,63 @@ class ArchiveExternalQuiescenceIT {
                         .setParameter("reader", reader).getSingleResult();
             })).hasStackTraceContaining("cannot be claimed as local drain");
 
-            assertThat(new ArchiveReadRecovery(c.tx()).recover(10)).isEqualTo(1);
+            var recovery = new ArchiveReadRecovery(c.tx());
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("""
+                        CREATE FUNCTION reject_target_archive_release() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN
+                          IF OLD.pin_id='%s'::uuid THEN RAISE EXCEPTION 'injected archive release failure'; END IF;
+                          RETURN OLD;
+                        END $$
+                        """.formatted(targetPin)).executeUpdate();
+                em.createNativeQuery("CREATE TRIGGER reject_target_archive_release BEFORE DELETE ON archive_read_pins FOR EACH ROW EXECUTE FUNCTION reject_target_archive_release()")
+                        .executeUpdate();
+            });
+            try {
+                assertThatThrownBy(() -> recovery.recoverReaderBatch(reader, 2))
+                        .hasStackTraceContaining("injected archive release failure");
+                assertPinAndMirror(c.tx(), targetPin, 1);
+                assertPinAndMirror(c.tx(), secondTargetPin, 0);
+                assertPinAndMirror(c.tx(), foreignPin, 1);
+            } finally {
+                c.tx().inTransaction(em -> {
+                    em.createNativeQuery("DROP TRIGGER reject_target_archive_release ON archive_read_pins").executeUpdate();
+                    em.createNativeQuery("DROP FUNCTION reject_target_archive_release()").executeUpdate();
+                });
+            }
+            assertThat(recovery.recoverReaderBatch(reader, 1)).isEqualTo(1);
+            assertThat(recovery.recoverReaderBatch(reader, 1)).isZero();
             assertPinAndMirror(c.tx(), targetPin, 0);
             assertPinAndMirror(c.tx(), foreignPin, 1);
             assertThat(readerState(c.tx(), foreignReader)).isEqualTo("ACTIVE");
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("DELETE FROM archive_version_object_refs WHERE object_id=:object")
+                        .setParameter("object", binding.objectId()).executeUpdate();
+            });
+            var cleanup = new ai.protomolt.proto.repo.container.archive.ArchiveCleanupLedger(c.tx());
+            assertThat(cleanup.claim(binding.objectId(), java.time.Instant.now().plusSeconds(1))).isEmpty();
+            c.tx().inTransaction(em -> {
+                em.createNativeQuery("SELECT fence_repository_reader(:reader)").setParameter("reader", foreignReader).getSingleResult();
+                em.createNativeQuery("SELECT attest_local_reader_quiescence(:reader)").setParameter("reader", foreignReader).getSingleResult();
+            });
+            assertThat(recovery.recoverReaderBatch(foreignReader, 1)).isEqualTo(1);
+            assertThat(quiescenceSource(c.tx(), foreignReader)).isEqualTo("LOCAL_DRAIN");
+            assertThat(cleanup.claim(binding.objectId(), java.time.Instant.now().plusSeconds(1))).isPresent();
+        }
+    }
+
+    @Test void emptyRecoveryStillRequiresQuiescenceAndValidBounds() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var reader = UUID.randomUUID(); ReaderRegistration.register(c.tx(), reader);
+            var recovery = new ArchiveReadRecovery(c.tx());
+            for (var id : java.util.List.of(reader, UUID.randomUUID()))
+                assertThatThrownBy(() -> recovery.recoverReaderBatch(id, 1)).hasMessageContaining("proven reader quiescence");
+            for (int limit : new int[]{0, -1, 1001})
+                assertThatThrownBy(() -> recovery.recoverReaderBatch(reader, limit)).isInstanceOf(IllegalArgumentException.class);
+            c.tx().inTransaction(em -> { em.createNativeQuery("SELECT fence_repository_reader(:id)").setParameter("id", reader).getSingleResult(); });
+            assertThatThrownBy(() -> recovery.recoverReaderBatch(reader, 1)).hasMessageContaining("proven reader quiescence");
+            c.tx().inTransaction(em -> { em.createNativeQuery("SELECT attest_local_reader_quiescence(:id)").setParameter("id", reader).getSingleResult(); });
+            assertThat(recovery.recoverReaderBatch(reader, 1)).isZero();
         }
     }
 

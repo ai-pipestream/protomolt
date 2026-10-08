@@ -226,9 +226,7 @@ public final class DocumentReadLedger {
     }
 
     int recoverQuiescedPins(int limit) {
-        int pins = new DocumentReadRecovery(tx).recoverBatch(incarnation, limit);
-        if (pins == limit) return pins;
-        return pins + new DocumentAssessmentReadRecovery(tx).recoverBatch(incarnation, limit - pins);
+        return new DocumentReadRecovery(tx).recoverResourcesBatch(incarnation, limit).selected();
     }
 
     /** Includes in-progress captures and drained handles whose SQL release has not succeeded. */
