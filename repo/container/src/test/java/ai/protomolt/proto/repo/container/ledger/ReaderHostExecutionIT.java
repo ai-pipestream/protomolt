@@ -107,8 +107,8 @@ class ReaderHostExecutionIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void failedBoundRegistrationKeepsItsBindingAfterHostFence(boolean committed) {
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void failedBoundRegistrationKeepsItsBindingAfterHostFence(boolean committed, boolean archive) {
         try (var c = context(POSTGRES)) {
             var host = UUID.randomUUID(); var reader = UUID.randomUUID(); host(c.tx(), host);
             var armed = new java.util.concurrent.atomic.AtomicBoolean();
@@ -129,7 +129,7 @@ class ReaderHostExecutionIT {
                     java.util.Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
                 var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
-                    () -> ReaderRegistration.register(new Tx(emf), reader, host));
+                    () -> construct(new Tx(emf), reader, host, archive));
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
                 assertThat(armed).isFalse();
                 assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
@@ -154,6 +154,54 @@ class ReaderHostExecutionIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void ledgerConstructorsRequireHostAndPreserveLocalShutdown(boolean archive) {
+        try (var c = context(POSTGRES)) {
+            var host = UUID.randomUUID(); var id = UUID.randomUUID(); host(c.tx(), host);
+            Runnable shutdown;
+            if (archive) {
+                var ledger = new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), id, host);
+                shutdown = () -> { ledger.fence(); ledger.attestLocalQuiescence(); };
+            } else {
+                var ledger = new DocumentReadLedger(c.tx(), id, host, 2);
+                shutdown = () -> { ledger.fence(); ledger.attestLocalQuiescence(); };
+            }
+            admit(c.tx(), id); fence(c.tx(), host);
+            assertThatThrownBy(() -> admit(c.tx(), id)).hasStackTraceContaining("host execution is not ACTIVE");
+            shutdown.run(); shutdown.run();
+            assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM repository_reader_incarnations WHERE incarnation=:id AND host_execution=:host AND state='QUIESCED'")
+                .setParameter("id", id).setParameter("host", host).getSingleResult()).intValue())).isEqualTo(1);
+            var rejected = UUID.randomUUID();
+            var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
+                () -> construct(c.tx(), rejected, host, archive));
+            assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void missingHostCannotProduceALedgerOrClaimSuccessfulCleanup(boolean archive) {
+        try (var c = context(POSTGRES)) {
+            var id = UUID.randomUUID(); var host = UUID.randomUUID();
+            var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
+                () -> construct(c.tx(), id, host, archive));
+            assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
+            assertThat(failure.getSuppressed()).hasSize(1);
+            assertThatThrownBy(() -> failure.retryCleanup(c.tx())).isInstanceOf(RuntimeException.class);
+            assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
+            assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM repository_reader_incarnations WHERE incarnation=:id")
+                .setParameter("id", id).getSingleResult()).intValue())).isZero();
+            assertThatThrownBy(() -> construct(c.tx(), UUID.randomUUID(), null, archive))
+                .isInstanceOf(NullPointerException.class);
+        }
+    }
+
+    private static void construct(Tx tx, UUID id, UUID host, boolean archive) {
+        if (archive) new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(tx, id, host);
+        else new DocumentReadLedger(tx, id, host);
+    }
+
     private static void awaitBlocked(Tx tx, int pid) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         do {
@@ -165,8 +213,7 @@ class ReaderHostExecutionIT {
         fail("Expected an actual PostgreSQL lock wait");
     }
     private static void host(Tx tx, UUID id) {
-        tx.inTransaction(em -> { em.createNativeQuery("INSERT INTO repository_reader_host_executions VALUES(:id,'test-host','test-boot','ACTIVE')")
-            .setParameter("id", id).executeUpdate(); });
+        ReaderHostExecutions.register(tx, id, "test-host", "test-boot");
     }
     private static void reader(Tx tx, UUID id, UUID host) {
         tx.inTransaction(em -> { em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state,host_execution) VALUES(:id,'ACTIVE',:host)")
@@ -176,6 +223,6 @@ class ReaderHostExecutionIT {
         tx.inTransaction(em -> { em.createNativeQuery("SELECT require_active_repository_reader(:id)").setParameter("id", id).getSingleResult(); });
     }
     private static void fence(Tx tx, UUID id) {
-        tx.inTransaction(em -> { em.createNativeQuery("SELECT fence_repository_reader_host(:id)").setParameter("id", id).getSingleResult(); });
+        ReaderHostExecutions.fence(tx, id);
     }
 }

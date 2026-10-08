@@ -23,9 +23,21 @@ public final class ArchiveReadLedger {
 
     /** Registers a fresh identity before any admission; duplicate identities fail, never reactivate. */
     public ArchiveReadLedger(Tx tx, UUID incarnation) {
+        this(tx, incarnation, Optional.empty());
+    }
+
+    /** Register under an existing ACTIVE host execution; no instance escapes on failure. */
+    public ArchiveReadLedger(Tx tx, UUID incarnation, UUID hostExecution) {
+        this(tx, incarnation, Optional.of(hostExecution));
+    }
+
+    private ArchiveReadLedger(Tx tx, UUID incarnation, Optional<UUID> hostExecution) {
+
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
-        ai.protomolt.proto.repo.container.ledger.ReaderRegistration.register(tx, incarnation);
+        if (hostExecution.isPresent())
+            ai.protomolt.proto.repo.container.ledger.ReaderRegistration.register(tx, incarnation, hostExecution.get());
+        else ai.protomolt.proto.repo.container.ledger.ReaderRegistration.register(tx, incarnation);
     }
 
     /** Permanently stops new pin admission. Does not prove that existing reads stopped. */

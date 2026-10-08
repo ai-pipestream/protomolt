@@ -35,11 +35,27 @@ public final class DocumentReadLedger {
 
     /** Bounds captures, active batches and drained handles awaiting successful SQL release together. */
     public DocumentReadLedger(Tx tx, UUID incarnation, int maxOutstandingReads) {
+        this(tx, incarnation, maxOutstandingReads, java.util.Optional.empty());
+    }
+
+    /** Register under an existing ACTIVE host execution; no instance escapes on failure. */
+    public DocumentReadLedger(Tx tx, UUID incarnation, UUID hostExecution) {
+        this(tx, incarnation, hostExecution, 32);
+    }
+
+    public DocumentReadLedger(Tx tx, UUID incarnation, UUID hostExecution, int maxOutstandingReads) {
+        this(tx, incarnation, maxOutstandingReads, java.util.Optional.of(hostExecution));
+    }
+
+    private DocumentReadLedger(Tx tx, UUID incarnation, int maxOutstandingReads,
+            java.util.Optional<UUID> hostExecution) {
+
         if (maxOutstandingReads < 1) throw new IllegalArgumentException("Outstanding read limit must be positive");
         this.maxOutstandingReads = maxOutstandingReads;
         this.tx = Objects.requireNonNull(tx);
         this.incarnation = Objects.requireNonNull(incarnation);
-        ReaderRegistration.register(tx, incarnation);
+        if (hostExecution.isPresent()) ReaderRegistration.register(tx, incarnation, hostExecution.get());
+        else ReaderRegistration.register(tx, incarnation);
     }
 
     /** Counts capture itself, so fencing cannot attest quiescence during SQL admission. */
