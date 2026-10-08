@@ -421,8 +421,12 @@ performance qualification must not displace these requirements.
    Host quiescence and ordinary session activation remain open. Never turn
    an explicit claim-only row into permission to invent
    replacement seeds.
-5. **Restore, pruning and backup.** Test retained schema/content reachability,
-   active read and pending-operation pins, current ACLs and failure recovery.
+5. **Restore, pruning and backup.**
+   The [revision pruning design](repository-revision-pruning.md) records the
+   proposed audit/content split, acquisition fences and acceptance gates. It is
+   direction-reviewed by Sol; no pruning operation is enabled by that checkpoint.
+   Test retained schema/content reachability, active read and pending-operation
+   pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;
    copying stored bytes alone is not a restored document. Demonstrate that
    pruning cannot remove referenced schema assets or provider versions, including
