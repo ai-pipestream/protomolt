@@ -47,7 +47,22 @@ capture, assessment, publication or drain records.
 
 ## Outstanding
 
-Initial anchor, unactivated predecessor, 63/64-edge limit and released roots need
-explicit cases. Rerun complete suites after those additions. Managed routing and
-library/gRPC qualification remain separate requirements. This checkpoint does not
-establish complete restart recovery or public availability.
+The added initial-anchor and unactivated-predecessor cases passed in 17s;
+`entry-states.*` contains the reports. The actual SQL chain of 64 installations
+passed the 63/64-edge boundary case in 1m47s; reports are `depth.*`.
+
+The terminal-release case completed cancellation, 3 capture drains and V111
+release while metadata remained loaded. A second load exhausted the occupied
+test budget; that fixture now uses an independent budget for stale-reservation
+checking. Tightening the released-state assertion then exposed DATA_LOSS where
+FAILED_PRECONDITION was expected. The red report is `released-state-red.*`.
+The binding query now excludes an exact V111 receipt before checking live roots.
+Sol reviewed this change; it does not replace the concurrent release classifier.
+
+A combined run of loader, reserved preparation, historical activation, root
+release/replay and live-root corruption suites passed: 64 tests, 0 failures,
+errors or skips; 5m29s command. All 7 terminal XML reports, the log and source
+hashes are in `qualified/`. The loader suite contains 17 cases, including the
+released-root correction and the complete ancestry limit. Managed routing and
+library/gRPC qualification remain separate requirements. This checkpoint does
+not establish complete restart recovery or public availability.
