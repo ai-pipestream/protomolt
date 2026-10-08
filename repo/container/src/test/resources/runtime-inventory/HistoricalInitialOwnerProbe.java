@@ -42,9 +42,29 @@ final class HistoricalInitialOwnerProbe {
                 request.openExecution(coordinator, RepositoryReadControl.NONE);
                 admitted = request.admitUploads(RepositoryReadControl.NONE);
                 started = request.start(Duration.ofMinutes(1), RepositoryReadControl.NONE);
-                request.prepareAssessment(policy, Map.of("a", fragments), Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
-                        (member, occurrence) -> freshDefinition,
-                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), RepositoryReadControl.NONE);
+                var ordinary = new HashMap<Integer, ByteString>();
+                var declared = command.intent().getMembers(0);
+                for (int ordinal = 0; ordinal < declared.getPartsCount(); ordinal++)
+                    if (!declared.getParts(ordinal).hasHistoricalReuse() && !declared.getParts(ordinal).hasEmpty())
+                        ordinary.put(ordinal, fragments.get(ordinal));
+                var providerReads = new java.util.concurrent.atomic.AtomicInteger();
+                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                    require(generation.equals(placement.generation()), "historical reader uses original backend generation");
+                    require(profile.equals(provider.profile()), "historical reader uses original provider profile");
+                    return provider.store();
+                }, 4, 4_000_000, budget)) {
+                    request.prepareAssessmentFromReader(policy, Map.of("a", ordinary),
+                            Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())),
+                            (member, occurrence) -> freshDefinition,
+                            new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(),
+                            (captured, ordinal, control) -> {
+                                providerReads.incrementAndGet();
+                                return reader.readHistorical(captured, ordinal, control);
+                            }, RepositoryReadControl.NONE);
+                    require(providerReads.get() > 0, "initial owner prepares historical fragments from provider");
+                    reader.close();
+                    require(reader.awaitIdle(Duration.ofSeconds(1)), "historical provider work exits before reader closure");
+                }
             }
             require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "initial entry survives first call");
             var owner = tx.inTransaction(em -> {

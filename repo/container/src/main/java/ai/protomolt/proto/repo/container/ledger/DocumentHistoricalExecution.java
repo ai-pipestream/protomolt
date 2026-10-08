@@ -194,10 +194,36 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             DocumentPublicationCandidate.Resolver resolver,
             ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
             RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        return prepareAssessment(caller, policy, fragments, container, resolver, limits, evaluatedAt, control, null, null);
+    }
+
+    synchronized DocumentPublicationAssessment.Historical prepareAssessmentFromReader(RepositoryCaller caller,
+            DocumentSchemaPolicies.Selection policy,
+            Map<String, Map<Integer, com.google.protobuf.ByteString>> ordinary,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver,
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
+            DocumentHistoricalAssessmentSources sources, DocumentHistoricalRetainedReader reader,
+            RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        return prepareAssessment(caller, policy, ordinary, container, resolver, limits, evaluatedAt, control,
+                java.util.Objects.requireNonNull(sources), java.util.Objects.requireNonNull(reader));
+    }
+
+    private DocumentPublicationAssessment.Historical prepareAssessment(RepositoryCaller caller,
+            DocumentSchemaPolicies.Selection policy,
+            Map<String, Map<Integer, com.google.protobuf.ByteString>> fragments,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver,
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
+            RepositoryReadControl control, DocumentHistoricalAssessmentSources sources, DocumentHistoricalRetainedReader reader)
+            throws com.google.protobuf.InvalidProtocolBufferException {
         mutate(caller, control, em -> null);
         var child = registration.forkAccepted();
-        var assessment = DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
-                fragments, container, resolver, budget, limits, evaluatedAt, work, child, assessmentIdentity, control);
+        var assessment = reader == null
+                ? DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
+                    fragments, container, resolver, budget, limits, evaluatedAt, work, child, assessmentIdentity, control)
+                : DocumentPublicationAssessment.prepareHistoricalFromReaderAccepted(record.command(), policy, modes,
+                    fragments, container, resolver, budget, limits, evaluatedAt, sources, reader, work, child, assessmentIdentity, control);
         try {
             // Resolution can outlast credential, claim or source changes; authorize findings at delivery.
             mutate(caller, control, em -> null);

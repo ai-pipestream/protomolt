@@ -435,6 +435,18 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             entry.assessment = execution.prepareAssessment(entry.caller, policy, fragments, container, resolver,
                     limits, evaluatedAt, control);
         }
+        /** Read and assess under this attached generation; retain one owned fragment snapshot. */
+        synchronized void prepareAssessmentFromReader(DocumentSchemaPolicies.Selection policy,
+                Map<String, Map<Integer, ByteString>> ordinary, Optional<DocumentSchemaAdmission.Definition> container,
+                DocumentPublicationCandidate.Resolver resolver, DocumentRevisionAssembly.Limits limits,
+                Instant evaluatedAt, DocumentHistoricalRetainedReader reader, RepositoryReadControl control)
+                throws InvalidProtocolBufferException {
+            var execution = execution(control);
+            if (entry.assessment != null) throw conflict("Historical assessment is already retained");
+            entry.assessment = execution.prepareAssessmentFromReader(entry.caller, policy, ordinary, container, resolver,
+                    limits, evaluatedAt, entry.sources, reader, control);
+        }
+
         /** Synchronous borrowed access only. Workers must retain their own existing source/scope permits. */
         synchronized <T> T withAssessment(Function<DocumentPublicationAssessment.Historical, T> action,
                 RepositoryReadControl control) {

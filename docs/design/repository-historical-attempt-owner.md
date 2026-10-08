@@ -1051,3 +1051,21 @@ and shutdown retried after worker exit. Assert bytes, versions, receipts, durabl
 counts and restored budgets. Test non-opted-in hosts explicitly. Keep the public
 unsupported guard until this complete composition passes; adding the reader port
 alone does not justify removing it.
+
+### Reader-backed assessment ownership
+
+The private retained attempt now accepts historical preparation through the reader
+interface. The assessment wrapper forks accepted Work before provider access and
+creates its fragment snapshot after mode and opaque-source preflight. That snapshot
+transfers directly into the assessment; it is not copied through a temporary
+payload map. Registration and source Work follow the existing assessment cleanup
+path. Calls remain serialized per borrowed attempt/execution, without holding the
+installed-attempt map monitor during provider work.
+
+For managed capture composition, reuse DocumentReadLedger's existing ownership of
+all issued handles, including captures with uncertain commit replies. On an
+attachment failure, close acquired captures and leave failed SQL release owned by
+the ledger's bounded releaseDrained/reconciliation paths. Do not discard handles
+or create a competing cleanup registry. Runtime shutdown must detach historical
+attempts before DocumentReadLifecycle closes reader admission and attests local
+quiescence. Managed capture acquisition and this shutdown wiring remain unfinished.
