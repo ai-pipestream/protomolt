@@ -52,6 +52,15 @@ class RepositoryBackupRehearsalIT {
         compiled = RepositoryBackupRehearsalProbeCompiler.compile(Files.createDirectories(ROOT.resolve("hosts")));
         Files.writeString(ROOT.resolve("runtime-inventory.tsv"), RepositoryBackupRehearsalProbeCompiler.runtimeInventory(compiled));
         Files.writeString(ROOT.resolve("host-sources.tsv"), String.join("\n", compiled.sourceDigests()) + "\n");
+        // Bind the evidence to the exact driver sources and init script that ran, not only to the host sources.
+        var driverSources = new StringBuilder();
+        try (var paths = Files.list(Path.of("src/test/java/ai/protomolt/proto/repo/container/ledger"))) {
+            for (var path : paths.filter(path -> path.getFileName().toString().startsWith("RepositoryBackupRehearsal")).sorted().toList())
+                driverSources.append(path.getFileName()).append('\t').append(RepositoryBackupRehearsalBackupSet.sha256(path)).append('\n');
+        }
+        var init = Path.of("src/test/resources/backup-recovery/rehearsal.init.gradle");
+        driverSources.append(init.getFileName()).append('\t').append(RepositoryBackupRehearsalBackupSet.sha256(init)).append('\n');
+        Files.writeString(ROOT.resolve("driver-sources.tsv"), driverSources);
         var shell = new RepositoryBackupRehearsalShell(ROOT.resolve("environment.log"), List.of());
         var stores = new RepositoryBackupRehearsalStores(shell, "protomolt-rehearsal-env");
         stores.requireDocker();
@@ -242,33 +251,54 @@ class RepositoryBackupRehearsalIT {
         finally { finish(run); }
     }
 
-    /** Provider identity is provider-issued: copying an object into a new provider mints a new version id. */
+    /** Provider identity is provider-issued: the recorded bytes copied into a new provider get a different version id. */
     @Test @Order(12) void copyingObjectsDoesNotPreserveProviderIdentity() throws Exception {
         requirePositive();
         var run = open("identity-gap");
         try {
             run.stores().requireDocker();
-            run.stores().createNetwork();
-            var volume = run.stores().createVolume("fresh-rustfs");
-            var provider = run.stores().startRustFs("fresh-rustfs", volume, RepositoryBackupRehearsalStores.reservePort(), run.s3Access(), run.s3Secret());
-            var record = RepositoryBackupRehearsalBackupSet.readJson(firstBackup.resolve("identities/identities.json"));
+            var copy = copy(run, "backup-copy");
+            var restored = restore(run, run.directory().resolve("restore"), copy);
+            var record = RepositoryBackupRehearsalBackupSet.readJson(copy.resolve("identities/identities.json"));
             var object = RepositoryBackupRehearsalBackupSet.list(record, "documentObjects").getFirst();
-            try (var client = s3(provider)) {
-                String bucket = RepositoryBackupRehearsalBackupSet.string(object, "namespace");
+            String bucket = RepositoryBackupRehearsalBackupSet.string(object, "namespace"), key = RepositoryBackupRehearsalBackupSet.string(object, "key");
+            String recordedVersion = RepositoryBackupRehearsalBackupSet.string(object, "providerVersion"), recordedSha = RepositoryBackupRehearsalBackupSet.string(object, "sha256");
+            byte[] bytes;
+            try (var client = s3(restored.provider())) {
+                var response = client.getObjectAsBytes(builder -> builder.bucket(bucket).key(key).versionId(recordedVersion));
+                bytes = response.asByteArray();
+                assertThat(response.response().versionId()).isEqualTo(recordedVersion);
+                assertThat(RepositoryBackupRehearsalBackupSet.sha256(bytes)).isEqualTo(recordedSha);
+                run.log().pass("identity-gap.get_recorded_version", "restored volume serves the recorded version " + recordedVersion + " with sha256 " + recordedSha);
+            }
+            var volume = run.stores().createVolume("fresh-rustfs");
+            var fresh = run.stores().startRustFs("fresh-rustfs", volume, RepositoryBackupRehearsalStores.reservePort(), run.s3Access(), run.s3Secret());
+            try (var client = s3(fresh)) {
                 client.createBucket(builder -> builder.bucket(bucket));
                 client.putBucketVersioning(builder -> builder.bucket(bucket).versioningConfiguration(configuration ->
                         configuration.status(software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
-                // Bytes copied with the recorded digest; the provider still issues its own version id.
-                var written = client.putObject(builder -> builder.bucket(bucket).key(RepositoryBackupRehearsalBackupSet.string(object, "key"))
-                        .contentType(RepositoryBackupRehearsalBackupSet.string(object, "contentType")),
-                        software.amazon.awssdk.core.sync.RequestBody.fromBytes(new byte[(int) RepositoryBackupRehearsalBackupSet.number(object, "size")]));
-                assertThat(written.versionId()).isNotBlank().isNotEqualTo(RepositoryBackupRehearsalBackupSet.string(object, "providerVersion"));
-                run.log().pass("identity-gap.version_id_not_preserved", "GET-old/PUT-new into a fresh provider issued version " + written.versionId()
-                        + " for the key recorded under version " + object.get("providerVersion") + "; a copied object cannot satisfy the recorded identity");
-                outcomes.put(run.id(), Map.of("passed", true, "recordedVersion", object.get("providerVersion"), "issuedVersion", written.versionId()));
+                var written = client.putObject(builder -> builder.bucket(bucket).key(key).contentType(RepositoryBackupRehearsalBackupSet.string(object, "contentType")),
+                        software.amazon.awssdk.core.sync.RequestBody.fromBytes(bytes));
+                assertThat(written.versionId()).isNotBlank().isNotEqualTo(recordedVersion);
+                var back = client.getObjectAsBytes(builder -> builder.bucket(bucket).key(key).versionId(written.versionId()));
+                assertThat(RepositoryBackupRehearsalBackupSet.sha256(back.asByteArray())).isEqualTo(recordedSha);
+                String absent = RepositoryBackupRehearsalContentChecksOutcome.of(() -> client.getObjectAsBytes(builder -> builder.bucket(bucket).key(key).versionId(recordedVersion)));
+                assertThat(absent).doesNotStartWith("OK");
+                run.log().pass("identity-gap.version_id_not_preserved", "the same bytes (sha256 " + recordedSha + ") put into a fresh provider were issued version "
+                        + written.versionId() + ", not the recorded " + recordedVersion + "; a GET by the recorded version on the fresh provider -> " + absent);
+                outcomes.put(run.id(), Map.of("passed", true, "recordedVersion", recordedVersion, "issuedVersion", written.versionId()));
             }
         } catch (Throwable failure) { outcomes.put(run.id(), Map.of("passed", false, "failure", failure.toString())); throw failure; }
         finally { finish(run); }
+    }
+
+    /** The outcome class of a driver-side action, for recorded refusals. */
+    static final class RepositoryBackupRehearsalContentChecksOutcome {
+        interface Action { void run() throws Exception; }
+        static String of(Action action) {
+            try { action.run(); return "OK"; }
+            catch (Exception failure) { return failure.getClass().getSimpleName() + ": " + failure.getMessage(); }
+        }
     }
 
     // ---- the positive rehearsal ----------------------------------------------------------------
@@ -310,12 +340,15 @@ class RepositoryBackupRehearsalIT {
                 var inFlight = catalog.inFlightWork();
                 assertThat(inFlight.get("activeReaderIncarnations")).isZero();
                 assertThat(inFlight.get("documentReadPins")).isZero();
-                log.pass("capture.quiescent", "no other client backend; in-flight work=" + inFlight + " (journal rows are durable state, not process activity)");
+                assertThat(inFlight.get("stagingPartAttempts")).isZero();
+                log.pass("capture.quiescent", "no other client backend, no ACTIVE reader incarnation, no read pin, no staging part attempt: " + inFlight
+                        + " (the pending operation's journal rows are durable state, not process activity)");
                 fingerprints = catalog.tableFingerprints(); sequences = catalog.sequences(); counts = catalog.rowCounts(); level = catalog.migrationLevel();
                 maxXid = catalog.maxStoredXid(); xidColumns = catalog.xidColumns(); invariants = catalog.coverageInvariants(); schemaCatalog = catalog.schemaCatalog();
                 assertThat(level).isEqualTo(119);
-                for (String key : List.of("certifiedAndUnresolved", "lineageAndUnresolved", "lineageWithoutInstallEdge", "lineageWithoutCertifiedAnchor",
-                        "certificateWithoutSealedHeader", "preparationWithoutAnyState", "installXidNotBelowCurrent", "successorExecutions"))
+                for (String key : List.of("certifiedAndUnresolved", "lineageAndUnresolved", "certifiedAndLineage", "certificateDiffersFromPreparation",
+                        "certificateDiffersFromSealedHeader", "lineageDiffersFromInstallEdge", "lineageDiffersFromCertifiedAnchor",
+                        "lineageDepthOrPredecessorInvalid", "preparationNotInExactlyOneState", "installXidNotBelowCurrent", "successorExecutions"))
                     assertThat(invariants.get(key)).as(key).isEqualTo(0L);
                 // Every managed publication journals its own preparation and certifies it (V118): three committed
                 // publications plus the pending operation's generation 0.
@@ -340,6 +373,15 @@ class RepositoryBackupRehearsalIT {
             assertThat(dump.ok() && !dump.stderr().toLowerCase().contains("error") && Files.size(backup.resolve("sql/ledger.dump")) > 0)
                     .as("pg_dump exit=%s stderr=%s", dump.exitCode(), dump.stderr()).isTrue();
             log.pass("capture.pg_dump", "exit=" + dump.exitCode() + " bytes=" + Files.size(backup.resolve("sql/ledger.dump")));
+            // The cut is proven, not assumed: no session may have appeared during the dump window, and the restored
+            // catalog must reproduce the fingerprints taken before the dump (checked in restore), so any write
+            // landing between the quiescence check and the dump would be detected rather than silently captured.
+            try (var catalog = catalog(sourceDb)) {
+                var others = catalog.otherBackends();
+                assertThat(others).as("client backends after the dump").isEmpty();
+                assertThat(catalog.tableFingerprints()).isEqualTo(fingerprints);
+                log.pass("capture.post_dump_quiescent", "no client backend after pg_dump; every table fingerprint unchanged across the dump window");
+            }
             var dbStop = stores.stop(sourceDb.container());
             var fsStop = stores.stop(sourceFs.container());
             log.pass("capture.stopped", "postgres " + dbStop + "; rustfs " + fsStop);
@@ -358,7 +400,8 @@ class RepositoryBackupRehearsalIT {
             var manifest = RepositoryBackupRehearsalBackupSet.seal(backup, identity);
             log.pass("capture.sealed", "components=" + RepositoryBackupRehearsalBackupSet.object(manifest, "components").size() + " manifest sha256=" + RepositoryBackupRehearsalBackupSet.sha256(RepositoryBackupRehearsalBackupSet.manifest(backup)));
             RepositoryBackupRehearsalBackupSet.verify(backup);
-            log.pass("capture.preflight", "sealed set verifies");
+            var sealedFingerprint = RepositoryBackupRehearsalBackupSet.fingerprint(backup);
+            log.pass("capture.preflight", "sealed set verifies; " + sealedFingerprint.size() + " files fingerprinted before restore");
 
             // 3. The source becomes unreachable before restore; its stopped volume is digested for the untouched proof.
             stores.remove(sourceDb.container());
@@ -383,16 +426,11 @@ class RepositoryBackupRehearsalIT {
             log.pass("recovered.exit", "recovered host exit=0, READY written after verification");
             assertThat(stores.volumeDigest(sourceFsVolume)).isEqualTo(sourceFsDigest);
             log.pass("source.volume_untouched", "source provider volume digest unchanged " + sourceFsDigest);
-            var expected = new TreeMap<String, String>();
-            RepositoryBackupRehearsalBackupSet.object(manifest, "components").forEach((component, value) ->
-                    expected.put(component, RepositoryBackupRehearsalBackupSet.string(RepositoryBackupRehearsalBackupSet.object(RepositoryBackupRehearsalBackupSet.object(manifest, "components"), component), "sha256")));
-            expected.put("manifest.json", RepositoryBackupRehearsalBackupSet.sha256(RepositoryBackupRehearsalBackupSet.manifest(backup)));
-            expected.put("SEALED", RepositoryBackupRehearsalBackupSet.sha256(RepositoryBackupRehearsalBackupSet.seal(backup)));
-            assertThat(RepositoryBackupRehearsalBackupSet.fingerprint(backup)).isEqualTo(expected);
-            log.pass("backup.untouched", "backup components unchanged after restore and verification");
+            assertThat(RepositoryBackupRehearsalBackupSet.fingerprint(backup)).isEqualTo(sealedFingerprint);
+            log.pass("backup.untouched", "every file of the sealed set, including manifest.json and SEALED, unchanged after restore and verification");
             var outcome = new LinkedHashMap<String, Object>();
             outcome.put("passed", true); outcome.put("backup", backup.toString()); outcome.put("generation", generation);
-            outcome.put("providerPort", (long) providerPort); outcome.put("xidAdvanced", restored.xidAdvanced());
+            outcome.put("providerPort", (long) providerPort);
             outcome.put("maxStoredXid", maxXid); outcome.put("tables", (long) fingerprints.size());
             outcomes.put(name, outcome);
             return backup;
@@ -402,7 +440,7 @@ class RepositoryBackupRehearsalIT {
         } finally { finish(run); }
     }
 
-    record Restored(RepositoryBackupRehearsalStores.Postgres postgres, RepositoryBackupRehearsalStores.Provider provider, Map<String, Object> manifest, boolean xidAdvanced) {}
+    record Restored(RepositoryBackupRehearsalStores.Postgres postgres, RepositoryBackupRehearsalStores.Provider provider, Map<String, Object> manifest) {}
 
     /** Preflight, then new volumes and containers from the backup set; refuses anything nonempty or unverifiable. */
     private Restored restore(Run run, Path target, Path backup) throws Exception {
@@ -429,24 +467,14 @@ class RepositoryBackupRehearsalIT {
         if (!result.ok() || result.stderr().contains("ERROR") || result.stderr().contains("WARNING"))
             throw new IllegalStateException("pg_restore reported problems: exit=" + result.exitCode() + " stderr=" + result.stderr());
         log.pass("restore.pg_restore", "exit=" + result.exitCode() + " into new database " + postgres.container());
-        boolean advanced = false;
-        try (var catalog = catalog(postgres)) {
-            long max = catalog.maxStoredXid(), current = catalog.currentXid();
-            if (current <= max) {
-                stores.stop(postgres.container());
-                long next = max + 1, epoch = next >>> 32, xid = next & 0xFFFFFFFFL;
-                var reset = stores.pgResetXid(dbVolume, epoch, Math.max(xid, 3));
-                if (!reset.ok()) throw new IllegalStateException("pg_resetwal failed: " + reset.stderr());
-                stores.start(postgres.container());
-                stores.awaitPostgres(postgres);
-                advanced = true;
-            }
-        }
         var recorded = RepositoryBackupRehearsalBackupSet.readJson(backup.resolve("catalog/fingerprints.json"));
         try (var catalog = catalog(postgres)) {
             long max = catalog.maxStoredXid(), current = catalog.currentXid();
-            assertThat(current).isGreaterThan(max);
-            log.pass("restore.xid_epoch", "next xid " + current + " > max stored xid8 " + max + (advanced ? " (advanced with pg_resetwal)" : " (no advancement needed)"));
+            // A restored cluster whose counter is not past every stored xid8 is refused, not repaired here:
+            // advancing it is a manual pg_resetwal procedure that this rehearsal has not exercised.
+            if (current <= max) throw new IllegalStateException("Restored cluster next transaction id " + current
+                    + " is not past the largest stored xid8 " + max + "; refuse to start a host (see the operator guide)");
+            log.pass("restore.xid_epoch", "next xid " + current + " > max stored xid8 " + max + " (no advancement needed)");
             var expectedSequences = new TreeMap<String, Long>();
             RepositoryBackupRehearsalBackupSet.object(manifest, "sequences").forEach((sequence, value) -> expectedSequences.put(sequence, RepositoryBackupRehearsalBackupSet.number(RepositoryBackupRehearsalBackupSet.object(manifest, "sequences"), sequence)));
             assertThat(catalog.sequences()).isEqualTo(expectedSequences);
@@ -469,7 +497,7 @@ class RepositoryBackupRehearsalIT {
                 assertThat(((Number) entry.getValue()).longValue()).as(entry.getKey()).isEqualTo(RepositoryBackupRehearsalBackupSet.number(recordedInvariants, entry.getKey()));
             log.pass("restore.coverage_invariants", "V118/V119 invariants equal the source: " + invariants);
         }
-        return new Restored(postgres, provider, manifest, advanced);
+        return new Restored(postgres, provider, manifest);
     }
 
     // ---- negative-case plumbing ----------------------------------------------------------------

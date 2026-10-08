@@ -176,14 +176,6 @@ final class RepositoryBackupRehearsalStores {
                 "--no-owner", "--no-privileges", "/in/" + dump.getFileName()), Map.of("PGPASSWORD", target.password()), 600);
     }
 
-    /** Advance the stopped cluster's next transaction id (and epoch) past every restored xid8 value. */
-    RepositoryBackupRehearsalShell.Result pgResetXid(String volume, long epoch, long xid) {
-        String segment = String.format("%04X", xid / 1_048_576L);
-        String script = "set -e; cd " + POSTGRES_PGDATA + "; [ -f pg_xact/" + segment + " ] || dd if=/dev/zero of=pg_xact/" + segment + " bs=262144 count=1 status=none; "
-                + "pg_resetwal -e " + epoch + " -x " + xid + " " + POSTGRES_PGDATA;
-        return shell.run(List.of("docker", "run", "--rm", "--user", "postgres", "-v", volume + ":" + POSTGRES_DATA, POSTGRES_IMAGE, "sh", "-c", script), Map.of(), 120);
-    }
-
     /** Archive a stopped volume byte for byte, preserving ownership; the file lands owned by the operator. */
     RepositoryBackupRehearsalShell.Result archiveVolume(String volume, Path target) {
         return shell.run(List.of("docker", "run", "--rm", "-v", volume + ":/data:ro", "-v", target.getParent() + ":/out", POSTGRES_IMAGE, "sh", "-c",

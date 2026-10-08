@@ -220,7 +220,8 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                 var id = UUID.fromString(RepositoryBackupRehearsalJson.string(revision, "revisionId"));
                 String raw = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readRaw(RepositoryBackupRehearsalFixture.member(account),
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                checks.require(!raw.equals("OK"), "new-generation.history_refused." + RepositoryBackupRehearsalJson.string(revision, "tag"), "readRaw -> " + raw);
+                checks.require(raw.equals("FAILED_PRECONDITION"), "new-generation.history_refused." + RepositoryBackupRehearsalJson.string(revision, "tag"),
+                        "readRaw -> " + raw + " (original generation not configured on this host)");
             }
         }
     }
@@ -231,7 +232,8 @@ public final class RepositoryBackupRehearsalRecoveredHost {
         try (var client = RepositoryBackupRehearsalFixture.s3(endpoint)) {
             String refused = RepositoryBackupRehearsalContentChecks.outcome(() -> client.getObjectAsBytes(builder -> builder.bucket(RepositoryBackupRehearsalJson.string(damaged, "namespace"))
                     .key(RepositoryBackupRehearsalJson.string(damaged, "key")).versionId(RepositoryBackupRehearsalJson.string(damaged, "providerVersion"))));
-            checks.require(!refused.equals("OK"), "missing-version.provider_version_absent", "GET recorded version -> " + refused);
+            checks.require(refused.startsWith("NoSuchKeyException") || refused.startsWith("NoSuchVersionException"), "missing-version.provider_version_absent",
+                    "GET recorded version -> " + refused);
             var latest = client.getObjectAsBytes(builder -> builder.bucket(RepositoryBackupRehearsalJson.string(damaged, "namespace")).key(RepositoryBackupRehearsalJson.string(damaged, "key")));
             checks.require(!latest.response().versionId().equals(RepositoryBackupRehearsalJson.string(damaged, "providerVersion"))
                     && !DocumentPartCodec.sha256Hex(latest.asByteArray()).equals(RepositoryBackupRehearsalJson.string(damaged, "sha256")),
@@ -249,14 +251,14 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                 String raw = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readRaw(member, address, id, NONE).close());
                 String validated = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readValidated(member, address, id, NONE).close());
                 if (affected) {
-                    checks.require(!raw.equals("OK"), "missing-version.raw_refused", "readRaw(" + tag + ") -> " + raw);
-                    checks.require(!validated.equals("OK"), "missing-version.validated_refused", "readValidated(" + tag + ") -> " + validated);
+                    checks.require(raw.equals("DATA_LOSS"), "missing-version.raw_refused", "readRaw(" + tag + ") -> " + raw);
+                    checks.require(validated.equals("DATA_LOSS"), "missing-version.validated_refused", "readValidated(" + tag + ") -> " + validated);
                     for (var selection : RepositoryBackupRehearsalJson.list(revision, "selections")) {
                         var selector = new HistoricalMaterializationRepository.Selection((int) RepositoryBackupRehearsalJson.number(selection, "revisionOrdinal"),
                                 RepositoryBackupRehearsalJson.string(selection, "rootSha256"), RepositoryBackupRehearsalJson.string(selection, "pathSha256"));
                         String materialized = RepositoryBackupRehearsalContentChecks.outcome(() -> { try (var result = host.historicalMaterializationRepository()
                                 .readMaterialized(member, address, id, selector, RepositoryBackupRehearsalFixture.LIMITS, NONE)) { result.view(NONE); } });
-                        checks.require(!materialized.equals("OK"), "missing-version.materialized_refused." + RepositoryBackupRehearsalJson.number(selection, "steps"),
+                        checks.require(materialized.equals("DATA_LOSS"), "missing-version.materialized_refused." + RepositoryBackupRehearsalJson.number(selection, "steps"),
                                 "readMaterialized(" + tag + ") -> " + materialized + "; the newer version was not substituted");
                     }
                 } else {
@@ -344,9 +346,10 @@ public final class RepositoryBackupRehearsalRecoveredHost {
             checks.require(!direct.equals("OK") && (direct.contains("403") || direct.toLowerCase().contains("signature") || direct.toLowerCase().contains("access")),
                     "wrong-credentials.provider_refuses", "direct GET with the wrong secret -> " + direct);
         }
-        String started;
+        // Composition binds the backend identity from the ledger without a provider call, so the host starts;
+        // the first provider read is where the credential is refused. Both facts are asserted, not just recorded.
         try (var host = open(config, offline, bundle)) {
-            started = "OK";
+            checks.pass("wrong-credentials.host", "host composition with the wrong provider secret succeeds (no provider call at composition)");
             var content = new RepositoryBackupRehearsalContentChecks(host, checks, identities, record);
             for (var revision : content.revisions()) {
                 String tag = RepositoryBackupRehearsalJson.string(revision, "tag");
@@ -354,12 +357,9 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                 var id = UUID.fromString(RepositoryBackupRehearsalJson.string(revision, "revisionId"));
                 String raw = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readRaw(RepositoryBackupRehearsalFixture.member(account),
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                checks.require(!raw.equals("OK"), "wrong-credentials.history_refused." + tag, "readRaw -> " + raw);
+                checks.require(raw.startsWith("BlobStoreException") && raw.contains("rejected the read"), "wrong-credentials.history_refused." + tag, "readRaw -> " + raw);
             }
-        } catch (RuntimeException refusal) {
-            started = refusal.getClass().getName() + ": " + refusal.getMessage();
         }
-        checks.pass("wrong-credentials.host", "host composition with the wrong provider secret -> " + started);
     }
 
     /** The catalog is one capture and the provider volume another: every recorded version is absent and reads refuse. */
@@ -371,7 +371,8 @@ public final class RepositoryBackupRehearsalRecoveredHost {
             for (var object : objects) {
                 String outcome = RepositoryBackupRehearsalContentChecks.outcome(() -> client.getObjectAsBytes(builder -> builder.bucket(RepositoryBackupRehearsalJson.string(object, "namespace"))
                         .key(RepositoryBackupRehearsalJson.string(object, "key")).versionId(RepositoryBackupRehearsalJson.string(object, "providerVersion"))));
-                if (!outcome.equals("OK")) absent++;
+                if (outcome.startsWith("NoSuchKeyException") || outcome.startsWith("NoSuchVersionException") || outcome.startsWith("NoSuchBucketException")) absent++;
+                else throw new RepositoryBackupRehearsalFailure("Unexpected provider outcome for a recorded version: " + outcome);
             }
             checks.require(absent == objects.size(), "inconsistent-snapshot.provider_versions_absent", absent + "/" + objects.size() + " recorded versions absent from the other capture's provider");
         }
@@ -385,7 +386,8 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
                 String validated = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readValidated(RepositoryBackupRehearsalFixture.member(account),
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                checks.require(!raw.equals("OK") && !validated.equals("OK"), "inconsistent-snapshot.history_refused." + tag, "readRaw -> " + raw + "; readValidated -> " + validated);
+                checks.require(raw.startsWith("BlobStoreException") && raw.contains("rejected the read") && validated.startsWith("BlobStoreException"),
+                        "inconsistent-snapshot.history_refused." + tag, "readRaw -> " + raw + "; readValidated -> " + validated);
             }
             // SQL-only evidence is still the catalog's own: receipts replay from the ledger, the pending chain is intact.
             content.verifyReplay("inconsistent-snapshot");

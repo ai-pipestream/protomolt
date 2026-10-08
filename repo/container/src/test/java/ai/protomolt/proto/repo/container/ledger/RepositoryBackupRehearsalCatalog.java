@@ -118,9 +118,12 @@ final class RepositoryBackupRehearsalCatalog implements AutoCloseable {
     }
 
     /**
-     * V118/V119 relational invariants that must hold in any consistent catalog: unresolved and proven
-     * sets are disjoint, every lineage row has its committed install edge and certified anchor, every
-     * certificate has a sealed header, and no restored install_xid is reachable by a new transaction.
+     * V118/V119 relational invariants that must hold in any consistent catalog, compared by identity
+     * (digests, nonces, counts), not by key existence alone: proven and unresolved sets are disjoint,
+     * certificates and lineage never overlap, every certificate matches its immutable preparation and
+     * sealed header, every lineage row matches its committed install edge, its certified anchor and
+     * (beyond depth 1) its verified predecessor, every preparation is in exactly one state, and no
+     * restored install_xid is reachable by a new transaction.
      */
     Map<String, Object> coverageInvariants() {
         var invariants = new LinkedHashMap<String, Object>();
@@ -129,18 +132,36 @@ final class RepositoryBackupRehearsalCatalog implements AutoCloseable {
                          USING (account_id,principal,operation_id,predecessor_generation)),
                        (SELECT count(*) FROM repository_preparation_coverage_lineage l JOIN repository_preparation_coverage_unresolved u
                          USING (account_id,principal,operation_id,predecessor_generation)),
-                       (SELECT count(*) FROM repository_preparation_coverage_lineage l LEFT JOIN repository_successor_installs i
-                         USING (account_id,principal,operation_id,predecessor_generation) WHERE i.install_xid IS NULL),
-                       (SELECT count(*) FROM repository_preparation_coverage_lineage l WHERE NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_certificates c
-                         WHERE c.account_id=l.account_id AND c.principal=l.principal AND c.operation_id=l.operation_id AND c.predecessor_generation=l.anchor_generation)),
+                       (SELECT count(*) FROM repository_preparation_coverage_lineage l JOIN repository_preparation_coverage_certificates c
+                         USING (account_id,principal,operation_id,predecessor_generation)),
+                       (SELECT count(*) FROM repository_preparation_coverage_certificates c LEFT JOIN repository_publication_preparations p
+                         USING (account_id,principal,operation_id,predecessor_generation)
+                         WHERE p.preparation_sha256 IS DISTINCT FROM c.preparation_sha256 OR p.command_sha256 IS DISTINCT FROM c.command_sha256),
                        (SELECT count(*) FROM repository_preparation_coverage_certificates c LEFT JOIN repository_preparation_history_sets h
-                         USING (account_id,principal,operation_id,predecessor_generation) WHERE h.sealed IS DISTINCT FROM true),
-                       (SELECT count(*) FROM repository_publication_preparations p WHERE NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_certificates c
-                         WHERE (c.account_id,c.principal,c.operation_id,c.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation))
-                         AND NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_lineage l
-                         WHERE (l.account_id,l.principal,l.operation_id,l.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation))
-                         AND NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_unresolved u
-                         WHERE (u.account_id,u.principal,u.operation_id,u.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation))),
+                         USING (account_id,principal,operation_id,predecessor_generation)
+                         WHERE h.sealed IS DISTINCT FROM true OR h.preparation_sha256 IS DISTINCT FROM c.preparation_sha256
+                          OR h.command_sha256 IS DISTINCT FROM c.command_sha256 OR h.expected_count IS DISTINCT FROM c.root_count
+                          OR h.roots_sha256 IS DISTINCT FROM c.roots_sha256),
+                       (SELECT count(*) FROM repository_preparation_coverage_lineage l LEFT JOIN repository_successor_installs i
+                         USING (account_id,principal,operation_id,predecessor_generation)
+                         WHERE i.install_xid IS NULL OR i.preparation_sha256 IS DISTINCT FROM l.preparation_sha256
+                          OR i.command_sha256 IS DISTINCT FROM l.command_sha256 OR i.owner_nonce IS DISTINCT FROM l.owner_nonce
+                          OR i.predecessor_preparation_sha256 IS DISTINCT FROM l.previous_preparation_sha256
+                          OR i.predecessor_nonce IS DISTINCT FROM l.previous_owner_nonce),
+                       (SELECT count(*) FROM repository_preparation_coverage_lineage l WHERE NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_certificates c
+                         WHERE c.account_id=l.account_id AND c.principal=l.principal AND c.operation_id=l.operation_id AND c.predecessor_generation=l.anchor_generation
+                          AND c.preparation_sha256=l.anchor_sha256 AND c.command_sha256=l.command_sha256 AND c.root_count=l.root_count AND c.roots_sha256=l.roots_sha256)),
+                       (SELECT count(*) FROM repository_preparation_coverage_lineage l WHERE l.predecessor_generation-l.anchor_generation<>l.depth
+                         OR (l.depth=1 AND l.previous_preparation_sha256<>l.anchor_sha256)
+                         OR (l.depth>1 AND NOT EXISTS (SELECT 1 FROM repository_preparation_coverage_lineage prior
+                          WHERE prior.account_id=l.account_id AND prior.principal=l.principal AND prior.operation_id=l.operation_id
+                           AND prior.predecessor_generation=l.predecessor_generation-1 AND prior.preparation_sha256=l.previous_preparation_sha256
+                           AND prior.owner_nonce=l.previous_owner_nonce AND prior.command_sha256=l.command_sha256 AND prior.anchor_generation=l.anchor_generation
+                           AND prior.anchor_sha256=l.anchor_sha256 AND prior.root_count=l.root_count AND prior.roots_sha256=l.roots_sha256 AND prior.depth=l.depth-1))),
+                       (SELECT count(*) FROM repository_publication_preparations p WHERE
+                         (SELECT count(*) FROM repository_preparation_coverage_certificates c WHERE (c.account_id,c.principal,c.operation_id,c.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation))
+                         + (SELECT count(*) FROM repository_preparation_coverage_lineage l WHERE (l.account_id,l.principal,l.operation_id,l.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation))
+                         + (SELECT count(*) FROM repository_preparation_coverage_unresolved u WHERE (u.account_id,u.principal,u.operation_id,u.predecessor_generation)=(p.account_id,p.principal,p.operation_id,p.predecessor_generation)) <> 1),
                        (SELECT count(*) FROM repository_successor_installs WHERE install_xid >= pg_current_xact_id()),
                        (SELECT count(*) FROM repository_preparation_coverage_certificates),
                        (SELECT count(*) FROM repository_preparation_coverage_lineage),
@@ -150,16 +171,19 @@ final class RepositoryBackupRehearsalCatalog implements AutoCloseable {
                 """, List.of(), result -> {
             invariants.put("certifiedAndUnresolved", result.getLong(1));
             invariants.put("lineageAndUnresolved", result.getLong(2));
-            invariants.put("lineageWithoutInstallEdge", result.getLong(3));
-            invariants.put("lineageWithoutCertifiedAnchor", result.getLong(4));
-            invariants.put("certificateWithoutSealedHeader", result.getLong(5));
-            invariants.put("preparationWithoutAnyState", result.getLong(6));
-            invariants.put("installXidNotBelowCurrent", result.getLong(7));
-            invariants.put("certificates", result.getLong(8));
-            invariants.put("lineage", result.getLong(9));
-            invariants.put("unresolved", result.getLong(10));
-            invariants.put("successorInstalls", result.getLong(11));
-            invariants.put("successorExecutions", result.getLong(12));
+            invariants.put("certifiedAndLineage", result.getLong(3));
+            invariants.put("certificateDiffersFromPreparation", result.getLong(4));
+            invariants.put("certificateDiffersFromSealedHeader", result.getLong(5));
+            invariants.put("lineageDiffersFromInstallEdge", result.getLong(6));
+            invariants.put("lineageDiffersFromCertifiedAnchor", result.getLong(7));
+            invariants.put("lineageDepthOrPredecessorInvalid", result.getLong(8));
+            invariants.put("preparationNotInExactlyOneState", result.getLong(9));
+            invariants.put("installXidNotBelowCurrent", result.getLong(10));
+            invariants.put("certificates", result.getLong(11));
+            invariants.put("lineage", result.getLong(12));
+            invariants.put("unresolved", result.getLong(13));
+            invariants.put("successorInstalls", result.getLong(14));
+            invariants.put("successorExecutions", result.getLong(15));
         });
         return invariants;
     }

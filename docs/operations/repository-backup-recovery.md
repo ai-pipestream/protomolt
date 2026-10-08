@@ -32,12 +32,16 @@ The snapshot is QUIESCED, never online. The harness proves the cut rather than a
 1. The only writer is the seed host JVM. It closes its `RepoServices` (drains schema
    workers, lifecycle threads, provider handles and readers) and exits with code 0.
 2. After the exit, `pg_stat_activity` must show no client backend other than the capture
-   connection, `repository_reader_incarnations` must hold no ACTIVE row and
-   `document_read_pins` must be empty. Durable journal state (the pending operation's
-   claims, preparations and expired leases) is data, not process activity, and is kept.
+   connection, `repository_reader_incarnations` must hold no ACTIVE row,
+   `document_read_pins` must be empty and no part attempt may be PLANNING or STAGING.
+   Durable journal state (the pending operation's claims, preparations and expired leases)
+   is data, not process activity, and is kept.
 3. Every base table is fingerprinted (row count plus an order-independent digest of all row
    text), together with sequences, the largest stored `xid8` and the V118/V119 invariants.
-4. `pg_dump --format=custom` runs from a sibling container of the same image.
+4. `pg_dump --format=custom` runs from a sibling container of the same image. Afterwards the
+   backend check is repeated and every table fingerprint must be unchanged, and the restore
+   later compares the restored tables against the same fingerprints: a write landing in the
+   dump window would be detected and the set refused, never captured silently.
 5. PostgreSQL and RustFS are stopped (clean `exited` state), then the RustFS volume is
    archived with `tar` from a helper container. No provider effect can arrive after the
    cut: the sole writer exited before the dump and the provider process was stopped
@@ -99,10 +103,10 @@ preserved under `repo/container/build/backup-rehearsal/<timestamp>/`.
 5. Removes the source containers and proves the database refuses connections and the
    recorded provider port is free; digests the stopped source volume.
 6. Restores: preflight, new volumes, provider volume extracted, RustFS on the recorded
-   port, new PostgreSQL, `pg_restore --exit-on-error`, transaction-id check (advancing
-   with `pg_resetwal` only when the restored cluster is not past every stored `xid8`),
-   sequence and migration-level checks, per-table fingerprint comparison against the
-   source capture, V118/V119 invariant comparison.
+   port, new PostgreSQL, `pg_restore --exit-on-error`, transaction-id check (the restore is
+   refused if the restored cluster is not past every stored `xid8`), sequence and
+   migration-level checks, per-table fingerprint comparison against the source capture,
+   V118/V119 invariant comparison by identity.
 7. Runs the recovered host JVM with no schema registry. It compares row counts, reader
    incarnations, backend profile, sequences, catalog digests and migration level; reads
    raw and validated history for every revision; decodes the root and nested occurrences
@@ -152,12 +156,13 @@ be kept.
 6. Start a new PostgreSQL, create the role and database from your own inputs, and
    `pg_restore --exit-on-error --no-owner --no-privileges`.
 7. Compare the restored cluster's next transaction id with the largest value in any
-   `xid8` column. If it is not strictly greater, stop the cluster and run
-   `pg_resetwal -e <epoch> -x <xid>` on the data directory, creating the `pg_xact` segment
-   first if it does not exist, then start it again. V119 lineage proofs and V93 install
-   edges compare `install_xid` with the current transaction; a restored cluster whose
-   counter had not advanced could refuse valid proofs or admit an invalid same-transaction
-   claim.
+   `xid8` column. If it is not strictly greater, do not start a host. V119 lineage proofs
+   and V93 install edges compare `install_xid` with the current transaction; a cluster whose
+   counter has not advanced could refuse valid proofs or admit an invalid same-transaction
+   claim. Advancing the counter is a manual `pg_resetwal` procedure following the PostgreSQL
+   documentation's safe-value rules for `-x` and `-e`; the harness refuses this state and has
+   not exercised that procedure (both archived runs restored a cluster already past the
+   stored values), so it is not part of the qualified runbook.
 8. Compare sequences and migration level with the manifest, and the per-table fingerprints
    with `catalog/fingerprints.json`; then start the host with the recorded generation,
    realm and endpoint. Verify reads before announcing readiness.
@@ -176,9 +181,9 @@ Each case restores a disposable copy of run-1's sealed set into its own stores.
 | missing-descriptor | retained attachment artifact rows deleted with referential triggers disabled, live registry armed | as above |
 | wrong-endpoint | recorded generation at a different endpoint | `ManagedBackendLedger.bind` refuses: already bound to another physical profile |
 | new-generation | new generation at the recorded endpoint | host binds; every history read refuses because the original generation is not configured |
-| wrong-credentials | wrong provider secret | direct GET refused by the provider; history reads refuse or the host refuses to compose |
+| wrong-credentials | wrong provider secret | direct GET refused by the provider (403, signature mismatch); the host composes without a provider call; every history read refuses with the provider rejection |
 | wrong-database-credentials | wrong ledger password | host exits nonzero on authentication failure; no READY |
-| identity-gap | recorded object bytes put into a fresh provider | provider issues a different version id |
+| identity-gap | the recorded version's bytes read from a restored volume and put into a fresh provider | same digest, different provider-issued version id; a GET by the recorded version id on the fresh provider fails |
 
 No case falls back to another backend, serves a newer version in place of a missing one,
 invents typed content, or advertises readiness.

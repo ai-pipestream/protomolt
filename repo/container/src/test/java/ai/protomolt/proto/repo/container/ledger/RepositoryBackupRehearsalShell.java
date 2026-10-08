@@ -49,7 +49,9 @@ final class RepositoryBackupRehearsalShell {
                 process.destroyForcibly();
                 throw new IllegalStateException("Command timed out after " + timeoutSeconds + "s: " + redact(String.join(" ", command)));
             }
-            var result = new Result(command, process.exitValue(), new String(out.get(), StandardCharsets.UTF_8), new String(err.get(), StandardCharsets.UTF_8));
+            // Results carry redacted text only, so a failure message can never embed a password or secret key.
+            var result = new Result(command.stream().map(this::redact).toList(), process.exitValue(),
+                    redact(new String(out.get(), StandardCharsets.UTF_8)), redact(new String(err.get(), StandardCharsets.UTF_8)));
             record(result);
             return result;
         } catch (IOException | InterruptedException | java.util.concurrent.ExecutionException failure) {
