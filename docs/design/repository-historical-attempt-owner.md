@@ -997,3 +997,57 @@ The combined 7-suite run passed 64 tests with no failures, errors or skips.
 Reports and source hashes are in the retention-loader evidence `qualified/`
 directory. This supersedes the missing private-loader cases listed above;
 managed routing and public library/gRPC qualification remain unfinished.
+
+### Managed runtime composition sequence
+
+The provider-read interface is now exposed by `DocumentHistoricalRetainedReader`.
+The engine implements it using its existing exact-ordinal read. Its focused test
+uses PostgreSQL and LocalStack and reads the retained provider version after the
+current key is overwritten. The expanded eight-host storage gate also passed at
+`4e595c4a4b91762fbc16a4507adefd4a40bac2b7`; its report is under
+`2026-10-07-initial-owner-provider/full-storage`. These results do not qualify the
+managed historical entry point.
+
+Implement the remaining composition in this order:
+
+1. Add a private preparation component that borrows an already accepted historical
+   Work and its captures. Deduplicate provider reads by source address, revision
+   and complete-revision ordinal. Validate every selector against the ledger's
+   prepared reference before issuing reads. Map the returned fragment to each
+   destination member and ordinal without confusing source and target ordinals.
+   Read only selected fragments through DocumentHistoricalRetainedReader. Keep
+   batches open until budgeted fragment copying finishes; close all batches on
+   failure without releasing the owner's source Work. Ordinary reuse and upload
+   fragments retain their existing admission checks.
+2. Add an explicit managed-host historical configuration. Existing factories keep
+   their current behavior and reader bounds. The host supplies the historical
+   reader and private operation-scoped authority; request fields cannot enable
+   either. Reserve an owner slot before acquiring captures or starting provider
+   reads. Attach captures and accepted Work before preparation. If attachment
+   fails, retain responsibility for capture drainage and report cleanup failures.
+3. Route historical commands before the ordinary operation-wide recovery guard.
+   Keep the outer call, validation, payload budget and permit boundaries. Observe
+   authorized durable replay before selecting a local generation. Initial retry
+   must reuse its seeds, incarnation and preparation. Local successor selection
+   must preserve all older generations for disposal. Cold recovery uses verified
+   retained preparation, then fresh captures and activation; START alone cannot
+   recreate process Work. Do not place provider I/O under a map-wide monitor.
+4. Retain assessment, START, CREATE reconciliation and publication state through
+   the existing attempt owner. Schema scopes remain owned by the current call.
+   Return only a receipt re-observed under the caller's current authority. A
+   timeout or lost reply cannot discard a possibly committed attempt.
+5. During shutdown, stop outer admission, drain accepted calls, then detach every
+   historical generation before shutting down readers and providers. A retained
+   old worker must not prevent another ready generation from being examined.
+   Timeout leaves the runtime retryable and its resources owned. Only complete
+   drainage permits host quiescence and resource closure.
+
+Before public enablement, qualify the same cases through the library and actual
+in-process gRPC adapter: initial publication, exact retry, restart from retained
+preparation, lost CREATE and commit replies, old/new generation overlap,
+revocation before delivery, cancellation with a held provider worker, mixed
+upload/current/historical input, shared source deduplication, capacity refusal,
+and shutdown retried after worker exit. Assert bytes, versions, receipts, durable
+counts and restored budgets. Test non-opted-in hosts explicitly. Keep the public
+unsupported guard until this complete composition passes; adding the reader port
+alone does not justify removing it.
