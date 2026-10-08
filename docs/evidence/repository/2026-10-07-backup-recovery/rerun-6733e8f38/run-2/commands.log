@@ -1,0 +1,167 @@
+2026-10-08T15:37:01.749247971Z exit=0 $ id -u
+  stdout: 1000
+2026-10-08T15:37:01.751419046Z exit=0 $ id -g
+  stdout: 1000
+2026-10-08T15:37:01.766214483Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-08T15:37:01.792401270Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T15:37:01.815446737Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T15:37:01.836523652Z exit=0 $ docker image inspect alpine:3.20 --format {{.Id}}
+  stdout: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+2026-10-08T15:37:01.870448681Z exit=0 $ docker network create protomolt-recovery-16cb7617f-4cf5387b-net
+  stdout: 9f68bf27b410b1d0ebba2dabe96e160fc77628457fb5ffa4b9abfd864be2669f
+2026-10-08T15:37:01.886118441Z exit=0 $ docker volume create protomolt-recovery-16cb7617f-4cf5387b-src-pg-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-pg-data
+2026-10-08T15:37:01.899677219Z exit=0 $ docker volume create protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data
+2026-10-08T15:37:02.110721185Z exit=0 $ docker run -d --name protomolt-recovery-16cb7617f-4cf5387b-src-pg --network protomolt-recovery-16cb7617f-4cf5387b-net -p 127.0.0.1:0:5432 -v protomolt-recovery-16cb7617f-4cf5387b-src-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: 101e4c44aad41c84f19631aef46615d2c98bf748cfe5580599d6dcd4987b883e
+2026-10-08T15:37:02.127086030Z exit=0 $ docker port protomolt-recovery-16cb7617f-4cf5387b-src-pg 5432/tcp
+  stdout: 127.0.0.1:33091
+2026-10-08T15:37:02.171701774Z exit=2 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - no response
+2026-10-08T15:37:02.705764841Z exit=0 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-08T15:37:03.245582509Z exit=0 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-08T15:37:03.460934330Z exit=0 $ docker run -d --name protomolt-recovery-16cb7617f-4cf5387b-src-rustfs --network protomolt-recovery-16cb7617f-4cf5387b-net -p 127.0.0.1:38003:9000 -v protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=recovery-81502a8a -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: fbfe853c979aee3d08bd06e29df71340fa2d655d578aa8da5d0aa9607afc1e87
+2026-10-08T15:37:03.991905701Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T15:37:04.011407988Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T15:37:10.207030079Z exit=0 $ true # ai.protomolt.proto.repo.recovery.SeedHost exit=0 log=seed-host.log
+2026-10-08T15:37:11.209743672Z exit=0 $ docker run --rm --network protomolt-recovery-16cb7617f-4cf5387b-net --user 1000:1000 -e PGPASSWORD -v /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/rebased/evidence/run-2/backup/sql:/out postgres:18-alpine pg_dump -h protomolt-recovery-16cb7617f-4cf5387b-src-pg -U repo -d repo --format=custom --no-owner --no-privileges -f /out/ledger.dump
+2026-10-08T15:37:11.564128684Z exit=0 $ docker stop -t 60 protomolt-recovery-16cb7617f-4cf5387b-src-pg
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-pg
+2026-10-08T15:37:11.576573706Z exit=0 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-pg --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-08T15:37:11.369477726Z
+2026-10-08T15:37:11.807957733Z exit=0 $ docker stop -t 60 protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+2026-10-08T15:37:11.819391503Z exit=0 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-rustfs --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-08T15:37:11.614260038Z
+2026-10-08T15:37:12.277875967Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data:/data:ro -v /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/rebased/evidence/run-2/backup/provider:/out alpine:3.20 sh -c set -e; cd /data && tar --numeric-owner -cf /out/rustfs-data.tar . && chown 1000:1000 /out/rustfs-data.tar
+2026-10-08T15:37:12.322096334Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T15:37:12.345682784Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T15:37:12.373090189Z exit=0 $ docker image inspect alpine:3.20 --format {{.Id}}
+  stdout: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+2026-10-08T15:37:12.528153951Z exit=0 $ docker rm -f protomolt-recovery-16cb7617f-4cf5387b-src-pg
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-pg
+2026-10-08T15:37:12.548726372Z exit=1 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-pg
+  stdout: []
+  stderr: error: no such object: protomolt-recovery-16cb7617f-4cf5387b-src-pg
+2026-10-08T15:37:12.690675806Z exit=0 $ docker rm -f protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+2026-10-08T15:37:12.712723426Z exit=1 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+  stdout: []
+  stderr: error: no such object: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+2026-10-08T15:37:12.733217659Z exit=1 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-pg --format {{.Id}}
+  stderr: error: no such object: protomolt-recovery-16cb7617f-4cf5387b-src-pg
+2026-10-08T15:37:12.751706029Z exit=1 $ docker inspect protomolt-recovery-16cb7617f-4cf5387b-src-rustfs --format {{.Id}}
+  stderr: error: no such object: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs
+2026-10-08T15:37:13.236268424Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data:/data:ro alpine:3.20 sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: 261fff9224077aaa5883e09bb4f057f1d681617520ad846990dac4d32d34c89a
+2026-10-08T15:37:13.254412573Z exit=0 $ docker volume create protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data
+2026-10-08T15:37:13.270555077Z exit=0 $ docker volume create protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data
+2026-10-08T15:37:13.729017810Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data:/data:ro alpine:3.20 sh -c find /data -mindepth 1 | head -1
+2026-10-08T15:37:14.212534267Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data:/data:ro alpine:3.20 sh -c find /data -mindepth 1 | head -1
+2026-10-08T15:37:14.681233957Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data:/data -v /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/rebased/evidence/run-2/backup/provider:/in:ro alpine:3.20 sh -c set -e; cd /data && tar --numeric-owner -xf /in/rustfs-data.tar
+2026-10-08T15:37:14.893771958Z exit=0 $ docker run -d --name protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs --network protomolt-recovery-16cb7617f-4cf5387b-net -p 127.0.0.1:38003:9000 -v protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=recovery-81502a8a -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: e26d98641f0b6eb251ed13381bd7c44341cd8144b1689b4c07105b1824799029
+2026-10-08T15:37:15.605202662Z exit=0 $ docker run -d --name protomolt-recovery-16cb7617f-4cf5387b-rst-pg --network protomolt-recovery-16cb7617f-4cf5387b-net -p 127.0.0.1:0:5432 -v protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: ac3a1a0414ca4366e00a0e9721a6133d7b7cabe4343881d09aeeea9fb0d61ef4
+2026-10-08T15:37:15.623148606Z exit=0 $ docker port protomolt-recovery-16cb7617f-4cf5387b-rst-pg 5432/tcp
+  stdout: 127.0.0.1:33092
+2026-10-08T15:37:15.664040349Z exit=2 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - no response
+2026-10-08T15:37:16.215753871Z exit=1 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - rejecting connections
+2026-10-08T15:37:16.754378242Z exit=0 $ docker exec protomolt-recovery-16cb7617f-4cf5387b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-08T15:37:18.929915544Z exit=0 $ docker run --rm --network protomolt-recovery-16cb7617f-4cf5387b-net --user 1000:1000 -e PGPASSWORD -v /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/rebased/evidence/run-2/backup/sql:/in:ro postgres:18-alpine pg_restore -h protomolt-recovery-16cb7617f-4cf5387b-rst-pg -U repo -d repo --exit-on-error --no-owner --no-privileges /in/ledger.dump
+2026-10-08T15:37:24.030716090Z exit=0 $ true # ai.protomolt.proto.repo.recovery.RecoveredHost exit=0 log=recovered-host.log
+2026-10-08T15:37:25.179903494Z exit=0 $ docker run --rm -v protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data:/data:ro alpine:3.20 sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: 261fff9224077aaa5883e09bb4f057f1d681617520ad846990dac4d32d34c89a
+2026-10-08T15:37:25.207491571Z exit=0 $ docker logs protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs
+  stdout: Initializing data directories: /data
+          Initializing log directory: /logs
+          Starting: /usr/bin/rustfs /data
+2026-10-08T15:37:25.229736775Z exit=0 $ docker logs protomolt-recovery-16cb7617f-4cf5387b-rst-pg
+  stdout: The files belonging to this database system will be owned by user "postgres".
+          This user must also own the server process.
+          
+          The database cluster will be initialized with locale "en_US.utf8".
+          The default database encoding has accordingly been set to "UTF8".
+          The default text search configuration will be set to "english".
+          
+          Data page checksums are enabled.
+          
+          fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok
+          creating subdirectories ... ok
+          selecting dynamic shared memory implementation ... posix
+          selecting default "max_connections" ... 100
+          selecting default "shared_buffers" ... 128MB
+          selecting default time zone ... UTC
+          creating configuration files ... ok
+          running bootstrap script ... ok
+          performing post-bootstrap initialization ... ok
+          syncing data to disk ... ok
+          
+          
+          Success. You can now start the database server using:
+          
+              pg_ctl -D /var/lib/postgresql/18/docker -l logfile start
+          
+          waiting for server to start....2026-10-08 15:37:16.187 UTC [52] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 15:37:16.195 UTC [52] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 15:37:16.213 UTC [64] LOG:  database system was shut down at 2026-10-08 15:37:15 UTC
+          2026-10-08 15:37:16.213 UTC [65] FATAL:  the database system is starting up
+          2026-10-08 15:37:16.220 UTC [52] LOG:  database system is ready to accept connections
+           done
+          server started
+          CREATE DATABASE
+          
+          
+          /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+          
+          waiting for server to shut down....2026-10-08 15:37:16.330 UTC [52] LOG:  received fast shutdown request
+          2026-10-08 15:37:16.335 UTC [52] LOG:  aborting any active transactions
+          2026-10-08 15:37:16.336 UTC [52] LOG:  background worker "logical replication launcher" (PID 68) exited with exit code 1
+          2026-10-08 15:37:16.336 UTC [62] LOG:  shutting down
+          2026-10-08 15:37:16.342 UTC [62] LOG:  checkpoint starting: shutdown immediate
+          2026-10-08 15:37:16.425 UTC [62] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.019 s, sync=0.036 s, total=0.089 s; sync files=303, longest=0.007 s, average=0.001 s; distance=4362 kB, estimate=4362 kB; lsn=0/1BA8858, redo lsn=0/1BA8858
+          2026-10-08 15:37:16.442 UTC [52] LOG:  database system is shut down
+           done
+          server stopped
+          
+          PostgreSQL init process complete; ready for start up.
+  stderr: sh: locale: not found
+          2026-10-08 15:37:15.836 UTC [46] WARNING:  no usable system locales were found
+          initdb: warning: enabling "trust" authentication for local connections
+          initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+          2026-10-08 15:37:16.549 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-08 15:37:16.549 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+          2026-10-08 15:37:16.549 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+          2026-10-08 15:37:16.561 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-08 15:37:16.575 UTC [81] LOG:  database system was shut down at 2026-10-08 15:37:16 UTC
+          2026-10-08 15:37:16.583 UTC [1] LOG:  database system is ready to accept connections
+2026-10-08T15:37:26.146000078Z exit=0 $ docker rm -f protomolt-recovery-16cb7617f-4cf5387b-rst-pg
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-pg
+2026-10-08T15:37:27.155134394Z exit=0 $ docker rm -f protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs
+2026-10-08T15:37:27.173152464Z exit=0 $ docker volume rm -f protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-rustfs-data
+2026-10-08T15:37:27.201649540Z exit=0 $ docker volume rm -f protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-rst-pg-data
+2026-10-08T15:37:27.219995590Z exit=0 $ docker volume rm -f protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-rustfs-data
+2026-10-08T15:37:27.247795057Z exit=0 $ docker volume rm -f protomolt-recovery-16cb7617f-4cf5387b-src-pg-data
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-src-pg-data
+2026-10-08T15:37:27.429380188Z exit=0 $ docker network rm protomolt-recovery-16cb7617f-4cf5387b-net
+  stdout: protomolt-recovery-16cb7617f-4cf5387b-net

@@ -1,0 +1,207 @@
+{
+  "account": "recovery-account-57892363-c10c-4292-82fa-847c89370bb6",
+  "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+  "realm": "recovery-realm",
+  "endpoint": "http://127.0.0.1:42129",
+  "typeUrl": "type.test/protomolt.recovery.RecoveryRecord",
+  "schemaArtifactSha256": "40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588",
+  "toolIdentity": {
+    "version": "1",
+    "name": "repository-recovery-rehearsal"
+  },
+  "drive": {
+    "prefix": "recovery-pipeline",
+    "id": "405b3b8b-9774-3dfc-9989-78df10862a92",
+    "bucket": "recovery-pipeline-89370bb6"
+  },
+  "archiveDrive": {
+    "prefix": "recovery-archive",
+    "id": "e6426dde-5195-3ce6-8d53-88c1561476f1",
+    "bucket": "recovery-archive-89370bb6"
+  },
+  "policySha256": "ce28f87a893f6698b6291bb8b969d62c64f7fd215190b7cb33c12ff13b0c8885",
+  "revisions": [{
+    "tag": "v1",
+    "revisionId": "bec724dc-b29b-4269-b51f-8d1e1f1b1fdc",
+    "mutationRevision": 1.0,
+    "operationId": "0b434538-7e5c-4f4e-bd3e-801787899369",
+    "rawFragments": [{
+      "sha256": "27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb",
+      "size": 239.0,
+      "revisionOrdinal": 0.0
+    }],
+    "commandSha256Sha256": "08696ac6740f8095ed4a8ee1ecc9b5cb3706fdafbdb394116734c2a72bdc3d67",
+    "policySha256": "ce28f87a893f6698b6291bb8b969d62c64f7fd215190b7cb33c12ff13b0c8885",
+    "validationProfile": "protomolt-retained-schema-admission/v1",
+    "metadataSha256": "09534a37ac714093d6ac725f6db6d89980fce5c5131652face44400bc4429f4d",
+    "manifestSha256": "70b4ab8b5facf68ed629966510caaf2cc274fdb03ed091835dfa2dbfa02cfafd"
+  }, {
+    "tag": "v2",
+    "revisionId": "114c1b01-3539-47b2-8c03-81c84cf598ac",
+    "mutationRevision": 2.0,
+    "operationId": "82e8a358-1f70-40a7-8812-f9c6d09a9b91",
+    "rawFragments": [{
+      "sha256": "b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76",
+      "size": 246.0,
+      "revisionOrdinal": 0.0
+    }],
+    "commandSha256Sha256": "21948da4453d4a1b126ad02e030bbd95d2329cc46a4356cead65eea83b680b0a",
+    "policySha256": "ce28f87a893f6698b6291bb8b969d62c64f7fd215190b7cb33c12ff13b0c8885",
+    "validationProfile": "protomolt-retained-schema-admission/v1",
+    "metadataSha256": "6bf0746e6f55b55f432c88a4d5b98cb21f976b0022a09eecc8fa83321784d4c8",
+    "manifestSha256": "2169fa5935278a897cb2204fb518854ff28c1bb8edddd13375e2c3586c87056f"
+  }],
+  "archive": {
+    "name": "recovery-docs",
+    "entryId": "report.pdf#2026",
+    "entryUuid": "c6e050d0-3122-3d94-bfd8-f0878c45e70a",
+    "sharedObjectKey": "recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b",
+    "markdownV2": "# Report, revised",
+    "retainedBytes": 92.0,
+    "v3Bytes": 18.0
+  },
+  "documentObjects": [{
+    "revisionId": "bec724dc-b29b-4269-b51f-8d1e1f1b1fdc",
+    "revisionOrdinal": 0.0,
+    "part": 1.0,
+    "subKey": "",
+    "objectId": "db1f01aa-02a4-480c-8943-bef57f5acc0c",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-pipeline-89370bb6",
+    "key": "recovery-pipeline/documents/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/55fa3588-0106-35e1-aff4-3904d8b534ba/attempts/95771f96-ba33-4265-9694-47096c4c8478/part-0",
+    "providerVersion": "6b2e4c03-b564-4ab9-b105-de1741b5dcdb",
+    "etag": "\"d96e7e2bd7596b5a156f01e0457af6e8\"",
+    "sha256": "27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb",
+    "size": 239.0,
+    "contentType": "application/protobuf"
+  }, {
+    "revisionId": "114c1b01-3539-47b2-8c03-81c84cf598ac",
+    "revisionOrdinal": 0.0,
+    "part": 1.0,
+    "subKey": "",
+    "objectId": "24c0f4a2-d3a7-4825-81be-dac8ff4d5eaf",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-pipeline-89370bb6",
+    "key": "recovery-pipeline/documents/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/55fa3588-0106-35e1-aff4-3904d8b534ba/attempts/f7397fbd-9299-41bc-a335-79c76b448b6c/part-0",
+    "providerVersion": "b8faa762-20a6-4933-aa6f-5e2a1583b0ac",
+    "etag": "\"4663f00c19e0a64ecc108c72a96df5da\"",
+    "sha256": "b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76",
+    "size": 246.0,
+    "contentType": "application/protobuf"
+  }],
+  "archiveObjects": [{
+    "version": 1.0,
+    "objectId": "65993b2b-b13b-45e6-a073-039a5eec1fa0",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-archive-89370bb6",
+    "key": "recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/markdown/writes/3d08b60c-f21a-4321-8326-beea8201b41b/04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d",
+    "providerVersion": "75650f86-7c91-470c-923c-5d3a460b5c22",
+    "etag": "\"a4d1c5ae1e2b525dc20dc6cafe2055fa\"",
+    "sha256": "04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d",
+    "size": 8.0,
+    "contentType": "text/markdown",
+    "state": "LIVE"
+  }, {
+    "version": 1.0,
+    "objectId": "0b32ae88-b56d-40ba-9e57-c520663774f5",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-archive-89370bb6",
+    "key": "recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b",
+    "providerVersion": "f88e7128-5b24-4bc4-b44f-f144bdd794f1",
+    "etag": "\"bb8adef937e8093035bb4b63e8325299\"",
+    "sha256": "a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b",
+    "size": 67.0,
+    "contentType": "application/pdf",
+    "state": "LIVE"
+  }, {
+    "version": 2.0,
+    "objectId": "a68a09b0-143b-49d8-9a20-b92c78817073",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-archive-89370bb6",
+    "key": "recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/markdown/writes/59b3f4d5-f12e-41eb-aab5-1854614f8a50/0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc",
+    "providerVersion": "0258cd31-e61a-49db-b5be-3393c337f49e",
+    "etag": "\"ab8d98c564c09941a815b7e52495cf77\"",
+    "sha256": "0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc",
+    "size": 17.0,
+    "contentType": "text/markdown",
+    "state": "LIVE"
+  }, {
+    "version": 2.0,
+    "objectId": "0b32ae88-b56d-40ba-9e57-c520663774f5",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "realm": "recovery-realm",
+    "namespace": "recovery-archive-89370bb6",
+    "key": "recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b",
+    "providerVersion": "f88e7128-5b24-4bc4-b44f-f144bdd794f1",
+    "etag": "\"bb8adef937e8093035bb4b63e8325299\"",
+    "sha256": "a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b",
+    "size": 67.0,
+    "contentType": "application/pdf",
+    "state": "LIVE"
+  }],
+  "schemaCatalog": {
+    "recovery-account-57892363-c10c-4292-82fa-847c89370bb6/40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588": 20005.0,
+    "recovery-account-57892363-c10c-4292-82fa-847c89370bb6/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319.0,
+    "recovery-account-57892363-c10c-4292-82fa-847c89370bb6/f00ca5310219fa024e94440130d304fc1b6450e2ba5cb426a380348ec803e757": 313.0,
+    "recovery-account-57892363-c10c-4292-82fa-847c89370bb6/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482.0
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 7.0,
+    "document_mutation_revision_seq": 2.0
+  },
+  "rowCounts": {
+    "archive_entries": 1.0,
+    "archive_object_bindings": 3.0,
+    "archive_object_uploads": 3.0,
+    "archive_version_object_refs": 4.0,
+    "archive_versions": 2.0,
+    "archives": 1.0,
+    "document_part_attempt_cleanup": 0.0,
+    "document_part_attempts": 2.0,
+    "document_revision_commits": 2.0,
+    "document_revision_parts": 2.0,
+    "document_revision_publications": 2.0,
+    "document_revision_schema_artifacts": 8.0,
+    "document_revision_schema_assets": 4.0,
+    "document_revision_schema_evidence": 2.0,
+    "documents": 1.0,
+    "flyway_schema_history": 111.0,
+    "managed_backend_profiles": 1.0,
+    "repository_execution_claims": 2.0,
+    "repository_operation_success": 2.0,
+    "repository_operations": 2.0,
+    "repository_physical_locations": 5.0,
+    "repository_reader_incarnations": 2.0,
+    "repository_schema_artifacts": 4.0
+  },
+  "migrationLevel": 111.0,
+  "backendProfile": {
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "provider": "s3",
+    "realm": "recovery-realm",
+    "identitySchema": "s3/v1",
+    "identityJson": "{\"region\": \"us-east-1\", \"endpoint\": \"http://127.0.0.1:42129\", \"path-style\": \"true\"}"
+  },
+  "materialization": {
+    "revisionOrdinal": 0.0,
+    "rootSha256": "04fcb144735f92312408157b334db74ec85bea6fe7561b3edd3e6d68f66c429d",
+    "pathSha256": "c0735bba1d54aead00b5a83404b253400562380a867b9a1b7872160bec1efc58",
+    "artifactSha256": "40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588",
+    "label": "rehearsal-v1"
+  },
+  "readerIncarnations": 2.0,
+  "registryOpensBeforeHistoricalReads": 2.0,
+  "accessMatrix": {
+    "member.v1": "OK",
+    "member.v2": "OK",
+    "stranger.v1": "NOT_FOUND",
+    "stranger.v2": "NOT_FOUND",
+    "outsider.v1": "NOT_FOUND",
+    "outsider.v2": "NOT_FOUND"
+  }
+}

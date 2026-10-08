@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="recovered-wrong-endpoint" tests="2" failures="0" errors="0" skipped="0">
+  <testcase classname="recovered-wrong-endpoint" name="wrong-endpoint.refused" timestamp="2026-10-07T12:03:25.289509518Z"><system-out>java.lang.IllegalStateException: Managed backend generation is already bound to another physical profile</system-out></testcase>
+  <testcase classname="recovered-wrong-endpoint" name="wrong-endpoint.schema.no_live_lookup" timestamp="2026-10-07T12:03:25.290328075Z"><system-out>live schema resolution attempts=0</system-out></testcase>
+</testsuite>

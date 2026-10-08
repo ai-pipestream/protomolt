@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-missing-component" tests="2" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-missing-component" name="missing-component.refused_before_resources" timestamp="2026-10-07T12:03:15.860410845Z"><system-out>refused: Required component is missing from the backup set: provider/rustfs-data.tar; resources created=0</system-out></testcase>
+  <testcase classname="negative-missing-component" name="missing-component.original_backup_untouched" timestamp="2026-10-07T12:03:15.862749756Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>

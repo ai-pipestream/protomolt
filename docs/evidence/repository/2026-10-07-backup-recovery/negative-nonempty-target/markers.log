@@ -1,0 +1,4 @@
+CHECK_OK nonempty-target.directory_refused :: refused: Restore target is not empty: /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/head/evidence/negative-nonempty-target/restore; resources created=0
+CHECK_OK nonempty-target.target_untouched :: existing file intact
+CHECK_OK nonempty-target.volume_refused :: a nonempty volume is reported occupied and never extracted into
+CHECK_OK nonempty-target.original_backup_untouched :: original backup set unchanged

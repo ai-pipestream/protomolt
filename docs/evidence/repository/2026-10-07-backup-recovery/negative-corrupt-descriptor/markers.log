@@ -1,0 +1,9 @@
+CHECK_OK restore.provider_identity :: restored provider at recorded endpoint http://127.0.0.1:42129
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-recovery-99b1eca2f-858a8532-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1580 > max stored xid8 1012 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}
+CHECK_OK restore.migration_level :: V111
+CHECK_OK corrupt-descriptor.injected :: retained descriptor artifact 40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588 replaced by damaged bytes on the disposable restored ledger
+CHECK_OK corrupt-descriptor.observed :: recovered host exit=0 marker=RECOVERED_HOST_CORRUPT_DESCRIPTOR_OK
+CHECK_OK corrupt-descriptor.not_ready :: no READY advertised
+CHECK_OK corrupt-descriptor.original_backup_untouched :: original backup set unchanged

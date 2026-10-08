@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-missing-version" tests="9" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-missing-version" name="restore.provider_identity" timestamp="2026-10-08T15:37:50.613005901Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:39835</system-out></testcase>
+  <testcase classname="negative-missing-version" name="restore.pg_restore" timestamp="2026-10-08T15:37:53.931579584Z"><system-out>exit=0 into new database protomolt-recovery-c597411fe-03bb0a91-rst-pg</system-out></testcase>
+  <testcase classname="negative-missing-version" name="restore.xid_epoch" timestamp="2026-10-08T15:37:53.971842458Z"><system-out>next xid 1580 &gt; max stored xid8 1012 (no advancement needed)</system-out></testcase>
+  <testcase classname="negative-missing-version" name="restore.sequences" timestamp="2026-10-08T15:37:53.972318979Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="negative-missing-version" name="restore.migration_level" timestamp="2026-10-08T15:37:53.972807262Z"><system-out>V111</system-out></testcase>
+  <testcase classname="negative-missing-version" name="missing-version.injected" timestamp="2026-10-08T15:37:54.159150711Z"><system-out>deleted recorded version e08bed67-2c9b-491d-bf11-396290b0cd28 of recovery-pipeline/documents/recovery-account-7ae36775-dcc7-4194-9079-0ef017e0f907/a275cb55-f625-3149-8df6-628f85e512d8/attempts/3a69d61a-11f1-4be7-a4fa-844e66d6d6da/part-0 on the disposable restored provider</system-out></testcase>
+  <testcase classname="negative-missing-version" name="missing-version.observed" timestamp="2026-10-08T15:37:56.981136310Z"><system-out>recovered host exit=0 marker=RECOVERED_HOST_MISSING_VERSION_OK</system-out></testcase>
+  <testcase classname="negative-missing-version" name="missing-version.not_ready" timestamp="2026-10-08T15:37:56.981213566Z"><system-out>no READY advertised</system-out></testcase>
+  <testcase classname="negative-missing-version" name="missing-version.original_backup_untouched" timestamp="2026-10-08T15:37:56.985833261Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>
