@@ -96,7 +96,7 @@ class RedisAtomicStorageIT {
             admin.set("atomiclegacy/key", "old bytes");
         }
         assertThatThrownBy(() -> store.get("legacy", "key")).isInstanceOf(BlobStore.BlobNotFoundException.class);
-        try (var handle = new RedisBlobStoreProvider().open(Map.of("uri", uri(), "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", "atomic"))) {
+        try (var handle = new RedisBlobStoreProvider().open(Map.of("uri", uri(), "ttl-seconds", "0", "max-object-bytes", "1024", "key-prefix", "atomic", "write-policy", "replace"))) {
             assertThat(handle.reclaimer().reclaim("recovery", "key")).isTrue();
             handle.store().put(spec("recovery", "key"), new byte[]{1});
             assertThat(handle.reclaimer().reclaim("recovery", "key")).isTrue();

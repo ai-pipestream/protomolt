@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the 1000-key pipelined {@code deleteAll}, SCAN listing across bucket
  * namespaces, and real TTL expiry. Skips cleanly without docker.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RedisBlobStoreIT {
 
     @Container
@@ -43,7 +43,7 @@ class RedisBlobStoreIT {
     static void setUp() {
         handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("redis", java.util.Map.of(
                 "uri", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379),
-                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "it:"));
+                "ttl-seconds", "0", "max-object-bytes", "0", "key-prefix", "it:", "write-policy", "replace"));
         store = (RedisBlobStore) handle.store();
     }
 

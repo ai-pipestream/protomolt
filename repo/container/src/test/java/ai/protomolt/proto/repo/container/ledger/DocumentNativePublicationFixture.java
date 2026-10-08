@@ -201,6 +201,16 @@ final class DocumentNativePublicationFixture {
         });
     }
 
+    /**
+     * A legitimately admitted, unfenced operation under another account/principal, so a
+     * wrong-binding test fails at the owner write fence rather than at the earlier absent-scope guard.
+     */
+    static RepositoryOperationLedger.Owner foreignScopedOwner(Context c, String account, String principal, UUID operation) {
+        return new RepositoryOperationLedger(c.tx).admit(new RepositoryOperationLedger.Key(account, principal, operation),
+                new RepositoryOperationLedger.EncodedCommand("test.fixture", 1, com.google.protobuf.ByteString.copyFromUtf8("fixture")),
+                UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+    }
+
     static long count(Context c,String table) { return c.tx.readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table).getSingleResult()).longValue()); }
     /** Seed real pre-V64 rows without asking the current Java terminal reader to run against an old schema. */
     static RepositoryOperationLedger.Owner seedLegacyAdmission(Context c, DocumentPublicationCommand command,

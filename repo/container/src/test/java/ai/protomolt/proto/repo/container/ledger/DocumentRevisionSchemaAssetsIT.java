@@ -110,20 +110,28 @@ class DocumentRevisionSchemaAssetsIT {
     }
 
     @Test void wrongScopeAndGenerationCannotUseCurrentOwnerFence() {
-        for (int variant = 0; variant < 3; variant++) {
+        for (int variant = 0; variant < 4; variant++) {
             try (var c = context(POSTGRES)) {
                 var p = prepare(c, 1);
                 var assets = stage(c, p.owner(), metadata(16), false);
+                var key = p.owner().key();
+                // Real admitted operations under the foreign account and principal: their scopes exist,
+                // so exactly one binding differs from the owner fenced in this transaction.
+                foreignScopedOwner(c, "foreign", key.principal(), key.operationId());
+                foreignScopedOwner(c, key.account(), "foreign", key.operationId());
                 int fault = variant;
                 assertThatThrownBy(() -> publish(c, p, Fault.NONE, false, (em, revision) -> {
                     reference(em, revision, p.owner(), assets.descriptorHash);
                     reference(em, revision, p.owner(), assets.metadataHash);
                     bindRow(em, revision, p.owner(), assets, "type.test/fixture.Record", assets.descriptor,
                             assets.metadataHash, null,
-                            fault == 0 ? "foreign" : p.owner().key().account(),
-                            fault == 1 ? "foreign" : p.owner().key().principal(),
+                            fault == 0 ? "foreign" : fault == 3 ? "unscoped" : key.account(),
+                            fault == 1 ? "foreign" : key.principal(),
                             fault == 2 ? p.owner().generation() + 1 : p.owner().generation());
-                }, em -> {})).hasStackTraceContaining("live owner write fence");
+                }, em -> {})).hasStackTraceContaining(fault == 3 ? "Repository execution scope is absent"
+                        : "live owner write fence");
+                assertThat(count(c, "document_revision_schema_assets")).isZero();
+                assertThat(count(c, "document_revision_commits")).isZero();
             }
         }
     }

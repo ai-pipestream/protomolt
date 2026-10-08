@@ -113,7 +113,11 @@ public final class AssessmentRejectionProbe {
         }
         verifyTerminalReads(tx, provider, caller, owner, command, selected, stage, current, observation, scenario);
         if (scenario == 1) AssessmentCaptureFaultProbe.runRejected(database, tx, caller, command);
-        if (scenario == 2) RejectedAssessmentExpiryProbe.run(database, tx, caller, command, stage);
+        if (scenario == 2) {
+            System.out.println("ASSESSMENT_REJECTION_EXPIRY_START");
+            RejectedAssessmentExpiryProbe.run(database, tx, caller, command, stage);
+            System.out.println("ASSESSMENT_REJECTION_EXPIRY_END");
+        }
         return current;
     }
 

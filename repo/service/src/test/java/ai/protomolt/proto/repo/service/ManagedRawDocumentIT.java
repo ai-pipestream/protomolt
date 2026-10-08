@@ -58,9 +58,18 @@ class ManagedRawDocumentIT {
         documents = new DocumentLedger(tx);
         drives = new DriveLedger(tx);
         raw = documents.rawObjects();
-        opened = BlobStores.discover().open("s3", Map.of("endpoint", S3.getEndpoint().toString(),
-                "region", S3.getRegion(), "access-key", S3.getAccessKey(), "secret-key", S3.getSecretKey(),
-                "path-style", "true", "conditional-writes", "false"));
+        opened = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", S3.getEndpoint().toString()),
+                Map.entry("region", S3.getRegion()),
+                Map.entry("access-key", S3.getAccessKey()),
+                Map.entry("secret-key", S3.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
         store = opened.store();
         primary = drive("managed-primary");
         secondary = drive("managed-secondary");

@@ -15,6 +15,8 @@ import java.util.*;
 public final class BoundedDocumentPublicFactoryProbe {
     public static void run(Path bundle) throws Exception {
         for (boolean rpc:new boolean[]{false,true}) {
+            long started = System.nanoTime();
+            phase(rpc, "factory-start", started);
             var config=new RepoServiceConfig(0,new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                     System.getenv("PROTOMOLT_TEST_USER"),System.getenv("PROTOMOLT_TEST_PASSWORD")),
                     "http://127.0.0.1:1","us-east-1","unused","unused","public-bounded",0,
@@ -37,17 +39,28 @@ public final class BoundedDocumentPublicFactoryProbe {
                 var publication=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
                         (account,principal,operation) -> caller);
                 if (rpc) publication=publication.withTransport(new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
+                phase(rpc, "factory-ready", started);
                 try {
+                    phase(rpc, "consumer-start", started);
                     BoundedDocumentPublicConsumer.run(config,schemas,publication,caller,host -> {
+                        phase(rpc, "fixture-prepare-start", started);
                         var fixture=BoundedDocumentHostProbe.prepare(host,new Tx(database.entityManagerFactory()));
+                        phase(rpc, "fixture-prepared", started);
                         return new BoundedDocumentPublicConsumer.Fixture(fixture.request(),fixture.document());
                     },rpc);
+                    phase(rpc, "consumer-complete", started);
                 } finally { schemas.close(); }
             } finally {
                 try (var paths=Files.walk(directory)) {
                     for (var path:paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
                 }
             }
+            phase(rpc, "factory-closed", started);
         }
+    }
+    private static void phase(boolean rpc, String name, long started) {
+        System.out.printf("PHASE name=factory-%s-%s elapsed_ms=%d%n", rpc ? "rpc" : "library", name,
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        System.out.flush();
     }
 }

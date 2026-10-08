@@ -2,6 +2,7 @@ package ai.protomolt.proto.platform;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ai.protomolt.proto.authz.AccessPolicyCallers;
 import ai.protomolt.proto.intake.service.identity.ApiKeyServerInterceptor;
 import ai.protomolt.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
@@ -45,6 +46,7 @@ import java.util.Map;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -76,6 +78,10 @@ class DocumentPlatformSmokeIT {
 
     static final String ACCOUNT = "acct-platform";
     static final String API_KEY = "platform-smoke-key";
+    /** Synthetic operator token: a node mounting the repository role is always guarded. */
+    static final String OPERATOR_TOKEN = "platform-smoke-operator-token";
+    /** Synthetic console login; the guarded console admits access-policy principals only. */
+    static final String CONSOLE_CREDENTIAL = "platform-smoke-console-credential";
     static final ObjectMapper MAPPER = new ObjectMapper();
     static final HttpClient HTTP = HttpClient.newHttpClient();
 
@@ -97,11 +103,19 @@ class DocumentPlatformSmokeIT {
     static ManagedChannel intakeChannel;
     static ManagedChannel repoChannel;
     static URI registryBase;
+    static String consoleCookie;
 
     static IngestDocumentResponse receipt;
 
     @BeforeAll
     static void boot() throws Exception {
+        Path policy = work.resolve("access-policy.json");
+        Files.writeString(policy, """
+                {"principals": [
+                  {"name": "console-operator",
+                   "credentialSha256": ["%s"],
+                   "scopes": ["search-query", "schema-read", "service-invoke"]}
+                ]}""".formatted(AccessPolicyCallers.sha256Hex(CONSOLE_CREDENTIAL)));
         platform = DocumentPlatform.start(
                 new DocumentPlatformConfig(
                         new RepoServiceConfig(
@@ -133,13 +147,12 @@ class DocumentPlatformSmokeIT {
                         0,
                         0,
                         null,
-                        Map.of()),
+                        Map.of(DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR_TOKEN,
+                                DocumentPlatformConfig.ENV_ACCESS_POLICY, policy.toString())),
                 new InMemoryApiKeyIdentityResolver()
                         .register(API_KEY, IntakeScope.unrestricted(ACCOUNT)));
 
-        repoChannel = NettyChannelBuilder.forAddress("127.0.0.1", platform.repoPort())
-                .usePlaintext()
-                .build();
+        repoChannel = operatorChannel(platform.repoPort());
         DriveServiceGrpc.newBlockingStub(repoChannel).createDrive(CreateDriveRequest.newBuilder()
                 .setName("intake")
                 .setAccountId(ACCOUNT)
@@ -168,7 +181,8 @@ class DocumentPlatformSmokeIT {
     @Order(1)
     void theRegistryServesTheDocumentModelFromFirstBoot() throws Exception {
         HttpResponse<String> subjects = HTTP.send(
-                HttpRequest.newBuilder(registryBase.resolve("/subjects")).GET().build(),
+                HttpRequest.newBuilder(registryBase.resolve("/subjects"))
+                        .header("api_token", OPERATOR_TOKEN).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(subjects.statusCode()).isEqualTo(200);
         assertThat(subjects.body()).contains(DocumentPlatform.DOCUMENT_SUBJECT);
@@ -261,10 +275,7 @@ class DocumentPlatformSmokeIT {
         }
         assertThat(status).isEqualTo("COMPLETED");
 
-        ManagedChannel searchChannel = NettyChannelBuilder
-                .forAddress("127.0.0.1", platform.searchPort())
-                .usePlaintext()
-                .build();
+        ManagedChannel searchChannel = operatorChannel(platform.searchPort());
         try {
             SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
                     .search(SearchRequest.newBuilder()
@@ -313,10 +324,7 @@ class DocumentPlatformSmokeIT {
         }
 
         // The replay re-indexed everything; nothing duplicated.
-        ManagedChannel searchChannel = NettyChannelBuilder
-                .forAddress("127.0.0.1", platform.searchPort())
-                .usePlaintext()
-                .build();
+        ManagedChannel searchChannel = operatorChannel(platform.searchPort());
         try {
             SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
                     .search(SearchRequest.newBuilder()
@@ -354,8 +362,17 @@ class DocumentPlatformSmokeIT {
         assertThat(page.statusCode()).isEqualTo(200);
         assertThat(page.body()).contains("Search Console");
 
+        // The guarded console signs in an access-policy principal and bridges with its session.
+        HttpResponse<String> login = HTTP.send(
+                HttpRequest.newBuilder(URI.create(base + "/session"))
+                        .POST(HttpRequest.BodyPublishers.ofString(CONSOLE_CREDENTIAL)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(login.statusCode()).as(login.body()).isEqualTo(200);
+        consoleCookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
         HttpResponse<String> subjects = HTTP.send(
-                HttpRequest.newBuilder(URI.create(base + "/subjects")).GET().build(),
+                HttpRequest.newBuilder(URI.create(base + "/subjects"))
+                        .header("Cookie", consoleCookie).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(subjects.statusCode()).isEqualTo(200);
         JsonNode surface = MAPPER.readTree(subjects.body());
@@ -365,6 +382,7 @@ class DocumentPlatformSmokeIT {
         HttpResponse<String> hits = HTTP.send(
                 HttpRequest.newBuilder(URI.create(base + "/search"))
                         .header("Content-Type", "application/json")
+                        .header("Cookie", consoleCookie)
                         .POST(HttpRequest.BodyPublishers.ofString(
                                 "{\"mappingSubject\":\"" + RepoDocumentMapping.SUBJECT
                                         + "\",\"query\":\"container works\",\"k\":5,"
@@ -379,6 +397,7 @@ class DocumentPlatformSmokeIT {
         HttpResponse<String> jobs = HTTP.send(
                 HttpRequest.newBuilder(URI.create(base + "/actions/list-jobs"))
                         .header("Content-Type", "application/json")
+                        .header("Cookie", consoleCookie)
                         .POST(HttpRequest.BodyPublishers.ofString("{}"))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -390,10 +409,7 @@ class DocumentPlatformSmokeIT {
     @Order(8)
     void theMetricServiceCountsTheCorpusOverTcpAndThroughTheCatalogVerbs() throws Exception {
         // The gRPC surface: the same live index the search service serves.
-        ManagedChannel metricsChannel = NettyChannelBuilder
-                .forAddress("127.0.0.1", platform.metricsPort())
-                .usePlaintext()
-                .build();
+        ManagedChannel metricsChannel = operatorChannel(platform.metricsPort());
         try {
             QueryMetricsResponse answered = MetricServiceGrpc.newBlockingStub(metricsChannel)
                     .queryMetrics(QueryMetricsRequest.newBuilder()
@@ -461,10 +477,7 @@ class DocumentPlatformSmokeIT {
         assertThat(status).isEqualTo("COMPLETED");
 
         // The document no longer answers the query that found it before.
-        ManagedChannel searchChannel = NettyChannelBuilder
-                .forAddress("127.0.0.1", platform.searchPort())
-                .usePlaintext()
-                .build();
+        ManagedChannel searchChannel = operatorChannel(platform.searchPort());
         try {
             SearchResponse hits = SearchServiceGrpc.newBlockingStub(searchChannel)
                     .search(SearchRequest.newBuilder()
@@ -547,10 +560,7 @@ class DocumentPlatformSmokeIT {
         assertThat(reconciled.path("submitted").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(reconciled.path("pruned").asInt()).isGreaterThanOrEqualTo(1);
 
-        ManagedChannel searchChannel = NettyChannelBuilder
-                .forAddress("127.0.0.1", platform.searchPort())
-                .usePlaintext()
-                .build();
+        ManagedChannel searchChannel = operatorChannel(platform.searchPort());
         try {
             SearchResponse pruned = SearchServiceGrpc.newBlockingStub(searchChannel)
                     .search(SearchRequest.newBuilder()
@@ -574,10 +584,21 @@ class DocumentPlatformSmokeIT {
         }
     }
 
+    /** A TCP channel presenting the synthetic operator token to a guarded listener. */
+    static ManagedChannel operatorChannel(int port) {
+        Metadata identity = new Metadata();
+        identity.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), OPERATOR_TOKEN);
+        return NettyChannelBuilder.forAddress("127.0.0.1", port)
+                .usePlaintext()
+                .intercept(MetadataUtils.newAttachHeadersInterceptor(identity))
+                .build();
+    }
+
     static JsonNode postAction(String name, ObjectNode input) throws Exception {
         HttpResponse<String> response = HTTP.send(
                 HttpRequest.newBuilder(registryBase.resolve("/protomolt/actions/" + name))
                         .header("Content-Type", "application/json")
+                        .header("api_token", OPERATOR_TOKEN)
                         .POST(HttpRequest.BodyPublishers.ofString(input.toString()))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());

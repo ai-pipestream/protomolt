@@ -966,13 +966,14 @@ public final class RepoServices implements AutoCloseable {
 
     private static java.util.Map<String, String> redisOptions(RepoServiceConfig config, boolean bounded) {
         var options = new java.util.HashMap<>(redisOptions(config));
-        if (bounded) options.put("write-policy", "create-only");
+        options.put("write-policy", bounded ? "create-only" : "replace");
         return java.util.Map.copyOf(options);
     }
 
     private static java.util.Map<String, String> redisOptions(RepoServiceConfig config) {
         return java.util.Map.of("uri", config.redisUri(), "ttl-seconds", Integer.toString(config.redisTtlSeconds()),
-                "max-object-bytes", Long.toString(config.redisMaxObjectBytes()), "key-prefix", "");
+                "max-object-bytes", Long.toString(config.redisMaxObjectBytes()), "key-prefix", "",
+                "write-policy", "replace");
     }
 
     private static java.util.Map<String, String> s3Options(RepoServiceConfig config) {
@@ -982,6 +983,11 @@ public final class RepoServices implements AutoCloseable {
         options.put("path-style", Boolean.toString(config.s3Endpoint() != null));
         options.put("conditional-writes", Boolean.toString(config.s3ConditionalWrites()));
         options.put("credentials-mode", config.hasStaticCredentials() ? "static" : "default-chain");
+        // The host chooses its S3 time budget explicitly; the provider has no defaults.
+        options.put("api-call-timeout-ms", "300000");
+        options.put("api-attempt-timeout-ms", "60000");
+        options.put("connection-timeout-ms", "10000");
+        options.put("socket-timeout-ms", "60000");
         if (config.hasStaticCredentials()) {
             options.put("access-key", config.s3AccessKey());
             options.put("secret-key", config.s3SecretKey());

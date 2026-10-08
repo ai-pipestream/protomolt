@@ -147,6 +147,9 @@ tasks.register('scopedPublicationTest', Test) {
         systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
         systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
                 configurations.assessmentTransportRuntime).asPath
+        // Persisted probe log: replaced by every run, kept after temporary-directory cleanup.
+        systemProperty 'protomolt.test.scopedPublicationLog',
+                reports.junitXml.outputLocation.file('scoped-publication.log').get().asFile.absolutePath
     }
     useJUnitPlatform()
 }
