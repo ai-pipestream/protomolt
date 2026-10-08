@@ -49,6 +49,11 @@ class DocumentCaptureAdmissionClosureIT {
     static Rig historicalInitial(Context c) throws Exception { return prepare(c, false, false, true, Duration.ofSeconds(1)); }
     static Rig historicalInitial(Context c, Duration lease) throws Exception { return prepare(c, false, false, true, lease); }
 
+    static Rig historicalInitial(Context c, java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim,
+            Runnable afterPreparation) throws Exception {
+        return prepare(c, false, false, true, Duration.ofMinutes(5), beforeClaim, false, afterPreparation);
+    }
+
     static Rig historicalCreationInitial(Context c, java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim) throws Exception {
         return prepare(c, false, false, true, Duration.ofSeconds(1), beforeClaim, true);
     }
@@ -87,7 +92,9 @@ class DocumentCaptureAdmissionClosureIT {
     }
 
     @Test void migrationCannotInventInitialCaptureForRetainedLegacyHistory() throws Exception {
-        try (var c = context(POSTGRES, "103"); var rig = prepare(c, false, false, false)) {
+        var legacy = DocumentPreparationRootReleaseIT.legacyReaderContext(POSTGRES, "103");
+        try (var c = legacy.context(); var rig = prepare(c, false, false, false)) {
+            legacy.disable();
             org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
                     .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load().migrate();
             var bytes = DocumentPublicationPreparationCodec.encode(rig.record());
@@ -287,7 +294,8 @@ class DocumentCaptureAdmissionClosureIT {
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void abandonedPreparationCannotAddAnotherCaptureButOpenPreparationCan(boolean migrateExisting) throws Exception {
-        try (var c = migrateExisting ? context(POSTGRES, "107") : context(POSTGRES); var rig = prepare(c)) {
+        var legacy = migrateExisting ? DocumentPreparationRootReleaseIT.legacyReaderContext(POSTGRES, "107") : null;
+        try (var c = migrateExisting ? legacy.context() : context(POSTGRES); var rig = prepare(c)) {
             // A positive control: an open preparation can add a fresh capture.
             append(c, rig);
             assertThat(batches(c, rig)).isEqualTo(2);
@@ -421,6 +429,12 @@ class DocumentCaptureAdmissionClosureIT {
 
     private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture, Duration lease,
             java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim, boolean creation) throws Exception {
+        return prepare(c, repeatedSelector, twoParts, capture, lease, beforeClaim, creation, () -> {});
+    }
+
+    private static Rig prepare(Context c, boolean repeatedSelector, boolean twoParts, boolean capture, Duration lease,
+            java.util.function.Consumer<DocumentPublicationPreparationRecord> beforeClaim, boolean creation,
+            Runnable afterPreparation) throws Exception {
         var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("capture-coverage")
                 .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
                         .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.getDefaultInstance()))
@@ -465,6 +479,7 @@ class DocumentCaptureAdmissionClosureIT {
                 var bytes = DocumentPublicationPreparationCodec.encode(record);
                 DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
                         DocumentPublicationPreparationJournal.digest(bytes), sources.references(command, () -> {}));
+                afterPreparation.run();
                 lockSources(em, fixture, pins);
                 if (capture) DocumentPreparationSourcePins.insert(em, record, pins, acquired.claim(), coordinator, () -> {});
                 return acquired.claim();

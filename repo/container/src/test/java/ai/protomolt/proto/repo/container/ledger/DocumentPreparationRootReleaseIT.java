@@ -108,7 +108,13 @@ class DocumentPreparationRootReleaseIT {
 
     /** V110 has no host binding column; only this fixture's unbound reader registration uses its old SQL shape. */
     private static LegacyReaderContext legacyReaderContext() {
-        var base=context(POSTGRES,"110");
+        return legacyReaderContext(POSTGRES,"110");
+    }
+
+    static LegacyReaderContext legacyReaderContext(PostgreSQLContainer postgres,String target) {
+        if (!java.util.Set.of("103","107","110").contains(target))
+            throw new IllegalArgumentException("Unsupported legacy reader fixture version");
+        var base=context(postgres,target);
         var enabled=new AtomicBoolean(true);
         try {
             var dataSource=legacyReaderRegistration(base.pool(),enabled);
@@ -119,7 +125,7 @@ class DocumentPreparationRootReleaseIT {
         } catch (RuntimeException|Error failure) { base.close(); throw failure; }
     }
 
-    private record LegacyReaderContext(Context context,AtomicBoolean enabled) {
+    record LegacyReaderContext(Context context,AtomicBoolean enabled) {
         void disable() { enabled.set(false); }
     }
 
@@ -139,7 +145,7 @@ class DocumentPreparationRootReleaseIT {
                                     return invoke(connection,operation,parameters);
                                 if (!normalized.equals("insertintorepository_reader_incarnations(incarnation,state,registration_nonce,host_execution)"
                                         +"values(?,'active',?,cast(?asuuid))"))
-                                    throw new SQLException("Unexpected V110 reader registration statement");
+                                    throw new SQLException("Unexpected pre-V112 reader registration statement");
                                 var oldParameters=parameters.clone();
                                 oldParameters[0]="INSERT INTO repository_reader_incarnations(incarnation,state,registration_nonce) "
                                         +"VALUES(?,'ACTIVE',?)";
@@ -150,7 +156,7 @@ class DocumentPreparationRootReleaseIT {
                                                     && values[0] instanceof Integer index && index==3) {
                                                 if (call.getName().equals("setNull")
                                                         || values.length>1 && values[1]==null) return null;
-                                                throw new SQLException("V110 fixture cannot register a host-bound reader");
+                                                throw new SQLException("Pre-V112 fixture cannot register a host-bound reader");
                                             }
                                             return invoke(statement,call,values);
                                         });

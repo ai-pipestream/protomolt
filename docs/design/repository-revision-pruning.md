@@ -227,6 +227,12 @@ siblings and in-flight consumers remain safe, and immutable replay still works.
 
 ## Review checkpoint
 
+The first implementation prerequisite is V116's nonblocking shared source-key fence
+on read-pin and preparation-root INSERTs. Both read scopes are covered because a
+CURRENT pin can survive a pointer move. [PostgreSQL evidence](../evidence/repository/2026-10-08-history-acquisition-fence/README.md)
+covers both transaction orderings and complete registration rollback. This does
+not establish a pruned-state check, release live references or permit deletion.
+
 Sol reviewed the source obligations and this design on 2026-10-08. The review
 supports preserving audit identities, splitting schema payloads, and avoiding the
 attempt-wide cleanup path. It also confirmed the nonempty CORE invariant, so no
