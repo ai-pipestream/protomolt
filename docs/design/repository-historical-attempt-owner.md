@@ -1289,3 +1289,9 @@ on the same claim. Both return one durable rejection. The owner lock remains
 available while cancellation waits. See
 `docs/evidence/repository/2026-10-08-terminal-decision-contention/`.
 This does not establish assessment-rejection versus cancellation ordering.
+
+Historical assessment rejection before cancellation is qualified with real
+providers. Cancellation waits at the rejection commit boundary, then returns the
+same receipt after commit despite loss of the rejection acknowledgement.
+See `docs/evidence/repository/2026-10-08-rejection-cancellation-race/`.
+Cancellation-before-rejection and pending-decision revocation remain unqualified.

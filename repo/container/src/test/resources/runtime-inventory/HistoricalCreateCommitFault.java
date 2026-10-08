@@ -21,6 +21,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     private record Rejection(RepositoryOperationLedger.Owner owner, UUID assessment) {}
     private final AtomicReference<Rejection> rejection = new AtomicReference<>();
     private final AtomicBoolean fired = new AtomicBoolean();
+    private java.util.function.IntConsumer rejectionCommit;
     private final jakarta.persistence.EntityManagerFactory factory;
     private final Tx tx;
     private final boolean lostAcknowledgement;
@@ -39,6 +40,11 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                                                 || ownsPublication(connection) || ownsVerification(connection) || ownsRejection(connection));
                                 if (target && !fired.compareAndSet(false, true))
                                     throw new AssertionError("Assessment commit fault was entered concurrently");
+                                if (target && rejection.get() != null && rejectionCommit != null) {
+                                    try (var query = connection.createStatement(); var rows = query.executeQuery("SELECT pg_backend_pid()")) {
+                                        rows.next(); rejectionCommit.accept(rows.getInt(1));
+                                    }
+                                }
                                 if (target && !lostAcknowledgement)
                                     throw new SQLException("Injected assessment commit rollback", "40001");
                                 Object returned = invoke(connection, action, arguments);
@@ -52,6 +58,10 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     }
 
     Tx tx() { return tx; }
+    void onRejectionCommit(java.util.function.IntConsumer action) {
+        if (rejectionCommit != null || fired.get()) throw new IllegalStateException("Rejection commit hook already used");
+        rejectionCommit = java.util.Objects.requireNonNull(action);
+    }
     void armRejection(RepositoryOperationLedger.Owner owner, UUID id) {
         if (assessment.get() != null || startKey.get() != null || publication.get() != null || verification.get() != null
                 || !rejection.compareAndSet(null, new Rejection(owner, id)))

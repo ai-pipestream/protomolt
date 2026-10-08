@@ -171,12 +171,29 @@ final class HistoricalInitialOwnerProbe {
             }
             if (reject) {
                 int heldReads = reads.outstandingReads();
-                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                var cancellation = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<DocumentPublicationReplay.Observation>>();
+                try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+                     var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
                     require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact rejection backend");
                     return provider.store();
                 }, 4, 4_000_000, budget); var request = attempts.resume(caller, command).orElseThrow()) {
                     if (rejectionFault != null) {
                         rejectionFault.armRejection(owner, started.assessment());
+                        rejectionFault.onRejectionCommit(pid -> {
+                            cancellation.set(workers.submit(() -> new DocumentPublicationRejections(observer.withTimeouts(
+                                    new SqlTimeouts(Duration.ofSeconds(10), Duration.ofSeconds(15))))
+                                    .cancel(caller, owner, command, RepositoryReadControl.NONE)));
+                            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+                            boolean waiting = false;
+                            while (System.nanoTime() < until) {
+                                waiting = observer.readOnly(em -> ((Number) em.createNativeQuery("""
+                                        SELECT count(*) FROM pg_stat_activity WHERE :pid=ANY(pg_blocking_pids(pid))
+                                        """).setParameter("pid", pid).getSingleResult()).longValue() == 1);
+                                if (waiting) break;
+                                java.util.concurrent.locks.LockSupport.parkNanos(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(10));
+                            }
+                            require(waiting && !cancellation.get().isDone(), "cancellation waits for uncommitted historical rejection");
+                        });
                         try {
                             request.rejectAssessment(selections, reads, reader,
                                     new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
@@ -195,6 +212,13 @@ final class HistoricalInitialOwnerProbe {
                             "invalid historical candidate produces exact assessment-bound rejection");
                     require(new DocumentPublicationReplay(observer).observe(caller, command).rejection().equals(decided.rejection()),
                             "historical rejection replays durably");
+                    if (cancellation.get() != null) {
+                        require(cancellation.get().get(5, java.util.concurrent.TimeUnit.SECONDS).equals(decided),
+                                "waiting cancellation returns committed assessment rejection unchanged");
+                        require(count(observer, key, "repository_operation_rejection") == 1,
+                                "competing cancellation creates no second decision");
+                        System.out.println("HISTORICAL_REJECTION_BEATS_CANCELLATION_OK");
+                    }
                     reads.releaseDrained(32);
                     require(reads.outstandingReads() == heldReads && !history.isReleased(),
                             "assessment replay releases its reads while historical source stays retained");
