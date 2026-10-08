@@ -49,7 +49,7 @@ final class DocumentHistoricalSchemas {
             active.run();
         } catch (CancellationException failure) {
             throw failure;
-        } catch (InvalidProtocolBufferException | IllegalArgumentException failure) {
+        } catch (InvalidProtocolBufferException | IllegalArgumentException | DocumentSchemaAdmission.DataLoss failure) {
             authorize(caller, address);
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
                     "Historical content or retained schema failed validation", failure);
