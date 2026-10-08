@@ -1049,13 +1049,19 @@ not prove that facade routing carries the same identity, control and cleanup rul
   and PostgreSQL confirmation that the ACL writer waits on the publisher PID.
   READ removal after commit denies receipt delivery and replay; WRITE-only removal
   preserves the exact SQL receipt when READ remains. See [commit-winner evidence](../evidence/repository/2026-10-08-historical-public-acl-commit-winner/README.md).
-  Credential and admission-policy publication-first races remain.
+  Credential and admission-policy publication-first cases now also pass through
+  library/gRPC. The actual administration connection waits on the publisher PID;
+  its transaction completes before the publication reply resumes. Credential
+  revocation denies delivery/replay with UNAUTHENTICATED while preserving success.
+  Policy replacement preserves exact authorized delivery/replay of that success.
+  See [authority commit-winner evidence](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md).
   Active policy replacement during upload now has library/gRPC cases. The facade
   maps `DocumentSchemaPolicies.StalePolicy` to FAILED_PRECONDITION; exact retry
   preserves the stale assessment and reports the same specific failure without
   new upload, selection or schema work. Private exception behavior is unchanged.
   See [policy-change evidence](../evidence/repository/2026-10-08-historical-public-policy-change/README.md).
-  Admission-policy publication-first SQL ordering remains to be qualified.
+  These cases cover replacement before upload completion and publication before
+  administration. They do not establish every possible intermediate race boundary.
 - Publication acknowledgement loss: commit the real publication transaction and
   lose its reply. An exact public retry must recover the authorized durable receipt
   with one revision, no second PUT and no second assessment CREATE.

@@ -52,6 +52,7 @@ Recent evidence:
 - [Historical public READ and WRITE revocation](../evidence/repository/2026-10-08-historical-public-acl-revocation/README.md)
 - [Historical public admission-policy change](../evidence/repository/2026-10-08-historical-public-policy-change/README.md)
 - [Historical public publication before ACL change](../evidence/repository/2026-10-08-historical-public-acl-commit-winner/README.md)
+- [Historical public publication before credential/policy change](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

@@ -46,9 +46,14 @@ final class HistoricalPublicDispatchProbe {
     static void runWinners(Tx observer, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source, Map<Integer, ByteString> fragments,
             PayloadBudget budget, javax.sql.DataSource database) throws Exception {
-        for (String phase : List.of("winner-read-library", "winner-read-grpc", "winner-write-library", "winner-write-grpc")) {
-            try (var gate = new HistoricalAuthorizationCommitGate(database, HistoricalAuthorizationCommitGate.Phase.PUBLICATION)) {
-                run(gate.tx(), provider, caller, original, placement, source, fragments, budget, null, phase, gate, observer);
+        for (String phase : List.of("winner-read-library", "winner-read-grpc", "winner-write-library", "winner-write-grpc",
+                "winner-credential-library", "winner-credential-grpc", "winner-policy-library", "winner-policy-grpc")) {
+            var binding = new RepositoryCredentialBinding("public-commit-winner", UUID.randomUUID(), 1);
+            new RepositoryCredentialAuthorities(observer).register(new RepositoryCaller("operator", true), binding, caller.principalName());
+            var scoped = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), caller.identities(), Optional.of(binding));
+            try (var gate = new HistoricalAuthorizationCommitGate(database, HistoricalAuthorizationCommitGate.Phase.PUBLICATION);
+                 var updater = new HistoricalObservedWriter(database)) {
+                run(gate.tx(), provider, scoped, original, placement, source, fragments, budget, null, phase, gate, observer, updater);
             }
         }
     }
@@ -56,13 +61,13 @@ final class HistoricalPublicDispatchProbe {
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
-        run(tx, provider, caller, original, placement, source, fragments, budget, fault, phase, null, tx);
+        run(tx, provider, caller, original, placement, source, fragments, budget, fault, phase, null, tx, null);
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase,
-            HistoricalAuthorizationCommitGate gate, Tx observer) throws Exception {
+            HistoricalAuthorizationCommitGate gate, Tx observer, HistoricalObservedWriter updater) throws Exception {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
                 || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-")
@@ -178,8 +183,8 @@ final class HistoricalPublicDispatchProbe {
                             var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
                             if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
                                     (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicCommitWinnerProbe.run(
-                                            observer, gate, remoteRepository, caller, request.build(), node, phase.contains("-read-")));
-                            else HistoricalPublicCommitWinnerProbe.run(observer, gate, repository, caller, request.build(), node, phase.contains("-read-"));
+                                            observer, gate, remoteRepository, caller, request.build(), node, phase.split("-")[1], updater));
+                            else HistoricalPublicCommitWinnerProbe.run(observer, gate, repository, caller, request.build(), node, phase.split("-")[1], updater);
                         }
                         else if (phase.endsWith("-library")) HistoricalPublicAuthorizationProbe.run(tx, takeover, runtime, reads,
                                 repository, caller, request.build(), selections, resolutions, phase.split("-")[0],
