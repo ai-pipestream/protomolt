@@ -206,3 +206,14 @@ the case counts and the "never silently passes" wording were corrected. Sol's pl
 advice for the two classification observations is recorded in findings 1 and 4. The
 earlier verdict ("not ready for coordinator integration") predates these changes; the
 coordinator decides on the archived run below.
+
+Independent verification of the reviewed tree (2026-10-08T12:34Z, same host, Kimi agent):
+the documented command was rerun end to end on the reviewed sources — BUILD SUCCESSFUL in
+2m22s, 12 tests, 0 failures, 0 errors, 0 skipped, all twelve outcomes `passed: true`
+(`verification-2026-10-08T1240Z/summary.json`, `junit-results.xml`, `environment.txt`,
+`driver-sources.tsv`). This is a third complete execution of both clean-room rehearsals,
+not a replay of archived results. The same session removed six unused duplicate driver
+sources under `backup-recovery/driver/ai/` (an abandoned parallel draft swept into
+`bbff47177` by an overlapping editor; never listed in
+`RepositoryBackupRehearsalProbeCompiler.SOURCES`, never compiled, never referenced); the
+verification run above was made after that removal.

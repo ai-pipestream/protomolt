@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-08T12:34:11.148Z" hostname="krick" time="140.075">
+  <properties/>
+  <testcase name="rehearsalRunOne()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="27.784"/>
+  <testcase name="rehearsalRunTwo()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="26.782"/>
+  <testcase name="preflightRefusesDamagedSets()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="1.36"/>
+  <testcase name="inconsistentCatalogAndObjectSnapshotRefuses()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="9.036"/>
+  <testcase name="missingProviderVersionRefusesWithoutSubstitution()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="9.716"/>
+  <testcase name="corruptRetainedDescriptorRefusesWithoutLiveSubstitution()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="10.022"/>
+  <testcase name="missingRetainedDescriptorRefusesWithoutLiveSubstitution()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="9.498"/>
+  <testcase name="wrongEndpointUnderRecordedGenerationRefuses()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="8.049"/>
+  <testcase name="newGenerationAtRecordedEndpointRefusesHistory()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="8.949"/>
+  <testcase name="wrongProviderCredentialsRefuse()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="8.942"/>
+  <testcase name="wrongDatabaseCredentialsRefuseTheHost()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="6.557"/>
+  <testcase name="copyingObjectsDoesNotPreserveProviderIdentity()" classname="ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalIT" time="12.227"/>
+  <system-out><![CDATA[REPOSITORY_BACKUP_REHEARSAL_EVIDENCE /work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T12-34-11.151764832Z
+CHECK_OK source.started :: postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:37405
+CHECK_OK seed.exit :: seed host exit=0 with REPOSITORY_BACKUP_REHEARSAL_SEED_OK
+CHECK_OK capture.quiescent :: no other client backend, no ACTIVE reader incarnation, no read pin, no staging part attempt: {activeReaderIncarnations=0, documentReadPins=0, stagingPartAttempts=0} (the pending operation's journal rows are durable state, not process activity)
+CHECK_OK capture.catalog_fingerprinted :: tables=92 V119 xid8 columns=22 maxStoredXid=1083 coverage invariants hold: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK capture.pg_dump :: exit=0 bytes=818017
+CHECK_OK capture.post_dump_quiescent :: no client backend after pg_dump; every table fingerprint unchanged across the dump window
+CHECK_OK capture.stopped :: postgres {finishedAt=2026-10-08T12:34:26.203368433Z, status=exited, exitCode=0}; rustfs {finishedAt=2026-10-08T12:34:26.437474967Z, status=exited, exitCode=0}
+CHECK_OK capture.provider_archive :: stopped RustFS volume archived, bytes=152064
+CHECK_OK capture.sealed :: components=17 manifest sha256=03860e5615a73360aa6dd224a760b2fed9b3698804112994314c1491fa38c7c5
+CHECK_OK capture.preflight :: sealed set verifies; 19 files fingerprinted before restore
+CHECK_OK source.unreachable :: source containers removed; database refuses connections; provider port 37405 free
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-766c08a5d-910096a0-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK recovered.exit :: recovered host exit=0, READY written after verification
+CHECK_OK source.volume_untouched :: source provider volume digest unchanged a5b056a9c710454c36d333b9487a5ff055a0d81ed5e256a94445b6172613f553
+CHECK_OK backup.untouched :: every file of the sealed set, including manifest.json and SEALED, unchanged after restore and verification
+CHECK_OK source.started :: postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:46767
+CHECK_OK seed.exit :: seed host exit=0 with REPOSITORY_BACKUP_REHEARSAL_SEED_OK
+CHECK_OK capture.quiescent :: no other client backend, no ACTIVE reader incarnation, no read pin, no staging part attempt: {activeReaderIncarnations=0, documentReadPins=0, stagingPartAttempts=0} (the pending operation's journal rows are durable state, not process activity)
+CHECK_OK capture.catalog_fingerprinted :: tables=92 V119 xid8 columns=22 maxStoredXid=1083 coverage invariants hold: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK capture.pg_dump :: exit=0 bytes=818017
+CHECK_OK capture.post_dump_quiescent :: no client backend after pg_dump; every table fingerprint unchanged across the dump window
+CHECK_OK capture.stopped :: postgres {finishedAt=2026-10-08T12:34:53.458422068Z, status=exited, exitCode=0}; rustfs {finishedAt=2026-10-08T12:34:53.715842478Z, status=exited, exitCode=0}
+CHECK_OK capture.provider_archive :: stopped RustFS volume archived, bytes=152064
+CHECK_OK capture.sealed :: components=17 manifest sha256=e052141b8e40e26848c0df8fd3ad3ab92cedfb49968188309d0df017a518943c
+CHECK_OK capture.preflight :: sealed set verifies; 19 files fingerprinted before restore
+CHECK_OK source.unreachable :: source containers removed; database refuses connections; provider port 46767 free
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:46767
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-ddeb9e045-d7585926-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK recovered.exit :: recovered host exit=0, READY written after verification
+CHECK_OK source.volume_untouched :: source provider volume digest unchanged e389ab35d29f1027ad376ec78afcd67f5e21a2574f74ea8135fdb72b61199e45
+CHECK_OK backup.untouched :: every file of the sealed set, including manifest.json and SEALED, unchanged after restore and verification
+CHECK_OK missing-component.refused_before_resources :: refused before any resource was created (missing)
+CHECK_OK corrupt-checksum.refused_before_resources :: refused before any resource was created (checksum differs from the manifest)
+CHECK_OK unsealed.refused_before_resources :: refused before any resource was created (not sealed)
+CHECK_OK mixed-captures.refused_before_resources :: refused before any resource was created (differs from the manifest)
+CHECK_OK nonempty-target.directory_refused :: restore into a nonempty directory refused; no resources created=true
+CHECK_OK nonempty-target.volume_refused :: a nonempty volume is reported occupied and is never extracted into
+CHECK_OK preflight.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK inconsistent-snapshot.injected :: catalog from run-1, provider volume from run-2, manifest resealed
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-46c3d7df2-2c2e3f63-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK inconsistent-snapshot.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_INCONSISTENT_SNAPSHOT_OK; no READY advertised
+CHECK_OK inconsistent-snapshot.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-686ca9af7-a415d244-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK missing-version.injected :: recorded version 39ad123e-4256-4083-9770-a959f993102d of revision alpha-v1's CORE deleted on the disposable restored provider; a newer latest version exists
+CHECK_OK missing-version.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_MISSING_VERSION_OK; no READY advertised
+CHECK_OK missing-version.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-8c9ee2e24-566cb954-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK corrupt-descriptor.injected :: retained attachment descriptor d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 damaged on the disposable restored ledger
+CHECK_OK corrupt-descriptor.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_CORRUPT_DESCRIPTOR_OK; no READY advertised
+CHECK_OK corrupt-descriptor.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-b1f5f11f2-51a3c2d3-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK missing-descriptor.injected :: retained attachment descriptor d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 absent from the disposable restored ledger; revision references still point at it
+CHECK_OK missing-descriptor.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_MISSING_DESCRIPTOR_OK; no READY advertised
+CHECK_OK missing-descriptor.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-d5580f646-f511c501-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK wrong-endpoint.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_WRONG_ENDPOINT_OK; no READY advertised
+CHECK_OK wrong-endpoint.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-f3545e4ae-a05b702f-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK new-generation.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_NEW_GENERATION_OK; no READY advertised
+CHECK_OK new-generation.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-14aa343cf-2f8e60e1-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK wrong-credentials.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_WRONG_CREDENTIALS_OK; no READY advertised
+CHECK_OK wrong-credentials.original_backup_untouched :: run-1 backup set unchanged
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-35f983900-fd94d47c-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK wrong-database-credentials.refused :: recovered host exit=1; PostgreSQL refused the credential; no READY
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:37405
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-4e676fa25-aeb06db7-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK identity-gap.get_recorded_version :: restored volume serves the recorded version 39ad123e-4256-4083-9770-a959f993102d with sha256 cf3bd8d6e8fabc31cfc05069b3d733a89fce0d4ca50a7fa41860a8a14501ebdb
+CHECK_OK identity-gap.version_id_not_preserved :: the same bytes (sha256 cf3bd8d6e8fabc31cfc05069b3d733a89fce0d4ca50a7fa41860a8a14501ebdb) put into a fresh provider were issued version 5063939d-cd7e-42cd-8501-b5d0351f1afa, not the recorded 39ad123e-4256-4083-9770-a959f993102d; a GET by the recorded version on the fresh provider -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
