@@ -14,7 +14,7 @@ final class HistoricalUploadFaultProbe {
     static void run(Tx independent, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, javax.sql.DataSource database) throws Exception {
-        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply", "shutdown", "expire")) {
+        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply", "shutdown", "expire", "takeover")) {
             try (var fault = mode.equals("lost-verification-reply") ? new HistoricalCreateCommitFault(database, true) : null) {
             var tx = fault == null ? independent : fault.tx();
             var sourceId = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
@@ -25,7 +25,8 @@ final class HistoricalUploadFaultProbe {
                             .setExpectedMutationRevision(current.mutationRevision))).build());
             var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
-                    Map.of(placement.drive().id(), placement), mode.equals("expire") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 0);
+                    Map.of(placement.drive().id(), placement), mode.equals("expire") || mode.equals("takeover")
+                            ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 0);
             if (fault != null) fault.armVerification(record.seeds().attempts().get("a"));
             var security = tx.readOnly(em -> (String) em.createNativeQuery("SELECT security::text FROM documents WHERE node_id=:id")
                     .setParameter("id", sourceId).getSingleResult());
@@ -45,6 +46,8 @@ final class HistoricalUploadFaultProbe {
             var owner = new RepositoryInstalledHistoricalAttempts(tx, budget, new DriveLedger(tx), 1);
             var reads = new DocumentReadLedger(tx, UUID.randomUUID());
             var coordinator = new RepositoryCaller(caller.principalName(), true);
+            var incarnation = UUID.randomUUID();
+            var successor = new AtomicReference<RepositorySuccessorInstall.Plan>();
             try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
                     "endpoint", System.getenv("PROTOMOLT_TEST_S3_ENDPOINT"), "region", System.getenv("PROTOMOLT_TEST_S3_REGION"),
                     "path-style", "true", "conditional-writes", "true", "access-key", System.getenv("PROTOMOLT_TEST_S3_ACCESS"),
@@ -68,6 +71,10 @@ final class HistoricalUploadFaultProbe {
                                 }
                                 if (mode.equals("cancel")) cancelled.set(true);
                                 if (mode.equals("expire")) expire(tx, key);
+                                if (mode.equals("takeover") && calls.get() == 1) {
+                                    expire(tx, key);
+                                    successor.set(HistoricalUploadTakeover.install(tx, budget, coordinator, record, incarnation));
+                                }
                                 if (mode.equals("lost-provider-reply")) throw new IllegalStateException("injected lost historical PUT reply");
                             }
                             return result;
@@ -77,8 +84,8 @@ final class HistoricalUploadFaultProbe {
                          require(generation.equals(placement.generation()) && profile.equals(placement.profile()), "exact historical backend");
                          return new DocumentUploadCoordinator.Backend(profile.identity(), borrowed);
                      }, 2, Duration.ofMillis(25), new SqlTimeouts(
-                             mode.equals("expire") ? Duration.ofSeconds(5) : Duration.ofSeconds(2), Duration.ofSeconds(10)));
-                     var request = owner.beginInitial(caller, record, Map.of("a", DocumentPublicationCandidate.Mode.TYPED), UUID.randomUUID())) {
+                             mode.equals("expire") || mode.equals("takeover") ? Duration.ofSeconds(5) : Duration.ofSeconds(2), Duration.ofSeconds(10)));
+                     var request = owner.beginInitial(caller, record, Map.of("a", DocumentPublicationCandidate.Mode.TYPED), incarnation)) {
                     request.captureSources(reads, RepositoryReadControl.NONE);
                     request.openExecution(coordinator, RepositoryReadControl.NONE);
                     var bodies = new HashMap<DocumentUploadPayloads.Key, PartObject>();
@@ -144,7 +151,7 @@ final class HistoricalUploadFaultProbe {
                         if (mode.equals("revoke") || mode.equals("cancel")) {
                             var expected = mode.equals("revoke") ? RepositoryException.Code.NOT_FOUND : RepositoryException.Code.CANCELLED;
                             require(hasCode(rejected, expected), "transfer reports exact authorization or cancellation failure");
-                        } else if (mode.equals("expire")) require(fenced(rejected), "expired claim rejects late provider result");
+                        } else if (mode.equals("expire") || mode.equals("takeover")) require(fenced(rejected), "old claim rejects late provider result");
                         else require(hasMessage(rejected, "injected lost historical PUT reply"), "provider reply failure survives");
                         if (revoked.get()) { security(tx, sourceId, security); revoked.set(false); }
                         cancelled.set(false);
@@ -155,7 +162,7 @@ final class HistoricalUploadFaultProbe {
                             // Restoring an ACL advances the document mutation revision; that candidate is stale.
                             if (mode.equals("revoke")) require(expected instanceof DocumentLedger.RevisionConflictException,
                                     "restored policy does not revive a stale candidate");
-                            else if (mode.equals("expire")) require(fenced(expected), "expired claim cannot retry");
+                            else if (mode.equals("expire") || mode.equals("takeover")) require(fenced(expected), "old claim cannot retry");
                             else require(expected instanceof DocumentPartAttemptLedger.FenceException,
                                     "uncertain attempt requires reconciliation");
                         }
@@ -165,6 +172,11 @@ final class HistoricalUploadFaultProbe {
                     var actual = opened.store().getBounded(spec.get().bucket(), spec.get().key(), receipt.get().versionId(), written.get().length);
                     require(Arrays.equals(actual.data(), written.get()) && Objects.equals(actual.versionId(), receipt.get().versionId()),
                             "real stored bytes and provider version remain accounted for");
+                    if (mode.equals("takeover")) {
+                        require(successor.get() != null, "successor installation completed before predecessor reply");
+                        HistoricalUploadTakeover.stage(tx, budget, caller, coordinator, record, successor.get(), source, uploads, bodies);
+                        require(calls.get() == 2, "successor writes once and replays without another PUT");
+                    }
                     long verified = tx.readOnly(em -> ((Number) em.createNativeQuery("""
                             SELECT count(*) FROM document_part_attempt_objects WHERE attempt_id=:id AND verified
                             """).setParameter("id", record.seeds().attempts().get("a")).getSingleResult()).longValue());

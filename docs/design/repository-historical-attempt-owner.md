@@ -1177,8 +1177,12 @@ Qualification checkpoint:
   cancellation until actual completion. See `2026-10-08-historical-provider-shutdown`.
 - Initial-owner lease expiry after a real PUT rejects verification and retry while
   preserving the stored object for reconciliation. See `2026-10-08-historical-upload-expiry`.
+- Successor installation before the predecessor PUT response fences that response.
+  After the predecessor fails, fresh capture and activation let the successor stage
+  with its own attempt and token; replay adds no PUT. This is same-process staging,
+  not publication or restart recovery. See `2026-10-08-historical-upload-takeover`.
 
 The evidence directories are under `docs/evidence/repository/`. Remaining cases
-include successor provider faults and expiry, destination-only revocation, takeover
-during PUT, cancellation after verification and SQL timeout in a later callback.
+include successor provider faults and expiry, destination-only revocation,
+cancellation after verification and SQL timeout in a later callback.
 Managed public routing and transport parity remain unfinished.
