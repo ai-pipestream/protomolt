@@ -928,6 +928,30 @@ refuse wrong callers or altered commands before disclosing busy state.
 
 #### End-to-end acceptance
 
+Public composition must address both entry guards: `DocumentPublicationFacade`
+and `RemoteDocumentPublicationRepository` currently call
+`requireExecutionSupported` before execution. Enable the historical branch only
+with explicit host configuration and qualify it through both the shared library
+and the authenticated gRPC client. Keep guards on ordinary-only internals;
+removing every occurrence would bypass their distinct historical ownership path.
+
+For synchronous dispatch, the facade's existing accepted call is sufficient.
+`shutdownStep` waits for those calls before closing and detaching historical
+entries, and each entry owns its own parent scope. Do not enter a second external
+admission scope through `withHistoricalAttempts` after the facade has accepted the
+request: shutdown may have closed external admission in between.
+
+Read the current account policy through `DocumentSchemaPolicies.read` before
+preparing an assessment; publication rechecks that policy under its existing
+SQL fence. Retain the original execution handle across retries. An attempted
+CREATE without an acknowledged result must use `reconcileAssessment` with its
+original selections and evidence. An absent reconciliation result does not
+authorize another CREATE. After an uncertain publication, first use authorized
+terminal replay; absence is not permission to repeat the original mutation.
+
+These composition choices received a read-only Sol review on 2026-10-08. They
+are implementation requirements, not evidence that public dispatch is available.
+
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
   unchanged. Exact retries return the same terminal receipt without uploads.
 - A changed selector, physical identity, mode, placement or destination condition
