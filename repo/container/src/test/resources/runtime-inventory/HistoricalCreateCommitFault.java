@@ -19,6 +19,10 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     private final AtomicReference<RepositoryOperationLedger.Owner> publication = new AtomicReference<>();
     private final AtomicReference<RepositoryOperationLedger.Key> publicationKey = new AtomicReference<>();
     private final AtomicReference<UUID> verification = new AtomicReference<>();
+    enum RecoveryPhase { RESERVATION, INSTALL }
+    private record Recovery(RepositoryOperationLedger.Key key, RecoveryPhase phase) {}
+    private final AtomicReference<Recovery> recovery = new AtomicReference<>();
+    private Runnable recoveryCommitted;
     private record Rejection(RepositoryOperationLedger.Owner owner, UUID assessment) {}
     private final AtomicReference<Rejection> rejection = new AtomicReference<>();
     private final AtomicBoolean fired = new AtomicBoolean();
@@ -38,7 +42,8 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                             (wrapper, action, arguments) -> {
                                 boolean target = action.getName().equals("commit") && !fired.get()
                                         && (ownsAssessment(connection, assessment.get()) || ownsStart(connection)
-                                                || ownsPublication(connection) || ownsVerification(connection) || ownsRejection(connection));
+                                                || ownsPublication(connection) || ownsVerification(connection) || ownsRejection(connection)
+                                                || ownsRecovery(connection));
                                 if (target && !fired.compareAndSet(false, true))
                                     throw new AssertionError("Assessment commit fault was entered concurrently");
                                 if (target && rejection.get() != null && rejectionCommit != null) {
@@ -49,6 +54,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                                 if (target && !lostAcknowledgement)
                                     throw new SQLException("Injected assessment commit rollback", "40001");
                                 Object returned = invoke(connection, action, arguments);
+                                if (target && recovery.get() != null && recoveryCommitted != null) recoveryCommitted.run();
                                 if (target) throw new SQLException("Injected assessment commit acknowledgement loss", "08006");
                                 return returned;
                             });
@@ -59,6 +65,25 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     }
 
     Tx tx() { return tx; }
+    void armRecovery(RepositoryOperationLedger.Key key, RecoveryPhase phase, Runnable committed) {
+        if (assessment.get() != null || startKey.get() != null || publication.get() != null || publicationKey.get() != null
+                || verification.get() != null || rejection.get() != null || !recovery.compareAndSet(null, new Recovery(key, phase)))
+            throw new IllegalStateException("Commit fault already armed");
+        recoveryCommitted = java.util.Objects.requireNonNull(committed);
+    }
+    private boolean ownsRecovery(Connection connection) throws SQLException {
+        var target = recovery.get();
+        if (target == null) return false;
+        String table = target.phase() == RecoveryPhase.RESERVATION ? "repository_coordinator_expirations" : "repository_successor_installs";
+        try (var statement = connection.prepareStatement("SELECT EXISTS(SELECT 1 FROM " + table
+                + " WHERE account_id=? AND principal=? AND operation_id=?"
+                + (target.phase() == RecoveryPhase.INSTALL ? " AND install_xid=pg_current_xact_id_if_assigned())"
+                        : " AND xmin=CAST(CAST(pg_current_xact_id_if_assigned() AS text) AS xid))"))) {
+            statement.setString(1, target.key().account()); statement.setString(2, target.key().principal());
+            statement.setObject(3, target.key().operationId());
+            try (var rows = statement.executeQuery()) { rows.next(); return rows.getBoolean(1); }
+        }
+    }
     void onRejectionCommit(java.util.function.IntConsumer action) {
         if (rejectionCommit != null || fired.get()) throw new IllegalStateException("Rejection commit hook already used");
         rejectionCommit = java.util.Objects.requireNonNull(action);

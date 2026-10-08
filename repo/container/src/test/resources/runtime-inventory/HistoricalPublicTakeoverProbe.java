@@ -203,6 +203,12 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
 
     void exercise(Tx tx, DocumentPublicationRuntime runtime, DocumentPublicationRepository repository,
             RepositoryCaller caller, PublishDocumentRequest request, AtomicInteger selections, AtomicInteger resolutions) throws Exception {
+        exercise(tx, runtime, repository, caller, request, selections, resolutions, null, null);
+    }
+
+    void exercise(Tx tx, DocumentPublicationRuntime runtime, DocumentPublicationRepository repository,
+            RepositoryCaller caller, PublishDocumentRequest request, AtomicInteger selections, AtomicInteger resolutions,
+            HistoricalCreateCommitFault fault, HistoricalCreateCommitFault.RecoveryPhase phase) throws Exception {
         var command = new DocumentPublicationCommand(request.getIntent());
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -213,7 +219,39 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
                 require(previous.borrowed() && previous.attached(), "old public call retains its generation");
                 var oldAttempt = attempt(tx, writes.getFirst());
                 HistoricalUploadFaultProbe.expire(tx, key);
+                UUID retained = null;
+                String durableRecovery = null;
+                if (fault != null) {
+                    var cancelled = new AtomicBoolean();
+                    fault.armRecovery(key, phase, () -> cancelled.set(true));
+                    var uncertainControl = new RepositoryReadControl() {
+                        public boolean isCancelled() { return cancelled.get(); }
+                        public long remainingNanos() { return Long.MAX_VALUE; }
+                    };
+                    try { repository.publishDocument(caller, request, uncertainControl);
+                        throw new AssertionError("Successor did not lose its recovery acknowledgement");
+                    } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                    require(cancelled.get(), "matched committed recovery cancels immediate confirmation");
+                    var pending = runtime.withHistoricalAttempts(attempts -> attempts.inspectSelected(caller, command).orElseThrow());
+                    retained = pending.identity();
+                    require(!retained.equals(previous.identity()) && !pending.attached() && !pending.borrowed(),
+                            "uncertain successor releases its borrow and retains its distinct local proposal");
+                    require(writes.size() == 1, "uncertain recovery has not repeated provider work");
+                    durableRecovery = recoveryRow(tx, key, phase);
+                    require(durableRecovery != null, "recovery transaction committed before acknowledgement loss");
+                    for (String table : List.of("document_assessment_owners", "document_revision_commits", "repository_operation_success"))
+                        require(count(tx, key, table) == 0, "uncertain recovery has no rows in " + table);
+                    HistoricalPublicDispatchProbe.replayRefusals(repository, caller, request, selections, resolutions, this, true);
+                    require(recoveryRow(tx, key, phase).equals(durableRecovery), "refused retries preserve durable recovery identity");
+                }
                 HistoricalPublicDispatchProbe.transport(repository, caller, request, selections, resolutions, false);
+                if (fault != null) {
+                    require(runtime.withHistoricalAttempts(attempts -> attempts.inspectSelected(caller, command).orElseThrow()).identity().equals(retained),
+                            "public retry resumes the retained successor identity");
+                    require(recoveryRow(tx, key, phase).equals(durableRecovery), "retry preserves the original durable recovery row");
+                    require(count(tx, key, "repository_coordinator_expirations") == 1 && count(tx, key, "repository_successor_installs") == 1,
+                            "one reservation and installation across lost acknowledgement and retry");
+                }
                 var result = repository.publishDocument(caller, request, RepositoryReadControl.NONE);
                 require(result.hasCommitted(), "successor public call commits while old provider reply is held");
                 require(!old.isDone(), "old worker still has not drained after successor commit");
@@ -246,6 +284,17 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
                 release.countDown();
             }
         }
+    }
+
+    private static String recoveryRow(Tx tx, RepositoryOperationLedger.Key key, HistoricalCreateCommitFault.RecoveryPhase phase) {
+        String table = phase == HistoricalCreateCommitFault.RecoveryPhase.RESERVATION
+                ? "repository_coordinator_expirations" : "repository_successor_installs";
+        return tx.readOnly(em -> {
+            var rows = em.createNativeQuery("SELECT to_jsonb(r)::text FROM " + table + " r WHERE account_id=:a AND principal=:p AND operation_id=:o", String.class)
+                    .setParameter("a", key.account()).setParameter("p", key.principal()).setParameter("o", key.operationId()).getResultList();
+            require(rows.size() <= 1, "recovery fixture has at most one durable successor");
+            return rows.isEmpty() ? null : (String) rows.getFirst();
+        });
     }
 
     private static Object[] attempt(Tx tx, BlobStore.PutSpec spec) {

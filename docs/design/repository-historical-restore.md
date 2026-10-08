@@ -1029,8 +1029,12 @@ not prove that facade routing carries the same identity, control and cleanup rul
   perform no placement selection, schema resolution or PUT. Changed intent maps
   to public CONFLICT rather than exposing the private ledger exception. Pending
   mode changes return CONFLICT; terminal fixed-mode changes return
-  FAILED_PRECONDITION. Uncertain reservation/install proposals and corrupted
-  persisted journals still need public-route qualification.
+  FAILED_PRECONDITION. Committed reservation/install acknowledgement loss with
+  cancelled immediate confirmation now preserves the exact local successor and
+  durable recovery row across public retry. Altered and unauthorized requests are
+  refused at that uncertain checkpoint without selector, schema or provider work.
+  See [recovery acknowledgement evidence](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md).
+  Corrupted persisted journals still need public-route qualification.
 - Current authorization and policy: revoke source READ, destination WRITE or
   credential generation, or change admission policy between capture and commit.
   Prove both SQL orderings through public dispatch, including authorized replay

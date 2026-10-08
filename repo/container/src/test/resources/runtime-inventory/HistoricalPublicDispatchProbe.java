@@ -58,6 +58,16 @@ final class HistoricalPublicDispatchProbe {
         }
     }
 
+    static void runRecovery(Tx observer, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
+            DocumentUploadPlan.Placement placement, DocumentPublishedRevision source, Map<Integer, ByteString> fragments,
+            PayloadBudget budget, javax.sql.DataSource database) throws Exception {
+        for (String phase : List.of("recovery-reservation", "recovery-install")) {
+            try (var fault = new HistoricalCreateCommitFault(database, true)) {
+                run(fault.tx(), provider, caller, original, placement, source, fragments, budget, fault, phase);
+            }
+        }
+    }
+
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
@@ -71,7 +81,7 @@ final class HistoricalPublicDispatchProbe {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
                 || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-")
-                || phase.startsWith("winner-");
+                || phase.startsWith("winner-") || phase.startsWith("recovery-");
         var readerId = UUID.randomUUID();
         var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {
@@ -103,7 +113,7 @@ final class HistoricalPublicDispatchProbe {
                                 || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
-                    phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
+                    phase.equals("takeover") || phase.startsWith("recovery-") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
                     new DocumentPublicationRuntime.Assessments(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
                             Duration.ofMinutes(5), Duration.ofSeconds(5)), authority::forOperation,
                     new DocumentPublicationRuntime.ExternalWorkers() {
@@ -160,7 +170,7 @@ final class HistoricalPublicDispatchProbe {
                             caller.principalName(), command.operationId()));
                     if (phase.equals("publication")) fault.armPublication(new RepositoryOperationLedger.Key(command.intent().getAccountId(),
                             caller.principalName(), command.operationId()));
-                    if (fault != null) {
+                    if (fault != null && !phase.startsWith("recovery-")) {
                         try {
                             repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
                             throw new AssertionError("Public historical call did not lose its " + phase + " acknowledgement");
@@ -179,7 +189,12 @@ final class HistoricalPublicDispatchProbe {
                     int resolvedBeforeRetry = resolutions.get();
                     int selectedBeforeRetry = selections.get(), putsBeforeRetry = takeover.completedPuts();
                     if (stoppingCase) {
-                        if (gate != null) {
+                        if (phase.startsWith("recovery-")) {
+                            takeover.exercise(tx, runtime, repository, caller, request.build(), selections, resolutions, fault,
+                                    phase.endsWith("reservation") ? HistoricalCreateCommitFault.RecoveryPhase.RESERVATION : HistoricalCreateCommitFault.RecoveryPhase.INSTALL);
+                            HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
+                                    repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
+                        } else if (gate != null) {
                             var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
                             if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
                                     (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicCommitWinnerProbe.run(
@@ -319,7 +334,7 @@ final class HistoricalPublicDispatchProbe {
         require(selections.get() == selected && resolutions.get() == resolved, "terminal replay performs no selection or resolution");
     }
 
-    private static void replayRefusals(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+    static void replayRefusals(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
             AtomicInteger selections, AtomicInteger resolutions, HistoricalPublicTakeoverProbe provider, boolean pending) throws Exception {
         int selected = selections.get(), resolved = resolutions.get(), puts = provider.completedPuts();
         HistoricalPublicReplayRefusalProbe.intent(repository, caller, request, pending);
