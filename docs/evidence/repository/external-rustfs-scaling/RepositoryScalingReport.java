@@ -1,83 +1,128 @@
 import java.nio.file.*;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.stream.*;
 
 /**
- * Dependency-free analyzer for raw nativeReplicaBenchmark directories produced on or
- * after the scaling-sampler change. Usage:
- *   java RepositoryScalingReport.java <output-dir> <raw-run-dir>...
- * It writes windows.csv (one row per measured window), configs.csv (pooled across
- * every window of the same topology, pool, client and heap settings), workers.csv
- * (per-process work, proving each JVM received traffic) and prints a short check log.
- * Percentiles are nearest-rank over measured primary operations; replay latency is the
- * receipt replay that follows each write is excluded from the timed value and is
- * not recorded as its own row.
+ * Dependency-free analyzer for raw nativeReplicaBenchmark directories produced with
+ * the scaling sampler. Usage:
+ *   java RepositoryScalingReport.java <output-dir> <label>=<raw-run-dir>...
+ * A bare directory argument is labelled by its directory name, or by its parent's
+ * name when the directory itself is called "raw" (the archive layout). Two inputs
+ * with identical raw content are rejected. It writes:
+ *   windows.csv   one row per measured window
+ *   configs.csv   pooled across every window of the same topology, pool, client,
+ *                 heap, sampling and journal settings, with the number of distinct runs
+ *   workers.csv   per process (PID, measured operations, PUTs, GETs, acquisitions)
+ *   warmup.csv    per configuration, mean latency of the first eight and last eight
+ *                 measured iterations of every client, by operation kind
+ *   trace-sites.csv  when a run was traced: per window, operation, metric and
+ *                 completion site counts, nanoseconds and failures
+ * Percentiles are nearest-rank over the measured primary operations; each write's
+ * receipt replay is excluded from its timed value and is not a row of its own.
+ * CPU rates use the window delta (begin to the moment every worker was done);
+ * database counters use the settled delta, which spans the 1.2 s statistics settle.
  */
 class RepositoryScalingReport {
-    record Key(int replicas, int pool, int clients, int heap, String journaled) {}
+    record Key(int replicas, int pool, int clients, int heap, String journaled, String sampleMillis) {
+        String csv() { return journaled + "," + replicas + "," + pool + "," + clients + "," + heap + "," + sampleMillis; }
+    }
     static final List<String> KINDS = List.of("read", "publish", "reject");
     static final class Window {
         String run, name; Key key; long operations, nanos;
         final Map<String, List<Long>> latency = new TreeMap<>();
+        final Map<String, List<long[]>> byIteration = new TreeMap<>(); // kind -> (iteration, elapsed)
         final Map<String, long[]> metrics = new TreeMap<>();
-        final Map<String, Double> scaling = new TreeMap<>();
+        final Map<String, Double> window = new TreeMap<>(), settled = new TreeMap<>();
         double statementExecMs; long statementCalls;
-        final List<long[]> workers = new ArrayList<>(); // index, measured ops, puts, gets, acquisitions
-        long childCpuNanos;
+        final List<long[]> workers = new ArrayList<>(); // index, pid, measured ops, puts, gets, acquisitions
+        long childCpuWindowNanos;
+        final List<String> trace = new ArrayList<>();
     }
 
     public static void main(String[] args) throws Exception {
         Locale.setDefault(Locale.ROOT);
-        if (args.length < 2) throw new IllegalArgumentException("Usage: <output-dir> <raw-run-dir>...");
+        if (args.length < 2) throw new IllegalArgumentException("Usage: <output-dir> <label>=<raw-run-dir>...");
         Path out = Path.of(args[0]);
         Files.createDirectories(out);
         var windows = new ArrayList<Window>();
-        for (String argument : Arrays.copyOfRange(args, 1, args.length)) windows.addAll(read(Path.of(argument)));
-        var text = new StringBuilder("run,window,journaled,replicas,pool_per_replica,clients_total,heap_mib,operations,inclusive_s,ops_per_s,"
+        var seen = new HashMap<String, String>();
+        for (String argument : Arrays.copyOfRange(args, 1, args.length)) {
+            String label; Path root;
+            int eq = argument.indexOf('=');
+            if (eq > 0) { label = argument.substring(0, eq); root = Path.of(argument.substring(eq + 1)); }
+            else {
+                root = Path.of(argument).toAbsolutePath().normalize();
+                label = root.getFileName().toString().equals("raw") ? root.getParent().getFileName().toString() : root.getFileName().toString();
+            }
+            String identity = identity(root);
+            if (seen.containsKey(identity)) throw new IllegalArgumentException("Duplicate raw input: " + label + " repeats " + seen.get(identity));
+            if (seen.containsValue(label)) throw new IllegalArgumentException("Duplicate run label: " + label);
+            seen.put(identity, label);
+            windows.addAll(read(root, label));
+        }
+        writeWindows(out, windows);
+        writeConfigs(out, windows);
+        writeWorkers(out, windows);
+        writeWarmup(out, windows);
+        writeTrace(out, windows);
+        System.out.println("runs=" + seen.size() + " windows=" + windows.size() + " output=" + out);
+    }
+
+    static String identity(Path root) throws Exception {
+        var digest = MessageDigest.getInstance("SHA-256");
+        for (String name : List.of("environment.txt", "windows.csv", "processes.csv")) digest.update(Files.readAllBytes(root.resolve(name)));
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    static void writeWindows(Path out, List<Window> windows) throws Exception {
+        var text = new StringBuilder("run,window,journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,operations,inclusive_s,ops_per_s,"
                 + "read_p50_ms,read_p95_ms,read_p99_ms,publish_p50_ms,publish_p95_ms,publish_p99_ms,reject_p50_ms,reject_p95_ms,reject_p99_ms,"
                 + "sql_connections_total,pool_busy_fraction,sql_acquire_mean_ms,sql_acquire_total_s,sql_acquisitions_per_iteration,"
                 + "sql_usage_total_s,statement_exec_total_s,statement_calls,statements_per_iteration,"
-                + "db_commits,db_commits_per_iteration,wal_bytes_mib,wal_fsyncs,wal_fsync_time_s,wal_write_time_s,relation_read_time_s,"
+                + "db_commits_settled,db_commits_per_iteration,wal_bytes_mib,wal_fsyncs_settled,wal_fsync_time_settled_s,wal_fsync_time_window_s,"
+                + "wal_client_backend_fsync_time_settled_s,wal_write_time_settled_s,wal_fsync_share_of_settled_span,wal_fsync_share_of_window,relation_read_time_s,"
                 + "provider_put_count,provider_put_mean_ms,provider_get_count,provider_get_mean_ms,"
-                + "host_cpus,host_busy_cores,host_iowait_cores,postgres_cores,rustfs_cores,worker_cores,worker_cpu_s,sampled_span_s,"
-                + "loadavg_begin,loadavg_end\n");
+                + "host_cpus,host_busy_cores,host_iowait_cores,postgres_cores,rustfs_cores,worker_cores,worker_cpu_s,settled_span_s,"
+                + "loadavg_begin,loadavg_done\n");
         for (var w : windows) {
             double seconds = w.nanos / 1e9;
-            // Resource deltas span the window plus the 1.2 s statistics settle; rate them over that span.
-            double span = w.scaling.get("elapsed_nanos") / 1e9;
+            double windowSpan = w.window.get("elapsed_nanos") / 1e9, settledSpan = w.settled.get("elapsed_nanos") / 1e9;
             int connections = w.key.replicas * w.key.pool;
-            long[] acquire = w.metrics.getOrDefault("sql_acquire", new long[3]), usage = w.metrics.getOrDefault("sql_usage", new long[3]);
-            long[] put = w.metrics.getOrDefault("provider_put", new long[3]), get = w.metrics.getOrDefault("provider_getBounded", new long[3]);
-            double commits = w.scaling.get("db_xact_commit") - w.scaling.get("statements_sampler_calls");
-            double jiffies = w.scaling.get("host_cpu_total_jiffies");
-            int cpus = (int) Math.round(w.scaling.get("host_cpus"));
-            text.append(w.run).append(',').append(w.name).append(',').append(w.key.journaled).append(',').append(w.key.replicas).append(',').append(w.key.pool)
-                    .append(',').append(w.key.clients).append(',').append(w.key.heap).append(',').append(w.operations)
+            long[] acquire = w.metrics.get("sql_acquire"), usage = w.metrics.get("sql_usage");
+            long[] put = w.metrics.get("provider_put"), get = w.metrics.get("provider_getBounded");
+            double commits = w.settled.get("db_xact_commit") - w.settled.get("statements_sampler_calls");
+            double jiffies = w.window.get("host_cpu_total_jiffies");
+            int cpus = (int) Math.round(w.window.get("host_cpus"));
+            text.append(w.run).append(',').append(w.name).append(',').append(w.key.csv()).append(',').append(w.operations)
                     .append(String.format(",%.3f,%.2f", seconds, w.operations / seconds));
             for (String kind : KINDS) text.append(percentiles(w.latency.get(kind), .5, .95, .99));
             text.append(',').append(connections)
                     .append(String.format(",%.3f,%.3f,%.3f,%.2f", usage[1] / 1e9 / seconds / connections, acquire[1] / 1e6 / Math.max(1, acquire[0]),
                             acquire[1] / 1e9, (double) acquire[0] / w.operations))
                     .append(String.format(",%.3f,%.3f,%d,%.2f", usage[1] / 1e9, w.statementExecMs / 1e3, w.statementCalls, (double) w.statementCalls / w.operations))
-                    .append(String.format(",%.0f,%.2f,%.2f,%.0f,%.3f,%.3f,%.3f", commits, commits / w.operations, w.scaling.get("wal_wal_bytes") / 1048576,
-                            w.scaling.get("walio_fsyncs"), w.scaling.get("walio_fsync_time") / 1e3, w.scaling.get("walio_write_time") / 1e3,
-                            w.scaling.get("relio_read_time") / 1e3))
+                    .append(String.format(",%.0f,%.2f,%.2f,%.0f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f", commits, commits / w.operations, w.settled.get("wal_wal_bytes") / 1048576,
+                            w.settled.get("walio_fsyncs"), w.settled.get("walio_fsync_time") / 1e3, w.window.get("walio_fsync_time") / 1e3,
+                            w.settled.getOrDefault("walio_client_backend_normal_fsync_time", 0.0) / 1e3, w.settled.get("walio_write_time") / 1e3,
+                            w.settled.get("walio_fsync_time") / 1e3 / settledSpan, w.window.get("walio_fsync_time") / 1e3 / windowSpan, w.settled.get("relio_read_time") / 1e3))
                     .append(String.format(",%d,%.2f,%d,%.2f", put[0], put[1] / 1e6 / Math.max(1, put[0]), get[0], get[1] / 1e6 / Math.max(1, get[0])))
-                    .append(String.format(",%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", cpus, w.scaling.get("host_cpu_busy_jiffies") / jiffies * cpus,
-                            w.scaling.get("host_cpu_iowait_jiffies") / jiffies * cpus,
-                            w.scaling.get("container_postgres_cpu_usage_usec") / 1e6 / span,
-                            w.scaling.get("container_rustfs_cpu_usage_usec") / 1e6 / span,
-                            w.childCpuNanos / 1e9 / span, w.childCpuNanos / 1e9)).append(String.format(",%.3f", span))
-                    .append(',').append(w.scaling.get("loadavg_begin_1m")).append(',').append(w.scaling.get("loadavg_end_1m")).append('\n');
+                    .append(String.format(",%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f", cpus, w.window.get("host_cpu_busy_jiffies") / jiffies * cpus,
+                            w.window.get("host_cpu_iowait_jiffies") / jiffies * cpus,
+                            w.window.get("container_postgres_cpu_usage_usec") / 1e6 / windowSpan,
+                            w.window.get("container_rustfs_cpu_usage_usec") / 1e6 / windowSpan,
+                            w.childCpuWindowNanos / 1e9 / windowSpan, w.childCpuWindowNanos / 1e9, settledSpan))
+                    .append(',').append(w.window.get("loadavg_begin_1m")).append(',').append(w.window.get("loadavg_done_1m")).append('\n');
         }
         Files.writeString(out.resolve("windows.csv"), text);
+    }
 
-        var configs = new StringBuilder("journaled,replicas,pool_per_replica,clients_total,heap_mib,runs,windows,operations,"
+    static void writeConfigs(Path out, List<Window> windows) throws Exception {
+        var configs = new StringBuilder("journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,runs,windows,operations,"
                 + "ops_per_s_min,ops_per_s_mean,ops_per_s_max,read_p50_ms,read_p95_ms,read_p99_ms,publish_p50_ms,publish_p95_ms,publish_p99_ms,"
                 + "reject_p50_ms,reject_p95_ms,reject_p99_ms,pool_busy_fraction_mean,sql_acquire_mean_ms,db_commits_per_iteration_mean,"
-                + "wal_fsync_s_per_window_mean,provider_put_mean_ms,postgres_cores_mean,rustfs_cores_mean,worker_cores_mean,host_busy_cores_mean\n");
+                + "wal_fsync_share_of_settled_span_mean,wal_fsync_share_of_window_mean,provider_put_mean_ms,postgres_cores_mean,rustfs_cores_mean,worker_cores_mean,host_busy_cores_mean\n");
         var grouped = new TreeMap<String, List<Window>>();
-        for (var w : windows) grouped.computeIfAbsent(w.key.journaled + "," + w.key.replicas + "," + w.key.pool + "," + w.key.clients + "," + w.key.heap, k -> new ArrayList<>()).add(w);
+        for (var w : windows) grouped.computeIfAbsent(w.key.csv(), k -> new ArrayList<>()).add(w);
         for (var entry : grouped.entrySet()) {
             var group = entry.getValue();
             var rates = group.stream().mapToDouble(w -> w.operations * 1e9 / w.nanos).sorted().toArray();
@@ -85,26 +130,65 @@ class RepositoryScalingReport {
                     .append(',').append(group.stream().mapToLong(w -> w.operations).sum())
                     .append(String.format(",%.2f,%.2f,%.2f", rates[0], Arrays.stream(rates).average().orElseThrow(), rates[rates.length - 1]));
             for (String kind : KINDS) configs.append(percentiles(group.stream().flatMap(w -> w.latency.get(kind).stream()).collect(Collectors.toList()), .5, .95, .99));
-            configs.append(String.format(",%.3f,%.3f,%.2f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f",
+            configs.append(String.format(",%.3f,%.3f,%.2f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f",
                     mean(group, w -> w.metrics.get("sql_usage")[1] / 1e9 / (w.nanos / 1e9) / (w.key.replicas * w.key.pool)),
                     mean(group, w -> w.metrics.get("sql_acquire")[1] / 1e6 / Math.max(1, w.metrics.get("sql_acquire")[0])),
-                    mean(group, w -> (w.scaling.get("db_xact_commit") - w.scaling.get("statements_sampler_calls")) / w.operations),
-                    mean(group, w -> w.scaling.get("walio_fsync_time") / 1e3),
+                    mean(group, w -> (w.settled.get("db_xact_commit") - w.settled.get("statements_sampler_calls")) / w.operations),
+                    mean(group, w -> w.settled.get("walio_fsync_time") / 1e3 / (w.settled.get("elapsed_nanos") / 1e9)),
+                    mean(group, w -> w.window.get("walio_fsync_time") / 1e3 / (w.window.get("elapsed_nanos") / 1e9)),
                     mean(group, w -> w.metrics.get("provider_put")[1] / 1e6 / Math.max(1, w.metrics.get("provider_put")[0])),
-                    mean(group, w -> w.scaling.get("container_postgres_cpu_usage_usec") / 1e6 / (w.scaling.get("elapsed_nanos") / 1e9)),
-                    mean(group, w -> w.scaling.get("container_rustfs_cpu_usage_usec") / 1e6 / (w.scaling.get("elapsed_nanos") / 1e9)),
-                    mean(group, w -> w.childCpuNanos / 1e9 / (w.scaling.get("elapsed_nanos") / 1e9)),
-                    mean(group, w -> w.scaling.get("host_cpu_busy_jiffies") / w.scaling.get("host_cpu_total_jiffies") * w.scaling.get("host_cpus"))))
+                    mean(group, w -> w.window.get("container_postgres_cpu_usage_usec") / 1e6 / (w.window.get("elapsed_nanos") / 1e9)),
+                    mean(group, w -> w.window.get("container_rustfs_cpu_usage_usec") / 1e6 / (w.window.get("elapsed_nanos") / 1e9)),
+                    mean(group, w -> w.childCpuWindowNanos / 1e9 / (w.window.get("elapsed_nanos") / 1e9)),
+                    mean(group, w -> w.window.get("host_cpu_busy_jiffies") / w.window.get("host_cpu_total_jiffies") * w.window.get("host_cpus"))))
                     .append('\n');
         }
         Files.writeString(out.resolve("configs.csv"), configs);
+    }
 
-        var workers = new StringBuilder("run,window,replicas,worker,measured_operations,provider_puts,provider_gets,sql_acquisitions\n");
+    static void writeWorkers(Path out, List<Window> windows) throws Exception {
+        var workers = new StringBuilder("run,window,replicas,worker,pid,measured_operations,provider_puts,provider_gets,sql_acquisitions\n");
         for (var w : windows) for (long[] worker : w.workers)
-            workers.append(w.run).append(',').append(w.name).append(',').append(w.key.replicas).append(',').append(worker[0]).append(',')
-                    .append(worker[1]).append(',').append(worker[2]).append(',').append(worker[3]).append(',').append(worker[4]).append('\n');
+            workers.append(w.run).append(',').append(w.name).append(',').append(w.key.replicas).append(',').append(worker[0]).append(',').append(worker[1])
+                    .append(',').append(worker[2]).append(',').append(worker[3]).append(',').append(worker[4]).append(',').append(worker[5]).append('\n');
         Files.writeString(out.resolve("workers.csv"), workers);
-        System.out.println("windows=" + windows.size() + " configs=" + grouped.size() + " output=" + out);
+    }
+
+    /** Within-window trend: cold-process effects show as a gap between the first and last eight iterations. */
+    static void writeWarmup(Path out, List<Window> windows) throws Exception {
+        var text = new StringBuilder("journaled,replicas,pool_per_replica,clients_total,heap_mib,sample_millis,kind,first8_mean_ms,last8_mean_ms,first8_over_last8\n");
+        var grouped = new TreeMap<String, List<Window>>();
+        for (var w : windows) grouped.computeIfAbsent(w.key.csv(), k -> new ArrayList<>()).add(w);
+        for (var entry : grouped.entrySet()) {
+            for (String kind : KINDS) {
+                var early = new ArrayList<Long>(); var late = new ArrayList<Long>();
+                for (var w : entry.getValue()) for (long[] sample : w.byIteration.get(kind)) {
+                    if (sample[0] < 8) early.add(sample[1]);
+                    else if (sample[0] >= 24) late.add(sample[1]);
+                }
+                if (early.isEmpty() || late.isEmpty()) continue;
+                double first = early.stream().mapToLong(Long::longValue).average().orElseThrow() / 1e6;
+                double last = late.stream().mapToLong(Long::longValue).average().orElseThrow() / 1e6;
+                text.append(entry.getKey()).append(',').append(kind).append(String.format(",%.2f,%.2f,%.3f%n", first, last, first / last));
+            }
+        }
+        Files.writeString(out.resolve("warmup.csv"), text);
+    }
+
+    static void writeTrace(Path out, List<Window> windows) throws Exception {
+        if (windows.stream().noneMatch(w -> !w.trace.isEmpty())) return;
+        var totals = new TreeMap<String, long[]>();
+        var text = new StringBuilder("run,window,replicas,pool_per_replica,operation,metric,completion_site,count,nanos,failures\n");
+        for (var w : windows) {
+            if (w.trace.isEmpty()) throw new IllegalStateException("Mixed traced and untraced windows: " + w.run + " " + w.name);
+            for (String line : w.trace) {
+                String[] cells = line.split(",");
+                var sum = totals.computeIfAbsent(w.run + "," + w.name + "," + w.key.replicas + "," + w.key.pool + "," + cells[0] + "," + cells[1] + "," + cells[2], k -> new long[3]);
+                for (int i = 0; i < 3; i++) sum[i] += Long.parseLong(cells[3 + i]);
+            }
+        }
+        totals.forEach((key, values) -> text.append(key).append(',').append(values[0]).append(',').append(values[1]).append(',').append(values[2]).append('\n'));
+        Files.writeString(out.resolve("trace-sites.csv"), text);
     }
 
     static double mean(List<Window> group, java.util.function.ToDoubleFunction<Window> f) { return group.stream().mapToDouble(f).average().orElseThrow(); }
@@ -116,25 +200,32 @@ class RepositoryScalingReport {
         return text.toString();
     }
 
-    static List<Window> read(Path root) throws Exception {
+    static List<Window> read(Path root, String label) throws Exception {
         var environment = new HashMap<String, String>();
         for (String line : Files.readAllLines(root.resolve("environment.txt"))) {
             int eq = line.indexOf('='); if (eq > 0) environment.put(line.substring(0, eq), line.substring(eq + 1));
         }
         int clients = Integer.parseInt(environment.get("clients"));
-        String journaled = environment.get("journaled");
+        String journaled = environment.get("journaled"), sampleMillis = environment.getOrDefault("sample_millis", "25");
+        boolean traced = environment.get("trace").equals("true");
         var rows = Files.readAllLines(root.resolve("windows.csv"));
         var plan = rows.subList(1, rows.size());
         if (plan.size() % 2 != 0) throw new IllegalStateException("Odd window count in " + root);
+        var processes = new HashMap<String, Long>();
+        for (String line : Files.readAllLines(root.resolve("processes.csv"))) {
+            String[] cells = line.split(",");
+            if (!cells[0].equals("window")) processes.put(cells[0] + "-" + cells[1], Long.parseLong(cells[2]));
+        }
         var result = new ArrayList<Window>();
         for (String line : plan) {
             String[] row = line.split(",");
             var w = new Window();
-            w.run = root.getFileName().toString(); w.name = row[0];
+            w.run = label; w.name = row[0];
             int replicas = Integer.parseInt(row[1]);
-            w.key = new Key(replicas, Integer.parseInt(row[2]), clients, Integer.parseInt(row[6]), journaled);
+            w.key = new Key(replicas, Integer.parseInt(row[2]), clients, Integer.parseInt(row[6]), journaled, sampleMillis);
             w.operations = Long.parseLong(row[4]); w.nanos = Long.parseLong(row[5]);
             if (Integer.parseInt(row[3]) * replicas != clients) throw new IllegalStateException("Client split mismatch: " + w.name);
+            for (String kind : KINDS) { w.latency.put(kind, new ArrayList<>()); w.byIteration.put(kind, new ArrayList<>()); }
             long count = 0;
             for (int worker = 0; worker < replicas; worker++) {
                 String prefix = w.name + "-" + worker;
@@ -142,8 +233,10 @@ class RepositoryScalingReport {
                 for (String operation : Files.readAllLines(root.resolve(prefix + "-operations.csv"))) {
                     String[] cells = operation.split(",");
                     if (!cells[0].equals("measure")) continue;
-                    w.latency.computeIfAbsent(cells[3], k -> new ArrayList<>()).add(Long.parseLong(cells[5]));
-                    if (!cells[3].equals("replay")) { count++; measured++; }
+                    if (!KINDS.contains(cells[3])) throw new IllegalStateException("Unexpected operation kind " + cells[3] + " in " + prefix);
+                    w.latency.get(cells[3]).add(Long.parseLong(cells[5]));
+                    w.byIteration.get(cells[3]).add(new long[] {Long.parseLong(cells[2]), Long.parseLong(cells[5])});
+                    count++; measured++;
                 }
                 var mine = new TreeMap<String, long[]>();
                 for (String metric : Files.readAllLines(root.resolve(prefix + "-measure-metrics.csv"))) {
@@ -156,19 +249,27 @@ class RepositoryScalingReport {
                     for (int i = 0; i < 3; i++) total[i] += values[i];
                     if (values[2] != 0) throw new IllegalStateException("Recorded failures in " + prefix + " " + cells[0]);
                 }
-                w.workers.add(new long[] {worker, measured, mine.get("provider_put")[0], mine.get("provider_getBounded")[0], mine.get("sql_acquire")[0]});
+                Long pid = processes.get(prefix);
+                if (pid == null) throw new IllegalStateException("No process record for " + prefix);
+                w.workers.add(new long[] {worker, pid, measured, mine.get("provider_put")[0], mine.get("provider_getBounded")[0], mine.get("sql_acquire")[0]});
+                if (traced) {
+                    var lines = Files.readAllLines(root.resolve(prefix + "-measure-trace.csv"));
+                    w.trace.addAll(lines.subList(1, lines.size()));
+                }
             }
             if (count != w.operations) throw new IllegalStateException("Operation count mismatch: " + w.name + " in " + root);
-            for (String kind : KINDS) if (w.latency.get(kind) == null) throw new IllegalStateException("No " + kind + " samples in " + w.name);
+            for (String kind : KINDS) if (w.latency.get(kind).isEmpty()) throw new IllegalStateException("No " + kind + " samples in " + w.name);
+            int children = 0;
             for (String line2 : Files.readAllLines(root.resolve(w.name + "-scaling.csv"))) {
                 String[] cells = line2.split(",", -1);
                 if (cells[0].equals("metric")) continue;
-                if (cells[0].startsWith("loadavg_")) { w.scaling.put(cells[0] + "_1m", Double.parseDouble(cells[1].split(" ")[0])); continue; }
-                if (cells[0].startsWith("child_")) { w.childCpuNanos += Long.parseLong(cells[3]); continue; }
-                if (cells[0].equals("host_cpus")) { w.scaling.put(cells[0], Double.parseDouble(cells[2])); continue; }
-                w.scaling.put(cells[0], Double.parseDouble(cells[3]));
+                if (cells.length != 6) throw new IllegalStateException("Scaling row needs six columns (begin, at_done, at_settled, two deltas): " + w.name);
+                if (cells[0].startsWith("loadavg_")) { w.window.put(cells[0] + "_1m", Double.parseDouble(cells[1].split(" ")[0])); continue; }
+                if (cells[0].startsWith("child_")) { w.childCpuWindowNanos += Long.parseLong(cells[4]); children++; continue; }
+                if (cells[0].equals("host_cpus")) { w.window.put(cells[0], Double.parseDouble(cells[1])); continue; }
+                w.window.put(cells[0], Double.parseDouble(cells[4]));
+                w.settled.put(cells[0], Double.parseDouble(cells[5]));
             }
-            long children = Files.readAllLines(root.resolve(w.name + "-scaling.csv")).stream().filter(s -> s.startsWith("child_")).count();
             if (children != replicas) throw new IllegalStateException("Expected " + replicas + " child CPU rows in " + w.name + ", found " + children);
             for (String line3 : Files.readAllLines(root.resolve(w.name + "-sql.csv"))) {
                 String[] cells = line3.split(",");

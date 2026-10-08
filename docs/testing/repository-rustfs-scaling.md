@@ -71,6 +71,7 @@ parent asserts it.
 | `nativeBenchmarkBudgetBytes` | aggregate | 0 | Total `PayloadBudget` bytes divided across replicas; 0 keeps 128,000,000 per worker. Initial admission reserves about 18 MiB per in-flight call, so 16 clients on one worker need at least 384,000,000. A worker refuses more than 384,000,000. |
 | `nativeBenchmarkHeapMiB` | aggregate | 0 | Total `-Xmx` across replicas, forwarded by the init script; 0 keeps 512 MiB per worker. |
 | `nativeBenchmarkPlan` | run | `mirrored` | `mirrored` is the twelve-window `f1 a4 f2 a1 f4 a2 a2 f4 a1 f2 a4 f1` sequence; `scaleout` is `a2 a4 f2 f4 f4 f2 a4 a2`. |
+| `nativeBenchmarkSampleMillis` | parent | 25 | Interval of the parent's `pg_stat_activity` backend-state sampling during measured windows, forwarded by the init script. That sampling is active SQL work whose cost grows with connection count; 0 disables it for a control run. |
 | `nativeBenchmarkTrace` | all workers | `false` | Per-operation JDBC commit/execute attribution by completion site through a test-only proxy. It adds overhead; use it for attribution, not for the compared numbers. |
 
 Window names encode the SQL pool: `fN` fixes eight connections in total
@@ -83,6 +84,15 @@ Not controlled: CPU. Workers, PostgreSQL and RustFS share the host without cgrou
 limits, so four JVMs have four times the GC and JIT threads. The report records
 host, container and worker CPU per window so that this can be checked rather than
 assumed. No window is a soak; each measured phase lasts a few seconds.
+
+Warmup is per client, not per process: the workload runs eight warmup iterations
+for every client, so with 16 clients a lone process executes 128 warmup
+operations while each of four processes executes 32. Every window starts fresh
+JVMs. The comparison is therefore between short-lived processes, and the
+analyzer's `warmup.csv` reports the gap between the first and last eight
+measured iterations per configuration so the cold-process share can be read
+rather than assumed. Changing the warmup volume needs the workload probe, which
+this harness does not own.
 
 ## Commands
 
@@ -128,7 +138,8 @@ and both image IDs with registry digests), `windows.csv`, `processes.csv`
 (PID, heap and exit code of every worker), per worker `-operations.csv` (every
 measured request with start and elapsed nanoseconds), `-measure-metrics.csv`
 (provider and pool callback counters), per window `-scaling.csv` (PostgreSQL,
-host, container and child CPU deltas), `-sql.csv` plus `-query-*.sql`
+host, container and child CPU counters at window begin, at the moment every
+worker was done, and after a 1.2 s statistics settle, with both deltas), `-sql.csv` plus `-query-*.sql`
 (`pg_stat_statements` per window), `-activity.csv`/`-locks.csv` (sampled backend
 states), `-rss.csv`, `-baseline.csv` and `-durable-delta.csv`.
 
@@ -138,12 +149,15 @@ Summaries:
 java docs/evidence/repository/external-rustfs-scaling/RepositoryScalingReport.java <output-dir> <raw-dir>...
 ```
 
-The analyzer recounts every window's operations, refuses recorded failures or
-durable-count mismatches, and writes `windows.csv`, `configs.csv` and
-`workers.csv`. Throughput is measured operations divided by inclusive window time
+Label inputs as `<label>=<dir>`; a bare archive directory named `raw` takes its
+parent's name. The analyzer recounts every window's operations, refuses recorded
+failures, durable-count mismatches and duplicate inputs, and writes `windows.csv`,
+`configs.csv` (with the number of distinct runs per configuration), `workers.csv`
+(PIDs and per-process work), `warmup.csv` and, for traced runs, `trace-sites.csv`. Throughput is measured operations divided by inclusive window time
 (which contains the receipt replays and parent polling); latency percentiles are
-nearest-rank over individual measured operations, excluding the replay that
-follows each write, which is reported separately.
+nearest-rank over individual measured operations. Each write's timed value ends
+before its receipt replay; the replay is inside the window but has no row of its
+own.
 
 ## Reading the resource columns
 
@@ -157,10 +171,16 @@ follows each write, which is reported separately.
   samplers' own marked statements, per primary operation. Maintenance ticks and
   pool validation also commit, so treat it as an upper bound; trace runs give the
   exact client-side `jdbc_commit` count per operation scope.
-- `wal_fsync_time_s`, `wal_write_time_s`: `pg_stat_io` WAL object timings with
-  `track_wal_io_timing=on`, summed over backends. Cumulative statistics flush at
-  most once a second per backend; the parent waits 1.2 s after the last worker
-  finishes and before releasing the workers, outside the inclusive window.
+- `wal_fsync_time_settled_s`, `wal_client_backend_fsync_time_settled_s`,
+  `wal_fsync_share_of_settled_span`: `pg_stat_io` WAL object fsync timings with
+  `track_wal_io_timing=on`, summed over backend types and contexts (the raw file
+  also keeps each backend type and context separately). PostgreSQL serialises WAL
+  writes and flushes under `WALWriteLock`, so the sum approximates flush
+  occupancy, but it is a sum of call durations, not a lock-hold measurement, and
+  it covers the settled span. Cumulative statistics flush at most once a second
+  per backend; the parent reads them 1.2 s after the last worker finishes, before
+  releasing the workers and outside the inclusive window; CPU counters are read at
+  the moment the last worker finished.
 - `postgres_cores`, `rustfs_cores`: container cgroup CPU over window time.
 - `worker_cores`: exact `ProcessHandle` CPU of the worker JVMs over window time.
 - `host_busy_cores`, `host_iowait_cores`: whole-host `/proc/stat` deltas, which

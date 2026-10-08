@@ -1,18 +1,19 @@
-=== compare-1 start 2026-10-08T11:15:17Z loadavg=8.46 6.79 4.61 6/17326 3417284
-=== compare-1 end 2026-10-08T11:19:10Z exit=0 raw=repo/container/build/native-replica-benchmark/cdcc93c6-bfcf-416a-96c7-5085e361f36d/ loadavg=13.62 10.88 6.78 4/17452 3443085
-=== compare-2 start 2026-10-08T11:19:10Z loadavg=13.62 10.88 6.78 6/17452 3443087
-=== compare-2 end 2026-10-08T11:23:04Z exit=0 raw=repo/container/build/native-replica-benchmark/a7533425-d480-4902-a145-91f6da357680/ loadavg=17.40 13.93 8.88 4/17418 3478353
-=== compare-3 start 2026-10-08T11:23:04Z loadavg=17.40 13.93 8.88 5/17418 3478355
-=== compare-3 end 2026-10-08T11:27:00Z exit=0 raw=repo/container/build/native-replica-benchmark/9c294c5a-55ec-4129-9714-f3f5f77956e2/ loadavg=15.79 14.63 10.28 6/17649 3511614
-=== load-4 start 2026-10-08T11:27:00Z loadavg=15.79 14.63 10.28 5/17649 3511616
-=== load-4 end 2026-10-08T11:30:08Z exit=0 raw=repo/container/build/native-replica-benchmark/626fc302-0b87-4d68-9063-a7186e4a9f1e/ loadavg=12.97 13.57 10.65 10/17737 3536959
-=== load-8 start 2026-10-08T11:30:08Z loadavg=12.97 13.57 10.65 8/17737 3536961
-=== load-8 end 2026-10-08T11:33:54Z exit=0 raw=repo/container/build/native-replica-benchmark/cfda6d69-5211-4900-a71c-46777a08b9ad/ loadavg=13.99 13.58 11.25 13/17926 3570248
-=== load-32 start 2026-10-08T11:33:54Z loadavg=13.99 13.58 11.25 14/17926 3570250
-=== load-32 end 2026-10-08T11:37:19Z exit=1 raw=repo/container/build/native-replica-benchmark/ec8d5cfe-2f8c-4c58-a219-d3e0d1f8719b/ loadavg=12.20 12.16 11.09 10/17679 3608676
-=== trace-16 start 2026-10-08T11:37:19Z loadavg=12.20 12.16 11.09 10/17679 3608678
-=== trace-16 end 2026-10-08T11:41:20Z exit=0 raw=repo/container/build/native-replica-benchmark/6f521933-1a1b-4e8e-bdbc-646de9eec20b/ loadavg=17.20 14.87 12.44 9/17590 3635999
-SERIES_DONE
-=== load-32-slots32 start 2026-10-08T11:42:07Z loadavg=12.56 13.97 12.25 6/17777 3644380
-=== load-32-slots32 end 2026-10-08T11:47:15Z exit=0 raw=repo/container/build/native-replica-benchmark/974972e5-fc6f-4ecc-a9c3-ba4ec7453794/ loadavg=19.84 16.09 13.38 8/17269 3690810
-SERIES2_DONE
+=== compare-1 start 2026-10-08T12:06:19Z loadavg=7.78 6.97 8.37 3/17114 3825837
+=== compare-1 end 2026-10-08T12:10:07Z exit=0 raw=repo/container/build/native-replica-benchmark/23d27fd5-3a9e-4f4d-8033-d79e92526069/ loadavg=12.16 9.55 9.08 9/17313 3850938
+=== compare-2 start 2026-10-08T12:10:07Z loadavg=12.16 9.55 9.08 5/17313 3850940
+=== compare-2 end 2026-10-08T12:14:05Z exit=0 raw=repo/container/build/native-replica-benchmark/0738f0ed-aa29-45ad-9cf6-d1bf63229f91/ loadavg=17.66 12.79 10.39 15/17583 3880044
+=== compare-3 start 2026-10-08T12:14:05Z loadavg=17.66 12.79 10.39 15/17583 3880046
+=== compare-3 end 2026-10-08T12:17:58Z exit=0 raw=repo/container/build/native-replica-benchmark/9873010e-45dc-4dd7-b852-0038377907f8/ loadavg=13.64 13.26 11.11 7/17612 3905833
+=== control-sample250 start 2026-10-08T12:17:58Z loadavg=13.64 13.26 11.11 10/17612 3905835
+=== control-sample250 end 2026-10-08T12:22:18Z exit=0 raw=repo/container/build/native-replica-benchmark/99202350-8e1f-4b7d-b720-c043c8d93e4a/ loadavg=13.41 13.46 11.68 10/17397 3937270
+=== load-4 start 2026-10-08T12:22:18Z loadavg=13.41 13.46 11.68 4/17397 3937272
+=== load-4 end 2026-10-08T12:27:34Z exit=0 raw=repo/container/build/native-replica-benchmark/19395beb-953f-4ddf-8d64-83765b9f3d07/ loadavg=8.34 9.74 10.50 4/17269 3987832
+=== load-8 start 2026-10-08T12:27:34Z loadavg=8.34 9.74 10.50 7/17269 3987834
+=== load-8 end 2026-10-08T12:33:02Z exit=0 raw=repo/container/build/native-replica-benchmark/5ac2234f-df31-4561-a6b9-6d28a0aecbf5/ loadavg=11.14 10.10 10.36 3/17391 4038102
+=== load-32-slots16 start 2026-10-08T12:33:02Z loadavg=11.14 10.10 10.36 2/17391 4038104
+=== load-32-slots16 end 2026-10-08T12:34:08Z exit=1 raw=repo/container/build/native-replica-benchmark/4288d9da-7384-46a8-ab16-1e0645a83457/ loadavg=9.86 9.84 10.25 14/17413 4046422
+=== load-32-slots32 start 2026-10-08T12:34:08Z loadavg=9.86 9.84 10.25 11/17413 4046424
+=== load-32-slots32 end 2026-10-08T12:40:04Z exit=0 raw=repo/container/build/native-replica-benchmark/a06397d5-cf53-4148-bd4c-1085e86f9c93/ loadavg=17.93 13.08 11.23 5/17109 4100497
+=== trace-16 start 2026-10-08T12:40:04Z loadavg=17.93 13.08 11.23 2/17109 4100501
+=== trace-16 end 2026-10-08T12:43:56Z exit=0 raw=repo/container/build/native-replica-benchmark/ba301eb0-d92d-4e06-8de4-c0a69527e54b/ loadavg=15.07 13.59 11.79 3/17358 4126302
+SERIES3_DONE

@@ -51,7 +51,9 @@ class NativeReplicaRuntimeTest {
         var probe = directory.resolve("storage-probe.jar");
         try (var output = new java.util.jar.JarOutputStream(Files.newOutputStream(probe)); var paths = Files.walk(classes)) {
             for (var file : paths.filter(Files::isRegularFile).sorted().toList()) {
-                output.putNextEntry(new java.util.jar.JarEntry(classes.relativize(file).toString().replace(java.io.File.separatorChar, '/')));
+                var entry = new java.util.jar.JarEntry(classes.relativize(file).toString().replace(java.io.File.separatorChar, '/'));
+                entry.setTime(315532800000L); // fixed timestamp: identical classes give an identical probe JAR hash
+                output.putNextEntry(entry);
                 Files.copy(file, output); output.closeEntry();
             }
         }
@@ -164,6 +166,10 @@ class NativeReplicaRuntimeTest {
         if (totalBudget < 0 || totalBudget > 768_000_000 || totalBudget % 4 != 0)
             throw new IllegalArgumentException("Total payload budget must be zero or a multiple of four up to 768000000");
         int totalHeap = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkHeapMiB", "0"));
+        // Backend-state sampling is active SQL work whose cost grows with connection count; the
+        // interval is recorded so a control run can show its effect. Zero disables it.
+        int sampleMillis = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkSampleMillis", "25"));
+        if (sampleMillis < 0 || sampleMillis > 5000) throw new IllegalArgumentException("Sample interval must be 0 (off) to 5000 ms");
         for (String config : plan) heapPerReplica(totalHeap, Integer.parseInt(config.substring(1)));
         Path output = Path.of(System.getProperty("protomolt.test.nativeBenchmarkOutput")).resolve(java.util.UUID.randomUUID().toString());
         int payloadBytes = Integer.parseInt(System.getProperty("protomolt.test.nativeBenchmarkPayloadBytes", "0"));
@@ -187,11 +193,18 @@ class NativeReplicaRuntimeTest {
                 + "\njournaled=" + journaled
                 + "\ntrace=" + trace
                 + "\nplan=" + planName
+                + "\nsample_millis=" + sampleMillis + "\nzero_sample_means=no backend-state sampling"
                 + "\nNo host isolation or container CPU/memory limits; trusted internal Java path.\n");
         // Immutable identity of what ran: every production artifact by content hash, the compiled probe, and both images.
         var identity = new StringBuilder();
         artifacts.forEach((sha, path) -> identity.append(sha).append("  ").append(path.getFileName()).append('\n'));
-        identity.append(sha256(probe)).append("  ").append(probe.getFileName()).append(" (compiled test probe)\n");
+        identity.append(sha256(probe)).append("  ").append(probe.getFileName()).append(" (compiled test probe, fixed entry timestamps)\n");
+        try (var sources = Files.list(directory)) {
+            for (var source : sources.filter(path -> path.toString().endsWith(".java")).sorted().toList())
+                identity.append(sha256(source)).append("  ").append(source.getFileName()).append(" (probe source)\n");
+        }
+        identity.append(sha256(Path.of(RepositoryScalingSampler.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .resolve("ai/protomolt/proto/repo/container/ledger/RepositoryScalingSampler.class"))).append("  RepositoryScalingSampler.class (parent sampler)\n");
         identity.append(RepositoryScalingSampler.describeImage(postgres.getDockerImageName())).append('\n');
         String rustfsId = RepositoryScalingSampler.containerIdByImage("rustfs");
         identity.append(RepositoryScalingSampler.describeImage(DockerClientFactory.instance().client()
@@ -239,6 +252,7 @@ class NativeReplicaRuntimeTest {
                     Files.writeString(directory.resolve(name + ".go"), "go", java.nio.file.StandardOpenOption.CREATE_NEW);
                     long finishDeadline = start + java.time.Duration.ofSeconds(90).toNanos();
                     boolean done;
+                    long lastSample = start - sampleMillis * 1_000_000L; // first poll samples at once
                     do {
                         done = true;
                         for (int index = 0; index < replicas; index++) {
@@ -246,11 +260,12 @@ class NativeReplicaRuntimeTest {
                             if (!children.get(index).isAlive() && children.get(index).exitValue() != 0)
                                 throw new AssertionError(Files.readString(output.resolve(name + "-" + index + ".log")));
                         }
-                        sampler.sample(name, children);
+                        if (sampleMillis > 0 && System.nanoTime() - lastSample >= sampleMillis * 1_000_000L) { sampler.sample(name, children); lastSample = System.nanoTime(); }
                         assertThat(System.nanoTime() < finishDeadline).as("traffic window deadline").isTrue();
                         if (!done) Thread.sleep(25);
                     } while (!done);
                     long elapsed = System.nanoTime() - start;
+                    scaling.markDone(name, children);
                     sampler.finish(name, totalClients, iterations);
                     // Cumulative PostgreSQL statistics flush at most once per second per backend.
                     // The settle is outside the inclusive window and before the children are released.

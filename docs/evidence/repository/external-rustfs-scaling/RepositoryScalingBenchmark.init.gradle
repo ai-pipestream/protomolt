@@ -13,3 +13,10 @@ gradle.allprojects { project ->
         task.systemProperty 'protomolt.test.nativeBenchmarkPlan', project.providers.gradleProperty('nativeBenchmarkPlan').getOrElse('mirrored')
     }
 }
+// nativeBenchmarkSampleMillis is the interval of the parent's pg_stat_activity backend-state
+// sampling during measured windows (default 25); zero disables that sampling for a control run.
+gradle.allprojects { project ->
+    project.tasks.matching { it.name == 'nativeReplicaBenchmark' }.configureEach { task ->
+        task.systemProperty 'protomolt.test.nativeBenchmarkSampleMillis', project.providers.gradleProperty('nativeBenchmarkSampleMillis').getOrElse('25')
+    }
+}

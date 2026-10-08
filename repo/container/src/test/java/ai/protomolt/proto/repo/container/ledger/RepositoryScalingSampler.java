@@ -47,7 +47,7 @@ final class RepositoryScalingSampler implements AutoCloseable {
     private final Path output;
     private final List<Container> containers;
     private final int hostCpus = Runtime.getRuntime().availableProcessors();
-    private Snapshot begin;
+    private Snapshot begin, done;
 
     RepositoryScalingSampler(String url, String user, String password, Path output, Map<String, String> containerIds) throws Exception {
         this.output = output;
@@ -118,53 +118,68 @@ final class RepositoryScalingSampler implements AutoCloseable {
     }
 
     void begin(String window, List<Process> children) throws Exception {
-        if (begin != null) throw new IllegalStateException("Window " + window + " began before the previous one finished");
+        if (begin != null || done != null) throw new IllegalStateException("Window " + window + " began before the previous one finished");
         begin = snapshot(children);
     }
 
-    /** Writes metric,begin,end,delta rows; the child rows carry exact process CPU over the window. */
+    /** Taken the moment every worker reports done: CPU and gauges are exact for the window here. */
+    void markDone(String window, List<Process> children) throws Exception {
+        if (begin == null || done != null) throw new IllegalStateException("Window " + window + " has no open begin snapshot");
+        done = snapshot(children);
+    }
+
+    /**
+     * Taken after the caller's statistics settle. Writes one row per metric with the
+     * window delta (begin to done) and the settled delta (begin to this snapshot).
+     * CPU and gauge rows carry both so a reader can see the settle cost; database
+     * counters are only trustworthy in the settled column because backends flush
+     * cumulative statistics at most once per second.
+     */
     void finish(String window, List<Process> children) throws Exception {
-        if (begin == null) throw new IllegalStateException("Window " + window + " did not begin");
-        var end = snapshot(children);
-        var text = new StringBuilder("metric,begin,end,delta\n");
-        row(text, "elapsed_nanos", begin.nanos(), end.nanos());
-        text.append("loadavg_begin,").append(begin.loadavg()).append(",,\n");
-        text.append("loadavg_end,").append(end.loadavg()).append(",,\n");
-        row(text, "host_cpus", hostCpus, hostCpus);
-        row(text, "host_cpu_busy_jiffies", begin.host().busy(), end.host().busy());
-        row(text, "host_cpu_idle_jiffies", begin.host().idle(), end.host().idle());
-        row(text, "host_cpu_iowait_jiffies", begin.host().iowait(), end.host().iowait());
-        row(text, "host_cpu_total_jiffies", begin.host().total(), end.host().total());
-        gauge(text, "host_mem_available_kib", begin.hostAvailableKib(), end.hostAvailableKib());
+        if (begin == null || done == null) throw new IllegalStateException("Window " + window + " was not marked done");
+        var settled = snapshot(children);
+        var text = new StringBuilder("metric,begin,at_done,at_settled,delta_window,delta_settled\n");
+        row(text, "elapsed_nanos", begin.nanos(), done.nanos(), settled.nanos());
+        text.append("loadavg_begin,").append(begin.loadavg()).append(",,,,\n");
+        text.append("loadavg_done,").append(done.loadavg()).append(",,,,\n");
+        text.append("loadavg_settled,").append(settled.loadavg()).append(",,,,\n");
+        text.append("host_cpus,").append(hostCpus).append(',').append(hostCpus).append(',').append(hostCpus).append(",0,0\n");
+        row(text, "host_cpu_busy_jiffies", begin.host().busy(), done.host().busy(), settled.host().busy());
+        row(text, "host_cpu_idle_jiffies", begin.host().idle(), done.host().idle(), settled.host().idle());
+        row(text, "host_cpu_iowait_jiffies", begin.host().iowait(), done.host().iowait(), settled.host().iowait());
+        row(text, "host_cpu_total_jiffies", begin.host().total(), done.host().total(), settled.host().total());
+        gauge(text, "host_mem_available_kib", begin.hostAvailableKib(), done.hostAvailableKib(), settled.hostAvailableKib());
         for (var container : containers) {
-            var before = begin.containerCpu().get(container.role()); var after = end.containerCpu().get(container.role());
-            row(text, "container_" + container.role() + "_cpu_usage_usec", before.usageMicros(), after.usageMicros());
-            row(text, "container_" + container.role() + "_cpu_user_usec", before.userMicros(), after.userMicros());
-            row(text, "container_" + container.role() + "_cpu_system_usec", before.systemMicros(), after.systemMicros());
-            gauge(text, "container_" + container.role() + "_memory_current_bytes", begin.containerMemory().get(container.role()), end.containerMemory().get(container.role()));
+            String role = container.role();
+            row(text, "container_" + role + "_cpu_usage_usec", begin.containerCpu().get(role).usageMicros(), done.containerCpu().get(role).usageMicros(), settled.containerCpu().get(role).usageMicros());
+            row(text, "container_" + role + "_cpu_user_usec", begin.containerCpu().get(role).userMicros(), done.containerCpu().get(role).userMicros(), settled.containerCpu().get(role).userMicros());
+            row(text, "container_" + role + "_cpu_system_usec", begin.containerCpu().get(role).systemMicros(), done.containerCpu().get(role).systemMicros(), settled.containerCpu().get(role).systemMicros());
+            gauge(text, "container_" + role + "_memory_current_bytes", begin.containerMemory().get(role), done.containerMemory().get(role), settled.containerMemory().get(role));
         }
-        for (String key : begin.database().keySet()) {
-            double before = begin.database().get(key), after = end.database().get(key);
-            if (after < before) throw new IllegalStateException("Database counter moved backwards: " + key);
-            text.append(key).append(',').append(before).append(',').append(after).append(',').append(after - before).append('\n');
+        // Per-backend WAL rows appear once a backend type has flushed; a counter absent earlier is zero.
+        var keys = new TreeSet<String>(begin.database().keySet()); keys.addAll(done.database().keySet()); keys.addAll(settled.database().keySet());
+        for (String key : keys) {
+            double first = begin.database().getOrDefault(key, 0.0), mid = done.database().getOrDefault(key, first), last = settled.database().getOrDefault(key, mid);
+            if (mid < first || last < mid) throw new IllegalStateException("Database counter moved backwards: " + key);
+            text.append(key).append(',').append(first).append(',').append(mid).append(',').append(last).append(',').append(mid - first).append(',').append(last - first).append('\n');
         }
         for (var child : children) {
-            Long before = begin.childCpuNanos().get(child.pid()), after = end.childCpuNanos().get(child.pid());
-            if (before == null || after == null) throw new IllegalStateException("Child " + child.pid() + " CPU time unavailable at a window boundary");
-            row(text, "child_" + child.pid() + "_cpu_nanos", before, after);
+            Long first = begin.childCpuNanos().get(child.pid()), mid = done.childCpuNanos().get(child.pid()), last = settled.childCpuNanos().get(child.pid());
+            if (first == null || mid == null || last == null) throw new IllegalStateException("Child " + child.pid() + " CPU time unavailable at a window boundary");
+            row(text, "child_" + child.pid() + "_cpu_nanos", first, mid, last);
         }
         Files.writeString(output.resolve(window + "-scaling.csv"), text, StandardOpenOption.CREATE_NEW);
-        begin = null;
+        begin = null; done = null;
     }
 
-    /** Gauges may fall; the delta column is signed. */
-    private static void gauge(StringBuilder text, String metric, long before, long after) {
-        text.append(metric).append(',').append(before).append(',').append(after).append(',').append(after - before).append('\n');
+    /** Gauges may fall; the delta columns are signed. */
+    private static void gauge(StringBuilder text, String metric, long first, long mid, long last) {
+        text.append(metric).append(',').append(first).append(',').append(mid).append(',').append(last).append(',').append(mid - first).append(',').append(last - first).append('\n');
     }
 
-    private static void row(StringBuilder text, String metric, long before, long after) {
-        if (after < before) throw new IllegalStateException("Counter moved backwards: " + metric);
-        text.append(metric).append(',').append(before).append(',').append(after).append(',').append(after - before).append('\n');
+    private static void row(StringBuilder text, String metric, long first, long mid, long last) {
+        if (mid < first || last < mid) throw new IllegalStateException("Counter moved backwards: " + metric);
+        text.append(metric).append(',').append(first).append(',').append(mid).append(',').append(last).append(',').append(mid - first).append(',').append(last - first).append('\n');
     }
 
     private Snapshot snapshot(List<Process> children) throws Exception {
@@ -203,6 +218,16 @@ final class RepositoryScalingSampler implements AutoCloseable {
                     SELECT coalesce(sum(writes),0), coalesce(sum(write_time),0), coalesce(sum(fsyncs),0), coalesce(sum(fsync_time),0)
                     FROM pg_stat_io WHERE object = 'wal'
                     """, "writes", "write_time", "fsyncs", "fsync_time");
+            // WAL flush occupancy by backend type and context, so client-backend flushes can be
+            // separated from the walwriter, checkpointer and segment initialisation.
+            try (var rows = statement.executeQuery("SELECT backend_type, context, writes, write_time, fsyncs, fsync_time FROM pg_stat_io "
+                    + "WHERE object = 'wal' AND (writes > 0 OR fsyncs > 0) ORDER BY backend_type, context " + MARKER)) {
+                while (rows.next()) {
+                    String prefix = "walio_" + rows.getString(1).replace(' ', '_') + "_" + rows.getString(2) + "_";
+                    values.put(prefix + "writes", rows.getDouble(3)); values.put(prefix + "write_time", rows.getDouble(4));
+                    values.put(prefix + "fsyncs", rows.getDouble(5)); values.put(prefix + "fsync_time", rows.getDouble(6));
+                }
+            }
             single(statement, values, "relio_", """
                     SELECT coalesce(sum(reads),0), coalesce(sum(read_time),0), coalesce(sum(writes),0), coalesce(sum(write_time),0),
                     coalesce(sum(fsyncs),0), coalesce(sum(fsync_time),0), coalesce(sum(hits),0), coalesce(sum(evictions),0),
