@@ -1034,7 +1034,12 @@ not prove that facade routing carries the same identity, control and cleanup rul
   durable recovery row across public retry. Altered and unauthorized requests are
   refused at that uncertain checkpoint without selector, schema or provider work.
   See [recovery acknowledgement evidence](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md).
-  Corrupted persisted journals still need public-route qualification.
+  A fresh process after reserved-phase writer termination now rejects a damaged
+  preparation on library/gRPC with the exact DATA_LOSS integrity error, unchanged
+  journal and no selection, schema, provider, installation or publication work.
+  Restoring the original bytes lets the same runtime recover and publish once.
+  See [corrupt-journal evidence](../evidence/repository/2026-10-08-historical-public-corrupt-journal/README.md).
+  This covers preparation-byte corruption, not every persisted journal field.
 - Current authorization and policy: revoke source READ, destination WRITE or
   credential generation, or change admission policy between capture and commit.
   Prove both SQL orderings through public dispatch, including authorized replay
@@ -1087,6 +1092,33 @@ not prove that facade routing carries the same identity, control and cleanup rul
 
 These checks supplement cold-process and concurrent takeover evidence; they do
 not replace the remaining full-goal pruning, backup, performance or hydration work.
+
+#### Next managed-host integration
+
+The qualified dispatcher is still reached through the package-private
+`DocumentPublicationRuntime.historicalJournaled` factory. `ManagedDocumentServices`
+uses `managedJournaled`, and `ManagedPublicationOptions` has no historical capacity
+or opt-in. Passing the checks above does not change that host wiring.
+
+The next implementation must provide explicit historical publication configuration
+with positive generation capacity and current per-operation recovery authority.
+Drain authority remains separate. Ordinary journaled publication must keep working
+without historical activation; selecting historical publication without its required
+configuration must fail before resources are exposed. Construction failure must
+leave cleanup ownership clear, including schema workers and native readers.
+
+Retained reads and recovered uploads must resolve their original backend generation
+and profile, including storage identity. New initial uploads may use the current
+placement selector. The existing managed host accepts only its configured backend;
+an unavailable historical identity must remain an explicit failure. Supporting
+additional retained backends requires an identity-based resolver with owned provider
+lifetime, not substitution of the current backend or provider-specific defaults.
+
+Qualify the wiring through the actual managed service and its library and
+authenticated gRPC boundaries: new mixed publication, retained revision readback,
+exact retry, cold recovery, missing backend refusal, and close while work is held.
+Also cover absent/invalid configuration and failed construction cleanup. Keep host
+activation and public API availability unclaimed until that composition passes.
 
 ### Pending source projection checkpoint (2026-10-07)
 

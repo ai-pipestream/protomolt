@@ -69,12 +69,21 @@ class HistoricalRuntimeQualificationTest {
         coldProcessRestart(phase, true);
     }
 
+    @Test void coldPublicCorruptPreparation() throws Exception {
+        coldProcessRestart("reserved", true, true);
+    }
+
     private void coldProcessRestart(String phase, boolean publicDispatch) throws Exception {
+        coldProcessRestart(phase, publicDispatch, false);
+    }
+
+    private void coldProcessRestart(String phase, boolean publicDispatch, boolean corruptPreparation) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
              var storage = new AssessmentStorageBackend("localstack")) {
             postgres.start(); storage.start();
             var environment = new java.util.HashMap<String, String>();
+            environment.put("PROTOMOLT_TEST_COLD_CORRUPT_PREPARATION", Boolean.toString(corruptPreparation));
             environment.put("PROTOMOLT_TEST_RUNTIME_BUNDLE", compiled.bundle().toString());
             environment.put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
             environment.put("PROTOMOLT_TEST_USER", postgres.getUsername());

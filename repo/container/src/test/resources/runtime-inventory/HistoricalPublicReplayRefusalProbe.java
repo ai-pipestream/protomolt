@@ -39,13 +39,21 @@ final class HistoricalPublicReplayRefusalProbe {
                         RepositoryException.Code.UNAUTHENTICATED));
     }
 
-    static void refuse(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+    static RepositoryException refuse(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
             RepositoryException.Code expected) {
+        return refuse(repository, caller, request, expected, null);
+    }
+
+    static RepositoryException refuse(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+            RepositoryException.Code expected, String message) {
         try {
             repository.publishDocument(caller, request, RepositoryReadControl.NONE);
             throw new AssertionError("Invalid public replay returned a receipt; expected " + expected);
         } catch (RepositoryException failure) {
             if (failure.code() != expected) throw new AssertionError("Expected " + expected + " but got " + failure.code(), failure);
+            if (message != null && !message.equals(failure.getMessage()))
+                throw new AssertionError("Expected exact refusal message: " + message, failure);
+            return failure;
         }
     }
 }

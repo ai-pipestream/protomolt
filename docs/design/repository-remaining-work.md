@@ -24,8 +24,11 @@ receipt across library and authenticated gRPC retries without new provider or sc
 work. Altered retries and invalid identities are refused; cleanup authority failure
 and SQL pin-release rollback retain ownership and permit subsequent cleanup.
 Explicit gRPC deadlines and orderly service admission close now retain actual
-producer resources until drainage. Recovery-journal and revocation/policy checks remain before exposing the
-host factory; see the explicit [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks).
+producer resources until drainage. Focused recovery acknowledgement, corrupt-journal,
+revocation and policy checks now pass. Explicit managed-host historical configuration
+and service composition remain before exposing the host factory; see the
+[acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
+and [next integration](repository-historical-restore.md#next-managed-host-integration).
 START reconciliation retains an exact attempt identity and requires current
 authority before restoring the original handle's CREATE permission. See
 [historical restore](repository-historical-restore.md#reconciliation-of-an-uncertain-start-acknowledgement).
@@ -54,6 +57,7 @@ Recent evidence:
 - [Historical public publication before ACL change](../evidence/repository/2026-10-08-historical-public-acl-commit-winner/README.md)
 - [Historical public publication before credential/policy change](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md)
 - [Historical public uncertain recovery acknowledgement](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md)
+- [Historical public corrupt-journal recovery](../evidence/repository/2026-10-08-historical-public-corrupt-journal/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

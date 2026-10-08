@@ -31,6 +31,7 @@ final class HistoricalPublicColdDispatchProbe {
         };
         var reads = new DocumentReadLedger(tx, UUID.randomUUID());
         var providerReads = new AtomicInteger();
+        var uploadBackends = new AtomicInteger();
         var reader = new DocumentPartReader((generation, profile) -> {
             require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "exact retained historical read backend");
             providerReads.incrementAndGet();
@@ -43,6 +44,7 @@ final class HistoricalPublicColdDispatchProbe {
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals("assessment-s3") && profile.equals(provider.profile()), "exact recovered upload backend");
+                        uploadBackends.incrementAndGet();
                         return new DocumentPublicationRuntime.Backend(profile.identity(), opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
@@ -72,6 +74,20 @@ final class HistoricalPublicColdDispatchProbe {
                         });
             });
             try {
+                if ("true".equals(System.getenv("PROTOMOLT_TEST_COLD_CORRUPT_PREPARATION"))) {
+                    var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+                    try (var corruption = new HistoricalPreparationCorruption(tx, key)) {
+                        HistoricalPublicReplayRefusalProbe.refuse(repository, caller, request.build(), RepositoryException.Code.DATA_LOSS,
+                                "Private preparation integrity check failed");
+                        corruption.requireNoPublication();
+                        HistoricalPublicDispatchProbe.transportRefusal(repository, caller, request.build(), RepositoryException.Code.DATA_LOSS,
+                                "Private preparation integrity check failed");
+                        corruption.requireNoPublication();
+                        require(selections.get() == 0 && resolutions.get() == 0 && providerReads.get() == 0 && uploadBackends.get() == 0,
+                                "damaged persisted preparation stops before selection, schema or provider work on both public paths");
+                    }
+                    System.out.println("HISTORICAL_PUBLIC_COLD_CORRUPT_PREPARATION_OK");
+                }
                 HistoricalPublicDispatchProbe.transport(repository, caller, request.build(), selections, resolutions, false);
                 require(providerReads.get() > 0, "fresh process reads actual historical provider bytes");
                 require(resolutions.get() == 1 && selections.get() == 1, "only upload resolves a fresh schema");

@@ -361,6 +361,16 @@ final class HistoricalPublicDispatchProbe {
                 PayloadBudget delivery, java.util.concurrent.CountDownLatch serverCancelled) throws Exception;
     }
 
+    static void transportRefusal(DocumentPublicationRepository repository, RepositoryCaller caller,
+            PublishDocumentRequest request, RepositoryException.Code code, String message) throws Exception {
+        withTransport(repository, caller, 2, (remote, service, delivery, serverCancelled) -> {
+            var failure = HistoricalPublicReplayRefusalProbe.refuse(remote, caller, request, code);
+            var status = io.grpc.Status.fromThrowable(failure);
+            require(status.getCode().name().equals(code.name()) && message.equals(status.getDescription()),
+                    "transport preserves the exact refusal status and description");
+        });
+    }
+
     private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
             int transportCapacity, TransportAction action) throws Exception {
         withTransport(repository, caller, transportCapacity, Duration.ofSeconds(60), action);
