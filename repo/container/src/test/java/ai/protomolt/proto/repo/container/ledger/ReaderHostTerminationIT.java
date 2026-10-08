@@ -149,7 +149,7 @@ class ReaderHostTerminationIT {
     }
 
     /** Only this managed child is covered; it has no subprocess workers or database sessions. */
-    private static final class ManagedChild implements AutoCloseable {
+    static final class ManagedChild implements AutoCloseable {
         final ReaderHostTermination.Identity identity = new ReaderHostTermination.Identity(UUID.randomUUID(), "managed-test-host", UUID.randomUUID().toString());
         final Process process;
         ManagedChild() throws Exception {

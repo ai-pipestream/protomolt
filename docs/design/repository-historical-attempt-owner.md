@@ -1562,3 +1562,22 @@ check the durable receipt and exact reader registration nonce plus host binding.
 A Java receipt value is data, not a cleanup capability. Local-only readers and
 LOCAL_DRAIN provenance need separate treatment; neither can be rewritten as
 external evidence. Public historical routing remains disabled.
+
+#### External per-reader quiescence
+
+V114 and `ReaderExternalQuiescence` require the exact reader UUID, registration
+nonce, host execution and persisted termination receipt. Supplied Java values do
+not grant authority. SQL checks the permanent host termination, locks one reader,
+and records a separate immutable quiescence receipt while moving that reader
+through FENCED to QUIESCED. Both changes commit atomically. Exact retries return
+the original receipt UUID; mismatched registrations and local-only readers fail.
+
+HOST_TERMINATION provenance cannot replace LOCAL_DRAIN or be reported as local
+attestation. Host termination and reader quiescence still do not release pins.
+Existing bounded recovery removes pins afterward; capture drain and preparation
+root release retain their own prerequisites.
+
+This is an internal foundation. The tests use real PostgreSQL and managed child
+processes with synthetic document objects. Production host attestation, restart
+harness integration, archive recovery under external evidence, and full historical
+capture/root reclamation remain acceptance work. Public routing remains disabled.

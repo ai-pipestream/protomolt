@@ -9,8 +9,9 @@ import java.util.UUID;
  * Durable read lifetimes after caller authorization. Each ledger belongs to one
  * fresh reader incarnation; never reuse that identity after a process restart.
  * Pins have no expiry. Crash recovery requires proof that the owning incarnation
- * and all its provider I/O have stopped. Only verified local shutdown can attest
- * quiescence; remote crash recovery is not enabled.
+ * and all its provider I/O have stopped. This ledger attests only local shutdown.
+ * External recovery requires a separately persisted verified host termination
+ * and exact per-reader quiescence receipt.
  */
 public final class ArchiveReadLedger {
     private final Tx tx;
