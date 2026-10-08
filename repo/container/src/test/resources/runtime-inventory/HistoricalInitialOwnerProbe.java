@@ -23,6 +23,12 @@ final class HistoricalInitialOwnerProbe {
                     .setMembers(0, member.toBuilder().setDestination(member.getDestination().toBuilder()
                             .setExpectedMutationRevision(current.mutationRevision))).build());
             run(tx, provider, caller, rejected, policy, placement, revision, fragments, budget, observation, null, database, true);
+            var lostReply = new DocumentPublicationCommand(rejected.intent().toBuilder()
+                    .setOperationId(UUID.randomUUID().toString()).build());
+            try (var rejectionFault = new HistoricalCreateCommitFault(database, true)) {
+                run(rejectionFault.tx(), provider, caller, lostReply, policy, placement, revision, fragments, budget,
+                        observation, null, database, true, rejectionFault, tx);
+            }
         }
     }
 
@@ -30,6 +36,15 @@ final class HistoricalInitialOwnerProbe {
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
             HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject) throws Exception {
+        run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation,
+                fault, database, reject, null, tx);
+    }
+
+    private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
+            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
+            Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
+            HistoricalCreateCommitFault fault, javax.sql.DataSource database, boolean reject,
+            HistoricalCreateCommitFault rejectionFault, Tx observer) throws Exception {
         require(!caller.processAuthority(), "initial owner executes as a credential-bound scoped caller");
         var coordinator = new RepositoryCaller(caller.principalName(), true);
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
@@ -155,18 +170,34 @@ final class HistoricalInitialOwnerProbe {
                 }
             }
             if (reject) {
+                int heldReads = reads.outstandingReads();
                 try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
                     require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact rejection backend");
                     return provider.store();
                 }, 4, 4_000_000, budget); var request = attempts.resume(caller, command).orElseThrow()) {
+                    if (rejectionFault != null) {
+                        rejectionFault.armRejection(owner, started.assessment());
+                        try {
+                            request.rejectAssessment(selections, reads, reader,
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
+                                    Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                            throw new AssertionError("Historical rejection did not lose its commit reply");
+                        } catch (RuntimeException failure) { rejectionFault.requireFailure(failure); }
+                        require(count(observer, key, "repository_operation_rejection") == 1,
+                                "lost reply follows exactly one durable rejection");
+                        reader.close(); // Terminal replay must not need another provider read.
+                    }
                     var decided = request.rejectAssessment(selections, reads, reader,
                             new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), observation,
                             Duration.ofSeconds(5), RepositoryReadControl.NONE);
                     require(decided.state() == DocumentPublicationReplay.State.TERMINATED
                             && decided.rejection().orElseThrow().getAssessment().getAssessmentId().equals(started.assessment().toString()),
                             "invalid historical candidate produces exact assessment-bound rejection");
-                    require(new DocumentPublicationReplay(tx).observe(caller, command).rejection().equals(decided.rejection()),
+                    require(new DocumentPublicationReplay(observer).observe(caller, command).rejection().equals(decided.rejection()),
                             "historical rejection replays durably");
+                    reads.releaseDrained(32);
+                    require(reads.outstandingReads() == heldReads && !history.isReleased(),
+                            "assessment replay releases its reads while historical source stays retained");
                     tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15))).inTransaction(em -> {
                         em.createNativeQuery("""
                                 SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM GREATEST(c.lease_until,o.lease_until)-clock_timestamp()))+0.05)
@@ -185,7 +216,8 @@ final class HistoricalInitialOwnerProbe {
                             "same historical entry returns its terminal rejection without mutation authority");
                     require(count(tx, key, "document_revision_commits") == 0, "invalid historical candidate never publishes");
                 }
-                System.out.println("HISTORICAL_INITIAL_REJECTION_OK");
+                System.out.println(rejectionFault == null ? "HISTORICAL_INITIAL_REJECTION_OK"
+                        : "HISTORICAL_INITIAL_REJECTION_REPLY_LOST_OK");
                 return;
             }
             DocumentPublicationResult result;

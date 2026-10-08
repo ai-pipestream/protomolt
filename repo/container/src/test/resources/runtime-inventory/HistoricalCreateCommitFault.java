@@ -18,6 +18,8 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     private final AtomicReference<UUID> proposedStart = new AtomicReference<>();
     private final AtomicReference<RepositoryOperationLedger.Owner> publication = new AtomicReference<>();
     private final AtomicReference<UUID> verification = new AtomicReference<>();
+    private record Rejection(RepositoryOperationLedger.Owner owner, UUID assessment) {}
+    private final AtomicReference<Rejection> rejection = new AtomicReference<>();
     private final AtomicBoolean fired = new AtomicBoolean();
     private final jakarta.persistence.EntityManagerFactory factory;
     private final Tx tx;
@@ -34,7 +36,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                             (wrapper, action, arguments) -> {
                                 boolean target = action.getName().equals("commit") && !fired.get()
                                         && (ownsAssessment(connection, assessment.get()) || ownsStart(connection)
-                                                || ownsPublication(connection) || ownsVerification(connection));
+                                                || ownsPublication(connection) || ownsVerification(connection) || ownsRejection(connection));
                                 if (target && !fired.compareAndSet(false, true))
                                     throw new AssertionError("Assessment commit fault was entered concurrently");
                                 if (target && !lostAcknowledgement)
@@ -50,6 +52,26 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     }
 
     Tx tx() { return tx; }
+    void armRejection(RepositoryOperationLedger.Owner owner, UUID id) {
+        if (assessment.get() != null || startKey.get() != null || publication.get() != null || verification.get() != null
+                || !rejection.compareAndSet(null, new Rejection(owner, id)))
+            throw new IllegalStateException("Commit fault already armed");
+    }
+    private boolean ownsRejection(Connection connection) throws SQLException {
+        var target = rejection.get();
+        if (target == null) return false;
+        var owner = target.owner();
+        try (var statement = connection.prepareStatement("""
+                SELECT EXISTS(SELECT 1 FROM repository_operation_rejection
+                WHERE account_id=? AND principal=? AND operation_id=? AND owner_generation=? AND assessment_id=?
+                  AND creation_xid=pg_current_xact_id_if_assigned())
+                """)) {
+            statement.setString(1, owner.key().account()); statement.setString(2, owner.key().principal());
+            statement.setObject(3, owner.key().operationId()); statement.setLong(4, owner.generation());
+            statement.setObject(5, target.assessment());
+            try (var rows = statement.executeQuery()) { rows.next(); return rows.getBoolean(1); }
+        }
+    }
     void armVerification(UUID attempt) {
         if (assessment.get() != null || startKey.get() != null || publication.get() != null
                 || !verification.compareAndSet(null, attempt)) throw new IllegalStateException("Commit fault already armed");

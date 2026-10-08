@@ -1263,3 +1263,10 @@ This is private initial-owner qualification. Successor rejection, lock contentio
 revocation at decision/delivery, lost rejection acknowledgement and cancellation
 still need historical-path coverage before managed/public enablement. The broad
 storage regression is recorded separately when it completes.
+
+Initial-owner rejection also passes a lost-commit-reply test against PostgreSQL
+and LocalStack. Retry returns the original receipt with the provider reader
+closed. Session cleanup and historical source retention are checked separately.
+See `docs/evidence/repository/2026-10-08-historical-rejection-reply/`.
+Restart recovery, successor rejection and decision races remain acceptance work.
+Public routing remains disabled.
