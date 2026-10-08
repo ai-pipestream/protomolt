@@ -957,3 +957,43 @@ the corrected cases pass. The evidence directory is
 This is a private checkpoint. Initial-anchor, unactivated-predecessor, ancestry
 limit and released-root cases remain, along with managed routing and transport
 qualification. Do not remove the public historical restriction at this checkpoint.
+
+### Managed provider-read integration
+
+The existing engine already implements exact historical reads in
+`DocumentPartReader.readHistorical`, including backend/version resolution,
+provider-worker pin ownership and delivery authorization. The coordinator's
+`DocumentRetainedReader` port accepts a current `PinnedPlan` only. Managed
+historical publication must reuse the engine reader through a separate small
+port rather than importing engine classes into the container module or duplicating
+provider logic in the runtime.
+
+The port must accept a ledger-issued historical capture plus explicit selected
+revision ordinals, returning verified bytes with their ordinal association and a
+closeable owner. Read only selected fragments. Preserve provider generation,
+namespace and version; never resolve through the current drive or latest object.
+Cancellation must leave pins and bytes owned until actual provider work exits.
+Recheck current source authority before delivery, including failures that would
+otherwise reveal provider details. Keep the existing payload and concurrency caps.
+
+`DocumentPublicationSchemaScopes` remains call-owned and thread-confined. The
+historical assessment preparation resolves schema selections synchronously and
+retains copied evidence, not that resolver callback. Complete that preparation
+before closing the call scopes. A retry that needs new resolution opens scopes
+for the current call; it cannot reuse a closed request's resolver.
+
+This read port does not enable public historical publication. Generation routing,
+recovery observation and retention loading, provider preparation, receipt handling
+and shutdown still need composition and common library/transport qualification.
+
+### Restart lookup qualification
+
+The initial-anchor, unactivated-predecessor, 63/64-edge limit and terminal
+root-release cases pass. Retaining metadata does not retain source references.
+A permanent release returns retention-unavailable before live-root corruption
+checks. The exact concurrent release classifier remains unchanged.
+
+The combined 7-suite run passed 64 tests with no failures, errors or skips.
+Reports and source hashes are in the retention-loader evidence `qualified/`
+directory. This supersedes the missing private-loader cases listed above;
+managed routing and public library/gRPC qualification remain unfinished.

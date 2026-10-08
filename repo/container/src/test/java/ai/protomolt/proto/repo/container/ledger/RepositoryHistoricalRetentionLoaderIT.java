@@ -100,6 +100,148 @@ class RepositoryHistoricalRetentionLoaderIT {
         return new RepositoryHistoricalRetentionLoader(c.tx(), budget, TIMEOUTS);
     }
 
+    @Test void loadsInitialAnchorBeforeAnySuccessorInstall() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c, Duration.ofSeconds(5))) {
+            var record = rig.record();
+            var modes = Map.of(record.command().intent().getMembers(0).getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
+            try (var work = rig.sources().work()) {
+                var admission = RepositoryOperationLedger.prepareHistoricalAdmission(record.key(), record.command(),
+                        record.seeds().ownerNonce(), Duration.ofSeconds(1), work);
+                c.tx().inTransaction(em -> {
+                    RepositoryExecutionClaimLedger.lockLive(em, rig.claim());
+                    DocumentPublicationModesJournal.insert(em, rig.claim(), record,
+                            DocumentPublicationModesJournal.encode(record.command(), modes));
+                    admission.apply(em, rig.claim());
+                    return null;
+                });
+            }
+            var reservation = reserve(c, rig);
+            var budget = new PayloadBudget(64_000_000);
+            var before = effects(c);
+            try (var loaded = loader(c, budget).load(CALLER, CALLER, reservation, owner(record), record, NONE)) {
+                assertThat(DocumentPublicationPreparationCodec.encode(loaded.record()))
+                        .isEqualTo(DocumentPublicationPreparationCodec.encode(record));
+            }
+            assertThat(effects(c)).containsExactly(before);
+            assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_successor_installs")).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void loadsThroughAnInstalledPredecessorThatNeverActivated() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var second = installedHistoricalSuccessor(c, rig, Duration.ofSeconds(1));
+            waitExpired(c, rig);
+            var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                    .inspect(CALLER, rig.record().key(), rig.record().command().sha256(), NONE);
+            assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.INSTALLED_NOT_ACTIVATED);
+            var source = observed.unactivated().orElseThrow();
+            var reservation = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                    UUID.randomUUID(), UUID.randomUUID(), Duration.ofMinutes(2), source.owner(),
+                    source.preparationSha256(), source.installation());
+            RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, reservation, NONE);
+            var budget = new PayloadBudget(64_000_000);
+            var before = effects(c);
+            try (var loaded = loader(c, budget).load(CALLER, CALLER, reservation, source.owner(), second.next(), NONE)) {
+                assertThat(DocumentPublicationPreparationCodec.encode(loaded.record()))
+                        .isEqualTo(DocumentPublicationPreparationCodec.encode(rig.record()));
+            }
+            assertThat(effects(c)).containsExactly(before);
+            assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_historical_activations")).isZero();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void countsPlannedSuccessorInThe64EdgeLimit() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var current = installedHistoricalSuccessor(c, rig, Duration.ofSeconds(1));
+            var budget = new PayloadBudget(64_000_000);
+            var before = effects(c);
+            for (int edges = 1; edges <= 64; edges++) {
+                waitExpired(c, rig);
+                var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
+                        .inspect(CALLER, rig.record().key(), rig.record().command().sha256(), NONE);
+                assertThat(observed.status()).isEqualTo(RepositoryCoordinatorRecoveryDiscovery.Status.INSTALLED_NOT_ACTIVATED);
+                var source = observed.unactivated().orElseThrow();
+                var lease = edges >= 63 ? Duration.ofSeconds(30) : Duration.ofSeconds(1);
+                var reservation = new RepositoryCoordinatorReservation.SupersededUnactivated(source.predecessor(),
+                        UUID.randomUUID(), UUID.randomUUID(), lease, source.owner(), source.preparationSha256(), source.installation());
+                RepositoryCoordinatorSupersession.reserve(c.tx(), CALLER, reservation, NONE);
+                if (edges == 63) {
+                    try (var loaded = loader(c, budget).load(CALLER, CALLER, reservation, source.owner(), current.next(), NONE)) {
+                        assertThat(DocumentPublicationPreparationCodec.encode(loaded.record()))
+                                .isEqualTo(DocumentPublicationPreparationCodec.encode(rig.record()));
+                    }
+                } else if (edges == 64) {
+                    var previous = current.next();
+                    assertThatThrownBy(() -> loader(c, budget).load(CALLER, CALLER, reservation, source.owner(), previous, NONE))
+                            .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                                assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION);
+                                assertThat(failure.getMessage()).contains("64-link activation limit");
+                            });
+                    break;
+                }
+                current = RepositorySuccessorInstall.prepare(reservation, current.next(), Duration.ofSeconds(1), current.modes());
+                RepositorySuccessorInstall.install(c.tx(), rig.budget(), CALLER, current, NONE);
+            }
+            assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_successor_installs")).isEqualTo(64);
+            assertThat(effects(c)).containsExactly(before);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
+    @Test void loadedMetadataDoesNotKeepReleasedRootsAlive() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var second = installedHistoricalSuccessor(c, rig, Duration.ofSeconds(1));
+            activateAndRelease(c, rig, second);
+            var reservation = reserve(c, rig);
+            var budget = new PayloadBudget(64_000_000);
+            try (var loaded = loader(c, budget).load(CALLER, CALLER, reservation, owner(second.next()), second.next(), NONE)) {
+                var third = RepositorySuccessorInstall.prepare(reservation, second.next(), Duration.ofMinutes(1), second.modes());
+                RepositorySuccessorInstall.install(c.tx(), rig.budget(), CALLER, third, NONE);
+                try (var later = capture(c, rig)) {
+                    var capture = activation(c.tx(), c, rig, third, later).activate(CALLER, CALLER, NONE);
+                    var owner = c.tx().inTransaction(em -> {
+                        var claim = RepositoryExecutionClaimLedger.lockLive(em, rig.record().key(), rig.record().command().sha256(),
+                                reservation.predecessor().epoch() + 1, reservation.successorToken());
+                        return RepositoryOperationLedger.lockLiveOwner(em, rig.record().key(), third.next().predecessorGeneration() + 1,
+                                third.next().seeds().ownerNonce(), Optional.of(claim));
+                    });
+                    assertThat(new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, rig.record().command(), NONE).rejection()).isPresent();
+                    later.sources().close();
+                    assertThat(capture.complete(CALLER, Duration.ofSeconds(1), NONE)).isPresent();
+                }
+                rig.sources().close(); rig.history().close();
+                assertThat(rig.history().awaitDrained(Duration.ofSeconds(1))).isTrue();
+                rig.history().release();
+                rig.reads().fence(); rig.reads().attestLocalQuiescence();
+                var pins = c.tx().readOnly(em -> (byte[]) em.createNativeQuery(
+                        "SELECT pins_sha256 FROM repository_preparation_pin_batches WHERE operation_id=:o AND initial_capture")
+                        .setParameter("o", rig.record().key().operationId()).getSingleResult());
+                var initial = new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(rig.record().key(),
+                        rig.record().command().sha256(), rig.claim().epoch(), rig.claim().token(), rig.coordinator()),
+                        0, HexFormat.of().formatHex(pins));
+                assertThat(DocumentPreparationCaptureDrain.recover(c.tx(), CALLER, initial, NONE).kind()).isEqualTo("QUIESCED");
+                assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_preparation_capture_drains")).isEqualTo(3);
+                var released = DocumentPreparationRootReleases.release(c.tx(), rig.budget(), CALLER, loaded.record(), NONE);
+                assertThat(released.captureCount()).isEqualTo(3);
+                assertThat(RepositoryHistoricalSuccessorActivationIT.count(c, "repository_preparation_history_roots")).isZero();
+                assertThat(budget.reservedBytes()).isPositive();
+                assertThatThrownBy(() -> c.tx().inTransaction(em -> {
+                    DocumentHistoricalRetentionBinding.require(em, loaded.record(),
+                            DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(loaded.record())), true);
+                    return null;
+                })).isInstanceOfSatisfying(RepositoryException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+                var retryBudget = new PayloadBudget(64_000_000);
+                assertThatThrownBy(() -> loader(c, retryBudget).load(CALLER, CALLER, reservation, owner(second.next()), second.next(), NONE))
+                        .isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                assertThat(retryBudget.reservedBytes()).isZero();
+            }
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @ParameterizedTest @ValueSource(strings = {"acl", "credential", "cancel", "install"})
     void rechecksChangesBetweenReadAndDelivery(String change) throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
@@ -174,17 +316,20 @@ class RepositoryHistoricalRetentionLoaderIT {
         }
     }
     private static RepositoryCoordinatorReservation.ExpiredUnquiesced reserve(Context c, Rig rig) {
-        c.tx().readOnly(em -> em.createNativeQuery("""
-                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
-                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
-                WHERE c.operation_id=:id
-                """).setParameter("id", rig.record().key().operationId()).getSingleResult());
+        waitExpired(c, rig);
         var observed = new RepositoryCoordinatorRecoveryDiscovery(c.tx(), TIMEOUTS)
                 .inspect(CALLER, rig.record().key(), rig.record().command().sha256(), NONE).candidate().orElseThrow();
         var reservation = new RepositoryCoordinatorReservation.ExpiredUnquiesced(observed.predecessor(), UUID.randomUUID(),
                 UUID.randomUUID(), Duration.ofMinutes(2), observed.owner());
         RepositoryCoordinatorExpiration.reserve(c.tx(), CALLER, reservation, NONE);
         return reservation;
+    }
+    private static void waitExpired(Context c, Rig rig) {
+        c.tx().readOnly(em -> em.createNativeQuery("""
+                SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                WHERE c.operation_id=:id
+                """).setParameter("id", rig.record().key().operationId()).getSingleResult());
     }
     private static long[] effects(Context c) {
         return java.util.stream.Stream.of("repository_execution_claims", "repository_publication_assessment_starts",

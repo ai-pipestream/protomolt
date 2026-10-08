@@ -18,6 +18,9 @@ final class DocumentHistoricalRetentionBinding {
         var roots = scope(em.createNativeQuery("""
                 SELECT h.predecessor_generation FROM repository_preparation_history_sets h
                 WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:retained
+                AND NOT EXISTS(SELECT 1 FROM repository_preparation_root_releases released
+                  WHERE released.account_id=h.account_id AND released.principal=h.principal
+                    AND released.operation_id=h.operation_id AND released.predecessor_generation=h.predecessor_generation)
                 AND EXISTS(SELECT 1 FROM repository_preparation_pin_batches b
                   JOIN repository_preparation_pin_owners own USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
                   WHERE b.account_id=h.account_id AND b.principal=h.principal AND b.operation_id=h.operation_id
