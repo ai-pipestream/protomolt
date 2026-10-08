@@ -18,6 +18,7 @@ design and the backup boundary are in
 | Provider | `rustfs/rustfs:1.0.0-beta.11-preview.1`, single `/data` volume, versioned buckets |
 | Identity | The restored provider must be reachable at the recorded endpoint origin, region and path style under the recorded backend generation and storage realm |
 | Content | Typed documents with retained descriptors, archive versions, receipts, sequences, claims and pins, restored verbatim |
+| Buckets | Provisioned by the host with versioning enabled and verified; an existing bucket is adopted by enabling versioning, or refused if S3 does not report it enabled |
 | Not supported | Online or incremental backup, point-in-time recovery, cross-provider or provider-neutral formats, endpoint or generation remapping, LocalStack, Redis-backed deployments, backup authenticity or encryption |
 
 ## Prerequisites
@@ -39,6 +40,11 @@ The script builds the observed admission runtime bundle with the root build,
 builds the harness through its composite build on the same JARs, and runs two
 positive rehearsals followed by every negative case. Options: `--runs N`,
 `--skip-negatives`, `--keep` (leave containers and volumes for inspection).
+The second positive run consumes `--xid-burn` transaction ids (default 8192)
+before seeding so that its restore has to take the `pg_resetwal` branch; the
+first run covers the branch where no advancement is needed. With
+`PROTOMOLT_GRADLE_LOCK=<file>` set, the Gradle steps run under `flock` on that
+file so parallel builds of one checkout on the same machine are serialized.
 Exit code 0 and the final line `REPOSITORY_RECOVERY_REHEARSAL_OK` mean every
 check passed; any failure leaves a nonzero exit and the failing check in
 `markers.log` and `results.xml` of the run directory.
@@ -113,8 +119,10 @@ who has to run them individually. Replace names as needed and keep the order.
    and `pg_restore --exit-on-error --no-owner --no-privileges`.
 7. Compare the restored cluster's next transaction id with the largest value in
    any `xid8` column. If it is not strictly greater, stop the cluster and run
-   `pg_resetwal -e <epoch> -x <xid>` on the data directory, creating the
-   `pg_xact` segment first if it does not exist, then start it again.
+   `pg_resetwal -e <epoch> -x <xid>` on the data directory as the `postgres`
+   user, creating the `pg_xact` segment first if it does not exist, then start
+   it again and repeat the comparison. The harness performs and checks this
+   step on its second positive run.
 8. Compare both sequences with the manifest, then start the host with the
    recorded generation, realm and endpoint. Verify reads before announcing
    readiness.

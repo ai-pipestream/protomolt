@@ -1,0 +1,5 @@
+CHECK_OK missing-version.raw_refused :: readRaw(v1) -> DATA_LOSS
+CHECK_OK missing-version.validated_refused :: readValidated(v1) -> DATA_LOSS
+CHECK_OK missing-version.materialized_refused :: readMaterialized(v1) -> DATA_LOSS
+CHECK_OK missing-version.latest_still_reads :: revision 2 unaffected; revision 1 was not served from the newer version
+CHECK_OK missing-version.schema.no_live_lookup :: live schema resolution attempts=0

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-corrupt-descriptor" tests="9" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-corrupt-descriptor" name="restore.provider_identity" timestamp="2026-10-08T17:05:55.036250546Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:37169</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="restore.pg_restore" timestamp="2026-10-08T17:05:58.406947471Z"><system-out>exit=0 into new database protomolt-recovery-abe6d260f-eb71f2b1-rst-pg</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="restore.xid_epoch" timestamp="2026-10-08T17:05:58.443435779Z"><system-out>next xid 1580 &gt; max stored xid8 1012 (no advancement needed)</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="restore.sequences" timestamp="2026-10-08T17:05:58.443864278Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="restore.migration_level" timestamp="2026-10-08T17:05:58.444249336Z"><system-out>V111</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="corrupt-descriptor.injected" timestamp="2026-10-08T17:05:58.455154438Z"><system-out>retained descriptor artifact 40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588 replaced by damaged bytes on the disposable restored ledger</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="corrupt-descriptor.observed" timestamp="2026-10-08T17:06:01.156263902Z"><system-out>recovered host exit=0 marker=RECOVERED_HOST_CORRUPT_DESCRIPTOR_OK</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="corrupt-descriptor.not_ready" timestamp="2026-10-08T17:06:01.156346318Z"><system-out>no READY advertised</system-out></testcase>
+  <testcase classname="negative-corrupt-descriptor" name="corrupt-descriptor.original_backup_untouched" timestamp="2026-10-08T17:06:01.157554281Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>

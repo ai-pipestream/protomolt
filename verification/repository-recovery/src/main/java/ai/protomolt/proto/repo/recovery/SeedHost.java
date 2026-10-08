@@ -54,16 +54,15 @@ public final class SeedHost {
                      RehearsalFixture.publicationOptions(bundle))) {
             var tx = new Tx(database.entityManagerFactory());
             var operator = RehearsalFixture.operator();
-            // Qualified buckets are versioned. The provisioner creates unversioned buckets, under which
-            // S3 returns no version id and the ledger records none; this rehearsal requires exact versions.
-            String suffix = account.substring(account.length() - 8);
-            String pipelineBucket = versionedBucket(endpoint, "recovery-pipeline-" + suffix);
-            String archiveBucket = versionedBucket(endpoint, "recovery-archive-" + suffix);
+            // Buckets are provisioned by the host. The production provisioner enables and verifies
+            // versioning, which is what makes every committed object carry a provider version id.
             var drive = host.driveRepository().createDrive(operator, CreateDriveRequest.newBuilder().setName("recovery-pipeline")
-                    .setAccountId(account).setDriveType(DriveType.DRIVE_TYPE_PIPELINE).setBucket(pipelineBucket).build()).getDrive();
+                    .setAccountId(account).setDriveType(DriveType.DRIVE_TYPE_PIPELINE).build()).getDrive();
             var archiveDrive = host.driveRepository().createDrive(operator, CreateDriveRequest.newBuilder().setName("recovery-archive")
-                    .setAccountId(account).setDriveType(DriveType.DRIVE_TYPE_CUSTOM).setBucket(archiveBucket).build()).getDrive();
+                    .setAccountId(account).setDriveType(DriveType.DRIVE_TYPE_CUSTOM).build()).getDrive();
             checks.require("s3".equals(drive.getProvider()) && !drive.getBucket().isBlank(), "seed.drive", "drive=" + drive.getDriveId() + " bucket=" + drive.getBucket());
+            checks.require(versioningEnabled(endpoint, drive.getBucket()) && versioningEnabled(endpoint, archiveDrive.getBucket()),
+                    "seed.drive.provisioned_versioned", "host-provisioned buckets report versioning ENABLED: " + drive.getBucket() + ", " + archiveDrive.getBucket());
             record.put("drive", Map.of("id", drive.getDriveId(), "bucket", drive.getBucket(), "prefix", drive.getPrefix()));
             record.put("archiveDrive", Map.of("id", archiveDrive.getDriveId(), "bucket", archiveDrive.getBucket(), "prefix", archiveDrive.getPrefix()));
             var policy = RehearsalFixture.installTypedPolicy(tx, account);
@@ -219,21 +218,16 @@ public final class SeedHost {
         return all;
     }
 
-    /** Operator-qualified bucket: created with versioning enabled before the drive binds to it. */
-    private static String versionedBucket(String endpoint, String name) {
+    /** Reads the provisioned bucket's versioning status through the plain S3 API, independent of the host. */
+    private static boolean versioningEnabled(String endpoint, String bucket) {
         try (var client = software.amazon.awssdk.services.s3.S3Client.builder().endpointOverride(java.net.URI.create(endpoint))
                 .region(software.amazon.awssdk.regions.Region.of(RehearsalFixture.env("PROTOMOLT_RECOVERY_S3_REGION"))).forcePathStyle(true)
                 .httpClientBuilder(software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient.builder())
                 .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
                         software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
                                 RehearsalFixture.env("PROTOMOLT_RECOVERY_S3_ACCESS"), RehearsalFixture.env("PROTOMOLT_RECOVERY_S3_SECRET")))).build()) {
-            client.createBucket(request -> request.bucket(name));
-            client.putBucketVersioning(request -> request.bucket(name).versioningConfiguration(
-                    configuration -> configuration.status(software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
-            var status = client.getBucketVersioning(request -> request.bucket(name)).status();
-            if (status != software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)
-                throw new RehearsalFailure("Bucket versioning is not enabled on " + name + ": " + status);
-            return name;
+            return client.getBucketVersioning(request -> request.bucket(bucket)).status()
+                    == software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED;
         }
     }
 

@@ -184,6 +184,22 @@ final class Ledger implements AutoCloseable {
         return max;
     }
 
+    /**
+     * Consume transaction ids on the source cluster before seeding, so the seeded xid8 values exceed
+     * what a fresh restored cluster allocates and the restore has to advance the counter.
+     */
+    void burnTransactions(long count) {
+        try {
+            connection.setReadOnly(false);
+            try (var statement = connection.createStatement()) {
+                for (long i = 0; i < count; i++) {
+                    try (var result = statement.executeQuery("SELECT pg_current_xact_id()")) { result.next(); }
+                }
+            }
+        } catch (SQLException failure) { throw new RehearsalFailure("Cannot consume transaction ids", failure); }
+        finally { try { connection.setReadOnly(true); } catch (SQLException ignored) { /* best effort */ } }
+    }
+
     long currentXid() {
         var value = new long[1];
         query("SELECT pg_current_xact_id()::text::numeric::bigint", List.of(), result -> value[0] = result.getLong(1));

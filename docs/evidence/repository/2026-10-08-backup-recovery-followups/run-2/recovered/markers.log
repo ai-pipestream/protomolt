@@ -1,0 +1,80 @@
+CHECK_OK restore.row_counts :: identity table counts equal the sealed manifest: {archive_entries=1, archive_object_bindings=3, archive_object_uploads=3, archive_version_object_refs=4, archive_versions=2, archives=1, document_part_attempt_cleanup=0, document_part_attempts=2, document_revision_commits=2, document_revision_parts=2, document_revision_publications=2, document_revision_schema_artifacts=8, document_revision_schema_assets=4, document_revision_schema_evidence=2, documents=1, flyway_schema_history=111, managed_backend_profiles=1, repository_execution_claims=2, repository_operation_success=2, repository_operations=2, repository_physical_locations=5, repository_reader_incarnations=2, repository_schema_artifacts=4}
+CHECK_OK restore.reader_incarnations_restored :: restored reader incarnations=2 (the seed host's registration, restored verbatim, never reused)
+CHECK_OK restore.backend_profile :: managed_backend_profiles row equals recorded identity for generation recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae
+CHECK_OK restore.sequences :: sequence values={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}
+CHECK_OK restore.schema_catalog :: catalog digests=4
+CHECK_OK restore.migration_level :: flyway level V111
+CHECK_OK restore.xid_past_stored :: current=9210 maxStored=9206
+CHECK_OK restore.fresh_incarnation :: restored incarnations=2 all QUIESCED; recovered host registered 2 new ACTIVE incarnation(s); none restored revived
+CHECK_OK restore.raw.v1.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.v1.fragment0 :: ordinal=0 sha256=f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e size=239
+CHECK_OK restore.raw.v1.publication_revision :: publicationRevision=1
+CHECK_OK restore.validated.v1.document :: document bytes equal recorded, sha256=f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e
+CHECK_OK restore.validated.v1.bindings :: policy=c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.raw.v2.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.v2.fragment0 :: ordinal=0 sha256=39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39 size=246
+CHECK_OK restore.raw.v2.publication_revision :: publicationRevision=2
+CHECK_OK restore.validated.v2.document :: document bytes equal recorded, sha256=39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39
+CHECK_OK restore.validated.v2.bindings :: policy=c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.materialized.descriptor_identity :: retained descriptor artifact sha256=40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588
+CHECK_OK restore.materialized.tool_identity :: admission runtime repository-recovery-rehearsal/1
+CHECK_OK restore.materialized.offline_decode :: label=rehearsal-v1 files=5 imports retained
+CHECK_OK restore.materialized.selection_identity :: ordinal=0
+CHECK_OK restore.archive.v1.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK restore.archive.v1.manifest :: frozen metadata snapshot title=Quarterly report
+CHECK_OK restore.archive.v2.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK restore.archive.v2.manifest :: frozen metadata snapshot title=Revised report
+CHECK_OK restore.archive.versions :: versions=[2, 1]
+CHECK_OK restore.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506
+CHECK_OK restore.archive.stats :: entries=1 versions=2 retainedBytes=92
+CHECK_OK restore.provider.8f5cd6201668 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-pipeline/documents/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/17f69be0-bd23-3c63-a3eb-87473a23a87f/attempts/6d91bac1-fb48-4e2b-af1c-a17cefcd0939/part-0 version=7ec11e77-0c03-4390-9922-b9a97018ea3d sha256=f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e etag="bc32af01b407b9a9db7935f02c709001"
+CHECK_OK restore.provider.c650aa2bd6a0 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-pipeline/documents/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/17f69be0-bd23-3c63-a3eb-87473a23a87f/attempts/d8c19d70-7aa7-4d25-b5cf-198f6527b7f1/part-0 version=286d2799-f010-4a4f-ac45-bebc6a397792 sha256=39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39 etag="a73ed3a3e00e8e3d4d46caf44600ab33"
+CHECK_OK restore.provider.0d35cdc882f7 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/markdown/writes/5b883651-8524-43db-ae10-23969097055d/04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d version=dd7dc5f2-c72e-4631-b356-5eb93faca3c1 sha256=04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d etag="a4d1c5ae1e2b525dc20dc6cafe2055fa"
+CHECK_OK restore.provider.21316760b204 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506 version=b787b4ab-49d4-46dc-ac61-9279617178dc sha256=6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506 etag="dc4f8e913786a7b91d3bdaf9ba22af43"
+CHECK_OK restore.provider.8c754c34fb60 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/markdown/writes/1393afed-45f2-42e3-882c-154a33c1d04b/0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc version=900e4e49-21e2-40ca-b4cf-1ed30f113ccb sha256=0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc etag="ab8d98c564c09941a815b7e52495cf77"
+CHECK_OK restore.provider.21316760b204 :: bucket=recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506 version=b787b4ab-49d4-46dc-ac61-9279617178dc sha256=6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506 etag="dc4f8e913786a7b91d3bdaf9ba22af43"
+CHECK_OK restore.provider.count :: objects=6
+CHECK_OK restore.replay.v1 :: receipt byte-equal, revision=95dcf320-f0cf-406b-9960-1b083ec66649
+CHECK_OK restore.replay.v2 :: receipt byte-equal, revision=91bd7b6f-a85e-4442-85e8-4eab83e7f790
+CHECK_OK restore.replay.archive_dedup :: deduplicated=true version=2
+CHECK_OK restore.access.member :: member reads both revisions
+CHECK_OK restore.access.revoked_public :: public grant revoked by revision 2 applies to revision 1: NOT_FOUND
+CHECK_OK restore.access.outsider :: foreign account denied
+CHECK_OK restore.access_matrix_unchanged :: matrix={member.v1=OK, member.v2=OK, stranger.v1=NOT_FOUND, stranger.v2=NOT_FOUND, outsider.v1=NOT_FOUND, outsider.v2=NOT_FOUND}
+CHECK_OK restore.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK restore.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK restore.schema.no_live_lookup :: live schema resolution attempts during historical verification=0
+CHECK_OK after-write.document.typed_without_registry_refused :: typed publication with no registry -> IllegalStateException: Recovered host attempted live schema resolution; no registry is configured
+CHECK_OK after-write.registry_rebuilt_from_retained_bytes :: artifact sha256=40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588
+CHECK_OK after-write.document.new_revision :: revision=ea3100e7-ef26-446a-9f43-44a8f265263b mutation=3 > restored sequence 2
+CHECK_OK after-write.document.rebuilt_registry_used :: resolutions=1
+CHECK_OK after-write.document.readable :: new revision readable
+CHECK_OK after-write.archive.new_version :: archive version 3 committed after restore
+CHECK_OK after-write.sequences_advanced :: sequences={archive_mutation_revision_seq=12, document_mutation_revision_seq=3} restored=2/8
+CHECK_OK after-write.archive.old_bindings_intact :: restored bindings unchanged, new version bound two objects (shared original, new markdown)
+CHECK_OK after-write.raw.v1.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.v1.fragment0 :: ordinal=0 sha256=f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e size=239
+CHECK_OK after-write.raw.v1.publication_revision :: publicationRevision=1
+CHECK_OK after-write.validated.v1.document :: document bytes equal recorded, sha256=f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e
+CHECK_OK after-write.validated.v1.bindings :: policy=c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.raw.v2.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.v2.fragment0 :: ordinal=0 sha256=39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39 size=246
+CHECK_OK after-write.raw.v2.publication_revision :: publicationRevision=2
+CHECK_OK after-write.validated.v2.document :: document bytes equal recorded, sha256=39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39
+CHECK_OK after-write.validated.v2.bindings :: policy=c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.materialized.descriptor_identity :: retained descriptor artifact sha256=40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588
+CHECK_OK after-write.materialized.tool_identity :: admission runtime repository-recovery-rehearsal/1
+CHECK_OK after-write.materialized.offline_decode :: label=rehearsal-v1 files=5 imports retained
+CHECK_OK after-write.materialized.selection_identity :: ordinal=0
+CHECK_OK after-write.archive.v1.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK after-write.archive.v1.manifest :: frozen metadata snapshot title=Quarterly report
+CHECK_OK after-write.archive.v2.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK after-write.archive.v2.manifest :: frozen metadata snapshot title=Revised report
+CHECK_OK after-write.archive.versions :: versions=[3, 2, 1]
+CHECK_OK after-write.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506
+CHECK_OK after-write.archive.stats :: entries=1 versions=3 retainedBytes=110
+CHECK_OK restore.ready :: recovered host advertised ready after verification

@@ -1,0 +1,19 @@
+CHECK_OK source.started :: postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:39165
+CHECK_OK source.xid_burn :: consumed 8192 transaction ids before seeding: 755 -> 8948
+CHECK_OK seed.exit :: seed host exit=0
+CHECK_OK capture.quiescent :: client backends other than the capture connection: []
+CHECK_OK capture.pg_dump :: exit=0 stderr=
+CHECK_OK capture.stopped :: postgres {exitCode=0, status=exited, finishedAt=2026-10-08T17:05:07.872488884Z}; rustfs {exitCode=0, status=exited, finishedAt=2026-10-08T17:05:08.14262318Z}
+CHECK_OK capture.provider_archive :: exit=0 stderr=
+CHECK_OK capture.sealed :: components=16 manifest sha256=bd99e952a93f2fbc41c3e92cf87ed8a9c7761f2126c24d61f5e5ae2dc03d5f45
+CHECK_OK capture.preflight :: sealed set verifies
+CHECK_OK source.unreachable :: source containers removed; database refuses connections; provider port 39165 free
+CHECK_OK restore.provider_identity :: restored provider at recorded endpoint http://127.0.0.1:39165
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-recovery-de482c0b4-14c241e4-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 9208 > max stored xid8 9206 (advanced with pg_resetwal)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}
+CHECK_OK restore.migration_level :: V111
+CHECK_OK restore.xid_branch :: seeded xid8 values exceeded the fresh cluster; pg_resetwal advancement branch executed
+CHECK_OK recovered.exit :: recovered host exit=0 READY=true
+CHECK_OK source.volume_untouched :: source provider volume digest unchanged 3fe3fe82be69bf02b19c1525580ca75d3374a8eb3264b1e42e6090c6fe3043b7
+CHECK_OK backup.untouched :: backup components unchanged after restore and verification
