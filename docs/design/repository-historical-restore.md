@@ -864,6 +864,34 @@ Qualification evidence must distinguish internal CREATE from public publication.
 
 ### Acceptance before enabling public restore
 
+#### Public dispatch composition
+
+Keep the existing `PublishDocument` envelope and validate it before any registry
+entry or provider work. That envelope requires every upload body, including on a
+cold retry. A new bodyless recovery API is not part of this entry point.
+
+Reuse `DocumentPublicationInputs.capture` for verified upload views and pinned
+current-reuse reads. Its result contains only ordinary ordinals;
+`DocumentHistoricalFragmentPreparation.capture` checks that exact set and fills
+historical ordinals from retained source readers. The upload coordinator's
+`stageAndPrepareAuthorizedOwned` callback keeps the borrowed upload view alive
+while the original execution handle prepares an independently owned assessment.
+The coordinator transfers that result only after preparation fences, worker drain
+and final authorization. The callback must not prepare through the temporary
+transfer child: CREATE binds assessment identity to the original execution handle.
+Retain the assessment in the attempt entry only after successful transfer; failed
+delivery must close it without leaving a closed assessment in the registry.
+
+The public driver still needs this composition and its tests. It must observe
+authorized terminal replay before host selection, resume an existing local entry
+before allocating a capture, and use explicit host coordinator authority for cold
+successor recovery. Branch before the ordinary operation-wide guard so historical
+provider work cannot prevent another generation from taking over. The outer
+accepted call and owned attempt lifetimes must cover shutdown and worker drain.
+No new default coordinator, provider, schema or credential fallback is permitted.
+
+#### End-to-end acceptance
+
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
   unchanged. Exact retries return the same terminal receipt without uploads.
 - A changed selector, physical identity, mode, placement or destination condition

@@ -116,10 +116,15 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     <T extends AutoCloseable> T stageAndPrepareOwned(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control, Preparation<T> preparation) {
+        return prepareOwned(preparation, callback -> stageAndPrepare(caller, owner, prepared, bodies, attributes, control, callback));
+    }
+
+    private static <T extends AutoCloseable> T prepareOwned(Preparation<T> preparation,
+            java.util.function.Function<Preparation<T>, T> stage) {
         Objects.requireNonNull(preparation);
         var pending = new AtomicReference<T>();
         try {
-            var result = stageAndPrepare(caller, owner, prepared, bodies, attributes, control, (staged, bytes, active) -> {
+            var result = stage.apply((staged, bytes, active) -> {
                 var candidate = Objects.requireNonNull(preparation.prepare(staged, bytes, active), "Owned preparation result");
                 pending.set(candidate);
                 return candidate;
@@ -182,6 +187,19 @@ final class DocumentUploadCoordinator implements AutoCloseable {
             Runnable control, DocumentUploadAuthority authority) {
         return execute(prepared, bodies, attributes, control, Map.of(), (staged, bytes, active) -> staged, false,
                 Objects.requireNonNull(authority));
+    }
+
+    /**
+     * The callback borrows verified upload bytes while the explicit operation
+     * authority remains live. Transfer its owned result only after preparation
+     * fences, provider drain and delivery authorization succeed.
+     */
+    <T extends AutoCloseable> T stageAndPrepareAuthorizedOwned(DocumentOperationUploadAdmission.Prepared prepared,
+            Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
+            Runnable control, DocumentUploadAuthority authority, Preparation<T> preparation) {
+        Objects.requireNonNull(authority);
+        return prepareOwned(preparation, callback -> execute(prepared, bodies, attributes, control,
+                Map.of(), callback, true, authority));
     }
 
     private <T> T execute(DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
