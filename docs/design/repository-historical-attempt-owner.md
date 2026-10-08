@@ -1175,8 +1175,10 @@ Qualification checkpoint:
   `2026-10-08-historical-verification-reply`.
 - Initial-owner admission shutdown retains provider work and memory after future
   cancellation until actual completion. See `2026-10-08-historical-provider-shutdown`.
+- Initial-owner lease expiry after a real PUT rejects verification and retry while
+  preserving the stored object for reconciliation. See `2026-10-08-historical-upload-expiry`.
 
 The evidence directories are under `docs/evidence/repository/`. Remaining cases
-include successor provider faults, destination-only revocation, expiry/takeover
+include successor provider faults and expiry, destination-only revocation, takeover
 during PUT, cancellation after verification and SQL timeout in a later callback.
 Managed public routing and transport parity remain unfinished.

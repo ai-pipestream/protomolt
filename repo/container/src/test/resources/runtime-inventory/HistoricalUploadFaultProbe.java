@@ -14,7 +14,7 @@ final class HistoricalUploadFaultProbe {
     static void run(Tx independent, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, javax.sql.DataSource database) throws Exception {
-        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply", "shutdown")) {
+        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply", "shutdown", "expire")) {
             try (var fault = mode.equals("lost-verification-reply") ? new HistoricalCreateCommitFault(database, true) : null) {
             var tx = fault == null ? independent : fault.tx();
             var sourceId = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
@@ -25,7 +25,7 @@ final class HistoricalUploadFaultProbe {
                             .setExpectedMutationRevision(current.mutationRevision))).build());
             var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
-                    Map.of(placement.drive().id(), placement), Duration.ofMinutes(2), 0);
+                    Map.of(placement.drive().id(), placement), mode.equals("expire") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 0);
             if (fault != null) fault.armVerification(record.seeds().attempts().get("a"));
             var security = tx.readOnly(em -> (String) em.createNativeQuery("SELECT security::text FROM documents WHERE node_id=:id")
                     .setParameter("id", sourceId).getSingleResult());
@@ -67,6 +67,7 @@ final class HistoricalUploadFaultProbe {
                                             "{\"permissions\":[{\"identityType\":\"public\",\"identity\":\"public\",\"access\":\"ACCESS_DENY\"}]}");
                                 }
                                 if (mode.equals("cancel")) cancelled.set(true);
+                                if (mode.equals("expire")) expire(tx, key);
                                 if (mode.equals("lost-provider-reply")) throw new IllegalStateException("injected lost historical PUT reply");
                             }
                             return result;
@@ -75,7 +76,8 @@ final class HistoricalUploadFaultProbe {
                      var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
                          require(generation.equals(placement.generation()) && profile.equals(placement.profile()), "exact historical backend");
                          return new DocumentUploadCoordinator.Backend(profile.identity(), borrowed);
-                     }, 2, Duration.ofMillis(25), new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(10)));
+                     }, 2, Duration.ofMillis(25), new SqlTimeouts(
+                             mode.equals("expire") ? Duration.ofSeconds(5) : Duration.ofSeconds(2), Duration.ofSeconds(10)));
                      var request = owner.beginInitial(caller, record, Map.of("a", DocumentPublicationCandidate.Mode.TYPED), UUID.randomUUID())) {
                     request.captureSources(reads, RepositoryReadControl.NONE);
                     request.openExecution(coordinator, RepositoryReadControl.NONE);
@@ -142,7 +144,8 @@ final class HistoricalUploadFaultProbe {
                         if (mode.equals("revoke") || mode.equals("cancel")) {
                             var expected = mode.equals("revoke") ? RepositoryException.Code.NOT_FOUND : RepositoryException.Code.CANCELLED;
                             require(hasCode(rejected, expected), "transfer reports exact authorization or cancellation failure");
-                        } else require(hasMessage(rejected, "injected lost historical PUT reply"), "provider reply failure survives");
+                        } else if (mode.equals("expire")) require(fenced(rejected), "expired claim rejects late provider result");
+                        else require(hasMessage(rejected, "injected lost historical PUT reply"), "provider reply failure survives");
                         if (revoked.get()) { security(tx, sourceId, security); revoked.set(false); }
                         cancelled.set(false);
                         try {
@@ -152,6 +155,7 @@ final class HistoricalUploadFaultProbe {
                             // Restoring an ACL advances the document mutation revision; that candidate is stale.
                             if (mode.equals("revoke")) require(expected instanceof DocumentLedger.RevisionConflictException,
                                     "restored policy does not revive a stale candidate");
+                            else if (mode.equals("expire")) require(fenced(expected), "expired claim cannot retry");
                             else require(expected instanceof DocumentPartAttemptLedger.FenceException,
                                     "uncertain attempt requires reconciliation");
                         }
@@ -190,6 +194,30 @@ final class HistoricalUploadFaultProbe {
         for (var next = failure; next != null; next = next.getCause())
             if (next instanceof RepositoryException repository && repository.code() == code) return true;
         return false;
+    }
+    private static boolean fenced(Throwable failure) {
+        for (var next = failure; next != null; next = next.getCause())
+            if (next instanceof RepositoryExecutionClaimLedger.Fenced) return true;
+        return false;
+    }
+    private static void expire(Tx tx, RepositoryOperationLedger.Key key) {
+        tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(5))).inTransaction(em -> {
+            em.createNativeQuery("SELECT claim_token FROM repository_execution_claims WHERE operation_id=:o FOR UPDATE")
+                    .setParameter("o", key.operationId()).getSingleResult();
+            em.createNativeQuery("SELECT owner_token FROM repository_operation_owners WHERE operation_id=:o FOR UPDATE")
+                    .setParameter("o", key.operationId()).getSingleResult();
+            // Keep renewal behind the same claim/owner locks while database time crosses both deadlines.
+            em.createNativeQuery("""
+                    SELECT pg_sleep(GREATEST(0,extract(epoch FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id", key.operationId()).getSingleResult();
+            require(Boolean.TRUE.equals(em.createNativeQuery("""
+                    SELECT c.lease_until<=clock_timestamp() AND o.lease_until<=clock_timestamp()
+                    FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                    WHERE c.operation_id=:id
+                    """).setParameter("id", key.operationId()).getSingleResult()), "database confirms both leases expired");
+        });
     }
     private static void awaitProvider(java.util.concurrent.CountDownLatch release) {
         boolean interrupted = false;
