@@ -72,8 +72,8 @@ attempt 4 (11:47Z, commit `bbff47177`) passed 12 of 12 and was reviewed by Sol; 
 (12:22Z, commit `f698103f1`) is the archived run. No timeout was raised. Three early
 expectations were replaced by the observed behavior (the certificate count, the mixed-set
 refusal text, the per-occurrence materialization shape) and the DataLoss acceptance in the
-corrupt-descriptor case records a classification difference (finding 1) rather than hiding
-it; after the review the negative cases require the observed outcome classes.
+corrupt-descriptor case recorded a classification difference (finding 1, since fixed and
+now required to be DATA_LOSS) rather than hiding it; after the review the negative cases require the observed outcome classes.
 
 ## Consistency boundary
 
@@ -129,7 +129,7 @@ archived from its stopped state, and the set was sealed.
 | nonempty-target | existing restore directory; occupied volume | refused; file intact; volume reported occupied |
 | inconsistent-snapshot | run-2's provider archive in run-1's set, resealed | all 3 recorded versions absent; raw and validated reads refuse (`BlobStoreException: Object provider rejected the read`); receipts and the pending chain still replay from the catalog; no READY |
 | missing-version | newer version put under the key, recorded version deleted | raw, validated, root and nested materialized reads of `alpha-v1` DATA_LOSS; the newer version never substituted; `alpha-v2` and `beta-v1` byte-equal |
-| corrupt-descriptor | attachment artifact bytes damaged (V48 digest CHECK dropped on the copy), live registry with the correct definition armed | raw read byte-equal; validated read refuses with the admission module's `DataLoss` type (see gap below); nested materialization DATA_LOSS; the intact root still decodes its own retained definition; live registry never consulted |
+| corrupt-descriptor | attachment artifact bytes damaged (V48 digest CHECK dropped on the copy), live registry with the correct definition armed | raw read byte-equal; validated read DATA_LOSS (required since the finding 1 fix); nested materialization DATA_LOSS; the intact root still decodes its own retained definition; live registry never consulted |
 | missing-descriptor | attachment artifact rows deleted with referential triggers disabled, live registry armed | raw byte-equal; validated DATA_LOSS; root and nested materialization DATA_LOSS; live registry never consulted |
 | wrong-endpoint | recorded generation, different endpoint | `Managed backend generation is already bound to another physical profile`; host never composed |
 | new-generation | new generation at the recorded endpoint | host composes; every history read FAILED_PRECONDITION |
@@ -142,22 +142,17 @@ supported writers; no production fallback exists for them.
 
 ## Findings and gaps
 
-1. **Classification gap (production, reported, not fixed here).** A retained artifact
-   whose bytes no longer match its digest makes the validated historical read throw
-   `ai.protomolt.proto.repo.admission.DocumentRetainedSchemaAssets.DataLoss`
-   (package-private, extends `IllegalStateException`) instead of
-   `RepositoryException(DATA_LOSS)`. `DocumentHistoricalSchemas.check` maps
-   `InvalidProtocolBufferException | IllegalArgumentException` to DATA_LOSS and rethrows
-   other runtime exceptions unchanged. A missing artifact and the materialized reads are
-   classified correctly. Reproducer: the `corrupt-descriptor` case
-   (`recovered/markers.log`, `corrupt-descriptor.validated_classification.*`). Proposed
-   fix: expose the admission data-loss type (or translate it inside
-   `DocumentSchemaAdmission.check`) and map it in `DocumentHistoricalSchemas.check`
-   exactly as `DocumentHistoricalMaterializer` maps
-   `DocumentSchemaMaterialization.DataLoss`. Sol's review refines the location: add a
-   public typed data-loss failure at the admission boundary and map it in
-   `DocumentHistoricalSchemas`, rather than exposing the package-private internal type.
-   Refusal is explicit either way; only the code differs. Production files were not edited.
+1. **Classification gap (production, fixed 2026-10-08).** A retained artifact whose
+   bytes no longer match its digest made the validated historical read throw the
+   package-private `DocumentRetainedSchemaAssets.DataLoss` (an `IllegalStateException`)
+   instead of `RepositoryException(DATA_LOSS)`, because `DocumentHistoricalSchemas.check`
+   mapped only `InvalidProtocolBufferException | IllegalArgumentException`. The earlier
+   archived runs recorded this as an observation and still passed. The fix adds the public
+   `DocumentSchemaAdmission.DataLoss` type at the admission boundary, which the internal type
+   now extends, and maps it to DATA_LOSS in `DocumentHistoricalSchemas.check`.
+   `DocumentHistoricalSchemasIT.corruptRetainedArtifactIsReportedAsHistoricalDataLoss`
+   failed before the fix and passes after it, and the `corrupt-descriptor` case now
+   requires DATA_LOSS for the validated read.
 2. **Two refusal shapes for damaged closures.** A *missing* artifact row makes the
    revision's retained snapshot incomplete, so every typed read of the revision refuses,
    including the root occurrence whose own artifact is intact. *Corrupt* bytes are detected
@@ -175,10 +170,11 @@ supported writers; no production fallback exists for them.
    existing `RepositoryErrors` mapping, not in the S3 implementation.
 5. **Not covered:** archive entries, Redis profiles, LocalStack, online capture, hosted CI,
    performance. The init script is required because the plain `test` task has no admission
-   bundle; without it JUnit disables the class with the stated reason and Gradle reports
-   all 12 cases as skipped with a green build (checked 2026-10-08T11:51Z). A plain green
-   run is therefore not rehearsal evidence; only a run with the init script is. This is
-   opt-in evidence, not continuing CI coverage.
+   bundle. Until 2026-10-08T15:30Z the class was disabled without it and Gradle reported
+   all 12 cases as skipped with a green build. `build.gradle` now excludes the rehearsal
+   from the ordinary `test` task and the init script re-includes it, so the documented
+   command without `-I` fails with no matching tests. This is opt-in evidence, not
+   continuing CI coverage.
 6. **Transaction counter advancement is refused, not automated.** A restored cluster
    whose next transaction id is not past every stored `xid8` would let a new transaction
    equal a restored `install_xid`; the restore stops there with an explicit message. The
@@ -217,3 +213,14 @@ sources under `backup-recovery/driver/ai/` (an abandoned parallel draft swept in
 `bbff47177` by an overlapping editor; never listed in
 `RepositoryBackupRehearsalProbeCompiler.SOURCES`, never compiled, never referenced); the
 verification run above was made after that removal.
+
+## Verification after the finding 1 fix
+
+On 2026-10-08 at 15:23Z the rehearsal ran again with the DATA_LOSS mapping fix and the
+stricter corrupt-descriptor check, under the shared lock:
+`flock -w 600 /tmp/protomolt-repository-qualification.lock ./gradlew -I repo/container/src/test/resources/backup-recovery/rehearsal.init.gradle :protomolt-repo-container:test --tests '*RepositoryBackupRehearsal*' --tests '*DocumentHistoricalSchemasIT' --max-workers=2 --console=plain`.
+Exit 0 in 2m44s: `RepositoryBackupRehearsalIT` 12 tests and `DocumentHistoricalSchemasIT`
+9 tests, 0 failures, 0 errors, 0 skipped. Every `corrupt-descriptor.validated_refused.*`
+check observed `DATA_LOSS`. Evidence: `verification-2026-10-08T1523Z/` (`summary.json`,
+`junit-results.xml`, `environment.txt`, `driver-sources.tsv`). The same command without
+`-I` now fails with "No tests found for given includes" instead of reporting skips.

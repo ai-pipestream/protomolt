@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -33,11 +32,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Evidence is kept under {@code build/backup-rehearsal/<timestamp>/} on success and failure.
  *
  * <p>Run the ordinary {@code test} task with {@code -I backup-recovery/rehearsal.init.gradle}, which
- * supplies the admission bundle and production host classpath; without it this class is disabled
- * with an explicit reason rather than passing vacuously.
+ * supplies the admission bundle and production host classpath and re-includes this class, which
+ * build.gradle excludes from the ordinary test task. Selecting it without the script finds no tests
+ * and fails the build; running it any other way without the bundle fails in {@code compileHosts}.
  */
-@EnabledIfSystemProperty(named = "protomolt.test.admissionRuntimeBundle", matches = ".+",
-        disabledReason = "Needs the admission transport runtime bundle: run with -I repo/container/src/test/resources/backup-recovery/rehearsal.init.gradle")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class RepositoryBackupRehearsalIT {

@@ -293,12 +293,7 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                 var recorded = RepositoryBackupRehearsalJson.list(revision, "rawFragments").stream().map(f -> RepositoryBackupRehearsalJson.string(f, "sha256")).toList();
                 checks.require(fragments.equals(recorded), mode + ".raw_explicit_opaque." + tag, "raw fragments still byte-equal: explicit opaque access, no validity claim");
                 String validated = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readValidated(member, address, id, NONE).close());
-                checks.require(isDataLoss(validated), mode + ".validated_refused." + tag, "readValidated -> " + validated);
-                // A digest mismatch escapes the validated read as the admission module's own DataLoss type rather than the
-                // SPI DATA_LOSS code (DocumentHistoricalSchemas.check maps IllegalArgumentException, not this IllegalStateException).
-                // Recorded as an observation: the refusal is explicit and typed, the classification is a reported gap.
-                checks.pass(mode + ".validated_classification." + tag, validated.equals("DATA_LOSS") ? "RepositoryException DATA_LOSS"
-                        : "admission DataLoss type leaked without the SPI DATA_LOSS code: " + validated);
+                checks.require(validated.equals("DATA_LOSS"), mode + ".validated_refused." + tag, "readValidated -> " + validated);
                 // An occurrence whose artifact is damaged refuses. An occurrence whose own artifact is intact behaves
                 // by damage kind: a missing row makes the revision's retained snapshot incomplete and refuses every
                 // typed read; corrupt bytes are detected only where they are used, so the intact root still decodes
@@ -327,11 +322,6 @@ public final class RepositoryBackupRehearsalRecoveredHost {
             live.access().close(); live.store().close();
             try (var paths = Files.walk(registry)) { for (var path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-    }
-
-    /** The SPI code, or the admission module's own data-loss type when it escapes unmapped. */
-    private static boolean isDataLoss(String outcome) {
-        return outcome.equals("DATA_LOSS") || outcome.startsWith("DataLoss: ");
     }
 
     /** Wrong provider credentials refuse the affected operations explicitly; nothing falls back or caches. */
