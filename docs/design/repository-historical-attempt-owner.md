@@ -1635,3 +1635,24 @@ lock followed by close retry, and the bounded Redis archive profile. Production-
 and retained history through both library and authenticated in-process gRPC. Supervisor
 provisioning, remote termination verification, bounded reader discovery and load
 qualification remain separate work; these builders alone do not complete recovery.
+
+#### Bounded discovery of terminated-host readers
+
+`ReaderHostDiscovery.discover` requires an exact permanent host termination
+receipt for every page, including an empty page. It reads at most 1,000 readers
+using the existing `(host_execution, incarnation)` index and a PostgreSQL UUID
+keyset cursor. Local-only readers and readers bound to other executions are not
+returned. The operation changes no state and holds no locks across later cleanup.
+
+Pages include QUIESCED readers because native pins, assessment sessions or capture
+cleanup can remain after quiescence. Reader state is a snapshot; it grants no
+mutation authority. External quiescence still verifies the persisted receipt and
+exact registration nonce in its own transaction. Local drain provenance must not
+be replaced with external provenance.
+
+An empty page ends a traversal, not recovery. The supervisor must wrap to an empty
+cursor to retry reported failures and discover late failed-registration tombstones
+behind its previous cursor. Tests cover PostgreSQL UUID ordering across Java's
+signed comparison boundary and a late tombstone after an empty page. Discovery is
+an internal scheduling primitive; an automatic supervisor and bounded cleanup of
+all associated pin/session families still require implementation and qualification.
