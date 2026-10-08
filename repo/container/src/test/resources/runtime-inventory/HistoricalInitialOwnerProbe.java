@@ -13,7 +13,7 @@ final class HistoricalInitialOwnerProbe {
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
-            HistoricalCreateCommitFault fault) throws Exception {
+            HistoricalCreateCommitFault fault, javax.sql.DataSource database) throws Exception {
         require(!caller.processAuthority(), "initial owner executes as a credential-bound scoped caller");
         var coordinator = new RepositoryCaller(caller.principalName(), true);
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
@@ -181,7 +181,7 @@ final class HistoricalInitialOwnerProbe {
                 if (cleanup != primary) primary.addSuppressed(cleanup);
             }
         }
-        if (fault == null) HistoricalUploadFaultProbe.run(tx, caller, command, placement, revision, fragments, budget);
+        if (fault == null) HistoricalUploadFaultProbe.run(tx, caller, command, placement, revision, fragments, budget, database);
         System.out.println(fault == null ? "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK" : "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
     }
     private static long count(Tx tx, RepositoryOperationLedger.Key key, String table) {

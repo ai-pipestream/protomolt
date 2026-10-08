@@ -140,7 +140,7 @@ public final class HistoricalAssessmentCreationProbe {
             if (claimed) {
                 if (scenario == Scenario.INITIAL_OWNER) {
                     HistoricalInitialOwnerProbe.run(tx, provider, caller, command, policy, source.placement(), revision,
-                            fragments, budget, observation, fault);
+                            fragments, budget, observation, fault, database);
                 } else if (gate != null) {
                     HistoricalCreateWinnerProbe.run(tx, independent, gate, scenario == Scenario.CREATE_WINS, caller,
                             command, policy, source.placement(), history, fragments, budget, observation);

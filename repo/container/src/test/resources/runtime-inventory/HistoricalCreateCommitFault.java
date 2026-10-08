@@ -17,6 +17,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     private final AtomicReference<RepositoryOperationLedger.Key> startKey = new AtomicReference<>();
     private final AtomicReference<UUID> proposedStart = new AtomicReference<>();
     private final AtomicReference<RepositoryOperationLedger.Owner> publication = new AtomicReference<>();
+    private final AtomicReference<UUID> verification = new AtomicReference<>();
     private final AtomicBoolean fired = new AtomicBoolean();
     private final jakarta.persistence.EntityManagerFactory factory;
     private final Tx tx;
@@ -33,7 +34,7 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
                             (wrapper, action, arguments) -> {
                                 boolean target = action.getName().equals("commit") && !fired.get()
                                         && (ownsAssessment(connection, assessment.get()) || ownsStart(connection)
-                                                || ownsPublication(connection));
+                                                || ownsPublication(connection) || ownsVerification(connection));
                                 if (target && !fired.compareAndSet(false, true))
                                     throw new AssertionError("Assessment commit fault was entered concurrently");
                                 if (target && !lostAcknowledgement)
@@ -49,6 +50,21 @@ final class HistoricalCreateCommitFault implements AutoCloseable {
     }
 
     Tx tx() { return tx; }
+    void armVerification(UUID attempt) {
+        if (assessment.get() != null || startKey.get() != null || publication.get() != null
+                || !verification.compareAndSet(null, attempt)) throw new IllegalStateException("Commit fault already armed");
+    }
+    private boolean ownsVerification(Connection connection) throws SQLException {
+        var attempt = verification.get();
+        if (attempt == null) return false;
+        try (var statement = connection.prepareStatement("""
+                SELECT EXISTS(SELECT 1 FROM document_part_attempt_objects
+                WHERE attempt_id=? AND verified AND xmin=CAST(CAST(pg_current_xact_id_if_assigned() AS text) AS xid))
+                """)) {
+            statement.setObject(1, attempt);
+            try (var rows = statement.executeQuery()) { rows.next(); return rows.getBoolean(1); }
+        }
+    }
     void armPublication(RepositoryOperationLedger.Owner owner) {
         if (assessment.get() != null || startKey.get() != null || !publication.compareAndSet(null, owner))
             throw new IllegalStateException("Commit fault already armed");
