@@ -48,25 +48,42 @@ final class DocumentSelectedAttemptLedger {
         var snapshot = List.copyOf(selected);
         var renewal = snapshot.isEmpty() ? null : prepareRenewal(snapshot, lease);
         tx.inTransaction(em -> {
-            RepositoryOperationLedger.renewLive(em, owner, lease);
-            if (renewal != null) renewSelections(em, owner, renewal);
+            renewOwnerAndSelections(em, owner, renewal, lease);
             return null;
         });
+    }
+
+    /** Reuses a caller-owned transaction; encode the bounded selection before taking locks. */
+    static void renewOwnerAndSelections(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Renewal renewal, Duration lease) {
+        RepositoryOperationLedger.renewLive(em, owner, lease);
+        if (renewal != null) renewSelections(em, owner, renewal);
     }
 
     /** One owner fence for at most 64 attempts, locked in deterministic UUID order. */
     List<DocumentPartAttemptLedger.Attempt> renew(RepositoryOperationLedger.Owner owner, List<Selected> selected, Duration lease) {
         Objects.requireNonNull(owner);
         var renewal = prepareRenewal(selected, lease);
-        return tx.inTransaction(em -> {
-            RepositoryOperationLedger.fenceLiveOwner(em, owner);
-            return renewSelections(em, owner, renewal);
-        });
+        return tx.inTransaction(em -> { return renew(em, owner, renewal); });
     }
 
-    private record Renewal(List<UUID> ids, String encoded, long millis) {}
+    static List<DocumentPartAttemptLedger.Attempt> renew(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Renewal renewal) {
+        RepositoryOperationLedger.fenceLiveOwner(em, owner);
+        return renewSelections(em, owner, renewal);
+    }
 
-    private static Renewal prepareRenewal(List<Selected> selected, Duration lease) {
+    static final class Renewal {
+        private final List<UUID> ids;
+        private final String encoded;
+        private final long millis;
+        private Renewal(List<UUID> ids, String encoded, long millis) { this.ids = ids; this.encoded = encoded; this.millis = millis; }
+        List<UUID> ids() { return ids; }
+        String encoded() { return encoded; }
+        long millis() { return millis; }
+    }
+
+    static Renewal prepareRenewal(List<Selected> selected, Duration lease) {
         Objects.requireNonNull(lease);
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("Lease must be between one second and one day");
@@ -104,6 +121,17 @@ final class DocumentSelectedAttemptLedger {
     DocumentPartAttemptLedger.Attempt verifyBatch(RepositoryOperationLedger.Owner owner, Selected selection,
             List<Observation> observations) {
         Objects.requireNonNull(owner); Objects.requireNonNull(selection);
+        var verification = prepareVerification(observations);
+        return tx.inTransaction(em -> { return verifyBatch(em, owner, selection, verification); });
+    }
+
+    static final class Verification {
+        private final String encoded;
+        private final int count;
+        private Verification(String encoded, int count) { this.encoded = encoded; this.count = count; }
+    }
+
+    static Verification prepareVerification(List<Observation> observations) {
         if (observations.isEmpty() || observations.size() > MAX_OBSERVATIONS)
             throw new IllegalArgumentException("Verification requires one to 256 observations");
         var rows = List.copyOf(observations);
@@ -112,8 +140,12 @@ final class DocumentSelectedAttemptLedger {
         var keys = new HashSet<String>();
         for (var row : rows) if (!keys.add(row.key()))
             throw new IllegalArgumentException("Duplicate verification key");
-        String encoded = encode(rows);
-        return tx.inTransaction(em -> {
+        return new Verification(encode(rows), rows.size());
+    }
+
+    /** Bounded observations in the caller's transaction, including rollback of a partial match. */
+    static DocumentPartAttemptLedger.Attempt verifyBatch(EntityManager em, RepositoryOperationLedger.Owner owner,
+            Selected selection, Verification verification) {
             RepositoryOperationLedger.fenceLiveOwner(em, owner);
             lockSelected(em, owner, selection);
             int changed = em.createNativeQuery("""
@@ -122,8 +154,8 @@ final class DocumentSelectedAttemptLedger {
                     WHERE p.attempt_id=:id AND p.object_key=q.key AND p.expected_size=q.size
                       AND p.expected_sha256=q.sha256 AND p.content_type=q.content_type
                       AND (NOT p.verified OR (p.provider_version IS NOT DISTINCT FROM q.version AND p.etag IS NOT DISTINCT FROM q.etag))
-                    """).setParameter("id", selection.attempt()).setParameter("rows", encoded).executeUpdate();
-            if (changed != rows.size()) throw new DocumentPartAttemptLedger.FenceException("Observed document parts differ from admitted or verified identity");
+                    """).setParameter("id", selection.attempt()).setParameter("rows", verification.encoded).executeUpdate();
+            if (changed != verification.count) throw new DocumentPartAttemptLedger.FenceException("Observed document parts differ from admitted or verified identity");
             em.createNativeQuery("""
                     UPDATE document_part_attempts SET state='VERIFIED' WHERE attempt_id=:id AND state='STAGING'
                       AND NOT EXISTS(SELECT 1 FROM document_part_attempt_objects WHERE attempt_id=:id AND NOT verified)
@@ -131,7 +163,6 @@ final class DocumentSelectedAttemptLedger {
             var result = lockSelected(em, owner, selection);
             requireOwner(em, owner);
             return result;
-        });
     }
 
     static DocumentPartAttemptLedger.Attempt lockSelected(EntityManager em,

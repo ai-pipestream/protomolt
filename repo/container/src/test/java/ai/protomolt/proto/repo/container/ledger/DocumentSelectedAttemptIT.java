@@ -62,6 +62,33 @@ class DocumentSelectedAttemptIT {
         }
     }
 
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void preparedMutationsShareTheCallerTransaction(boolean commit) {
+        var f=fixture(2,LEASE,true);
+        Object ownerBefore=ownerLease(f), claimBefore=claimLease(f), attemptBefore=attemptLease(f);
+        var renewal=DocumentSelectedAttemptLedger.prepareRenewal(List.of(f.selection),Duration.ofHours(1));
+        var verification=DocumentSelectedAttemptLedger.prepareVerification(f.observations);
+        Runnable mutate=()->tx.inTransaction(em->{
+            DocumentSelectedAttemptLedger.renewOwnerAndSelections(em,f.owner,renewal,Duration.ofHours(1));
+            assertThat(DocumentSelectedAttemptLedger.renew(em,f.owner,renewal)).hasSize(1);
+            assertThat(DocumentSelectedAttemptLedger.verifyBatch(em,f.owner,f.selection,verification).state()).isEqualTo("VERIFIED");
+            if(!commit) throw new IllegalStateException("caller transaction aborted");
+        });
+        if(commit) {
+            mutate.run();
+            assertThat(verified(f)).isEqualTo(2);
+            assertThat(ownerLease(f)).isNotEqualTo(ownerBefore);
+            assertThat(claimLease(f)).isNotEqualTo(claimBefore);
+            assertThat(attemptLease(f)).isNotEqualTo(attemptBefore);
+        } else {
+            assertThatThrownBy(mutate::run).hasMessageContaining("caller transaction aborted");
+            assertThat(verified(f)).isZero();
+            assertThat(ownerLease(f)).isEqualTo(ownerBefore);
+            assertThat(claimLease(f)).isEqualTo(claimBefore);
+            assertThat(attemptLease(f)).isEqualTo(attemptBefore);
+        }
+    }
+
     @Test void rejectedSelectedRenewalDoesNotAdvanceOwnerLease() {
         var f=fixture(1,LEASE,true);
         Object claimBefore=claimLease(f);
