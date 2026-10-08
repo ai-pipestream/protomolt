@@ -334,9 +334,30 @@ final class HistoricalInstalledOwnerProbe {
                             "one successor rejection and no publication");
                     reads.releaseDrained(32);
                     require(reads.outstandingReads() == 0, "successor rejection assessment sessions released");
-                    require(request.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
-                            == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "rejected successor retires normally");
+                    request.close();
+                    call.close();
+                    require(runtime.isIdle(), "first rejection request has returned before retry");
+                    try (var laterCall = runtime.enter(); var later = attempts.resume(caller, command).orElseThrow()) {
+                        require(later.rejectAssessment(selections, reads, reader, limits, observation,
+                                Duration.ofSeconds(5), RepositoryReadControl.NONE).equals(result),
+                                "later client call returns original successor rejection without provider access");
+                        require(later.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                                == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "rejected successor retires normally");
+                    }
                     require(new DocumentPublicationReplay(tx).observe(caller, command).equals(result), "receipt survives successor retirement");
+                    new RepositoryCredentialAuthorities(tx).revoke(coordinator,
+                            caller.credentialBinding().orElseThrow(), caller.principalName());
+                    try {
+                        new DocumentPublicationReplay(tx).observe(caller, command);
+                        throw new AssertionError("Revoked credential received successor rejection");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                "receipt delivery rejects revoked credentials");
+                    }
+                    require(new DocumentPublicationReplay(tx).observe(coordinator, command).equals(result)
+                            && count(tx, "repository_operation_rejection", command.operationId()) == 1,
+                            "credential revocation preserves original receipt for authorized recovery");
+                    System.out.println("HISTORICAL_SUCCESSOR_REJECTION_REVOKED_OK");
                 }
                 require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 0))
                         && budget.reservedBytes() == before, "rejected successor releases entry and memory");

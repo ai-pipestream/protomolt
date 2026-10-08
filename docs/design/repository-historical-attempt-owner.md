@@ -1277,3 +1277,9 @@ Retry requires no provider read, and normal retirement releases the entry while
 preserving receipt replay. See
 `docs/evidence/repository/2026-10-08-successor-rejection/`.
 This does not establish restart recovery or concurrent rejection behavior.
+
+Successor receipt replay is also tested across separate accepted runtime calls,
+with the provider reader closed. Credential revocation after retirement prevents
+client delivery while authorized recovery preserves the original receipt. See
+`docs/evidence/repository/2026-10-08-successor-rejection-delivery/`.
+Revocation during a pending decision remains separate acceptance work.
