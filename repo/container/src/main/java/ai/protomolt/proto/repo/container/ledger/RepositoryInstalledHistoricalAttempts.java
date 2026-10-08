@@ -386,6 +386,54 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             return entry.plan;
         }
 
+        /** Acquire each source revision for this reserved generation; failed captures remain ledger-owned. */
+        synchronized void captureSources(DocumentReadLedger ledger, RepositoryReadControl control) {
+            requireMutable(control);
+            entry.requireSettled();
+            if (entry.plan == null && entry.initial == null) throw conflict("Historical installation is not confirmed");
+            if (entry.sources != null) throw conflict("Historical sources are already attached");
+            Objects.requireNonNull(ledger);
+            record Source(ai.protomolt.proto.repo.v1.NodeAddress address, UUID revision) {}
+            var selected = new LinkedHashSet<Source>();
+            for (var member : entry.command.intent().getMembersList()) for (var part : member.getPartsList()) {
+                control.check();
+                if (part.hasHistoricalReuse()) {
+                    var source = part.getHistoricalReuse();
+                    selected.add(new Source(source.getSource(), UUID.fromString(source.getRevisionId())));
+                }
+            }
+            var histories = new ArrayList<DocumentReadLedger.PinnedHistory>();
+            DocumentHistoricalAssessmentSources sources = null;
+            DocumentHistoricalAssessmentSources.Work work = null;
+            boolean transferred = false;
+            Throwable pending = null;
+            try {
+                for (var source : selected) {
+                    control.check();
+                    histories.add(ledger.captureHistorical(entry.caller, source.address(), source.revision()));
+                }
+                sources = DocumentHistoricalAssessmentSources.open(entry.command, entry.caller, histories, control);
+                work = sources.work();
+                attachSources(sources, work, control);
+                transferred = true;
+                sources.close();
+            } catch (RuntimeException | Error failure) { pending = failure; throw failure; }
+            finally {
+                if (!transferred) {
+                    var cleanup = new ArrayList<AutoCloseable>();
+                    if (work != null) cleanup.add(work);
+                    if (sources != null) cleanup.add(sources);
+                    cleanup.addAll(histories);
+                    // Closed handles remain ledger-owned until bounded SQL release succeeds.
+                    try { DocumentHistoricalAssessmentSources.closeAll(cleanup); }
+                    catch (RuntimeException | Error failure) {
+                        if (pending == null) throw failure;
+                        if (pending != failure) pending.addSuppressed(failure);
+                    }
+                }
+            }
+        }
+
         /** Success transfers sources, root Work and exact histories. Failure transfers nothing. */
         synchronized void attachSources(DocumentHistoricalAssessmentSources sources,
                 DocumentHistoricalAssessmentSources.Work work, RepositoryReadControl control) {

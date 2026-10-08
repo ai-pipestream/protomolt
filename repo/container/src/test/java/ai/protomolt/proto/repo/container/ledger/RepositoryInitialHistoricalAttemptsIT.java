@@ -23,6 +23,48 @@ class RepositoryInitialHistoricalAttemptsIT {
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
     private static final Duration LEASE = Duration.ofMinutes(5);
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void ownerAcquiresCapturesAndRetainsPartialFailureForLedgerCleanup(boolean cancel) throws Exception {
+        try (var c = context(POSTGRES); var template = historicalInitial(c, LEASE)) {
+            var record = fresh(template.record());
+            var budget = new PayloadBudget(256L * 1024 * 1024);
+            var owner = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 1);
+            var reads = new DocumentReadLedger(c.tx(), UUID.randomUUID());
+            var cancellation = new RepositoryReadControl() {
+                public boolean isCancelled() { return reads.outstandingReads() > 0; }
+                public long remainingNanos() { return Long.MAX_VALUE; }
+            };
+            try {
+                try (var call = owner.beginInitial(CALLER, record, modes(record), UUID.randomUUID())) {
+                    assertThat(reads.outstandingReads()).isZero();
+                    if (cancel) {
+                        assertThatThrownBy(() -> call.captureSources(reads, cancellation))
+                                .isInstanceOfSatisfying(RepositoryException.class,
+                                        failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                        assertThat(reads.outstandingReads()).isEqualTo(1);
+                        assertThat(count(c, record, "repository_execution_claims")).isZero();
+                        assertThat(reads.releaseDrained(10)).isEqualTo(1);
+                        assertThat(reads.outstandingReads()).isZero();
+                    }
+                    call.captureSources(reads, NONE);
+                    int captures = reads.outstandingReads();
+                    assertThat(captures).isEqualTo(1);
+                    assertThatThrownBy(() -> call.captureSources(reads, NONE)).hasMessageContaining("already attached");
+                    assertThat(reads.outstandingReads()).isEqualTo(captures);
+                    call.openExecution(CALLER, NONE);
+                    call.start(LEASE, NONE);
+                }
+            } finally {
+                owner.close();
+                assertThat(owner.detachClosed(Duration.ofSeconds(1), ignored -> CALLER, NONE)).isTrue();
+                reads.releaseDrained(10);
+                assertThat(reads.outstandingReads()).isZero();
+                reads.fence(); reads.attestLocalQuiescence();
+                assertThat(budget.reservedBytes()).isZero();
+            }
+        }
+    }
+
     @Test void reservesBeforeCaptureAndRetainsStartAcrossCallsAndSourceClosure() throws Exception {
         try (var c = context(POSTGRES); var template = historicalInitial(c, LEASE)) {
             var record = fresh(template.record());
