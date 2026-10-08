@@ -14,7 +14,7 @@ final class HistoricalUploadFaultProbe {
     static void run(Tx independent, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, javax.sql.DataSource database) throws Exception {
-        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply")) {
+        for (String mode : List.of("replay", "revoke", "cancel", "lost-provider-reply", "lost-verification-reply", "shutdown")) {
             try (var fault = mode.equals("lost-verification-reply") ? new HistoricalCreateCommitFault(database, true) : null) {
             var tx = fault == null ? independent : fault.tx();
             var sourceId = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
@@ -36,6 +36,8 @@ final class HistoricalUploadFaultProbe {
             var spec = new AtomicReference<BlobStore.PutSpec>();
             var receipt = new AtomicReference<BlobStore.PutResult>();
             var written = new AtomicReference<byte[]>();
+            var providerEntered = new java.util.concurrent.CountDownLatch(1);
+            var providerRelease = new java.util.concurrent.CountDownLatch(1);
             var control = new RepositoryReadControl() {
                 public boolean isCancelled() { return cancelled.get(); }
                 public long remainingNanos() { return Long.MAX_VALUE; }
@@ -55,6 +57,10 @@ final class HistoricalUploadFaultProbe {
                             if (method.getName().equals("put")) {
                                 calls.incrementAndGet(); spec.set((BlobStore.PutSpec) args[0]);
                                 receipt.set((BlobStore.PutResult) result); written.set(((byte[]) args[1]).clone());
+                                if (mode.equals("shutdown")) {
+                                    providerEntered.countDown();
+                                    awaitProvider(providerRelease);
+                                }
                                 if (mode.equals("revoke")) {
                                     revoked.set(true);
                                     security(tx, sourceId,
@@ -87,6 +93,34 @@ final class HistoricalUploadFaultProbe {
                         var first = request.stageUploads(uploads, bodies, Map.of(), control);
                         var again = request.stageUploads(uploads, bodies, Map.of(), control);
                         require(first.members().getFirst().selection().equals(again.members().getFirst().selection()), "exact selection replay");
+                    } else if (mode.equals("shutdown")) {
+                        var finished = new java.util.concurrent.CountDownLatch(1);
+                        var failure = new AtomicReference<RuntimeException>();
+                        try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                            var transfer = workers.submit(() -> {
+                                try { request.stageUploads(uploads, bodies, Map.of(), control); }
+                                catch (RuntimeException rejected) { failure.set(rejected); }
+                                finally { finished.countDown(); }
+                            });
+                            try {
+                                require(providerEntered.await(10, java.util.concurrent.TimeUnit.SECONDS), "provider reaches post-PUT gate");
+                                cancelled.set(true);
+                                require(transfer.cancel(true), "transfer cancellation submitted");
+                                owner.close(); uploads.close();
+                                require(transfer.isCancelled() && finished.getCount() == 1, "cancelled future is not completed work");
+                                require(!uploads.awaitIdle(Duration.ofMillis(20)), "provider worker keeps coordinator busy");
+                                require(!owner.detachClosed(Duration.ofMillis(20), ignored -> coordinator, RepositoryReadControl.NONE),
+                                        "shutdown timeout retains active request");
+                                require(uploads.providerActivity().active() == 1 && budget.reservedBytes() > retained,
+                                        "provider worker retains payload and child metadata");
+                                require(reads.outstandingReads() == 1 && reads.releaseDrained(16) == 0,
+                                        "active provider work protects historical capture");
+                            } finally { providerRelease.countDown(); }
+                            require(finished.await(10, java.util.concurrent.TimeUnit.SECONDS), "actual transfer exits after provider release");
+                            require(failure.get() instanceof java.util.concurrent.CancellationException
+                                    || hasCode(failure.get(), RepositoryException.Code.CANCELLED), "cancelled transfer cannot succeed");
+                            require(uploads.awaitIdle(Duration.ofSeconds(1)), "coordinator becomes idle after actual completion");
+                        }
                     } else if (fault != null) {
                         try {
                             request.stageUploads(uploads, bodies, Map.of(), control);
@@ -156,6 +190,21 @@ final class HistoricalUploadFaultProbe {
         for (var next = failure; next != null; next = next.getCause())
             if (next instanceof RepositoryException repository && repository.code() == code) return true;
         return false;
+    }
+    private static void awaitProvider(java.util.concurrent.CountDownLatch release) {
+        boolean interrupted = false;
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        try {
+            while (true) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new AssertionError("Provider release gate timed out");
+                try {
+                    if (!release.await(remaining, java.util.concurrent.TimeUnit.NANOSECONDS))
+                        throw new AssertionError("Provider release gate timed out");
+                    return;
+                } catch (InterruptedException cancellation) { interrupted = true; }
+            }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
     private static boolean hasMessage(Throwable failure, String message) {
         for (var next = failure; next != null; next = next.getCause()) if (message.equals(next.getMessage())) return true;
