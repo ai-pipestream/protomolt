@@ -115,7 +115,8 @@ public final class HistoricalAssessmentCreationProbe {
         var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
                 : new RepositoryCaller("principal", true);
         if (scoped) new RepositoryCredentialAuthorities(tx).register(new RepositoryCaller("operator", true), credential, caller.principalName());
-        var ledger = new DocumentReadLedger(tx, UUID.randomUUID());
+        var ledger = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER
+                ? HistoricalColdRestartProbe.writerReads(tx) : new DocumentReadLedger(tx, UUID.randomUUID());
         var history = ledger.captureHistorical(caller, revision.getAddress(), UUID.fromString(revision.getRevisionId()));
         var budget = new PayloadBudget(128_000_000);
         try {

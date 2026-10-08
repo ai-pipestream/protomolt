@@ -12,7 +12,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Recovery receives request bytes only; retained metadata and historical bytes come from storage. */
 public final class HistoricalColdRestartProbe {
-    static void checkpointAndHalt(Tx tx, DocumentPublicationCommand command, RepositoryCaller caller,
+    static DocumentReadLedger writerReads(Tx tx) {
+        var host = UUID.fromString(System.getenv("PROTOMOLT_TEST_COLD_HOST_EXECUTION"));
+        ReaderHostExecutions.register(tx, host, "cold-restart-driver", System.getenv("PROTOMOLT_TEST_COLD_HOST_BOOT"));
+        return new DocumentReadLedger(tx, UUID.randomUUID(), host);
+    }
+
+    static void checkpointAndHalt
+(Tx tx, DocumentPublicationCommand command, RepositoryCaller caller,
             Map<Integer, ByteString> fragments, PayloadBudget budget) throws Exception {
         require(!caller.processAuthority(), "writer uses scoped credential");
         String application = tx.readOnly(em -> (String) em.createNativeQuery("SELECT current_setting('application_name')").getSingleResult());
@@ -162,6 +169,7 @@ public final class HistoricalColdRestartProbe {
                     history.release(); reads.fence(); reads.attestLocalQuiescence();
                     require(reads.outstandingReads() == 0, "fresh process releases its reads");
                 }
+                reclaimOriginalWriter(tx, coordinator, prepared.plan().previous(), budget);
             }
             require(budget.reservedBytes() == 0, "fresh process releases metadata");
             require(new DocumentPublicationReplay(tx).observe(caller, command).result().isPresent(), "durable restart receipt");
@@ -173,6 +181,93 @@ public final class HistoricalColdRestartProbe {
             observation.identity(() -> {});
         }
         System.out.println("HISTORICAL_COLD_PROCESS_RESTART_OK");
+    }
+
+    private static void reclaimOriginalWriter(Tx tx, RepositoryCaller coordinator,
+            DocumentPublicationPreparationRecord predecessor, PayloadBudget budget) {
+        // Fixture-only archive read after publication: the reservation loader is no
+        // longer usable after terminal retirement. Decode the immutable original
+        // preparation with the same digest/command/nonce checks as runtime loading.
+        try (var scratch = budget.reserve(3L * DocumentPublicationPreparationCodec.MAX_BYTES)) {
+            var key = predecessor.key();
+            var rows = tx.readOnly(em -> em.createNativeQuery("""
+                    SELECT p.preparation_bytes,p.preparation_sha256,p.owner_nonce,p.command_sha256,p.predecessor_generation
+                    FROM repository_publication_preparations p JOIN repository_preparation_pin_batches b
+                    USING(account_id,principal,operation_id,predecessor_generation)
+                    WHERE p.account_id=:account AND p.principal=:principal AND p.operation_id=:op
+                    AND b.initial_capture AND b.sealed AND octet_length(p.preparation_bytes) BETWEEN 1 AND :maximum
+                    """).setParameter("account", key.account()).setParameter("principal", key.principal())
+                    .setParameter("op", key.operationId()).setParameter("maximum", DocumentPublicationPreparationCodec.MAX_BYTES)
+                    .setMaxResults(2).getResultList());
+            require(rows.size() == 1, "exact original retained preparation from SQL");
+            var row = (Object[]) rows.getFirst();
+            var original = DocumentPublicationPreparationJournal.decode(row, ((byte[]) row[0]).length, key,
+                    predecessor.command().sha256(), ((Number) row[4]).longValue());
+            require(original.predecessorGeneration() == 0, "fixture original retention is generation zero");
+            reclaimWriter(tx, coordinator, original, budget);
+        }
+    }
+
+    private static void reclaimWriter(Tx tx, RepositoryCaller coordinator,
+            DocumentPublicationPreparationRecord record, PayloadBudget budget) {
+        var host = UUID.fromString(System.getenv("PROTOMOLT_TEST_COLD_HOST_EXECUTION"));
+        var identities = tx.readOnly(em -> em.createNativeQuery("""
+                SELECT r.incarnation,r.registration_nonce,t.receipt_id FROM repository_reader_incarnations r
+                JOIN repository_reader_host_terminations t ON t.execution=r.host_execution
+                WHERE r.host_execution=:host AND r.state='ACTIVE'
+                """).setParameter("host", host).getResultList());
+        require(identities.size() == 1, "exact crashed reader remains protected after successor publication");
+        var identity = (Object[]) identities.getFirst();
+        UUID reader = (UUID) identity[0];
+        long pinned = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM document_read_pins WHERE reader_incarnation=:reader")
+                .setParameter("reader", reader).getSingleResult()).longValue());
+        require(pinned > 0, "crashed writer still owns native pins");
+        long captured = tx.readOnly(em -> ((Number) em.createNativeQuery("""
+                SELECT count(*) FROM repository_preparation_source_pins p JOIN repository_preparation_pin_batches b
+                USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
+                WHERE p.account_id=:account AND p.principal=:principal AND p.operation_id=:op
+                AND b.initial_capture AND b.sealed AND p.reader_incarnation=:reader
+                """).setParameter("account", record.key().account()).setParameter("principal", record.key().principal())
+                .setParameter("op", record.key().operationId()).setParameter("reader", reader).getSingleResult()).longValue());
+        require(captured == pinned, "original sealed source pins belong to exact crashed reader");
+
+        try {
+            DocumentPreparationRootReleases.release(tx, budget, coordinator, record, RepositoryReadControl.NONE);
+            throw new AssertionError("Undrained writer allowed preparation root release");
+        } catch (RepositoryException expected) {
+            require(expected.getMessage().contains("has not drained"), "root release failed for exact undrained capture");
+        }
+        var quiescence = new ReaderExternalQuiescence(tx);
+        var receipt = quiescence.quiesce(reader, (UUID) identity[1], host, (UUID) identity[2]);
+        require(quiescence.quiesce(reader, (UUID) identity[1], host, (UUID) identity[2]).equals(receipt), "reader receipt replays");
+        long recovered = 0;
+        var recovery = new DocumentReadRecovery(tx);
+        for (int batch = 0; batch < 10001; batch++) {
+            int count = recovery.recoverBatch(reader, 1);
+            if (count == 0) break;
+            recovered += count;
+        }
+        require(recovered == pinned, "bounded recovery removes exactly the crashed reader pins");
+        var captures = tx.readOnly(em -> em.createNativeQuery("""
+                SELECT b.predecessor_generation,b.pins_sha256,o.claim_epoch,o.claim_token,o.incarnation
+                FROM repository_preparation_pin_batches b JOIN repository_preparation_pin_owners o
+                USING(account_id,principal,operation_id,predecessor_generation,pins_sha256)
+                WHERE b.account_id=:account AND b.principal=:principal AND b.operation_id=:op AND b.initial_capture AND b.sealed
+                """).setParameter("account", record.key().account()).setParameter("principal", record.key().principal()).setParameter("op", record.key().operationId()).getResultList());
+        require(captures.size() == 1, "one sealed original capture");
+        var capture = (Object[]) captures.getFirst();
+        var drainIdentity = new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(
+                record.key(), record.command().sha256(), ((Number) capture[2]).longValue(), (UUID) capture[3], (UUID) capture[4]),
+                ((Number) capture[0]).longValue(), HexFormat.of().formatHex((byte[]) capture[1]));
+        require(DocumentPreparationCaptureDrain.recover(tx, coordinator, drainIdentity, RepositoryReadControl.NONE).kind().equals("QUIESCED"),
+                "original capture records proven quiescence after pin recovery");
+        var released = DocumentPreparationRootReleases.release(tx, budget, coordinator, record, RepositoryReadControl.NONE);
+        require(DocumentPreparationRootReleases.release(tx, budget, coordinator, record, RepositoryReadControl.NONE).equals(released),
+                "root release receipt replays");
+        require(count(tx, "repository_preparation_history_roots", record.key().operationId()) == 0, "historical preparation roots released");
+        require(new DocumentPublicationReplay(tx).observe(coordinator, record.command()).result().isPresent(), "publication receipt remains after orphan cleanup");
+        System.out.println("HISTORICAL_COLD_ORPHAN_CAPTURE_RECLAIMED_OK");
     }
 
     private static long count(Tx tx, String table, UUID operation) {

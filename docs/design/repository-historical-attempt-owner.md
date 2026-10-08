@@ -1581,3 +1581,28 @@ This is an internal foundation. The tests use real PostgreSQL and managed child
 processes with synthetic document objects. Production host attestation, restart
 harness integration, archive recovery under external evidence, and full historical
 capture/root reclamation remain acceptance work. Public routing remains disabled.
+
+#### Managed writer crash reclamation
+
+The production-JAR restart harness now binds the writer reader to an execution
+chosen by the trusted driver before process launch. The driver retains the actual
+Process handle, observes exit code 23 and disappearance of that writer's uniquely
+named SQL sessions, then records verified termination. The recovery JVM reads the
+durable evidence; the request file still contains only command and upload bytes.
+
+After successful publication, the harness verifies that the abandoned reader is
+still ACTIVE, native pins remain, and preparation-root release fails for an
+undrained capture. It then quiesces the exact registration, recovers pins in
+batches of one, records capture drainage and releases the original preparation
+roots. Both cleanup receipts and the publication receipt remain replayable.
+This passes for initial START, reservation and unactivated installation crashes.
+
+The original retained preparation can differ from the immediate predecessor.
+The installed-phase test exposed that distinction. The fixture now reads the
+initial sealed capture's canonical generation-zero record from SQL with explicit
+memory limits and the existing digest/command/nonce/generation decoder checks.
+This fixture archive read is not a new public recovery endpoint.
+
+The proof covers the managed test writer and its SQL sessions. Production host
+verification, deployment wiring, broader crash phases and public routing remain
+unfinished. These runs are correctness evidence, not load-performance results.
