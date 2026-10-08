@@ -1407,7 +1407,11 @@ upload requests a fresh definition. It then creates the assessment, publishes,
 replays the receipt and retires its own resources. The test is included in the
 mandatory storage driver as well as a focused qualification entry point.
 
-This proves recovery from a crashed writer after START. It does not qualify every
-crash phase, public managed routing or transport parity. The crashed writer's old
+The restart matrix covers a crash after initial START, after recovery reservation,
+and after successor installation before activation. Each case uses an independent
+database and provider fixture. Recovery asserts the exact discovered state and
+distinguishes writer installs from the fresh process's single install/activation.
+It does not qualify every later crash phase, public managed routing or transport
+parity. The crashed writer's old
 reader-incarnation cleanup remains an explicit acceptance item: fresh-process
 cleanup must not be described as proof that orphaned captures have been reclaimed.

@@ -282,7 +282,7 @@ public final class HistoricalAssessmentCreationProbe {
                 require(execution.start(caller, retention, RepositoryReadControl.NONE).equals(started),
                         "repeated start preserves coordinates and acknowledged permission");
                 if (scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER)
-                    HistoricalColdRestartProbe.checkpointAndHalt(tx, command, caller, fragments);
+                    HistoricalColdRestartProbe.checkpointAndHalt(tx, command, caller, fragments, budget);
                 if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
                         "lost START acknowledgement recovers identity; rolled back START permits a new identity");
                 if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR

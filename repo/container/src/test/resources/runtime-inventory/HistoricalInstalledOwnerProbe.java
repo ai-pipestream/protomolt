@@ -70,8 +70,12 @@ final class HistoricalInstalledOwnerProbe {
             var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
                     .inspect(coordinator, key, command.sha256(), RepositoryReadControl.NONE);
-            require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND,
+            require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND
+                            || check == Check.COLD && observed.unactivated().isPresent(),
                     "provider owner begins from actual expired predecessor discovery");
+            long expirations = count(tx, "repository_coordinator_expirations", command.operationId());
+            long supersessions = count(tx, "repository_coordinator_supersessions", command.operationId());
+            long installations = count(tx, "repository_successor_installs", command.operationId());
             var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
             require(command.intent().getMembersCount() == 1, "fixture has one mixed member");
             var member = command.intent().getMembers(0);
@@ -104,8 +108,9 @@ final class HistoricalInstalledOwnerProbe {
                 } catch (IllegalArgumentException refused) {
                     require(refused.getMessage().contains("checksum differs"), "actual bytes are checked before reservation");
                 }
-                require(count(tx, "repository_coordinator_expirations", command.operationId()) == 0
-                        && count(tx, "repository_successor_installs", command.operationId()) == 0,
+                require(count(tx, "repository_coordinator_expirations", command.operationId()) == expirations
+                        && count(tx, "repository_coordinator_supersessions", command.operationId()) == supersessions
+                        && count(tx, "repository_successor_installs", command.operationId()) == installations,
                         "bad payloads perform no reservation or installation writes");
                 require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
                         == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "first call reserves one proposal");
@@ -117,8 +122,9 @@ final class HistoricalInstalledOwnerProbe {
                         == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "second call confirms retained installation");
                 plan = request.installedPlan(coordinator, RepositoryReadControl.NONE);
             }
-            require(count(tx, "repository_coordinator_expirations", command.operationId()) == 1
-                    && count(tx, "repository_successor_installs", command.operationId()) == 1,
+            require(count(tx, "repository_coordinator_expirations", command.operationId()) == expirations + (observed.candidate().isPresent() ? 1 : 0)
+                    && count(tx, "repository_coordinator_supersessions", command.operationId()) == supersessions + (observed.unactivated().isPresent() ? 1 : 0)
+                    && count(tx, "repository_successor_installs", command.operationId()) == installations + 1,
                     "one exact reservation and installation before any new history capture");
             if (check == Check.SELF_SUPERSESSION) {
                 var previous = plan;

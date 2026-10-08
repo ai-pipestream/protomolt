@@ -34,7 +34,9 @@ class HistoricalRuntimeQualificationTest {
         run("cold-owner", "HISTORICAL_COLD_OWNER_HOST_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
                 "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
     }
-    @Test void coldProcessRestart() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"initial", "reserved", "installed"})
+    void coldProcessRestart(String phase) throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
              var storage = new AssessmentStorageBackend("localstack")) {
@@ -48,7 +50,7 @@ class HistoricalRuntimeQualificationTest {
             environment.put("PROTOMOLT_TEST_S3_REGION", storage.getRegion());
             environment.put("PROTOMOLT_TEST_S3_ACCESS", storage.getAccessKey());
             environment.put("PROTOMOLT_TEST_S3_SECRET", storage.getSecretKey());
-            HistoricalColdRestartDriver.run(compiled, environment, directory.resolve("cold-restart"));
+            HistoricalColdRestartDriver.run(compiled, environment, directory.resolve("cold-restart"), phase);
         }
     }
     @Test void overlappingGenerations() throws Exception {
