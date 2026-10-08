@@ -152,7 +152,7 @@ installation only through the exact same-transaction successor edge, including
 owner and command/preparation digests, with V93's claim, modes and owner completion
 checks. It must retain an unresolved entry and must not acquire an invented history
 header or certificate. Installation does not grant activation or capture authority.
-The certificate implementation is under test; pruning is not enabled.
+V118 implements new root-owner certification. Pruning is not enabled.
 
 This proof relies on the trusted repository handler. Direct table DML using the
 backend database role is privileged administration, not a supported publication
@@ -174,6 +174,22 @@ need separate bounded lineage reconciliation through immutable install edges to
 the original verified root owner, including its exact release proof when released.
 An activation receipt alone does not replace that verification. Both ordinary and
 historical successors remain unresolved until this reconciliation is implemented.
+
+`DocumentPreparationCoverageReconciliation` now verifies one retained root owner
+with a bounded decode reservation and explicit SQL timeouts. It rechecks immutable
+identity under claim then preparation locks. Released roots go through the full
+terminal/release verifier before certification; missing headers remain unknown.
+`DocumentPreparationCoverageBatch` buffers at most 64 keys for one account and
+operation principal, using UUID/generation keyset pagination. Each entry commits
+separately. Failures propagate and leave the failing entry unresolved; retrying the
+same cursor is safe because completed entries leave the unresolved index. A corrupt
+entry currently stops that principal's batch, requiring investigation or explicit
+cursor selection to inspect later entries. There is no silent skip.
+
+The final unresolved lookup covers the whole account, including other principals
+and keys before the cursor. Its result is an observation, not pruning authority:
+new work may commit afterward. Successor lineage certification, additional race
+qualification and the final pruning transaction remain required.
 
 Avoid an account counter lock held across document or physical-origin locks. A
 READ COMMITTED indexed unresolved check is combined with the source document's
