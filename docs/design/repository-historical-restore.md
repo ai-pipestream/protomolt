@@ -912,6 +912,11 @@ maintenance runs before new nonterminal work and through runtime `tick()`. It
 borrows only proven, unborrowed retirement entries and performs authority lookup
 and disposal outside the registry monitor. Failed cleanup remains visible and
 retryable; borrowed workers continue to protect their generations and source pins.
+Each bounded pass moves its selected ready generation IDs to the tail of the
+maintenance order before disposal. A held worker or failed authority lookup cannot
+permanently monopolize the first batch. Rotation changes neither selected retry
+routing nor ownership and runs only under the short registry monitor; disposal
+still runs outside it and rechecks each entry before borrowing.
 
 `inspectSelected` returns only a staleable local generation ID and borrowed,
 attached and disposal state. It neither borrows the entry nor changes capacity,
@@ -1036,6 +1041,10 @@ not prove that facade routing carries the same identity, control and cleanup rul
   publication. Receipt delivery remains independent of cleanup; bounded maintenance
   reports the failure, retries it, and eventually returns capacity without dropping
   retained ownership. Qualify fairness when an earlier entry remains undrainable.
+  Bounded internal maintenance now has real-SQL fairness cases for a held source
+  worker and an authority lookup failure. Public terminal replay and maintenance
+  retry have an authority-failure case with real provider publication. A failed
+  SQL pin-release transaction remains a separate public acceptance item.
 
 These checks supplement cold-process and concurrent takeover evidence; they do
 not replace the remaining full-goal pruning, backup, performance or hydration work.

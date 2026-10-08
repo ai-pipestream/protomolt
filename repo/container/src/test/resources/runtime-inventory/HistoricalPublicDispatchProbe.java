@@ -29,6 +29,7 @@ final class HistoricalPublicDispatchProbe {
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cancel");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "shutdown");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-cancel");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup");
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
@@ -42,10 +43,13 @@ final class HistoricalPublicDispatchProbe {
             return provider.store();
         }, 4, 4_000_000, budget);
         var coordinator = new RepositoryCaller(caller.principalName(), true);
+        var failCleanup = new java.util.concurrent.atomic.AtomicBoolean();
+        var cleanupFailure = new IllegalStateException("injected public cleanup authority failure");
         var keys = new HashSet<UUID>();
         DocumentPublicationRuntime.RecoveryAuthority authority = (account, principal, operation) -> {
             require(account.equals(original.intent().getAccountId()) && principal.equals(caller.principalName())
                     && keys.contains(operation), "exact host coordinator lookup");
+            if (failCleanup.get()) throw cleanupFailure;
             return coordinator;
         };
         try (var opened = new ai.protomolt.proto.repo.blob.s3.S3BlobStoreProvider().open(Map.of(
@@ -54,12 +58,13 @@ final class HistoricalPublicDispatchProbe {
                 "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
              var takeover = new HistoricalPublicTakeoverProbe(opened)) {
             // This phase observes actual provider calls without holding their replies.
-            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start")) takeover.close();
+            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.equals("cleanup")) takeover.close();
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
                         return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover")
-                                || phase.equals("publication") || phase.equals("normal") || phase.equals("start") || stoppingCase ? takeover.opened() : opened);
+                                || phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.equals("cleanup")
+                                || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
                     phase.equals("takeover") ? Duration.ofSeconds(2) : Duration.ofMinutes(2), 2, DocumentPublicationCommand.MAX_COMMAND_BYTES, 16, false,
@@ -177,11 +182,35 @@ final class HistoricalPublicDispatchProbe {
                         HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
                                 repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
                     }
+                    if (phase.equals("cleanup") && !remote) {
+                        var committed = repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
+                        int puts = takeover.completedPuts(), selected = selections.get(), resolved = resolutions.get();
+                        failCleanup.set(true);
+                        try {
+                            require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
+                                    "authorized receipt delivery does not require cleanup authority");
+                            transport(repository, caller, request.build(), selections, resolutions, false);
+                            try {
+                                runtime.tick();
+                                throw new AssertionError("Cleanup authority failure was swallowed");
+                            } catch (IllegalStateException failure) {
+                                require(failure == cleanupFailure, "maintenance reports the original cleanup failure");
+                            }
+                            require(runtime.withHistoricalAttempts(attempts -> attempts.drain().unresolved()) == 1
+                                            && reads.outstandingReads() > 0 && budget.reservedBytes() > baseline,
+                                    "failed cleanup retains the generation, captures and bytes");
+                            require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
+                                    "cleanup failure does not replace the durable receipt");
+                            require(puts == takeover.completedPuts() && selected == selections.get() && resolved == resolutions.get(),
+                                    "cleanup failure and terminal replay add no PUT, selection or schema resolution");
+                        } finally { failCleanup.set(false); }
+                    }
                     runtime.tick();
                     require(runtime.withHistoricalAttempts(attempts -> attempts.drain().unresolved()) == 0,
                             "completed public operation releases its generation slot");
                 }
             } finally {
+                failCleanup.set(false);
                 takeover.close();
                 runtime.close();
                 boolean stopped = false;
@@ -190,7 +219,8 @@ final class HistoricalPublicDispatchProbe {
             }
         }
         require(budget.reservedBytes() == baseline, "public historical dispatch releases byte reservations");
-        System.out.println(stoppingCase ? "HISTORICAL_PUBLIC_" + phase.replace('-', '_').toUpperCase(java.util.Locale.ROOT) + "_DRAIN_OK"
+        System.out.println(phase.equals("cleanup") ? "HISTORICAL_PUBLIC_CLEANUP_RETRY_OK"
+                : stoppingCase ? "HISTORICAL_PUBLIC_" + phase.replace('-', '_').toUpperCase(java.util.Locale.ROOT) + "_DRAIN_OK"
                 : phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
                 : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"
                 : fault == null ? "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_GRPC_OK"

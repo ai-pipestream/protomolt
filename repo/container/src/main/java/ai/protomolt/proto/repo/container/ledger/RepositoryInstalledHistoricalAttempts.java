@@ -766,6 +766,13 @@ synchronized Optional<Attempt> resumeGeneration(RepositoryCaller coordinator, Re
             if (closed) throw unavailable();
             candidates = generations.values().stream().filter(entry -> !entry.borrowed && entry.retirement != RetirementProof.NONE)
                     .limit(limit).map(entry -> entry.id).toList();
+            // Give later ready entries a turn even when an earlier worker cannot drain or
+            // its authority lookup fails. This changes maintenance order, not retry routing.
+            // Rotate before leaving the monitor so an interrupted pass cannot pin the head.
+            for (var id : candidates) {
+                var entry = generations.remove(id);
+                generations.put(id, entry);
+            }
         }
         int retired = 0;
         RuntimeException failure = null;
