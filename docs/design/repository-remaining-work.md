@@ -21,7 +21,9 @@ concurrent takeover while an old provider reply remains held. Library cancellati
 orderly shutdown and remote-client cancellation also retain actual workers and
 resources until drainage. Publication acknowledgement loss preserves one durable
 receipt across library and authenticated gRPC retries without new provider or schema
-work. Deadline, negative-identity, revocation/policy and cleanup-failure checks remain before exposing the
+work. Altered retries and invalid identities are refused; cleanup authority failure
+and SQL pin-release rollback retain ownership and permit subsequent cleanup.
+Deadline, recovery-journal and revocation/policy checks remain before exposing the
 host factory; see the explicit [acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks).
 START reconciliation retains an exact attempt identity and requires current
 authority before restoring the original handle's CREATE permission. See
@@ -43,6 +45,7 @@ Recent evidence:
 - [Historical public publication acknowledgement loss](../evidence/repository/2026-10-08-historical-public-publication-ack/README.md)
 - [Historical public replay refusals](../evidence/repository/2026-10-08-historical-public-replay-refusals/README.md)
 - [Historical cleanup fairness and authority retry](../evidence/repository/2026-10-08-historical-cleanup-fairness/README.md)
+- [Historical public SQL cleanup rollback](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md)
 - [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
 - [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
 - [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)

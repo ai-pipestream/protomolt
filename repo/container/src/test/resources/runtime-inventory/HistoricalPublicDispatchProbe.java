@@ -30,6 +30,7 @@ final class HistoricalPublicDispatchProbe {
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "shutdown");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-cancel");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup");
+        run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup-sql");
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
@@ -37,7 +38,8 @@ final class HistoricalPublicDispatchProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.equals("rpc-cancel");
-        var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+        var readerId = UUID.randomUUID();
+        var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {
             require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical read provider");
             return provider.store();
@@ -58,12 +60,12 @@ final class HistoricalPublicDispatchProbe {
                 "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
              var takeover = new HistoricalPublicTakeoverProbe(opened)) {
             // This phase observes actual provider calls without holding their replies.
-            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.equals("cleanup")) takeover.close();
+            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.startsWith("cleanup")) takeover.close();
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
                         return new DocumentPublicationRuntime.Backend(profile.identity(), phase.equals("takeover")
-                                || phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.equals("cleanup")
+                                || phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.startsWith("cleanup")
                                 || stoppingCase ? takeover.opened() : opened);
                     }, new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
                     new SqlTimeouts(Duration.ofSeconds(5), Duration.ofSeconds(15)), 2, Duration.ofMillis(25),
@@ -205,6 +207,32 @@ final class HistoricalPublicDispatchProbe {
                                     "cleanup failure and terminal replay add no PUT, selection or schema resolution");
                         } finally { failCleanup.set(false); }
                     }
+                    if (phase.equals("cleanup-sql") && !remote) {
+                        var committed = repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
+                        int puts = takeover.completedPuts(), selected = selections.get(), resolved = resolutions.get();
+                        var releaseFault = new HistoricalPinReleaseFault(tx, readerId, new RepositoryOperationLedger.Key(
+                                command.intent().getAccountId(), caller.principalName(), command.operationId()));
+                        try (releaseFault) {
+                            try {
+                                runtime.tick();
+                                throw new AssertionError("SQL pin-release failure was swallowed");
+                            } catch (RuntimeException failure) { releaseFault.requireFailure(failure); }
+                            releaseFault.requireRetained();
+                            require(runtime.withHistoricalAttempts(attempts -> attempts.drain().unresolved()) == 1
+                                            && reads.outstandingReads() > 0 && budget.reservedBytes() > baseline,
+                                    "SQL rollback retains generation, read lifetimes and bytes");
+                            require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
+                                    "failed pin release preserves exact committed receipt");
+                            withTransport(repository, caller, 2, (remoteRepository, service, delivery, serverCancelled) ->
+                                    require(remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
+                                            "gRPC returns same receipt while SQL cleanup is failing"));
+                            require(puts == takeover.completedPuts() && selected == selections.get() && resolved == resolutions.get(),
+                                    "SQL cleanup failure and terminal replay add no provider PUT or schema work");
+                        }
+                        runtime.tick();
+                        releaseFault.requireReleased();
+                        HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments, committed.getCommitted());
+                    }
                     runtime.tick();
                     require(runtime.withHistoricalAttempts(attempts -> attempts.drain().unresolved()) == 0,
                             "completed public operation releases its generation slot");
@@ -219,7 +247,8 @@ final class HistoricalPublicDispatchProbe {
             }
         }
         require(budget.reservedBytes() == baseline, "public historical dispatch releases byte reservations");
-        System.out.println(phase.equals("cleanup") ? "HISTORICAL_PUBLIC_CLEANUP_RETRY_OK"
+        System.out.println(phase.equals("cleanup-sql") ? "HISTORICAL_PUBLIC_SQL_CLEANUP_RETRY_OK"
+                : phase.equals("cleanup") ? "HISTORICAL_PUBLIC_CLEANUP_RETRY_OK"
                 : stoppingCase ? "HISTORICAL_PUBLIC_" + phase.replace('-', '_').toUpperCase(java.util.Locale.ROOT) + "_DRAIN_OK"
                 : phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
                 : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"

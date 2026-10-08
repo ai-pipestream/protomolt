@@ -1043,8 +1043,11 @@ not prove that facade routing carries the same identity, control and cleanup rul
   retained ownership. Qualify fairness when an earlier entry remains undrainable.
   Bounded internal maintenance now has real-SQL fairness cases for a held source
   worker and an authority lookup failure. Public terminal replay and maintenance
-  retry have an authority-failure case with real provider publication. A failed
-  SQL pin-release transaction remains a separate public acceptance item.
+  retry have an authority-failure case with real provider publication. A real SQL
+  pin-release rollback now restores exact pins and retention mirrors, preserves
+  library/gRPC terminal receipts, and succeeds on retry with one capture-drain
+  receipt. See [the rollback evidence](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md).
+  This does not qualify every cleanup failure or lost cleanup acknowledgement.
 
 These checks supplement cold-process and concurrent takeover evidence; they do
 not replace the remaining full-goal pruning, backup, performance or hydration work.
