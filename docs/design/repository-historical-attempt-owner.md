@@ -1069,3 +1069,27 @@ the ledger's bounded releaseDrained/reconciliation paths. Do not discard handles
 or create a competing cleanup registry. Runtime shutdown must detach historical
 attempts before DocumentReadLifecycle closes reader admission and attests local
 quiescence. Managed capture acquisition and this shutdown wiring remain unfinished.
+
+### Historical upload coordinator composition
+
+DocumentUploadCoordinator calls ordinary admission, which rejects historical owners
+with execution claims. Private probes use DocumentPartTransfer directly and do not
+qualify the coordinator path.
+
+Reuse existing payload budgets, backend resolution, workers, flushing and heartbeat.
+An internal transfer authority must apply historical authorization and ownership
+checks in the same transaction as admission, renewals, observation verification,
+final state verification and post-preparation checks. Extract EntityManager-bound
+operations; avoid nested transactions. Provider I/O remains outside SQL. Check
+current authority after workers exit. Uncertain writes require reconciliation with
+the original attempt identities. Implicit retries are prohibited.
+
+Fork source Work and a registration child under the execution monitor, then release
+the monitor before running transfers. Background callbacks into synchronized mutate
+would otherwise deadlock. Retain protection until workers, heartbeat and flusher
+exit. Freeze DocumentHistoricalSuccessorBinding's verified activation receipt or
+synchronize that check independently; preserve receipt equality.
+
+Sol reviewed this design. Implementation and barrier tests remain required for
+expiry, revocation, late observations, uncertain provider replies and shutdown.
+Public historical publication remains disabled pending integration and conformance.
