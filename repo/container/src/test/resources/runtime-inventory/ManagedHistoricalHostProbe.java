@@ -130,6 +130,11 @@ public final class ManagedHistoricalHostProbe {
     }
 
     static PublishDocumentRequest historical(Tx tx, RepositoryCaller caller, PublishDocumentRequest source, DocumentPublishedRevision revision) {
+        return historical(tx, caller, source, revision, parsed());
+    }
+
+    static PublishDocumentRequest historical(Tx tx, RepositoryCaller caller, PublishDocumentRequest source,
+            DocumentPublishedRevision revision, ParserResult parsed) {
         var member = source.getIntent().getMembers(0).toBuilder().clearParts().setDestination(DocumentRevisionCondition.newBuilder()
                 .setAddress(revision.getAddress()).setExpectedMutationRevision(revision.getMutationRevision()));
         var ledger = new DocumentReadLedger(tx, UUID.randomUUID());
@@ -148,7 +153,7 @@ public final class ManagedHistoricalHostProbe {
                         .setObject(object)));
             }
         } finally { capture.close(); ledger.releaseDrained(16); }
-        var bytes = Document.newBuilder().setDocId(revision.getAddress().getDocId()).putParserResults("fresh", parsed()).build().toByteString();
+        var bytes = Document.newBuilder().setDocId(revision.getAddress().getDocId()).putParserResults("fresh", parsed).build().toByteString();
         int ordinal = member.getPartsCount();
         member.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED))
                 .setUpload(PublicationUpload.newBuilder().setSizeBytes(bytes.size()).setSha256(DocumentPartCodec.sha256Hex(bytes.toByteArray()))

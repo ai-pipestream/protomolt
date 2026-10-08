@@ -30,7 +30,8 @@ class DocumentAssessmentStorageRuntimeTest {
 
     @Test void managedHistoricalShutdown() throws Exception {
         boundedPublicHostBinding("ManagedHistoricalShutdownProbe", "MANAGED_HISTORICAL_HELD_PUT_LIBRARY_OK",
-                "MANAGED_HISTORICAL_HELD_PUT_RPC_OK", "MANAGED_HISTORICAL_HELD_GET_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_GET_RPC_OK");
+                "MANAGED_HISTORICAL_HELD_PUT_RPC_OK", "MANAGED_HISTORICAL_HELD_GET_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_GET_RPC_OK",
+                "MANAGED_HISTORICAL_HELD_SCHEMA_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_SCHEMA_RPC_OK");
     }
 
     private void boundedPublicHostBinding(String probe, String... markers) throws Exception {

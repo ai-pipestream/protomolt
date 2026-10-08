@@ -1138,8 +1138,12 @@ while a real Redis PUT or selected historical GET reply is held. Repeated close 
 the reader and fences the host. See [held-provider evidence](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md).
 The [held historical read evidence](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
 also distinguishes caller cancellation from the lifetime of the actual read worker.
-Next qualify unavailable upload placements during recovery and close during held
-schema loads. Multi-backend operation, deployed recovery and performance remain
+A fresh Git descriptor load now has hosted library/gRPC cancellation and timed-close
+coverage: the actual resolver worker and shared resources remain owned until it exits,
+and the closed resolver does not cache its late result. See
+[held schema evidence](../evidence/repository/2026-10-08-managed-historical-schema-shutdown/README.md).
+Next qualify unavailable upload placements during recovery. Multi-backend operation,
+deployed recovery and performance remain
 unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)

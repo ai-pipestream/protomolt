@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.ManagedSchemaOwnershipTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-08T08:50:06.032Z" hostname="krick" time="0.604">
+  <properties/>
+  <testcase name="closeFailureIsReportedAndRetriedBeforeRecordingCompletion()" classname="ai.protomolt.proto.repo.service.ManagedSchemaOwnershipTest" time="0.576"/>
+  <testcase name="successfulTransferClosesActualResolverAndCannotTransferTwice()" classname="ai.protomolt.proto.repo.service.ManagedSchemaOwnershipTest" time="0.011"/>
+  <testcase name="failedCompositionLeavesActualResolverUsableByItsCaller()" classname="ai.protomolt.proto.repo.service.ManagedSchemaOwnershipTest" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

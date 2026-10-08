@@ -17,15 +17,17 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-/** Holds an actual Redis read/write reply while a managed historical host cancels and drains. */
+/** Holds an actual Redis or Git reply while a managed historical host cancels and drains. */
 public final class ManagedHistoricalShutdownProbe {
     public static void main(String[] args) throws Exception {
-        for (boolean read : new boolean[] {false, true})
-            for (boolean remote : new boolean[] {false, true}) run(Path.of(args[0]), remote, read);
+        for (var kind : ManagedHistoricalWorkerGate.Kind.values())
+            for (boolean remote : new boolean[] {false, true}) run(Path.of(args[0]), remote, kind);
     }
 
-    private static void run(Path bundle, boolean remote, boolean read) throws Exception {
-        var gate = new ManagedHistoricalWorkerGate(read);
+    private static void run(Path bundle, boolean remote, ManagedHistoricalWorkerGate.Kind kind) throws Exception {
+        var gate = new ManagedHistoricalWorkerGate(kind);
+        boolean schema = kind == ManagedHistoricalWorkerGate.Kind.SCHEMA;
+        boolean asynchronous = kind != ManagedHistoricalWorkerGate.Kind.PUT;
         var closes = new AtomicInteger();
         var real = new RedisBlobStoreProvider();
         BlobStoreProvider provider = new BlobStoreProvider() {
@@ -45,14 +47,21 @@ public final class ManagedHistoricalShutdownProbe {
         var identity = new ReaderHostOptions(UUID.randomUUID(), "historical-shutdown", UUID.randomUUID().toString());
         var caller = new RepositoryCaller("operator", true);
         var definition = BoundedDocumentHostProbe.definition(StringValue.getDescriptor());
+        var fresh = BoundedDocumentHostProbe.definition(com.google.protobuf.Timestamp.getDescriptor());
         Path directory = Files.createTempDirectory("historical-shutdown-git");
         try (var git = GitSchemaRegistryStore.builder().repositoryDir(directory).build();
              var database = new LedgerDatabase(config.ledger())) {
             git.putDescriptorSet(definition.metadata().getArtifactSha256(), definition.descriptors());
-            var resolver = new RegistrySchemaResolver(git, new DocumentSchemaArtifactCache.Limits(8_000_000, 16, 4_000_000), 4, 16);
+            git.putDescriptorSet(fresh.metadata().getArtifactSha256(), fresh.descriptors());
+            var resolver = new RegistrySchemaResolver(gate.wrapRegistry(git, fresh.metadata().getArtifactSha256(), fresh.descriptors()),
+                    new DocumentSchemaArtifactCache.Limits(8_000_000, 16, 4_000_000), 4, 16);
             ManagedSchemaAccess schemas = new ManagedSchemaAccess() {
                 public DocumentSchemaAdmission.Resolution open(RepositoryCaller actual, DocumentPublicationMember member, RepositoryReadControl control) {
-                    return resolver.open(occurrence -> new RegistrySchemaResolver.Selected(definition.metadata(), definition.source()), control::check);
+                    return resolver.open(occurrence -> {
+                        var selected = occurrence.typeUrl().equals(fresh.metadata().getTypeUrl()) ? fresh : definition;
+                        require(occurrence.typeUrl().equals(selected.metadata().getTypeUrl()), "fixture only resolves the declared schema identities");
+                        return new RegistrySchemaResolver.Selected(selected.metadata(), selected.source());
+                    }, control::check);
                 }
                 public void close() { resolver.close(); }
                 public boolean awaitIdle(Duration timeout) throws InterruptedException { return resolver.awaitLoads(timeout); }
@@ -72,7 +81,10 @@ public final class ManagedHistoricalShutdownProbe {
                 var fixture = BoundedDocumentHostProbe.prepare(host, tx);
                 var source = host.publicationRepository().publishDocument(caller, fixture.request(), RepositoryReadControl.NONE);
                 require(source.hasCommitted(), "real typed source committed before shutdown scenario");
-                var request = ManagedHistoricalHostProbe.historical(tx, caller, fixture.request(), source.getCommitted().getMembers(0));
+                var request = schema ? ManagedHistoricalHostProbe.historical(tx, caller, fixture.request(), source.getCommitted().getMembers(0),
+                        ParserResult.newBuilder().setDocument(ParserDocument.newBuilder().setShape(com.google.protobuf.Any.pack(
+                                com.google.protobuf.Timestamp.newBuilder().setSeconds(5).build(), "type.test"))).build())
+                        : ManagedHistoricalHostProbe.historical(tx, caller, fixture.request(), source.getCommitted().getMembers(0));
                 gate.source(request.getIntent().getMembers(0).getPartsList().stream().filter(DocumentPublicationPart::hasHistoricalReuse)
                         .findFirst().orElseThrow().getHistoricalReuse().getObject());
                 var publisher = host.publicationRepository();
@@ -108,8 +120,10 @@ public final class ManagedHistoricalShutdownProbe {
                         publication = rpcResult;
                     } else publication = executor.submit(() -> publisher.publishDocument(caller, request, control));
                     try {
-                        require(gate.entered.await(10, TimeUnit.SECONDS), "historical publication reached actual selected Redis reply");
+                        require(gate.entered.await(10, TimeUnit.SECONDS), "historical publication reached actual selected worker reply");
                         gate.verifyBytes();
+                        if (schema) require(resolver.stats().activeLoads() == 1 && resolver.stats().registryReads() == 2,
+                                "fresh schema uses a real uncached Git load after the original source schema");
                         var pins = pins(tx, identity);
                         require(!pins.isEmpty(), "historical source has live pins before cancellation");
                         if (remote) {
@@ -123,12 +137,14 @@ public final class ManagedHistoricalShutdownProbe {
                         catch (RepositoryDrainTimeoutException expected) {
                             require(remote && expected.getMessage().equals("Publication RPCs still active; shared resources retained"), "RPC close retains active call");
                         } catch (IllegalStateException expected) {
-                            require((!remote || read) && expected.getMessage().equals("Native publication resources still active; shared resources retained"), "close retains active provider work");
+                            require((!remote || asynchronous) && expected.getMessage().equals("Native publication resources still active; shared resources retained"), "close retains active worker");
                         }
                         require(closes.get() == 0 && gate.exited.getCount() == 1, "real provider stays open until worker exit");
-                        require(pins(tx, identity).equals(pins), "timed-out close preserves exact historical source pins");
+                        if (!schema) require(pins(tx, identity).equals(pins), "timed-out close preserves exact historical source pins");
+                        else require(!resolver.awaitLoads(Duration.ZERO) && resolver.stats().activeLoads() == 1,
+                                "caller cancellation cannot release the actual registry worker");
                         require(hostState(tx, identity).equals("ACTIVE"), "live host cannot attest termination");
-                        if (!read) {
+                        if (!asynchronous) {
                             if (remote) require(!service.awaitIdle(Duration.ZERO), "client cancellation does not release server producer");
                             else require(!publication.isDone(), "library worker remains held");
                         }
@@ -140,6 +156,8 @@ public final class ManagedHistoricalShutdownProbe {
                         } catch (RepositoryException expected) { require(expected.code() == RepositoryException.Code.UNAVAILABLE, "closed admission status"); }
                         gate.release.countDown();
                         require(gate.exited.await(5, TimeUnit.SECONDS), "held provider reply exits");
+                        if (schema) require(resolver.awaitLoads(Duration.ofSeconds(5)) && resolver.stats().cachedBytes() == 0,
+                                "closed resolver drains and does not cache a late schema result");
                         if (remote) require(service.awaitIdle(Duration.ofSeconds(10)), "historical RPC producer drains");
                         try { publication.get(10, TimeUnit.SECONDS); throw new AssertionError("Cancelled historical publication succeeded"); }
                         catch (ExecutionException expected) { require(remote
@@ -162,7 +180,7 @@ public final class ManagedHistoricalShutdownProbe {
         } finally {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-        System.out.println("MANAGED_HISTORICAL_HELD_" + (read ? "GET_" : "PUT_") + (remote ? "RPC" : "LIBRARY") + "_OK");
+        System.out.println("MANAGED_HISTORICAL_HELD_" + kind + "_" + (remote ? "RPC" : "LIBRARY") + "_OK");
     }
 
     private static List<String> pins(Tx tx, ReaderHostOptions host) {
