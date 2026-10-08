@@ -40,10 +40,12 @@ final class HistoricalRuntimeShutdownProbe {
                     public void closeAdmission() { externalClosed.set(true); }
                     public boolean awaitIdle(Duration wait) { return true; }
                 }, 2);
-        var attempts = runtime.historicalAttempts();
-        DocumentRetainedReader.Batch held = null;
+        var retained = new java.util.concurrent.atomic.AtomicReference<RepositoryInstalledHistoricalAttempts>();
+        var held = new java.util.concurrent.atomic.AtomicReference<DocumentRetainedReader.Batch>();
         var histories = new ArrayList<DocumentReadLedger.PinnedHistory>();
         try {
+            runtime.withHistoricalAttempts(attempts -> {
+            retained.set(attempts); // Test inspection only; no registry mutations after the action.
             for (int index = 0; index < 2; index++) {
                 var current = new DocumentLedger(tx).findByNodeId(
                         ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress())).orElseThrow();
@@ -68,12 +70,23 @@ final class HistoricalRuntimeShutdownProbe {
                     if (index == 0) {
                         int ordinal = member.getPartsList().stream().filter(part -> part.hasHistoricalReuse())
                                 .findFirst().orElseThrow().getHistoricalReuse().getRevisionOrdinal();
-                        held = reader.readHistorical(history, ordinal, RepositoryReadControl.NONE);
-                        require(!held.parts().isEmpty(), "real provider bytes remain borrowed");
+                        held.set(reader.readHistorical(history, ordinal, RepositoryReadControl.NONE));
+                        require(!held.get().parts().isEmpty(), "real provider bytes remain borrowed");
                     }
                 }
             }
             runtime.close();
+            require(!runtime.shutdownStep(Duration.ZERO), "accepted action prevents shutdown even between registry borrows");
+            require(attempts.drain().unresolved() == 2, "accepted action retains both generations");
+            try {
+                runtime.withHistoricalAttempts(ignored -> { throw new AssertionError("Closed runtime admitted new historical work"); });
+                throw new AssertionError("Missing closed-runtime refusal");
+            } catch (RepositoryException expected) {
+                require(expected.code() == RepositoryException.Code.UNAVAILABLE, "new historical call is refused after close");
+            }
+            return null;
+            });
+            var attempts = retained.get();
             require(!reader.closed && !externalClosed.get(), "outer close preserves nested resources");
             failAuthority.set(true);
             try { runtime.shutdownStep(Duration.ZERO); throw new AssertionError("Missing authority failure"); }
@@ -85,7 +98,7 @@ final class HistoricalRuntimeShutdownProbe {
                     "ready generation drains despite held earlier generation");
             require(!reader.closed && !externalClosed.get() && budget.reservedBytes() > baseline,
                     "timeout retains reader admission and byte ownership");
-            held.close(); held = null;
+            held.getAndSet(null).close();
             boolean stopped = false;
             for (int pass = 0; pass < 4 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(1));
             require(stopped && reader.closed && externalClosed.get(), "shutdown retry closes nested resources");
@@ -93,7 +106,7 @@ final class HistoricalRuntimeShutdownProbe {
                     && budget.reservedBytes() == baseline, "shutdown returns all captures and memory");
         } finally {
             failAuthority.set(false);
-            if (held != null) held.close();
+            if (held.get() != null) held.getAndSet(null).close();
             runtime.close();
             boolean stopped = false;
             for (int pass = 0; pass < 4 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(1));

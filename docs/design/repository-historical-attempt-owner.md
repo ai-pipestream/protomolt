@@ -1228,10 +1228,14 @@ provider admission, external workers and the shared reader. A failed authority
 lookup or incomplete detach leaves those resources available for a later shutdown
 pass. A held generation does not stop disposal of another ready generation.
 
-The private registry accessor does not itself enforce an accepted runtime scope.
-It is currently used only by qualification. The future dispatch implementation
-must enforce that scope around every registry operation, including initial slot
-reservation, so close cannot admit new requests through that internal path.
+The internal `withHistoricalAttempts` action now owns the runtime call scope from
+entry through synchronous completion. Close refuses new actions; shutdown cannot
+detach generations until an already accepted action returns, including between
+individual registry borrows. Registry references and borrowed calls must remain
+inside the action. Future facade dispatch must preserve its existing accepted-call
+scope across routing rather than treating continuation as a fresh external call.
 The factory does not yet dispatch historical requests or perform cold recovery.
 Qualification is recorded under
 `docs/evidence/repository/2026-10-08-historical-runtime-shutdown/`.
+The subsequent accepted-action check is under
+`docs/evidence/repository/2026-10-08-historical-runtime-scope/`.

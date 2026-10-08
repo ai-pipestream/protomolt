@@ -271,10 +271,17 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 key -> authority.forOperation(key.account(), key.principal(), key.operationId()), externalWorkers, null, historical);
     }
 
-    /** For the internal accepted-call driver; callers must hold the runtime's outer scope. */
-    RepositoryInstalledHistoricalAttempts historicalAttempts() {
+    /** Synchronous internal driver boundary. Registry and borrowed calls must not escape the action. */
+    <T, E extends Exception> T withHistoricalAttempts(HistoricalAction<T, E> action) throws E {
         if (historical == null) throw new IllegalStateException("Historical lifecycle is not configured");
-        return historical;
+        Objects.requireNonNull(action);
+        try (var accepted = scopeCalls.enter()) {
+            return action.run(historical);
+        }
+    }
+
+    @FunctionalInterface interface HistoricalAction<T, E extends Exception> {
+        T run(RepositoryInstalledHistoricalAttempts attempts) throws E;
     }
 
     private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
