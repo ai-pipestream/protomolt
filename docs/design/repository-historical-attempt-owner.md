@@ -743,9 +743,58 @@ call scope or explicitly transfer ownership of a retained scope.
 load the original retained preparation. `DocumentPublicationPreparationJournal.load`
 requires a live claim. `RepositoryReservedPreparation.load` loads the immediate
 predecessor after reservation, which is not necessarily the original retention
-anchor. Add bounded, integrity-checked anchor discovery under explicit process
-authority, with current execution-caller authorization before returning source
-metadata. Follow persisted lineage rather than assuming generation zero.
+anchor. `RepositoryHistoricalRetentionLoader` now provides bounded anchor
+discovery under process authority and current execution-caller authorization.
+It follows persisted lineage, verifies preparation and capture identities, and
+returns a budgeted metadata lease. It creates no read pin or execution permit.
+The loader has SQL tests but no production call site as of a8ca11413.
+
+The remaining composition has an ordering constraint: `beginProposed` requires
+the original retention record, while the loader requires an established
+reservation and the immediate predecessor record. Existing same-process tests
+supply the original record from memory; that is insufficient for restart recovery.
+A restart path must retain one proposal before SQL, reserve recovery, load the
+immediate predecessor with `RepositoryReservedPreparation`, then load the original
+anchor. It must preserve uncertain reservation identities and bound metadata
+memory before handing ownership to installed historical execution. No request
+may manufacture the missing original record from current schema metadata.
+
+The next implementation is a registry-owned cold proposal entry, allocated through
+an internal `beginColdProposed` operation. Keep the existing warm entry unchanged.
+Reserve entry capacity and metadata budget before SQL. Fix the execution caller,
+canonical command, modes, lease, SQL timeouts and discovery-derived proposal at
+creation. Local retry must find this entry before considering newer discovery.
+
+Advance through these phases without provider I/O under the registry monitor:
+
+1. Validate the request and resubmitted upload bytes, check current authorization,
+   and verify durable mode bindings before reservation: `requireBoundModes` for
+   an expired bound owner, or `requireSupersessionModes` for an unactivated
+   supersession. Then reserve the exact recovery proposal. An uncertain acknowledgement retains
+   that proposal for confirmation; it does not permit a new identity.
+2. Load the immediate predecessor and fixed modes under the reservation. Load the
+   original anchor through the bounded ancestry loader and verify command, owner,
+   schema/source retention and mode bindings. Attach the anchor once. Failed or
+   unauthorized loading must not install a successor or release another owner's
+   content protections.
+3. Prepare and retain one successor plan, then confirm installation. Preserve that
+   plan after an uncertain acknowledgement. Close metadata leases only after their
+   ownership is transferred or the entry is safely disposed.
+4. Acquire fresh source pins and Work through existing capture operations. Activate
+   a new execution under the installed claim. Neither loaded metadata nor prior
+   START/CREATE evidence grants execution authority to the restarted process.
+
+Terminal receipt replay precedes this path and requires current caller authority.
+A committed or terminated operation needs no cold proposal, provider access or
+source Work merely to return its receipt. Pending recovery requires explicit
+private process authority for the operation. Preserve the public routing restriction
+while this internal path is being qualified.
+
+Acceptance for the first slice includes fresh-registry recovery across multiple
+successors, exact retry after lost reservation/install replies, missing or corrupt
+anchor refusal, revoked authority, exhausted capacity/budget, and cleanup at every
+phase. Prove fresh capture/activation separately with real providers and then with
+a separate process. Existing SQL loader tests alone do not satisfy those cases.
 
 Persisted START, capture or assessment evidence cannot reconstruct a live execution
 permit. Cold recovery must install a successor and acquire fresh capture ownership
