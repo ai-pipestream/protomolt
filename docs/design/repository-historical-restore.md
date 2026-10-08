@@ -829,6 +829,39 @@ qualification before they can serve that purpose. Keep the public path closed
 until this recovery sequence and publication are proven. No protobuf change or
 new repository-wide transaction boundary is introduced by the private permit.
 
+### Planned reconciliation of an uncertain START acknowledgement
+
+The current implementation above deliberately refuses CREATE after losing the
+START acknowledgement. Before public historical publication is enabled, extend
+that boundary to let the original live handle reconcile its own uncertain START.
+This is planned behavior, not an available public operation.
+
+Retain a private proposed assessment UUID and exact retention duration on the
+synchronized historical execution handle before entering its first START
+transaction. Reuse that proposal on retry. A loaded row may grant CREATE only
+when it matches this retained proposal and the complete current-authority
+transaction succeeds, including claim, owner nonce, command, fixed modes,
+placements, captured sources, retention and expiry checks. Final authorization
+must succeed after commit before the local permission is armed. Observation
+alone, including journal load or a fresh handle with matching coordinates,
+never grants permission. This revises the acknowledged-INSERT-only rule solely
+for the original handle's exact private attempt.
+
+CREATE remains single-attempt on that handle. Its existing uncertain-commit
+reconciliation is separate; repeating START cannot clear a CREATE-attempt marker.
+Process loss still requires qualified successor or drain recovery rather than
+reconstructing this private permission from persisted coordinates.
+
+Required tests use real transactions: committed START with lost reply followed
+by same-handle CREATE; rolled-back START followed by retry; competing and fresh
+handles denied before schema claims; duration mismatch, expiry, claim fencing,
+owner fencing and credential revocation denied. Preserve the existing CREATE
+lost-acknowledgement tests. Keep public historical dispatch gated until these
+cases and its complete publication and recovery sequence pass.
+
+Sol reviewed this proposed boundary against the current journal and execution
+fences. Implementation and qualification remain open.
+
 ### Acceptance before enabling public restore
 
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are

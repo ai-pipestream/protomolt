@@ -4,11 +4,46 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+## Current checkpoint: 2026-10-08
+
+Ordinary journaled publication has a public library boundary and an optional
+authenticated gRPC mount. Hosted builders can bind their readers to an explicit
+supervisor execution. Verified termination, bounded reader discovery and a callable
+recovery step now exist; none installs a deployed verifier or scheduler. Capture
+and preparation-root disposal still require separate operation authority.
+
+The immediate open integration is public historical publication. Its facade still
+rejects historical selectors; the private retained-attempt and cold-restart paths
+are qualified independently. Keep that guard until accepted-call dispatch, retries,
+caller identity and shutdown pass library and authenticated transport tests.
+The START journal currently preserves coordinates after an uncertain commit but
+does not restore the original handle's CREATE permission. The reviewed proposal
+in [historical restore](repository-historical-restore.md#planned-reconciliation-of-an-uncertain-start-acknowledgement)
+retains an exact private attempt identity and requires current authority before
+reconciliation. Its implementation and tests precede public dispatch.
+
+Pruning must now account for persisted historical preparations and their retained
+roots. The older assumption that journals cannot contain historical selectors is
+obsolete. Atomic pruning, isolated backup/restore, controlled replica performance,
+fairness and progressive hydration remain requirements of the full goal.
+
+Recent evidence:
+
+- [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
+- [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
+- [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)
+- [Full storage regression before the supervisor](../evidence/repository/2026-10-08-host-composition-storage-gate/README.md)
+
+The dated implementation history below records earlier boundaries. Use this
+checkpoint and the current managed-recovery section when choosing remaining work.
+
 Repository network startup now requires explicit operator authentication, and TCP
 repo-backed storage requires its own upstream credential. This closes the open
-operator-listener prerequisite. It does not provide key-specific absent-destination
-creation authority; that grant still needs design, shared admission checks, and
-replay/revocation/race tests. See [authentication evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
+operator-listener prerequisite. Authentication alone does not grant absent-destination
+creation. `RepositoryCredentialAuthorities` and `RepositoryCreationGrants` now provide
+the internal authority primitives; the scoped creation sections below record their
+enforcement and qualification. Production provisioning remains separate. See
+[authentication evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
 
 Initial journaled session admission now composes claim, binding, preparation,
 modes, operation and first owner in one SQL transaction. Shared standalone helpers
@@ -176,8 +211,9 @@ performance qualification must not displace these requirements.
    abandoned load capacity through provider completion. Managed-host composition
    now accepts an explicit host-bound schema scope and lifecycle component. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
-   `ManagedDocumentServices` owns a native runtime, but the managed publication
-   accessor is package-private and no publication RPC is mounted. `ManagedSchemaAccess`
+   `ManagedDocumentServices` owns a native runtime. `RepoServices.publicationRepository()`
+   is public, and explicit journaled composition can mount the publication RPC.
+   Public historical dispatch remains gated. `ManagedSchemaAccess`
    supplies optional scope composition and shutdown ownership without a production
    dependency on the registry adapter. Scopes receive the actual caller and member
    and authorize every occurrence. Shutdown rejects new scopes, quiesces publication,
@@ -186,9 +222,9 @@ performance qualification must not displace these requirements.
    registry store only after successful service shutdown; failed construction leaves
    schema cleanup with the caller. Configuration is checked before readers register.
    Real PostgreSQL/LocalStack/Git fixtures cover typed/opaque/replay, scoped caller
-   forwarding and held-read shutdown. Public
-   publication activation additionally needs the scoped authorization and durable
-   session work below; schema wiring is not a document-creation grant.
+   forwarding and held-read shutdown. Ordinary scoped journaled publication has
+   separate authorization and durable-session qualification; schema wiring is not
+   a document-creation grant.
    Establish tenant/security scope, exact schema identity, bounded ownership,
    eviction, concurrent lookup and cancellation before sharing cached entries.
    Test equal type URLs with different occurrence definitions, registry outage,
@@ -271,6 +307,11 @@ performance qualification must not displace these requirements.
 ## Work gated by publication and retention guarantees
 
 4. **Recovery.** Follow the [recovery design](repository-publication-recovery.md).
+   Ordinary managed recovery now runs under the accepted-call and operation-key
+   guards with explicit recovery authority; see the current managed recovery
+   boundary below. The following paragraphs record earlier implementation stages,
+   not outstanding ordinary-session registration tasks. Public historical dispatch,
+   deployed termination verification and supervisor scheduling remain open.
    Original-owner stage reconciliation now has real lost-acknowledgment and
    fresh-process forced-exit evidence without a capability handoff file. Claim
    expiry and transfer refuse the stale handle. The bounded manager now owns
@@ -379,15 +420,13 @@ performance qualification must not displace these requirements.
    revision immutability remain unchanged. Next, resolve pending command references
    and design atomic pruning with the same lock order used by reference acquisition;
    do not derive a deletable flag from an earlier inventory snapshot.
-   Source inspection confirms that the current preparation journal cannot register
-   historical selectors: `DocumentPublicationPreparationRecord` reconstructs through
-   ordinary upload preparation, which calls `requireExecutionSupported`. Historical
-   preparation uses a separate internal unclaimed path; claimed historical admission
-   remains refused. An indexed journal-selector projection would therefore be empty
-   for currently supported registrations. Do not add it or relax that guard solely
-   to make the inventory appear complete. Design claimed historical ownership, source
-   pin lifetime, canonical decode and atomic reference acquisition together before
-   activation. Unknown/legacy journal coverage remains conservative until verified.
+   Historical selectors now have an explicit validation branch in
+   `DocumentPublicationPreparationRecord`, and cold recovery loads their canonical
+   persisted preparation. Re-audit the inventory against preparation history roots,
+   sealed source captures, retained schemas and terminal release receipts before
+   designing deletion. A selector projection is no longer necessarily empty.
+   Unknown/legacy journal coverage remains conservative until verified; the public
+   historical dispatch gate is independent of whether private journals retain data.
    Required restore acceptance cases include registry absence, policy change, revoked
    access, stale destination revision, shared-byte reuse, failed finalization, and a
    pruning race with a held restore read. Backup qualification must restore the matching

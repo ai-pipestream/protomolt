@@ -64,6 +64,15 @@ class DocumentPreparationMultiRootReleaseIT {
                     var identity=new DocumentPreparationCaptureDrain.Identity(new RepositoryCoordinatorDrain.Identity(key,command.sha256(),
                             claim.epoch(),claim.token(),coordinator),0,HexFormat.of().formatHex(pins.digest()));
                     DocumentPreparationCaptureDrain.recover(c.tx(),CALLER,identity,NONE);
+                    var inventory=new DocumentRevisionRetentionInventory(c.tx());
+                    var firstRetained=inventory.inspect(CALLER,original.fixture().address(),original.fixture().revision(),NONE);
+                    var secondRetained=inventory.inspect(CALLER,second.address(),second.revision(),NONE);
+                    assertThat(firstRetained.sourceReadPins()).isZero();
+                    assertThat(secondRetained.sourceReadPins()).isZero();
+                    assertThat(firstRetained.sourcePreparationRoots()).isEqualTo(2);
+                    assertThat(secondRetained.sourcePreparationRoots()).isEqualTo(1);
+                    assertThat(secondRetained.unresolved()).contains(
+                            DocumentRevisionRetentionInventory.UnresolvedReachability.PREPARATION_JOURNAL_SELECTORS);
                     assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                         insert(em,record);
                         int deleted=em.createNativeQuery("""
@@ -73,6 +82,7 @@ class DocumentPreparationMultiRootReleaseIT {
                     })).hasStackTraceContaining("remove every target root atomically");
                     assertThat(rows(c,"repository_preparation_history_roots",key)).isEqualTo(2);
                     assertThat(rows(c,"repository_preparation_root_releases",key)).isZero();
+                    assertThat(inventory.inspect(CALLER,second.address(),second.revision(),NONE)).isEqualTo(secondRetained);
                     var receipt=DocumentPreparationRootReleases.release(c.tx(),original.budget(),CALLER,record,NONE);
                     assertThat(receipt.rootCount()).isEqualTo(2);
                     assertThat(receipt.captureCount()).isEqualTo(1);
@@ -81,6 +91,10 @@ class DocumentPreparationMultiRootReleaseIT {
                     assertThat(rows(c,"repository_preparation_root_releases",key)).isEqualTo(1);
                     assertThat(rows(c,"repository_preparation_history_roots",original.record().key())).isEqualTo(1);
                     assertThat(rows(c,"repository_preparation_root_releases",original.record().key())).isZero();
+                    assertThat(inventory.inspect(CALLER,original.fixture().address(),original.fixture().revision(),NONE)
+                            .sourcePreparationRoots()).isEqualTo(1);
+                    assertThat(inventory.inspect(CALLER,second.address(),second.revision(),NONE)
+                            .sourcePreparationRoots()).isZero();
                     var live=c.tx().readOnly(em -> DocumentPreparationHistoryRoots.coverage(em,original.record(),
                             DocumentPublicationPreparationJournal.digest(DocumentPublicationPreparationCodec.encode(original.record()))));
                     assertThat(live).isEqualTo(DocumentPreparationHistoryRoots.Coverage.EXACT);
