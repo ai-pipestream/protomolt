@@ -16,6 +16,11 @@ class HistoricalRuntimeQualificationTest {
         run(null, "HISTORICAL_RECONCILIATION_HOST_OK", "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK",
                 "HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK", "HISTORICAL_RECONCILIATION_RELEASED_OK");
     }
+    @Test void publicCommitWinner() throws Exception {
+        run("public-commit-winner", "HISTORICAL_PUBLIC_COMMIT_WINNER_HOST_OK",
+                "HISTORICAL_PUBLIC_WINNER_READ_LIBRARY_DRAIN_OK", "HISTORICAL_PUBLIC_WINNER_READ_GRPC_DRAIN_OK",
+                "HISTORICAL_PUBLIC_WINNER_WRITE_LIBRARY_DRAIN_OK", "HISTORICAL_PUBLIC_WINNER_WRITE_GRPC_DRAIN_OK");
+    }
     @Test void initialOwner() throws Exception {
         run("initial-owner", "HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
                 "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK", "HISTORICAL_UPLOAD_REPLAY_OK",
@@ -124,7 +129,7 @@ class HistoricalRuntimeQualificationTest {
                 String output = Files.readString(log);
                 assertThat(process.exitValue()).as(output).isZero();
                 assertThat(output).contains(markers);
-                if (!"initial-owner".equals(mode)) {
+                if (!"initial-owner".equals(mode) && !"public-commit-winner".equals(mode)) {
                     assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
                             "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 }

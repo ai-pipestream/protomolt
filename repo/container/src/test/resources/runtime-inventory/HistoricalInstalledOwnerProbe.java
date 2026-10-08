@@ -11,7 +11,7 @@ import java.util.*;
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
     enum Check {
-        ORDINARY, COLD, COLD_RESTART_WRITER, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, INITIAL_OWNER, REJECTION;
+        ORDINARY, COLD, COLD_RESTART_WRITER, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, REJECTION;
         boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
     }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,

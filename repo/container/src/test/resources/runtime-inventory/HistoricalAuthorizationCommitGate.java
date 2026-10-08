@@ -14,7 +14,7 @@ import javax.sql.DataSource;
 
 /** Holds a real commit before and after durability, without changing its result. */
 final class HistoricalAuthorizationCommitGate implements AutoCloseable {
-    enum Phase { SCHEMA_STAGE, ASSESSMENT_CREATE }
+    enum Phase { SCHEMA_STAGE, ASSESSMENT_CREATE, PUBLICATION }
     private final Phase phase;
     private final AtomicBoolean fired = new AtomicBoolean();
     private final CountDownLatch entered = new CountDownLatch(1);
@@ -24,6 +24,7 @@ final class HistoricalAuthorizationCommitGate implements AutoCloseable {
     private final jakarta.persistence.EntityManagerFactory factory;
     private final Tx tx;
     private volatile RepositoryOperationLedger.Owner owner;
+    private volatile RepositoryOperationLedger.Key publicationKey;
     private volatile UUID assessment;
     private volatile int writerPid;
 
@@ -58,6 +59,10 @@ final class HistoricalAuthorizationCommitGate implements AutoCloseable {
         tx = new Tx(factory);
     }
     Tx tx() { return tx; }
+    void armPublication(RepositoryOperationLedger.Key key) {
+        if (phase != Phase.PUBLICATION || publicationKey != null) throw new IllegalStateException("Invalid publication gate");
+        publicationKey = java.util.Objects.requireNonNull(key);
+    }
     void arm(RepositoryOperationLedger.Owner owner, UUID assessment) {
         if (this.owner != null) throw new IllegalStateException("Commit gate already armed");
         this.assessment = assessment;
@@ -68,6 +73,18 @@ final class HistoricalAuthorizationCommitGate implements AutoCloseable {
     void awaitCommitted() throws InterruptedException { await(committed, "durable commit"); }
     void release() { allowCommit.countDown(); allowReturn.countDown(); }
     private boolean matches(Connection connection) throws SQLException {
+        if (phase == Phase.PUBLICATION) {
+            var key = publicationKey;
+            if (key == null) return false;
+            try (var statement = connection.prepareStatement("""
+                    SELECT EXISTS(SELECT 1 FROM repository_operation_success
+                    WHERE account_id=? AND principal=? AND operation_id=?
+                    AND creation_xid=pg_current_xact_id_if_assigned())
+                    """)) {
+                statement.setString(1, key.account()); statement.setString(2, key.principal()); statement.setObject(3, key.operationId());
+                try (var rows = statement.executeQuery()) { rows.next(); return rows.getBoolean(1); }
+            }
+        }
         var bound = owner;
         if (bound == null) return false;
         String sql = phase == Phase.ASSESSMENT_CREATE ? """

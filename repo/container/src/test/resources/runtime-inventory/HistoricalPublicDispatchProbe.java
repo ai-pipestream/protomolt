@@ -43,12 +43,30 @@ final class HistoricalPublicDispatchProbe {
             run(tx, provider, caller, original, placement, source, fragments, budget, null, phase);
     }
 
+    static void runWinners(Tx observer, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
+            DocumentUploadPlan.Placement placement, DocumentPublishedRevision source, Map<Integer, ByteString> fragments,
+            PayloadBudget budget, javax.sql.DataSource database) throws Exception {
+        for (String phase : List.of("winner-read-library", "winner-read-grpc", "winner-write-library", "winner-write-grpc")) {
+            try (var gate = new HistoricalAuthorizationCommitGate(database, HistoricalAuthorizationCommitGate.Phase.PUBLICATION)) {
+                run(gate.tx(), provider, caller, original, placement, source, fragments, budget, null, phase, gate, observer);
+            }
+        }
+    }
+
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
+        run(tx, provider, caller, original, placement, source, fragments, budget, fault, phase, null, tx);
+    }
+
+    private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
+            DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
+            Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase,
+            HistoricalAuthorizationCommitGate gate, Tx observer) throws Exception {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
-                || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-");
+                || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-")
+                || phase.startsWith("winner-");
         var readerId = UUID.randomUUID();
         var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {
@@ -71,7 +89,7 @@ final class HistoricalPublicDispatchProbe {
                 "secret-key", System.getenv("PROTOMOLT_TEST_S3_SECRET")));
              var takeover = new HistoricalPublicTakeoverProbe(opened)) {
             // This phase observes actual provider calls without holding their replies.
-            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.startsWith("cleanup")) takeover.close();
+            if (phase.equals("publication") || phase.equals("normal") || phase.equals("start") || phase.startsWith("cleanup") || gate != null) takeover.close();
             var runtime = DocumentPublicationRuntime.historicalJournaled(tx, new DriveLedger(tx), reads, reader, budget,
                     (generation, profile) -> {
                         require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact historical upload provider");
@@ -156,7 +174,14 @@ final class HistoricalPublicDispatchProbe {
                     int resolvedBeforeRetry = resolutions.get();
                     int selectedBeforeRetry = selections.get(), putsBeforeRetry = takeover.completedPuts();
                     if (stoppingCase) {
-                        if (phase.endsWith("-library")) HistoricalPublicAuthorizationProbe.run(tx, takeover, runtime, reads,
+                        if (gate != null) {
+                            var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
+                            if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
+                                    (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicCommitWinnerProbe.run(
+                                            observer, gate, remoteRepository, caller, request.build(), node, phase.contains("-read-")));
+                            else HistoricalPublicCommitWinnerProbe.run(observer, gate, repository, caller, request.build(), node, phase.contains("-read-"));
+                        }
+                        else if (phase.endsWith("-library")) HistoricalPublicAuthorizationProbe.run(tx, takeover, runtime, reads,
                                 repository, caller, request.build(), selections, resolutions, phase.split("-")[0],
                                 ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress()));
                         else if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
