@@ -17,12 +17,14 @@ public final class ReaderRegistration {
     public static final class Failure extends IllegalStateException {
         private final UUID incarnation;
         private final UUID nonce;
+        private final UUID hostExecution;
         private volatile Cleanup cleanup = Cleanup.PENDING;
 
-        private Failure(UUID incarnation, UUID nonce, RuntimeException cause) {
+        private Failure(UUID incarnation, UUID nonce, UUID hostExecution, RuntimeException cause) {
             super("Reader registration failed before admission", cause);
             this.incarnation = incarnation;
             this.nonce = nonce;
+            this.hostExecution = hostExecution;
         }
 
         public UUID incarnation() { return incarnation; }
@@ -42,14 +44,14 @@ public final class ReaderRegistration {
                 // to resolve. A SELECT alone could miss an uncommitted registration.
                 // On rollback, reserve the UUID as our permanent, closed tombstone.
                 em.createNativeQuery("""
-                        INSERT INTO repository_reader_incarnations(incarnation,state,registration_nonce)
-                        VALUES(:id,'ACTIVE',:nonce) ON CONFLICT(incarnation) DO NOTHING
-                        """).setParameter("id", incarnation).setParameter("nonce", nonce).executeUpdate();
-                var stored = (UUID) em.createNativeQuery("""
-                        SELECT registration_nonce FROM repository_reader_incarnations
+                        INSERT INTO repository_reader_incarnations(incarnation,state,registration_nonce,host_execution,quiescence_source,quiesced_at)
+                        VALUES(:id,'QUIESCED',:nonce,CAST(:host AS uuid),'LOCAL_DRAIN',clock_timestamp()) ON CONFLICT(incarnation) DO NOTHING
+                        """).setParameter("id", incarnation).setParameter("nonce", nonce).setParameter("host", hostExecution).executeUpdate();
+                var stored = (Object[]) em.createNativeQuery("""
+                        SELECT registration_nonce,host_execution FROM repository_reader_incarnations
                         WHERE incarnation=:id FOR UPDATE
                         """).setParameter("id", incarnation).getSingleResult();
-                if (!nonce.equals(stored)) return Cleanup.FOREIGN_IDENTITY;
+                if (!nonce.equals(stored[0]) || !Objects.equals(hostExecution, stored[1])) return Cleanup.FOREIGN_IDENTITY;
                 if (!Boolean.TRUE.equals(em.createNativeQuery("SELECT fence_repository_reader(:id)")
                         .setParameter("id", incarnation).getSingleResult()))
                     throw new IllegalStateException("Failed registration fence was not acknowledged");
@@ -64,17 +66,27 @@ public final class ReaderRegistration {
 
     /** Strictly fresh registration; never resume or reactivate a duplicate UUID. */
     public static void register(Tx tx, UUID incarnation) {
+        registerWithBinding(tx, incarnation, null);
+    }
+
+    /** Bind a fresh reader to the host execution before any read can be admitted. */
+    public static void register(Tx tx, UUID incarnation, UUID hostExecution) {
+        registerWithBinding(tx, incarnation, Objects.requireNonNull(hostExecution));
+    }
+
+    private static void registerWithBinding(Tx tx, UUID incarnation, UUID hostExecution) {
         Objects.requireNonNull(tx); Objects.requireNonNull(incarnation);
+
         UUID nonce = UUID.randomUUID();
         try {
             tx.inTransaction(em -> {
                 em.createNativeQuery("""
-                        INSERT INTO repository_reader_incarnations(incarnation,state,registration_nonce)
-                        VALUES(:id,'ACTIVE',:nonce)
-                        """).setParameter("id", incarnation).setParameter("nonce", nonce).executeUpdate();
+                        INSERT INTO repository_reader_incarnations(incarnation,state,registration_nonce,host_execution)
+                        VALUES(:id,'ACTIVE',:nonce,CAST(:host AS uuid))
+                        """).setParameter("id", incarnation).setParameter("nonce", nonce).setParameter("host", hostExecution).executeUpdate();
             });
         } catch (RuntimeException original) {
-            var failure = new Failure(incarnation, nonce, original);
+            var failure = new Failure(incarnation, nonce, hostExecution, original);
             try { failure.retryCleanup(tx); }
             catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
             throw failure;

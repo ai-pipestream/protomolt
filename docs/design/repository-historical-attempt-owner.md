@@ -1520,3 +1520,21 @@ ordering test for read admission, plus an unrelated execution that continues
 admitting readers while the target execution is held at the test barrier.
 No claim of horizontal scalability follows from those schedules alone; they
 establish the intended contention boundary for later load qualification.
+
+#### Bound registration failure cleanup
+
+The host-lifecycle foundation reserves a failed constructor's reader identity as a
+terminal LOCAL_DRAIN tombstone. This is local evidence: registration must return
+before a ledger instance or provider work can escape. It is not evidence for a
+crashed reader that previously served reads.
+
+Cleanup inserts the exact private registration nonce and expected host binding
+with QUIESCED state, then resolves an incarnation conflict before inspecting the
+stored identity. A matching committed registration is fenced and locally drained;
+a different nonce or host remains untouched. If the original transaction rolled
+back after the host was fenced, the terminal insertion can still reserve that
+identity without creating an ACTIVE unbound reader. The host foreign key remains
+required, and host binding, nonce and quiescence evidence remain immutable.
+Active registration still requires an ACTIVE host. Public SQL callers cannot be
+allowed to manufacture LOCAL_DRAIN evidence; this is the same trusted lifecycle
+boundary as existing local attestation.
