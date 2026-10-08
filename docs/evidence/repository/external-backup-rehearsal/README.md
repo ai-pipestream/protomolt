@@ -160,8 +160,10 @@ supported writers; no production fallback exists for them.
    than a `RepositoryException` code (inconsistent-snapshot, wrong-credentials). Explicit,
    but a second classification observation for the coordinator.
 5. **Not covered:** archive entries, Redis profiles, LocalStack, online capture, hosted CI,
-   performance. The dedicated init script is required because the plain `test` task has
-   no admission bundle; without it the class is disabled with an explicit reason.
+   performance. The init script is required because the plain `test` task has no admission
+   bundle; without it JUnit disables the class with the stated reason and Gradle reports
+   all 12 cases as skipped with a green build (checked 2026-10-08T11:51Z). A plain green
+   run is therefore not rehearsal evidence; only a run with the init script is.
 
 ## Review
 

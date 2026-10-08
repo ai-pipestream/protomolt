@@ -74,8 +74,9 @@ The init script wires the module's ordinary `test` task without editing its buil
 it adds the observed admission transport runtime bundle (`admissionTransportRuntimeInventory`)
 and the production host classpath (module JAR plus `assessmentTransportRuntime`, the same
 closure `admissionStorageTest` uses), and marks the task never up to date so a rehearsal is
-always a fresh run. Without the init script the plain `test` task has no bundle and the class
-is disabled with an explicit reason; it never silently passes.
+always a fresh run. Without the init script the plain `test` task has no bundle: JUnit disables the class with
+the stated reason and Gradle reports its 12 cases as skipped. Such a run is not rehearsal
+evidence; a passing rehearsal always has zero skipped cases in its archived results.
 
 Options: `-Pprotomolt.rehearsalKeep=true` leaves each case's containers and volumes for
 inspection (they are otherwise removed at the end of each case). Evidence is always
