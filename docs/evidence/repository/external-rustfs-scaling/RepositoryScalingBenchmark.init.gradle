@@ -1,0 +1,15 @@
+// Isolated wiring for the replica scaling qualification. It forwards two Gradle
+// properties to the existing nativeReplicaBenchmark task without editing the
+// module build. Invoke with:
+//   ./gradlew -I docs/evidence/repository/external-rustfs-scaling/RepositoryScalingBenchmark.init.gradle \
+//     :protomolt-repo-container:nativeReplicaBenchmark -PnativeBenchmarkJournaled=true \
+//     -PnativeBenchmarkHeapMiB=2048 -PnativeBenchmarkPlan=mirrored ...
+// nativeBenchmarkHeapMiB is the aggregate worker heap divided equally across the
+// replicas of each window; zero keeps 512 MiB per worker. nativeBenchmarkPlan is
+// mirrored (one/two/four replicas) or scaleout (two/four replicas, allows 32 clients).
+gradle.allprojects { project ->
+    project.tasks.matching { it.name == 'nativeReplicaBenchmark' }.configureEach { task ->
+        task.systemProperty 'protomolt.test.nativeBenchmarkHeapMiB', project.providers.gradleProperty('nativeBenchmarkHeapMiB').getOrElse('0')
+        task.systemProperty 'protomolt.test.nativeBenchmarkPlan', project.providers.gradleProperty('nativeBenchmarkPlan').getOrElse('mirrored')
+    }
+}
