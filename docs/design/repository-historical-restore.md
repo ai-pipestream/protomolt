@@ -1040,8 +1040,12 @@ not prove that facade routing carries the same identity, control and cleanup rul
   with UNAUTHENTICATED, create no assessment/commit/success rows, and drain through
   separate process cleanup authority. See [credential evidence](../evidence/repository/2026-10-08-historical-public-credential-revocation/README.md).
   This proves revocation before upload completion, not the publication-lock race.
-  The remaining cases must isolate READ and WRITE on the shared source/destination
-  node with selective ACLs. Publication-first ordering needs an exact commit gate
+  READ and WRITE now have separate library/gRPC cases using selective ACLs on the
+  shared source/destination node. Revocation commits before the upload reply is
+  released; the call and retry return NOT_FOUND without assessment or publication.
+  The opposite permission remains available and the original ACL is restored after
+  cleanup. See [ACL evidence](../evidence/repository/2026-10-08-historical-public-acl-revocation/README.md).
+  Publication-first ordering still needs an exact commit gate
   and observed blocked writer; revoked READ/credentials deny later receipt access,
   while WRITE-only revocation can leave authorized committed replay available.
   Inspect and qualify public error mapping for `DocumentSchemaPolicies.StalePolicy`

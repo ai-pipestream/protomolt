@@ -39,6 +39,8 @@ final class HistoricalPublicDispatchProbe {
             var scoped = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), caller.identities(), Optional.of(binding));
             run(tx, provider, scoped, original, placement, source, fragments, budget, null, phase);
         }
+        for (String phase : List.of("read-library", "read-grpc", "write-library", "write-grpc"))
+            run(tx, provider, caller, original, placement, source, fragments, budget, null, phase);
     }
 
     private static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
@@ -46,7 +48,7 @@ final class HistoricalPublicDispatchProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase) throws Exception {
         long baseline = budget.reservedBytes();
         boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
-                || phase.startsWith("credential-");
+                || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-");
         var readerId = UUID.randomUUID();
         var reads = new DocumentReadLedger(tx, readerId);
         var reader = new DocumentPartReader((generation, profile) -> {
@@ -154,11 +156,13 @@ final class HistoricalPublicDispatchProbe {
                     int resolvedBeforeRetry = resolutions.get();
                     int selectedBeforeRetry = selections.get(), putsBeforeRetry = takeover.completedPuts();
                     if (stoppingCase) {
-                        if (phase.equals("credential-library")) HistoricalPublicCredentialProbe.run(tx, takeover, runtime, reads,
-                                repository, caller, request.build(), selections, resolutions);
-                        else if (phase.equals("credential-grpc")) withTransport(repository, caller, 2,
-                                (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicCredentialProbe.run(
-                                        tx, takeover, runtime, reads, remoteRepository, caller, request.build(), selections, resolutions));
+                        if (phase.endsWith("-library")) HistoricalPublicAuthorizationProbe.run(tx, takeover, runtime, reads,
+                                repository, caller, request.build(), selections, resolutions, phase.split("-")[0],
+                                ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress()));
+                        else if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
+                                (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicAuthorizationProbe.run(
+                                        tx, takeover, runtime, reads, remoteRepository, caller, request.build(), selections, resolutions,
+                                        phase.split("-")[0], ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress())));
                         else if (phase.equals("rpc-cancel") || phase.equals("rpc-deadline")) withTransport(repository, caller, 1,
                                 phase.equals("rpc-deadline") ? Duration.ofSeconds(10) : Duration.ofSeconds(60),
                                 (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseRemoteCancellation(
