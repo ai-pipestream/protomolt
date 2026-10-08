@@ -99,6 +99,15 @@ own resources (`negative-*/markers.log`, `negative-*/recovered/markers.log`).
 No case fell back to another backend, served a newer version in place of a
 missing one, invented typed content, or advertised readiness.
 
+## Rerun on the rebased head (2026-10-08)
+
+After the branch was rebased onto `350f64457` (the integration base with the
+BOM completeness fix), the same command was run again from the rebased head
+`6733e8f38`. The output is archived under `rerun-6733e8f38/`. Both positive
+runs passed with the same check counts (seed 55, harness 17, recovered host 80,
+READY written) and all eight negative cases passed; the transaction-id epoch
+check again needed no advancement and the Flyway level was still V111.
+
 ## Boundary noted
 
 A provider-version loss is detected by the recovered host's verified read,

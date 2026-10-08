@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-corrupt-checksum" tests="2" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-corrupt-checksum" name="corrupt-checksum.refused_before_resources" timestamp="2026-10-08T15:37:27.654312245Z"><system-out>refused: Component checksum differs from the manifest: sql/ledger.dump actual=acfb4705baf4b6c83be4fab6d3d8ce722ecb8d1a26315597bfebb14d25af5aad; resources created=0</system-out></testcase>
+  <testcase classname="negative-corrupt-checksum" name="corrupt-checksum.original_backup_untouched" timestamp="2026-10-08T15:37:27.655961995Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>
