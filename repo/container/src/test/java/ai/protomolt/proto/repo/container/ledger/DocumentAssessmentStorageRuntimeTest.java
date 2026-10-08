@@ -17,6 +17,40 @@ class DocumentAssessmentStorageRuntimeTest {
     private static final long SQL_HOST_TIMEOUT_SECONDS = 180 + 30;
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
 
+    @Test void boundedPublicHostBinding() throws Exception {
+        var compiled = StorageRuntimeProbeCompiler.compile(directory);
+        try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
+             var redis = new org.testcontainers.containers.GenericContainer<>("redis:7-alpine")
+                     .withCommand("redis-server", "--appendonly", "yes", "--appendfsync", "always", "--maxmemory-policy", "noeviction")
+                     .withExposedPorts(6379)) {
+            postgres.start(); redis.start();
+            var log = directory.resolve("bounded-public-host.log");
+            var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    compiled.classpath() + java.io.File.pathSeparator + compiled.probe(),
+                    "ai.protomolt.proto.repo.service.BoundedDocumentPublicFactoryProbe", compiled.bundle().toString());
+            builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
+            builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
+            builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
+            builder.environment().put("PROTOMOLT_TEST_REDIS_URI", "redis://" + redis.getHost() + ":" + redis.getMappedPort(6379));
+            var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            try {
+                assertThat(process.waitFor(90, TimeUnit.SECONDS)).as("Bounded public host completed; log: %s", log).isTrue();
+                assertThat(Files.size(log)).isLessThan(1_048_576);
+                String result = Files.readString(log);
+                assertThat(process.exitValue()).as(result).isZero();
+                assertThat(result).contains("BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK", "BOUNDED_PUBLIC_CONSUMER_RPC_OK",
+                        "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
+                System.out.println(result);
+            } finally {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    assertThat(process.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+        }
+    }
+
     @Test void observedAssessmentAndSqlRunTogetherOnProductionJars() throws Exception {
         var compiled = StorageRuntimeProbeCompiler.compile(directory);
         var bundle = compiled.bundle();
@@ -101,6 +135,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK","BOUNDED_DOCUMENT_TYPED_REJECTION_OK","BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK","BOUNDED_PUBLICATION_RPC_CANCELLATION_OK","BOUNDED_PUBLICATION_SCHEMA_SHUTDOWN_OK","BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK","BOUNDED_PUBLIC_CONSUMER_RPC_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
+                assertThat(result).contains("BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
                 assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("RECOVERY_OPEN_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");

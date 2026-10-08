@@ -13,10 +13,12 @@ public final class BoundedDocumentPublicConsumer {
     public record Fixture(PublishDocumentRequest request,Document expected) {}
     @FunctionalInterface public interface Bootstrap { Fixture prepare(RepoServices host) throws Exception; }
     public static void run(RepoServiceConfig config,ManagedSchemaAccess schemas,ManagedPublicationOptions publication,
-            RepositoryCaller caller,Bootstrap bootstrap,boolean rpc) throws Exception {
+            RepositoryCaller caller,Bootstrap bootstrap,boolean rpc,ReaderHostOptions identity) throws Exception {
         var history=rpc ? new HistoricalReadAccess(auth -> caller,32L*1024*1024,2) : null;
-        try (var host=RepoServices.buildBoundedDocuments(config,BridgeEngine.standard(),history,schemas,publication,
-                new BoundedDocumentOptions(1024*1024,64L*1024*1024))) {
+        var limits=new BoundedDocumentOptions(1024*1024,64L*1024*1024);
+        try (var host=identity==null
+                ? RepoServices.buildBoundedDocuments(config,BridgeEngine.standard(),history,schemas,publication,limits)
+                : RepoServices.buildBoundedDocumentsHosted(config,BridgeEngine.standard(),history,schemas,publication,limits,identity)) {
             require(host.services().size()==(rpc ? 2 : 0),"only explicitly selected RPCs mounted");
             unavailable(host::repository); unavailable(host::archiveRepository); unavailable(host::archiveMutationRepository);
             unavailable(host::driveRepository); unavailable(() -> host.startHttp(0,"fixture-token"));
@@ -62,7 +64,9 @@ public final class BoundedDocumentPublicConsumer {
                 }
             }
         }
-        System.out.println(rpc ? "BOUNDED_PUBLIC_CONSUMER_RPC_OK" : "BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK");
+        System.out.println(identity==null
+                ? (rpc ? "BOUNDED_PUBLIC_CONSUMER_RPC_OK" : "BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK")
+                : (rpc ? "BOUNDED_HOSTED_CONSUMER_RPC_OK" : "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK"));
     }
     private static Channel withToken(Channel channel,String token) {
         var headers=new Metadata();

@@ -13,8 +13,10 @@ import java.util.*;
 
 /** Fixture setup is separate from the consumer that uses only public composition APIs. */
 public final class BoundedDocumentPublicFactoryProbe {
+    public static void main(String[] args) throws Exception { run(Path.of(args[0])); }
     public static void run(Path bundle) throws Exception {
-        for (boolean rpc:new boolean[]{false,true}) {
+        for (boolean hosted:new boolean[]{false,true}) for (boolean rpc:new boolean[]{false,true}) {
+            var identity=hosted ? new ReaderHostOptions(UUID.randomUUID(),"bounded-public-consumer",UUID.randomUUID().toString()) : null;
             var config=new RepoServiceConfig(0,new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                     System.getenv("PROTOMOLT_TEST_USER"),System.getenv("PROTOMOLT_TEST_PASSWORD")),
                     "http://127.0.0.1:1","us-east-1","unused","unused","public-bounded",0,
@@ -39,9 +41,11 @@ public final class BoundedDocumentPublicFactoryProbe {
                 if (rpc) publication=publication.withTransport(new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
                 try {
                     BoundedDocumentPublicConsumer.run(config,schemas,publication,caller,host -> {
+                        if (identity!=null) assertHost(database,identity,"ACTIVE","ACTIVE");
                         var fixture=BoundedDocumentHostProbe.prepare(host,new Tx(database.entityManagerFactory()));
                         return new BoundedDocumentPublicConsumer.Fixture(fixture.request(),fixture.document());
-                    },rpc);
+                    },rpc,identity);
+                    if (identity!=null) assertHost(database,identity,"FENCED","QUIESCED");
                 } finally { schemas.close(); }
             } finally {
                 try (var paths=Files.walk(directory)) {
@@ -49,5 +53,23 @@ public final class BoundedDocumentPublicFactoryProbe {
                 }
             }
         }
+    }
+
+    private static void assertHost(LedgerDatabase database,ReaderHostOptions identity,String hostState,String readerState) {
+        new Tx(database.entityManagerFactory()).inTransaction(em -> {
+            var rows=em.createNativeQuery("""
+                    SELECT h.state,h.host_identity,h.boot_identity,r.state,r.quiescence_source
+                    FROM repository_reader_host_executions h JOIN repository_reader_incarnations r
+                      ON r.host_execution=h.execution WHERE h.execution=:id
+                    """).setParameter("id",identity.execution()).getResultList();
+            if (rows.size()!=1) throw new AssertionError("Bounded documents must bind exactly one reader");
+            var row=(Object[])rows.getFirst();
+            if (!hostState.equals(row[0]) || !identity.hostIdentity().equals(row[1])
+                    || !identity.bootIdentity().equals(row[2]) || !readerState.equals(row[3]))
+                throw new AssertionError("Host or reader binding/state mismatch");
+            if ("QUIESCED".equals(readerState) && !"LOCAL_DRAIN".equals(row[4]))
+                throw new AssertionError("Clean close must retain local drain provenance");
+            return null;
+        });
     }
 }

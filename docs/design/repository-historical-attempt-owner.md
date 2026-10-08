@@ -1631,7 +1631,7 @@ These SQL limits do not establish a network or connection-pool deadline.
 
 Focused qualification covers full managed composition over PostgreSQL and
 LocalStack, duplicate startup, partial construction, local drain, a held host-row
-lock followed by close retry, and the bounded Redis archive profile. Hosted bounded
-document publication still needs its production-bundle qualification. Supervisor
+lock followed by close retry, and the bounded Redis archive profile. Production-bundle qualification also covers hosted bounded-document publication
+and retained history through both library and authenticated in-process gRPC. Supervisor
 provisioning, remote termination verification, bounded reader discovery and load
 qualification remain separate work; these builders alone do not complete recovery.
