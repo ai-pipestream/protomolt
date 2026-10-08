@@ -506,6 +506,14 @@ class DocumentPublicationCommitIT {
         long reserved=plan.entries().stream().mapToLong(e->e.part().part().size()).sum()*2;
         var budget=new PayloadBudget(reserved);
         try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,budget)) {
+            DocumentHistoricalRetainedReader historical = reader;
+            try (var selected = historical.readHistorical(history, first.revisionOrdinal(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(selected.parts()).hasSize(1);
+                var expected = fixture.bodies.values().stream().filter(body -> body.part()==part.part()
+                        && body.subKey().equals(part.subKey())).findFirst().orElseThrow();
+                assertThat(selected.parts().getFirst().bytes()).containsExactly(expected.bytes());
+            }
+            assertThat(budget.reservedBytes()).isZero();
             var batch=reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
             assertThat(batch.parts()).hasSize(plan.entries().size());
             for(int i=0;i<plan.entries().size();i++) {
