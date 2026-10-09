@@ -108,6 +108,20 @@ class OpenVinoProviderTest {
     }
 
     @Test
+    void unarySendsTheRequestedOutputTokenLimit() {
+        // The live OVMS smoke test bounds generation the same way; this checks the wire field.
+        responseBody = """
+                {"choices":[{"message":{"content":"ok"},"finish_reason":"length"}],
+                 "usage":{"prompt_tokens":5,"completion_tokens":16}}
+                """;
+        GenerateResponse response = provider.generate(model(),
+                request("judge").toBuilder().setMaxOutputTokens(16).build());
+        assertThat(response.getText()).isEqualTo("ok");
+        assertThat(response.getUsage().getCompletionTokens()).isEqualTo(16);
+        assertThat(lastBody.get()).contains("\"max_tokens\":16");
+    }
+
+    @Test
     void unarySendsExactStrictResponseFormatWithoutCatalogMetadata() throws Exception {
         responseBody = """
                 {"choices":[{"message":{"content":"{\\"verdict\\":\\"VALID\\"}"},

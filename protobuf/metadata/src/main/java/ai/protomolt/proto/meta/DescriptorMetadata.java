@@ -15,6 +15,13 @@ import java.util.Optional;
  */
 public final class DescriptorMetadata {
 
+    /** Reads the metadata options when a descriptor was built without them registered. */
+    private static final ExtensionRegistry EXTENSIONS = ExtensionRegistry.newInstance();
+
+    static {
+        MetadataProto.registerAllExtensions(EXTENSIONS);
+    }
+
     private DescriptorMetadata() {
     }
 
@@ -57,9 +64,19 @@ public final class DescriptorMetadata {
         }
     }
 
+    /**
+     * The field's metadata option. A descriptor compiled or parsed without the metadata
+     * extensions registered keeps the option as an unknown field; it is read from there
+     * too, so callers such as {@link SensitivityMasker} never treat an annotated field as
+     * unannotated because of how its descriptor was loaded.
+     */
     public static Optional<FieldMeta> field(FieldDescriptor field) {
         Objects.requireNonNull(field, "field");
         var options = field.getOptions();
+        if (!options.hasExtension(MetadataProto.field)
+                && options.getUnknownFields().hasField(MetadataProto.field.getNumber())) {
+            options = reparse(options.toByteString(), com.google.protobuf.DescriptorProtos.FieldOptions.parser());
+        }
         if (!options.hasExtension(MetadataProto.field)) {
             return Optional.empty();
         }
@@ -69,10 +86,22 @@ public final class DescriptorMetadata {
     public static Optional<MessageMeta> message(Descriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor");
         var options = descriptor.getOptions();
+        if (!options.hasExtension(MetadataProto.message)
+                && options.getUnknownFields().hasField(MetadataProto.message.getNumber())) {
+            options = reparse(options.toByteString(), com.google.protobuf.DescriptorProtos.MessageOptions.parser());
+        }
         if (!options.hasExtension(MetadataProto.message)) {
             return Optional.empty();
         }
         return Optional.of(options.getExtension(MetadataProto.message));
+    }
+
+    private static <T> T reparse(com.google.protobuf.ByteString options, com.google.protobuf.Parser<T> parser) {
+        try {
+            return parser.parseFrom(options, EXTENSIONS);
+        } catch (com.google.protobuf.InvalidProtocolBufferException failure) {
+            throw new IllegalStateException("descriptor options are not valid protobuf", failure);
+        }
     }
 
     /**
