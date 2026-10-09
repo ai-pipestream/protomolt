@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" tests="6" skipped="0" failures="1" errors="0" timestamp="2026-10-09T23:17:36.539Z" hostname="krick" time="0.879">
+  <properties/>
+  <testcase name="refusedConnectionOnBoundedReadIsUnavailableWithoutByteCounts()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.271"/>
+  <testcase name="emptyBodyAfterDeclaredLengthIsUnavailableAndNamesTheBytes()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.051"/>
+  <testcase name="chunkedOversizedBodyIsRejectedRatherThanReturningPrefix()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.01"/>
+  <testcase name="stalledBodyKeepsTimeoutMeaningAfterHeaders()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.519">
+    <failure message="org.opentest4j.AssertionFailedError: &#10;expected: DEADLINE_EXCEEDED&#10; but was: UNAVAILABLE" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: 
+expected: DEADLINE_EXCEEDED
+ but was: UNAVAILABLE
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.lambda$stalledBodyKeepsTimeoutMeaningAfterHeaders$2(S3BoundedReadFailureTest.java:83)
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.stalledBodyKeepsTimeoutMeaningAfterHeaders(S3BoundedReadFailureTest.java:82)
+</failure>
+  </testcase>
+  <testcase name="oversizedHeaderRejectsWithoutWaitingForBody()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.009"/>
+  <testcase name="bodyEndingBeforeDeclaredLengthIsUnavailableAndNamesTheBytes()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.01"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

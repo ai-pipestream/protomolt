@@ -40,8 +40,9 @@ and close.
 | `RequestTimeout`, 408, 504, SDK call or attempt timeout, socket timeout | `BlobStoreException(DEADLINE_EXCEEDED)` |
 | 429 | `BlobStoreException(RESOURCE_EXHAUSTED)` |
 | other 5xx, connection refused, other I/O failure | `BlobStoreException(UNAVAILABLE)` |
+| body ending before `Content-Length`, by I/O failure or end of stream while the streamed body is read | `BlobStoreException(UNAVAILABLE)` with the message `Object provider ended the response body early: received n of m declared bytes in the single body read the SDK does not retry` |
 | I/O failure on an interrupted thread | `BlobStoreException(CANCELLED)` |
-| content length disagreeing with the body | `BlobStoreException(DATA_LOSS)` |
+| negative `Content-Length`, or a body longer than `Content-Length` | `BlobStoreException(DATA_LOSS)` |
 | other 4xx | `BlobStoreException(UNKNOWN)` |
 
 `DocumentPartReader.readPart` already converts `BlobNotFoundException` (DATA_LOSS for a
@@ -108,6 +109,7 @@ Unchanged, recorded here because the suites assert them next to the provider cas
 | cancelled or expired control | `CANCELLED`, `DEADLINE_EXCEEDED` | `RepositoryReadControl.check`; message replaced by "Historical read cancelled or expired" after provider work |
 | payload or response budget exhausted | `RESOURCE_EXHAUSTED` | `DocumentPartReader.readFragments`, `HistoricalDocumentResponses.capture` |
 | retained generation not mounted in this host | `FAILED_PRECONDITION "Original document backend is unavailable"` | `ManagedDocumentServices.requireOriginal` |
+| archive binding under a generation or realm this host does not serve | `FAILED_PRECONDITION "Original archive backend is not configured on this host"` | `ArchiveObjectReader`, translating the host resolver's typed `UnservedBackendGenerationException` (`ManagedArchiveServices`) after authorization and the pin; the archive twin of the row above, pinned by `ArchiveBackendGenerationHostIT` (`repo/service`) and the archive qualification's new-generation case |
 | digest, size, content type, version id or ETag disagreement | `DATA_LOSS "Document part disagrees with its published byte or provider identity"` | `DocumentPartReader.readPart` |
 | retained schema bytes or evidence damaged | `DATA_LOSS` | `DocumentHistoricalSchemas.check`, `DocumentHistoricalMaterializer.read` |
 | selected occurrence unknown | `NOT_FOUND "Historical occurrence is unavailable"` | `DocumentHistoricalMaterializer.read` |
@@ -132,12 +134,55 @@ description equality rather than relying on this table.
 Run:
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock ./gradlew \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock ./gradlew \
   :protomolt-repo-engine:test --tests '*HistoricalReadFailure*' \
   :protomolt-repo-container:test --tests '*HistoricalReadFailure*' \
   :protomolt-repo-service:test --tests '*HistoricalReadFailure*' \
   --max-workers=2 --console=plain
 ```
+
+## Why DATA_LOSS is unreachable for damaged bytes on RustFS
+
+The archive qualification's corrupt-payload case and `RustFsDamagedObjectReadIT`
+(`repo/blob/s3`) flip one byte of an object's data file on the stopped volume of the pinned
+image `rustfs/rustfs:1.0.0-beta.11-preview.1` and read it back. Observed on the wire, with
+the SDK, the `aws` CLI and curl's SigV4 client against the same object:
+
+| Request | Answer |
+|---|---|
+| HEAD, by version id or latest | `200 OK`, `Content-Length`, ETag, version id: no signal |
+| `GetObjectAttributes` | the stored checksum and size: no signal |
+| GET, by version id, latest, with `x-amz-checksum-mode: ENABLED`, or any `Range` (including a range entirely before the flipped byte) | `200 OK` or `206 Partial Content` with the complete header set and the requested `Content-Length`, then zero body bytes and an orderly close; no error status, no error body, and no trailer, since the body is `Content-Length` delimited |
+| a second and third GET | identical; nothing changes server side |
+| RustFS log | `bitrot reader hash mismatch`, `Erasure decode failed during GetObject ... bytes_written: 0`, `HTTP transport failed ... error from user's Body stream`; the hash covers the whole data block, which is why a range before the flipped byte fails too |
+
+A client that sees `200`, the headers and a body that ends short of `Content-Length` sees
+exactly what a connection dropped mid-body leaves behind. Treating that as DATA_LOSS would
+classify every mid-body transport failure as corruption, so the adapter keeps UNAVAILABLE
+and names the fact instead: `Object provider ended the response body early: received 0 of
+1048576 declared bytes in the single body read the SDK does not retry`, with the HTTP
+client's `IOException` (`Premature EOF` from the URL-connection client) as cause. The engine's
+DATA_LOSS for damaged content comes only from the digest and size checks on delivered bytes
+(`DocumentPartReader.readPart`, `ArchiveObjectReader`), and this provider never delivers a
+byte of a block whose hash mismatches, so that branch is unreachable for it.
+
+The two read paths differ only in where the short body is seen. `getBounded` streams the
+body outside the SDK's retry loop: one body read, the counts above in the adapter message.
+`get` uses `getObjectAsBytes`, where the SDK reads the body inside its retry loop and gives
+up after four attempts; the adapter's cause chain then carries
+`RetryableException: Failed to read response. (SDK Attempt Count: 4)` and no byte counts,
+because the SDK does not expose them.
+
+A byte flipped 64 bytes before the end of a 2 KiB object's `xl.meta` (an inline object below
+the 512 KiB threshold has no part file) is answered differently: HEAD still `200`, GET
+`503 Service Unavailable` with the XML error `SlowDown`, "Resource requested is unreadable,
+please reduce your request rate". That is the same status and error code the provider uses
+for throttling, so it maps to UNAVAILABLE through the 5xx row and is not promoted either;
+distinguishing it by message text would be a heuristic.
+
+A closed port is the other UNAVAILABLE: `SdkClientException` with connection refused on the
+cause chain and no byte counts in the message. Both unit and RustFS tests assert the two
+messages are distinct.
 
 ## Injection labels
 

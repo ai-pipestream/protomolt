@@ -1,0 +1,26 @@
+CHECK_OK corrupt-payload.provider_observation :: direct GET of the damaged version by its recorded version id -> RetryableException: Failed to read response. (SDK Attempt Count: 4)
+CHECK_OK corrupt-payload.provider_bytes_changed :: the provider no longer serves the recorded digest for the recorded version
+CHECK_OK corrupt-payload.read_refused :: getEntry(alpha-report v3) -> UNAVAILABLE [RepositoryException(UNAVAILABLE) <- BlobStoreException(UNAVAILABLE) <- IOException]; the provider ended the body of the damaged part before its declared length, no bytes served
+CHECK_OK corrupt-payload.read_refused.short_body :: the adapter names the short body on the cause chain: "Object provider ended the response body early: received 0 of 1048576 declared bytes in the single body read the SDK does not retry"
+CHECK_OK corrupt-payload.rendition_refused :: getEntry(attachment.bin only) -> UNAVAILABLE
+CHECK_OK corrupt-payload.manifest_intact :: the catalog still attests the recorded digest
+CHECK_OK corrupt-payload.siblings_readable :: sibling renditions still read byte-equal: [markdown, original]
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.info :: current metadata equal: title=Notes currentVersion=1 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK corrupt-payload.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-subject.v1.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK corrupt-payload.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-subject.v2.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK corrupt-payload.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-draft.v2.info :: current metadata equal: title=Draft currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.unaffected.alpha-report.v1 :: versions that do not reference the damaged object read byte-equal
+CHECK_OK corrupt-payload.unaffected.alpha-report.v2 :: versions that do not reference the damaged object read byte-equal
+CHECK_OK corrupt-payload.not_ready :: READY is only written by a fully verified host
