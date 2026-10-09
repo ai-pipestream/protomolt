@@ -1,0 +1,4 @@
+0b3fb51f2cb047aa059a09ed139c1bb20152741d3a50491bfdfc617950308238  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentUploadAuthority.java
+b7058996b5f605f032a40d059ac2370f3fbf91e7eb9f7f108e6b1657d0cba4bc  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentUploadCoordinator.java
+a6da7cd8ba4f07748cb68b6ce17c0164f8916991dfb83d43865dccd39876e459  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentObservationFlusher.java
+9dfa73e61a10098f9f41db1cb55710f9ede303cb49a342a4aa4b67aeeadd30b0  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentUploadCoordinatorIT.java

@@ -4,11 +4,92 @@ This is the working order for the additions to the repository composition goal.
 It does not replace the [design](repository-composition.md) or declare unfinished
 features available. Recovery is one workstream, not the whole goal.
 
+## Current checkpoint: 2026-10-08
+
+Ordinary journaled publication has a public library boundary and an optional
+authenticated gRPC mount. Hosted builders can bind their readers to an explicit
+supervisor execution. Verified termination, bounded reader discovery and a callable
+recovery step now exist; none installs a deployed verifier or scheduler. Capture
+and preparation-root disposal still require separate operation authority.
+
+The immediate open integration is managed historical publication. An explicit
+managed factory and service option now route historical requests through library
+and authenticated in-process gRPC boundaries. Ordinary options still reject
+historical selectors. The shared dispatcher covers committed and rejected receipts,
+START and CREATE acknowledgement loss, three cold-process crash boundaries, and
+concurrent takeover while an old provider reply remains held. Library cancellation,
+orderly shutdown and remote-client cancellation also retain actual workers and
+resources until drainage. Publication acknowledgement loss preserves one durable
+receipt across library and authenticated gRPC retries without new provider or schema
+work. Altered retries and invalid identities are refused; cleanup authority failure
+and SQL pin-release rollback retain ownership and permit subsequent cleanup.
+Explicit gRPC deadlines and orderly service admission close now retain actual
+producer resources until drainage. Focused recovery acknowledgement, corrupt-journal,
+revocation and policy checks now pass. Managed-host configuration and initial
+publication/replay now pass with retained physical identity checks over Redis.
+Cold hosted recovery now passes all three crash boundaries through the full S3
+host after correcting retained-plan budget accounting. A new historical publication
+refuses unavailable source generations through both hosted boundaries without falling
+back to the mounted backend. Hosted library/gRPC cancellation now retains exact
+historical pins and resources while a real PUT or selected historical GET reply is
+held, then drains on repeated close. A held real Git descriptor load also retains
+its worker and shared resources until drainage, without caching its late result.
+Cold recovery now also refuses an unavailable original upload generation while its
+historical source remains readable; both boundaries preserve the saved placement
+and create no provider versions or publication results. See the
+[acceptance list](repository-historical-restore.md#remaining-factory-exposure-checks)
+and [next integration](repository-historical-restore.md#next-managed-host-integration).
+START reconciliation retains an exact attempt identity and requires current
+authority before restoring the original handle's CREATE permission. See
+[historical restore](repository-historical-restore.md#reconciliation-of-an-uncertain-start-acknowledgement).
+These tests do not establish production provisioning, network transport parity,
+throughput or horizontal scaling.
+
+Pruning must now account for persisted historical preparations and their retained
+roots. The older assumption that journals cannot contain historical selectors is
+obsolete. Atomic pruning, isolated backup/restore, controlled replica performance,
+fairness and progressive hydration remain requirements of the full goal.
+
+Recent evidence:
+
+- [Unavailable saved upload backend during cold recovery](../evidence/repository/2026-10-08-managed-cold-unavailable-upload/README.md)
+- [Managed historical shutdown during schema resolution](../evidence/repository/2026-10-08-managed-historical-schema-shutdown/README.md)
+- [Managed historical shutdown during a provider read](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
+- [Managed historical shutdown with a held provider reply](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md)
+- [Unavailable historical source generation](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md)
+- [Managed historical cold recovery](../evidence/repository/2026-10-08-managed-historical-cold/README.md)
+- [Historical public dispatch](../evidence/repository/2026-10-08-historical-public-dispatch/README.md)
+- [Historical cold-process dispatch](../evidence/repository/2026-10-08-historical-public-cold-restart/README.md)
+- [Concurrent public takeover](../evidence/repository/2026-10-08-historical-public-takeover/README.md)
+- [Historical public cancellation and shutdown](../evidence/repository/2026-10-08-historical-public-stop/README.md)
+- [Historical public publication acknowledgement loss](../evidence/repository/2026-10-08-historical-public-publication-ack/README.md)
+- [Historical public replay refusals](../evidence/repository/2026-10-08-historical-public-replay-refusals/README.md)
+- [Historical cleanup fairness and authority retry](../evidence/repository/2026-10-08-historical-cleanup-fairness/README.md)
+- [Historical public SQL cleanup rollback](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md)
+- [Historical public deadline and service close](../evidence/repository/2026-10-08-historical-public-transport-stop/README.md)
+- [Historical public credential revocation during upload](../evidence/repository/2026-10-08-historical-public-credential-revocation/README.md)
+- [Historical public READ and WRITE revocation](../evidence/repository/2026-10-08-historical-public-acl-revocation/README.md)
+- [Historical public admission-policy change](../evidence/repository/2026-10-08-historical-public-policy-change/README.md)
+- [Historical public publication before ACL change](../evidence/repository/2026-10-08-historical-public-acl-commit-winner/README.md)
+- [Historical public publication before credential/policy change](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md)
+- [Historical public uncertain recovery acknowledgement](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md)
+- [Historical public corrupt-journal recovery](../evidence/repository/2026-10-08-historical-public-corrupt-journal/README.md)
+- [Explicit managed historical publication](../evidence/repository/2026-10-08-managed-historical-host/README.md)
+- [Hosted service readers](../evidence/repository/2026-10-08-host-reader-composition/README.md)
+- [Bounded hosted publication](../evidence/repository/2026-10-08-bounded-hosted-documents/README.md)
+- [Supervisor SQL and crash-restart qualification](../evidence/repository/2026-10-08-reader-recovery-supervisor/README.md)
+- [Full storage regression before the supervisor](../evidence/repository/2026-10-08-host-composition-storage-gate/README.md)
+
+The dated implementation history below records earlier boundaries. Use this
+checkpoint and the current managed-recovery section when choosing remaining work.
+
 Repository network startup now requires explicit operator authentication, and TCP
 repo-backed storage requires its own upstream credential. This closes the open
-operator-listener prerequisite. It does not provide key-specific absent-destination
-creation authority; that grant still needs design, shared admission checks, and
-replay/revocation/race tests. See [authentication evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
+operator-listener prerequisite. Authentication alone does not grant absent-destination
+creation. `RepositoryCredentialAuthorities` and `RepositoryCreationGrants` now provide
+the internal authority primitives; the scoped creation sections below record their
+enforcement and qualification. Production provisioning remains separate. See
+[authentication evidence](../evidence/repository/2026-10-06-required-network-authentication/README.md).
 
 Initial journaled session admission now composes claim, binding, preparation,
 modes, operation and first owner in one SQL transaction. Shared standalone helpers
@@ -176,8 +257,9 @@ performance qualification must not displace these requirements.
    abandoned load capacity through provider completion. Managed-host composition
    now accepts an explicit host-bound schema scope and lifecycle component. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
-   `ManagedDocumentServices` owns a native runtime, but the managed publication
-   accessor is package-private and no publication RPC is mounted. `ManagedSchemaAccess`
+   `ManagedDocumentServices` owns a native runtime. `RepoServices.publicationRepository()`
+   is public, and explicit journaled composition can mount the publication RPC.
+   Public historical dispatch remains gated. `ManagedSchemaAccess`
    supplies optional scope composition and shutdown ownership without a production
    dependency on the registry adapter. Scopes receive the actual caller and member
    and authorize every occurrence. Shutdown rejects new scopes, quiesces publication,
@@ -186,9 +268,9 @@ performance qualification must not displace these requirements.
    registry store only after successful service shutdown; failed construction leaves
    schema cleanup with the caller. Configuration is checked before readers register.
    Real PostgreSQL/LocalStack/Git fixtures cover typed/opaque/replay, scoped caller
-   forwarding and held-read shutdown. Public
-   publication activation additionally needs the scoped authorization and durable
-   session work below; schema wiring is not a document-creation grant.
+   forwarding and held-read shutdown. Ordinary scoped journaled publication has
+   separate authorization and durable-session qualification; schema wiring is not
+   a document-creation grant.
    Establish tenant/security scope, exact schema identity, bounded ownership,
    eviction, concurrent lookup and cancellation before sharing cached entries.
    Test equal type URLs with different occurrence definitions, registry outage,
@@ -271,6 +353,11 @@ performance qualification must not displace these requirements.
 ## Work gated by publication and retention guarantees
 
 4. **Recovery.** Follow the [recovery design](repository-publication-recovery.md).
+   Ordinary managed recovery now runs under the accepted-call and operation-key
+   guards with explicit recovery authority; see the current managed recovery
+   boundary below. The following paragraphs record earlier implementation stages,
+   not outstanding ordinary-session registration tasks. Public historical dispatch,
+   deployed termination verification and supervisor scheduling remain open.
    Original-owner stage reconciliation now has real lost-acknowledgment and
    fresh-process forced-exit evidence without a capability handoff file. Claim
    expiry and transfer refuse the stale handle. The bounded manager now owns
@@ -334,8 +421,12 @@ performance qualification must not displace these requirements.
    Host quiescence and ordinary session activation remain open. Never turn
    an explicit claim-only row into permission to invent
    replacement seeds.
-5. **Restore, pruning and backup.** Test retained schema/content reachability,
-   active read and pending-operation pins, current ACLs and failure recovery.
+5. **Restore, pruning and backup.**
+   The [revision pruning design](repository-revision-pruning.md) records the
+   proposed audit/content split, acquisition fences and acceptance gates. It is
+   direction-reviewed by Sol; no pruning operation is enabled by that checkpoint.
+   Test retained schema/content reachability, active read and pending-operation
+   pins, current ACLs and failure recovery.
    Restore publishes through the same concurrency and validation boundaries;
    copying stored bytes alone is not a restored document. Demonstrate that
    pruning cannot remove referenced schema assets or provider versions, including
@@ -379,15 +470,13 @@ performance qualification must not displace these requirements.
    revision immutability remain unchanged. Next, resolve pending command references
    and design atomic pruning with the same lock order used by reference acquisition;
    do not derive a deletable flag from an earlier inventory snapshot.
-   Source inspection confirms that the current preparation journal cannot register
-   historical selectors: `DocumentPublicationPreparationRecord` reconstructs through
-   ordinary upload preparation, which calls `requireExecutionSupported`. Historical
-   preparation uses a separate internal unclaimed path; claimed historical admission
-   remains refused. An indexed journal-selector projection would therefore be empty
-   for currently supported registrations. Do not add it or relax that guard solely
-   to make the inventory appear complete. Design claimed historical ownership, source
-   pin lifetime, canonical decode and atomic reference acquisition together before
-   activation. Unknown/legacy journal coverage remains conservative until verified.
+   Historical selectors now have an explicit validation branch in
+   `DocumentPublicationPreparationRecord`, and cold recovery loads their canonical
+   persisted preparation. Re-audit the inventory against preparation history roots,
+   sealed source captures, retained schemas and terminal release receipts before
+   designing deletion. A selector projection is no longer necessarily empty.
+   Unknown/legacy journal coverage remains conservative until verified; the public
+   historical dispatch gate is independent of whether private journals retain data.
    Required restore acceptance cases include registry absence, policy change, revoked
    access, stale destination revision, shared-byte reuse, failed finalization, and a
    pruning race with a held restore read. Backup qualification must restore the matching
@@ -1060,3 +1149,40 @@ It supersedes the earlier suggestion to close/reopen the execution handle on eve
 client call: that would lose START permission and sticky CREATE/publication state.
 Use separate client-call and retained-entry lifetimes and retain the prepared
 assessment where continuation requires it. This design does not enable public routing.
+
+### Historical ownership qualification checkpoint
+
+The private owner now reserves local capacity before SQL and retains exact proposals
+through uncertain replies. It tracks generations independently from the selected
+retry entry. An older worker can remain active while a successor installs, captures
+fresh sources and publishes through real providers. Old-generation retirement waits
+for actual worker completion and preserves the successor route. Separate SQL tests
+cover byte-budget rejection and V98 replacement of an unactivated successor while
+an older generation continues cleanup.
+
+Evidence:
+
+- `../evidence/repository/2026-10-07-historical-generations/README.md`: 61 SQL cases
+  plus the packaged provider regression for the generation ownership foundation.
+- `../evidence/repository/2026-10-07-historical-generation-overlap/README.md`:
+  provider upload, receipt and readback across overlapping generations, including
+  resource return after retirement; final fixture passed the full provider gate.
+- `../evidence/repository/2026-10-07-historical-generation-limits/README.md`:
+  26 SQL cases covering capacity and exact replacement lineage.
+
+These checkpoints do not enable the public historical entrypoint. Outstanding
+acceptance includes the remaining publication/takeover transaction orderings and managed-host
+routing with accepted-call shutdown and credential boundaries. Pruning, scale
+qualification and progressive hydration remain separate requirements of the goal.
+
+The race tests must distinguish explicit SQL finalization from JDBC commit:
+`DocumentPublicationCommit` executes `SET CONSTRAINTS ALL IMMEDIATE` before the
+transaction callback returns. Expiry after successful finalization can allow that
+transaction to commit under the fencing locks; a waiting takeover must then reject
+the terminal operation. See `repository-historical-attempt-owner.md` for the
+reviewed barrier positions and current qualification status.
+
+The local proposal case passes focused provider checks in both retirement orders,
+including active Work, capture-drain records and preserved receipts. See
+`../evidence/repository/2026-10-07-local-successor-terminal-retirement/README.md`.
+The aggregate passed in 13m58s; public historical routing is not enabled.

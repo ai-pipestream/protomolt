@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-08T03:06:33.094Z" hostname="krick" time="125.555">
+  <properties/>
+  <testcase name="[1] &quot;initial&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="27.124"/>
+  <testcase name="[2] &quot;reserved&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="34.255"/>
+  <testcase name="[3] &quot;installed&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="34.167"/>
+  <testcase name="coldOwner()" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="29.978"/>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE initial
+HISTORICAL_COLD_PROCESS_RESTART_OK initial
+NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE reserved
+HISTORICAL_COLD_PROCESS_RESTART_OK reserved
+NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE installed
+HISTORICAL_COLD_PROCESS_RESTART_OK installed
+NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+]]></system-out>
+  <system-err><![CDATA[Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 2891030c6b5e64bb4ca12327adff694351c395ec15dad2f2a669b854ed10efee
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.345684485S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 71ee7b74827c3452e2956fa6006ea5e9b6e2eff4025133427b3f83b66416ad52
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.906926047S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55389/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: ff7bd701ffc2fa68cf2be59eb10e3fac93ac2463ab3608d674a6e3529488e221
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.35640934S
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 693eedc1938d7327fa206ef98dc0487ac32b01f68fb534670e185cf2b6ef70ec
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.895332073S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55391/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 5b88f566d563665b39e78ec4d71ae8a442218b8f436c4b8a69a2b86a5ce35d7e
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.839867676S
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 87d54f693f839b559ec089aa647c6f28525cd20042d1d80be79810f5283b3e5f
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.887028488S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55393/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 7b24da28a04fbe2b27ea2b1d7cdf8d153cd8f5327492723163dc1dfa1d153abd
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.821822658S
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: dcbc6c5256e92d8a993d35584557af262a8968e84b3945b661cde8fdb1911af4
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.862878912S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55396/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 0a85d30961c8db73a170c243445f4bcfafd2c69480ae1f6bc045db67b89df988
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.832179414S
+]]></system-err>
+</testsuite>

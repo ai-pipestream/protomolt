@@ -95,7 +95,10 @@ final class DocumentPublicationPreparationJournal {
                 .setParameter("command", record.command().canonical().toByteArray())
                 .setParameter("commandDigest", HexFormat.of().parseHex(record.command().sha256()))
                 .setParameter("bytes", encoded.toByteArray()).setParameter("digest", digest).executeUpdate();
-        if (inserted == 1) DocumentPreparationHistoryRoots.insert(em, record, digest, sources);
+        if (inserted == 1) {
+            DocumentPreparationHistoryRoots.insert(em, record, digest, sources);
+            DocumentPreparationCoverageCertificates.certifyNew(em, record, digest);
+        }
         else if (DocumentPreparationHistoryRoots.coverage(em, record, digest) == DocumentPreparationHistoryRoots.Coverage.UNKNOWN
                 && !sources.isEmpty())
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,

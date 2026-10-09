@@ -1,0 +1,3 @@
+3cf76f9173ed527b19b9e650661e4f49966173cadd0879247c01327d92d779f7  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalFragmentPreparation.java
+71e3ca9c834e5cbe2f525627bfe19e7165e884922e836aec84b605febc4b20d9  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalAssessmentSources.java
+06b29119e54f0f2840a52379d4b39941ab4fe858285436f5cc146f0249e523e9  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationCommitIT.java

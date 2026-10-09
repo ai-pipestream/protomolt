@@ -10,31 +10,72 @@ import java.util.*;
 
 /** Real provider mixed publication with assessment ownership spanning separate client calls. */
 final class HistoricalInstalledOwnerProbe {
-    enum Check { ORDINARY, REVOKED, EXPIRED }
+    enum Check {
+        ORDINARY, COLD, COLD_RESTART_WRITER, REVOKED, EXPIRED, SELF_SUPERSESSION, OVERLAP, COMMIT_WINS, COMMIT_WINS_OLD_FIRST, CLAIM_EXPIRES, TAKEOVER_FIRST, RECOVERED_PUBLICATION, PUBLIC_RECOVERY, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, INITIAL_OWNER_REJECTIONS, REJECTION;
+        boolean commitWinner() { return this == COMMIT_WINS || this == COMMIT_WINS_OLD_FIRST; }
+    }
     record Prepared(RepositoryInstalledHistoricalAttempts attempts, RepositorySuccessorInstall.Plan plan,
-            PayloadBudget budget, long before, RepositoryCaller coordinator) implements AutoCloseable {
+            PayloadBudget budget, long before, RepositoryCaller coordinator, HistoricalGenerationOverlapProbe overlap) implements AutoCloseable {
         @Override public void close() throws Exception {
+            closeOwned(attempts, coordinator, overlap, budget, before);
+        }
+    }
+
+    private static void closeOwned(RepositoryInstalledHistoricalAttempts attempts, RepositoryCaller coordinator,
+            HistoricalGenerationOverlapProbe overlap, PayloadBudget budget, long before) throws Exception {
+        Throwable primary = null;
+        try {
+            if (overlap != null) overlap.releaseWorker();
             attempts.close();
             require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
                     "proposed owner drains on every exit path");
-            require(budget.reservedBytes() == before, "proposed owner returns retained preparation bytes");
+        } catch (Exception | Error failure) { primary = failure; }
+        try {
+            if (overlap != null) overlap.close();
+        } catch (Exception | Error cleanup) {
+            if (primary == null) primary = cleanup;
+            else if (cleanup != primary) primary.addSuppressed(cleanup);
         }
+        try {
+            require(budget.reservedBytes() == before, "proposed owner returns retained preparation bytes");
+        } catch (Exception | Error cleanup) {
+            if (primary == null) primary = cleanup;
+            else if (cleanup != primary) primary.addSuppressed(cleanup);
+        }
+        if (primary instanceof Exception failure) throw failure;
+        if (primary instanceof Error failure) throw failure;
     }
 
     /** One owner is installed before the caller captures fresh historical sources. */
     static Prepared prepare(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
             DocumentPublicationPreparationRecord original, Map<Integer, ByteString> fragments,
             PayloadBudget budget, Check check) throws Exception {
+        return prepare(tx, caller, coordinator, original.command(), Optional.of(original), fragments, budget, check);
+    }
+
+    static Prepared prepareCold(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationCommand command, Map<Integer, ByteString> uploads, PayloadBudget budget) throws Exception {
+        return prepare(tx, caller, coordinator, command, Optional.empty(), uploads, budget, Check.COLD);
+    }
+
+    private static Prepared prepare(Tx tx, RepositoryCaller caller, RepositoryCaller coordinator,
+            DocumentPublicationCommand command, Optional<DocumentPublicationPreparationRecord> original,
+            Map<Integer, ByteString> fragments, PayloadBudget budget, Check check) throws Exception {
         long before = budget.reservedBytes();
         var ownerTx = check == Check.EXPIRED ? tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(35), Duration.ofSeconds(45))) : tx;
-        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), 1);
+        var attempts = new RepositoryInstalledHistoricalAttempts(ownerTx, budget, new DriveLedger(tx), (check == Check.OVERLAP || check.commitWinner()) ? 2 : 1);
+        HistoricalGenerationOverlapProbe overlap = null;
         try {
             var timeouts = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
-            var command = original.command();
+            var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
             var observed = new RepositoryCoordinatorRecoveryDiscovery(tx, timeouts)
-                    .inspect(coordinator, original.key(), command.sha256(), RepositoryReadControl.NONE);
-            require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND,
+                    .inspect(coordinator, key, command.sha256(), RepositoryReadControl.NONE);
+            require(observed.status() == RepositoryCoordinatorRecoveryDiscovery.Status.EXPIRED_BOUND
+                            || check == Check.COLD && observed.unactivated().isPresent(),
                     "provider owner begins from actual expired predecessor discovery");
+            long expirations = count(tx, "repository_coordinator_expirations", command.operationId());
+            long supersessions = count(tx, "repository_coordinator_supersessions", command.operationId());
+            long installations = count(tx, "repository_successor_installs", command.operationId());
             var bodies = new HashMap<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject>();
             require(command.intent().getMembersCount() == 1, "fixture has one mixed member");
             var member = command.intent().getMembers(0);
@@ -46,7 +87,11 @@ final class HistoricalInstalledOwnerProbe {
             }
             require(bodies.size() == 1, "mixed fixture resubmits one fresh payload");
             var modes = Map.of(member.getMemberId(), DocumentPublicationCandidate.Mode.TYPED);
-            try (var request = attempts.beginProposed(caller, original, modes, observed, Duration.ofMinutes(2), timeouts)) {
+            var lease = (check == Check.SELF_SUPERSESSION || check == Check.OVERLAP || check.commitWinner()
+                    || check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) ? Duration.ofSeconds(30) : Duration.ofMinutes(2);
+            try (var request = check == Check.COLD
+                    ? attempts.beginColdProposed(caller, new DocumentPublicationCommand(command.intent()), modes, observed, lease, timeouts)
+                    : attempts.beginProposed(caller, original.orElseThrow(), modes, observed, lease, timeouts)) {
                 try {
                     request.advancePreparation(coordinator, modes, Map.of(), RepositoryReadControl.NONE);
                     throw new AssertionError("Missing resubmitted bytes reserved historical recovery");
@@ -63,30 +108,70 @@ final class HistoricalInstalledOwnerProbe {
                 } catch (IllegalArgumentException refused) {
                     require(refused.getMessage().contains("checksum differs"), "actual bytes are checked before reservation");
                 }
-                require(count(tx, "repository_coordinator_expirations", command.operationId()) == 0
-                        && count(tx, "repository_successor_installs", command.operationId()) == 0,
+                require(count(tx, "repository_coordinator_expirations", command.operationId()) == expirations
+                        && count(tx, "repository_coordinator_supersessions", command.operationId()) == supersessions
+                        && count(tx, "repository_successor_installs", command.operationId()) == installations,
                         "bad payloads perform no reservation or installation writes");
                 require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
                         == RepositoryHistoricalAttemptPreparation.Phase.RESERVED, "first call reserves one proposal");
             }
             require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "proposal survives first call");
-            final RepositorySuccessorInstall.Plan plan;
+            RepositorySuccessorInstall.Plan plan;
             try (var request = attempts.resume(caller, command).orElseThrow()) {
                 require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
                         == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "second call confirms retained installation");
                 plan = request.installedPlan(coordinator, RepositoryReadControl.NONE);
             }
-            require(count(tx, "repository_coordinator_expirations", command.operationId()) == 1
-                    && count(tx, "repository_successor_installs", command.operationId()) == 1,
+            require(count(tx, "repository_coordinator_expirations", command.operationId()) == expirations + (observed.candidate().isPresent() ? 1 : 0)
+                    && count(tx, "repository_coordinator_supersessions", command.operationId()) == supersessions + (observed.unactivated().isPresent() ? 1 : 0)
+                    && count(tx, "repository_successor_installs", command.operationId()) == installations + 1,
                     "one exact reservation and installation before any new history capture");
+            if (check == Check.SELF_SUPERSESSION) {
+                var previous = plan;
+                tx.readOnly(em -> em.createNativeQuery("""
+                        SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (GREATEST(c.lease_until,o.lease_until)-clock_timestamp())))+0.05)
+                        FROM repository_execution_claims c JOIN repository_operation_owners o USING(account_id,principal,operation_id)
+                        WHERE c.operation_id=:op
+                        """).setParameter("op", command.operationId()).getSingleResult());
+                try (var request = attempts.resume(caller, command).orElseThrow()) {
+                    require(request.reconcileUnactivated(coordinator, modes, bodies, RepositoryReadControl.NONE),
+                            "same retained owner replaces its own expired installed claim");
+                    try {
+                        request.installedPlan(coordinator, RepositoryReadControl.NONE);
+                        throw new AssertionError("Replacement exposed the old installed plan");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.CONFLICT, "replacement still requires installation");
+                    }
+                }
+                require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)),
+                        "same entry survives replacement request");
+                try (var request = attempts.resume(caller, command).orElseThrow()) {
+                    require(request.advancePreparation(coordinator, modes, bodies, RepositoryReadControl.NONE)
+                            == RepositoryHistoricalAttemptPreparation.Phase.INSTALLED, "replacement installs on a later request");
+                    plan = request.installedPlan(coordinator, RepositoryReadControl.NONE);
+                }
+                require(plan.reservation().predecessor().epoch() == previous.reservation().predecessor().epoch() + 1
+                        && !plan.reservation().successorToken().equals(previous.reservation().successorToken())
+                        && !plan.reservation().successorIncarnation().equals(previous.reservation().successorIncarnation())
+                        && !plan.next().seeds().ownerNonce().equals(previous.next().seeds().ownerNonce()),
+                        "replacement advances epoch and mints distinct claim, process and owner identities");
+                require(count(tx, "repository_coordinator_supersessions", command.operationId()) == 1
+                        && count(tx, "repository_successor_installs", command.operationId()) == 2
+                        && count(tx, "repository_historical_activations", command.operationId()) == 0,
+                        "one replacement and two installs precede fresh capture or activation");
+                System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK");
+            }
+            if (check == Check.OVERLAP) {
+                overlap = new HistoricalGenerationOverlapProbe(tx, caller, coordinator, attempts, command);
+                plan = overlap.takeOver(plan, modes, bodies, timeouts);
+            }
             System.out.println("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-            return new Prepared(attempts, plan, budget, before, coordinator);
+            if (check == Check.COLD) System.out.println("SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK");
+
+            return new Prepared(attempts, plan, budget, before, coordinator, overlap);
         } catch (Exception | Error failure) {
-            attempts.close();
             try {
-                require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
-                        "failed preparation releases its local owner");
-                require(budget.reservedBytes() == before, "failed preparation returns retained bytes");
+                closeOwned(attempts, coordinator, overlap, budget, before);
             } catch (Exception | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
@@ -107,6 +192,7 @@ final class HistoricalInstalledOwnerProbe {
         var attempts = prepared.attempts();
         var runtime = new DocumentPublicationScopeCalls();
         boolean transferred = false;
+        HistoricalPublicationLosingSuccessorProbe losing = null;
         Throwable primary = null;
         try {
             DocumentAssessmentStartJournal.Started started;
@@ -120,7 +206,7 @@ final class HistoricalInstalledOwnerProbe {
                         Instant.now(), RepositoryReadControl.NONE);
             }
             require(runtime.isIdle(), "first client call releases runtime barrier while assessment stays retained");
-            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 1)), "entry survives first call");
+            require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, check == Check.OVERLAP ? 2 : 1)), "entry survives first call");
             sources.close(); // Subsequent requests must use the retained Work and assessment.
             var owner = tx.inTransaction(em -> {
                 var claim = RepositoryExecutionClaimLedger.lockLive(em, plan.next().key(), command.sha256(),
@@ -245,13 +331,100 @@ final class HistoricalInstalledOwnerProbe {
             }
             var found = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
             require(found.stage().equals(created), "separate request CREATE has exact persisted identity");
+            if (check == Check.REJECTION) {
+                var reads = new DocumentReadLedger(tx, UUID.randomUUID());
+                var placement = plan.next().placements().values().iterator().next();
+                try (var reader = new ai.protomolt.proto.repo.engine.DocumentPartReader((generation, profile) -> {
+                    require(generation.equals(placement.generation()) && profile.equals(provider.profile()), "exact successor backend");
+                    return provider.store();
+                }, 4, 4_000_000, budget); var call = runtime.enter();
+                     var request = attempts.resume(caller, command).orElseThrow()) {
+                    var result = request.rejectAssessment(selections, reads, reader, limits, observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE);
+                    var receipt = result.rejection().orElseThrow();
+                    require(result.state() == DocumentPublicationReplay.State.TERMINATED
+                            && receipt.getOwnerGeneration() == owner.generation() && owner.generation() > 1
+                            && receipt.getCommandSha256().equals(command.sha256())
+                            && receipt.getAssessment().getAssessmentId().equals(created.assessment().toString())
+                            && receipt.getAssessment().getManifestSha256().equals(created.manifestSha256()),
+                            "rejection identifies successor generation, command and assessment");
+                    reader.close();
+                    require(request.rejectAssessment(selections, reads, reader, limits, observation,
+                            Duration.ofSeconds(5), RepositoryReadControl.NONE).equals(result), "successor terminal replay needs no provider read");
+                    require(count(tx, "repository_operation_rejection", command.operationId()) == 1
+                            && count(tx, "document_revision_commits", command.operationId()) == 0,
+                            "one successor rejection and no publication");
+                    reads.releaseDrained(32);
+                    require(reads.outstandingReads() == 0, "successor rejection assessment sessions released");
+                    request.close();
+                    call.close();
+                    require(runtime.isIdle(), "first rejection request has returned before retry");
+                    try (var laterCall = runtime.enter(); var later = attempts.resume(caller, command).orElseThrow()) {
+                        require(later.rejectAssessment(selections, reads, reader, limits, observation,
+                                Duration.ofSeconds(5), RepositoryReadControl.NONE).equals(result),
+                                "later client call returns original successor rejection without provider access");
+                        require(later.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                                == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "rejected successor retires normally");
+                    }
+                    require(new DocumentPublicationReplay(tx).observe(caller, command).equals(result), "receipt survives successor retirement");
+                    new RepositoryCredentialAuthorities(tx).revoke(coordinator,
+                            caller.credentialBinding().orElseThrow(), caller.principalName());
+                    try {
+                        new DocumentPublicationReplay(tx).observe(caller, command);
+                        throw new AssertionError("Revoked credential received successor rejection");
+                    } catch (RepositoryException refused) {
+                        require(refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                "receipt delivery rejects revoked credentials");
+                    }
+                    require(new DocumentPublicationReplay(tx).observe(coordinator, command).equals(result)
+                            && count(tx, "repository_operation_rejection", command.operationId()) == 1,
+                            "credential revocation preserves original receipt for authorized recovery");
+                    System.out.println("HISTORICAL_SUCCESSOR_REJECTION_REVOKED_OK");
+                }
+                require(attempts.drain().equals(new RepositoryInstalledHistoricalAttempts.Drain(0, 0))
+                        && budget.reservedBytes() == before, "rejected successor releases entry and memory");
+                System.out.println("HISTORICAL_SUCCESSOR_REJECTION_OK");
+                return;
+            }
             ai.protomolt.proto.repo.v1.DocumentPublicationResult result;
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
-                result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
-                        new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                if (check == Check.CLAIM_EXPIRES || check == Check.TAKEOVER_FIRST) {
+                    var reservation = check == Check.TAKEOVER_FIRST
+                            ? HistoricalPublicationBeforeClaimProbe.run(database, tx, coordinator, owner, plan, created,
+                                    publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                            new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE))
+                            : HistoricalPublicationClaimExpiryProbe.run(database, command, created, tx, coordinator, owner, plan,
+                            publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE));
+                    require(request.retireFenced(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
+                            == RepositoryInstalledHistoricalAttempts.Retirement.RETIRED, "expired publisher retires after confirmed takeover");
+                    require(budget.reservedBytes() == before, "expired publisher returns retained bytes");
+                    System.out.println("SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK");
+                    HistoricalPostRollbackPublicationProbe.run(tx, provider, caller, coordinator, original, plan, reservation,
+                            policy, fragments, container, resolver, limits, budget, observation, database);
+                    return;
+                } else if (check.commitWinner()) {
+                    losing = new HistoricalPublicationLosingSuccessorProbe(tx, attempts, caller, coordinator, command,
+                            request.identity(), fragments, accepted.fork());
+                    result = HistoricalPublicationCommitWinnerProbe.run(database, tx, coordinator, owner, plan,
+                            publicationTx -> request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                                    new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE), losing::selectWhilePublicationWaits);
+                } else {
+                    result = request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
+                            new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false), RepositoryReadControl.NONE);
+                }
             }
             require(runtime.isIdle(), "publication request releases runtime barrier");
             HistoricalClaimedMixedPublicationProbe.verify(tx, provider, caller, command, owner, selections, fragments, result);
+            if (prepared.overlap() != null) prepared.overlap().verifyAndRetire();
+            if (losing != null) {
+                losing.verifyAndRetire(check == Check.COMMIT_WINS_OLD_FIRST);
+                require(budget.reservedBytes() == before, "both generation byte reservations returned");
+                require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                        "receipt preserved after losing proposal and publisher retirement");
+                System.out.println("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                return;
+            }
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 try {
                     request.publishAssessment(selections, observation, new RepositorySchemaArtifacts(tx),
@@ -263,9 +436,9 @@ final class HistoricalInstalledOwnerProbe {
                 }
             }
             require(runtime.isIdle(), "repeat refusal releases runtime barrier");
-            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == 2,
-                    "original and successor START only");
-            require(count(tx, "document_assessment_owners", command.operationId()) == 1, "exactly one CREATE");
+            require(count(tx, "repository_publication_assessment_starts", command.operationId()) == (check == Check.RECOVERED_PUBLICATION ? 3 : 2),
+                    "exact START count for completed generations");
+            require(count(tx, "document_assessment_owners", command.operationId()) == (check == Check.RECOVERED_PUBLICATION ? 2 : 1), "exact CREATE count for publication attempts");
             require(count(tx, "document_revision_commits", command.operationId()) == 1, "exactly one publication");
             try (var call = runtime.enter(); var request = attempts.resume(caller, command).orElseThrow()) {
                 require(request.retireTerminal(coordinator, Duration.ofSeconds(1), RepositoryReadControl.NONE)
@@ -282,6 +455,8 @@ final class HistoricalInstalledOwnerProbe {
             primary = failure; throw failure;
         } finally {
             try {
+                if (losing != null) losing.close();
+                if (prepared.overlap() != null) prepared.overlap().releaseWorker();
                 runtime.close(); attempts.close();
                 require(runtime.awaitIdle(Duration.ofSeconds(1)), "client requests drained before owner shutdown");
                 require(attempts.detachClosed(Duration.ofSeconds(1), ignored -> coordinator, RepositoryReadControl.NONE),
@@ -292,6 +467,8 @@ final class HistoricalInstalledOwnerProbe {
                 if (primary != cleanup) primary.addSuppressed(cleanup);
             }
         }
+        if (check == Check.SELF_SUPERSESSION) System.out.println("SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK");
+        if (check == Check.COLD) System.out.println("SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK");
         System.out.println(fault == null ? "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK"
                 : "SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK");
     }

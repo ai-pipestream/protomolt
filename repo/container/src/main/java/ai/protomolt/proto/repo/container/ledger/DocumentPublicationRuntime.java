@@ -109,6 +109,13 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     private final java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority;
     private final ExternalWorkers externalWorkers;
     private final RepositoryManagedRecovery recovery;
+    private final RepositoryInstalledHistoricalAttempts historical;
+    private final DocumentHistoricalPublicationDispatch historicalDispatch;
+
+    private record HistoricalDispatchOptions(DocumentRetainedReader ordinaryReader,
+            DocumentHistoricalRetainedReader historicalReader, DocumentAssessmentReader assessmentReader,
+            RecoveryAuthority authority, DocumentAssessmentRuntimeObserver.Observation observation,
+            Duration retention, Duration minimumRemaining) {}
     private final DocumentPublicationReplay publicationReplay;
     private final PayloadBudget publicationBudget;
     private final java.util.concurrent.Semaphore publicationPermits;
@@ -254,6 +261,81 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 maxSessions,maxCommandBytes,cleanupBatchSize,deliverEvents,assessments,drainAuthority,externalWorkers,null);
     }
 
+    /** Internal lifecycle composition; does not enable historical request dispatch. */
+    static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentHistoricalRetainedReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime historicalJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers, int historicalCapacity) throws IOException {
+        Objects.requireNonNull(authority); Objects.requireNonNull(externalWorkers);
+        var historical = new RepositoryInstalledHistoricalAttempts(tx.withTimeouts(sqlTimeouts), budget, drives, historicalCapacity);
+        return new DocumentPublicationRuntime(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                observeAssessments(tx, drives, ledger, reader, budget, assemblyLimits, assessments),
+                key -> authority.forOperation(key.account(), key.principal(), key.operationId()), externalWorkers, null, historical);
+    }
+
+    /** Synchronous internal driver boundary. Registry and borrowed calls must not escape the action. */
+    <T, E extends Exception> T withHistoricalAttempts(HistoricalAction<T, E> action) throws E {
+        if (historical == null) throw new IllegalStateException("Historical lifecycle is not configured");
+        Objects.requireNonNull(action);
+        try (var accepted = scopeCalls.enter()) {
+            return action.run(historical);
+        }
+    }
+
+    @FunctionalInterface interface HistoricalAction<T, E extends Exception> {
+        T run(RepositoryInstalledHistoricalAttempts attempts) throws E;
+    }
+
+    /**
+     * Managed historical publication with explicit retained-generation capacity and recovery authority.
+     * Original backend identities must resolve exactly; unavailable retained storage cannot be substituted.
+     * Successful construction transfers external worker lifecycle ownership; on failure it stays with the caller.
+     * This factory does not provision host termination verification or a recovery scheduler.
+     */
+    public static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentHistoricalRetainedReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime managedHistoricalJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers, int historicalCapacity,
+            RecoveryAuthority recoveryAuthority) throws IOException {
+        if (historicalCapacity < 1) throw new IllegalArgumentException("Historical generation capacity must be positive");
+        Objects.requireNonNull(tx); Objects.requireNonNull(drives); Objects.requireNonNull(ledger);
+        Objects.requireNonNull(reader); Objects.requireNonNull(budget); Objects.requireNonNull(backends);
+        Objects.requireNonNull(assemblyLimits); Objects.requireNonNull(sqlTimeouts);
+        return historicalJournaled(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                assessments, authority, externalWorkers, historicalCapacity, recoveryAuthority);
+    }
+
+    /** Shared historical implementation; lifecycle-only composition remains internal. */
+    static <R extends DocumentRetainedReader & DocumentAssessmentReader & DocumentHistoricalRetainedReader & DocumentReadLifecycle.Reader>
+            DocumentPublicationRuntime historicalJournaled(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, Assessments assessments,
+            DrainAuthority authority, ExternalWorkers externalWorkers, int historicalCapacity,
+            RecoveryAuthority recoveryAuthority) throws IOException {
+        Objects.requireNonNull(authority); Objects.requireNonNull(externalWorkers); Objects.requireNonNull(recoveryAuthority);
+        Objects.requireNonNull(assessments);
+        var observation = DocumentAssessmentRuntimeObserver.observe(assessments.runtimeBundle(), RepositoryReadControl.NONE::check);
+        var assessmentExecution = new DocumentPublicationAssessmentExecution(tx, drives, ledger, reader, budget,
+                assemblyLimits, observation, assessments.retention(), assessments.minimumRemaining());
+        var historical = new RepositoryInstalledHistoricalAttempts(tx.withTimeouts(sqlTimeouts), budget, drives, historicalCapacity);
+        return new DocumentPublicationRuntime(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts,
+                parallelism, flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents,
+                assessmentExecution, key -> authority.forOperation(key.account(), key.principal(), key.operationId()),
+                externalWorkers, recoveryAuthority, historical,
+                new HistoricalDispatchOptions(reader, reader, reader, recoveryAuthority, observation,
+                        assessments.retention(), assessments.minimumRemaining()));
+    }
+
     private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
             Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
             Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
@@ -261,7 +343,34 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
             java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
             ExternalWorkers externalWorkers, RecoveryAuthority recoveryAuthority) {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism,
+                flushAge, lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents, assessments,
+                drainAuthority, externalWorkers, recoveryAuthority, null);
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
+            ExternalWorkers externalWorkers, RecoveryAuthority recoveryAuthority,
+            RepositoryInstalledHistoricalAttempts historical) {
+        this(tx, drives, ledger, reader, budget, backends, assemblyLimits, sqlTimeouts, parallelism, flushAge,
+                lease, maxSessions, maxCommandBytes, cleanupBatchSize, deliverEvents, assessments, drainAuthority,
+                externalWorkers, recoveryAuthority, historical, null);
+    }
+
+    private <R extends DocumentRetainedReader & DocumentReadLifecycle.Reader> DocumentPublicationRuntime(
+            Tx tx, DriveLedger drives, DocumentReadLedger ledger, R reader, PayloadBudget budget,
+            Backends backends, DocumentRevisionAssembly.Limits assemblyLimits, SqlTimeouts sqlTimeouts,
+            int parallelism, Duration flushAge, Duration lease, int maxSessions, long maxCommandBytes,
+            int cleanupBatchSize, boolean deliverEvents, DocumentPublicationAssessmentExecution assessments,
+            java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> drainAuthority,
+            ExternalWorkers externalWorkers, RecoveryAuthority recoveryAuthority,
+            RepositoryInstalledHistoricalAttempts historical, HistoricalDispatchOptions historicalOptions) {
         Objects.requireNonNull(backends);
+        this.historical = historical;
         this.drainAuthority = drainAuthority;
         this.externalWorkers = externalWorkers;
         publicationReplay=new DocumentPublicationReplay(tx.withTimeouts(sqlTimeouts));
@@ -280,6 +389,11 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
                 : DocumentPublicationSessions.journaled(tx, execution, lease, maxSessions, maxCommandBytes, budget);
         recovery=recoveryAuthority==null ? null
                 : new RepositoryManagedRecovery(tx,budget,sessions,lease,sqlTimeouts,maxSessions,recoveryAuthority);
+        historicalDispatch = historicalOptions == null ? null : new DocumentHistoricalPublicationDispatch(tx, drives,
+                historical, historicalOptions.authority(), ledger, historicalOptions.ordinaryReader(),
+                historicalOptions.historicalReader(), historicalOptions.assessmentReader(), uploads, assemblyLimits,
+                historicalOptions.observation(), lease, historicalOptions.retention(), historicalOptions.minimumRemaining(),
+                sqlTimeouts, deliverEvents);
     }
 
     /** Borrowed payloads must remain stable until return, including after caller cancellation. */
@@ -302,7 +416,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         Objects.requireNonNull(selector);
         if (!journaledPublication) throw new IllegalStateException("Managed publication requires durable mode journals");
         return new DocumentPublicationFacade(scopeCalls,publicationBudget,publicationPermits,
-                (caller,input,control) -> publishValidated(caller,input,selector,control),maxObjectBytes);
+                (caller,input,control) -> publishValidated(caller,input,selector,control),maxObjectBytes,historicalDispatch!=null);
     }
 
     private PublishDocumentResponse publishValidated(RepositoryCaller caller, DocumentPublicationInput input,
@@ -315,6 +429,8 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
             default -> throw new IllegalArgumentException("Invalid publication mode");
         }));
         var fixedModes=modes(selectedModes);
+        if (historicalDispatch != null && !DocumentPreparationHistoryRoots.roots(command).isEmpty())
+            return historicalDispatch.publish(caller, input, selector, fixedModes, control);
         try (var operation=operationCall(caller,command)) {
             var observed=publicationReplay.observe(caller,command,fixedModes,control);
             if (observed.result().isPresent() || observed.rejection().isPresent()) return response(observed);
@@ -424,7 +540,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         catch (DocumentPublicationReplay.Terminated rejected) { throw new Rejected(rejected.receipt()); }
     }
 
-    private static Map<UUID, DocumentUploadPlan.Placement> placements(Map<UUID, Placement> selected) {
+    static Map<UUID, DocumentUploadPlan.Placement> placements(Map<UUID, Placement> selected) {
         var result = new HashMap<UUID, DocumentUploadPlan.Placement>();
         selected.forEach((id, placement) -> result.put(id, placement.selected));
         return result;
@@ -448,7 +564,7 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         scopeCalls.close();
         // Recovery callers may still need activation, lazy schema resolution and provider starts.
         // Their complete scope is drained before closing those nested resources.
-        if (recovery==null) closeNestedAdmission();
+        if (recovery==null && historical==null) closeNestedAdmission();
     }
 
     private void closeNestedAdmission() {
@@ -465,7 +581,10 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
     /** One bounded maintenance pass; the host schedules and retries failures. */
     public synchronized int tick() {
         if (stopping) throw new IllegalStateException("Publication runtime is stopping");
-        return reads.tick();
+        try (var accepted = scopeCalls.enter()) {
+            int retired = historicalDispatch == null ? 0 : historicalDispatch.tick(RepositoryReadControl.NONE);
+            return retired + reads.tick();
+        }
     }
 
     /** Local wait budget excludes SQL time; configure database statement/network timeouts separately. */
@@ -482,10 +601,14 @@ public final class DocumentPublicationRuntime implements AutoCloseable {
         if (stopped) return true;
         stopping = true;
         close();
-        if (recovery!=null) {
+        if (recovery!=null || historical!=null) {
             if (!scopeCalls.awaitIdle(remaining(budget,start))) return false;
             control.check();
-            if (!recovery.detach(remaining(budget,start),control)) return false;
+            if (recovery!=null && !recovery.detach(remaining(budget,start),control)) return false;
+            if (historical!=null) {
+                historical.close();
+                if (!historical.detachClosed(remaining(budget,start),drainAuthority,control)) return false;
+            }
             closeNestedAdmission();
         }
         if (drainAuthority != null) {

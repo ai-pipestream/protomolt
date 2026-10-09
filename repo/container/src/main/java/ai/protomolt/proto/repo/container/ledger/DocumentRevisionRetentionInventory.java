@@ -22,7 +22,7 @@ final class DocumentRevisionRetentionInventory {
     record ObjectReferences(UUID object, boolean reclaiming, boolean retiring, long historicalRevisions, long currentRevisions,
             long archiveVersions, long documentReaders, long archiveReaders, long assessments, long mirrors) {}
     record ArtifactReferences(String sha256, long revisions, long operationClaims, long assessments) {}
-    record Snapshot(UUID revision, boolean current, long sourceReadPins, long sourceAssessmentSlots,
+    record Snapshot(UUID revision, boolean current, long sourceReadPins, long sourceAssessmentSlots, long sourcePreparationRoots,
             List<ObjectReferences> objects, List<ArtifactReferences> artifacts,
             List<UnresolvedReachability> unresolved) {
         Snapshot { objects = List.copyOf(objects); artifacts = List.copyOf(artifacts); unresolved = List.copyOf(unresolved); }
@@ -42,14 +42,17 @@ final class DocumentRevisionRetentionInventory {
         control.check();
         if (rows.isEmpty()) throw new RepositoryException(RepositoryException.Code.NOT_FOUND, "Revision not found");
         boolean current = false, header = false;
-        long readers = 0, slots = 0;
+        long readers = 0, slots = 0, preparationRoots = 0;
         var objects = new ArrayList<ObjectReferences>();
         var artifacts = new ArrayList<ArtifactReferences>();
         for (Object value : rows) {
             control.check();
             var row = (Object[]) value;
             switch ((String) row[0]) {
-                case "REVISION" -> { header = true; current = (Boolean) row[2]; readers = count(row, 4); slots = count(row, 5); }
+                case "REVISION" -> {
+                    header = true; current = (Boolean) row[2]; readers = count(row, 4); slots = count(row, 5);
+                    preparationRoots = count(row, 12);
+                }
                 case "OBJECT" -> {
                     if (row[3] == null) throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
                             "Published object has no retention record");
@@ -63,7 +66,8 @@ final class DocumentRevisionRetentionInventory {
         if (!header) throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Revision inventory header missing");
         if (objects.size() > DocumentPublicationCommand.MAX_PARTS || artifacts.size() > 64)
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED, "Revision inventory exceeds bounds");
-        return new Snapshot(revision, current, readers, slots, objects, artifacts, List.of(UnresolvedReachability.values()));
+        return new Snapshot(revision, current, readers, slots, preparationRoots, objects, artifacts,
+                List.of(UnresolvedReachability.values()));
     }
 
     private static long count(Object[] row, int column) { return ((Number) row[column]).longValue(); }
@@ -85,7 +89,9 @@ final class DocumentRevisionRetentionInventory {
               (SELECT count(*) FROM document_read_pins p WHERE p.source_revision=r.revision_id) AS history_count,
               (SELECT count(*) FROM document_assessment_slots s WHERE s.source_revision=r.revision_id) AS current_count,
               0::bigint AS archive_count,0::bigint AS document_readers,0::bigint AS archive_readers,
-              0::bigint AS assessment_count,0::bigint AS mirrors,false AS retiring
+              0::bigint AS assessment_count,0::bigint AS mirrors,false AS retiring,
+              (SELECT count(*) FROM repository_preparation_history_roots h
+               WHERE h.node_id=r.node_id AND h.revision_id=r.revision_id) AS preparation_roots
             FROM revision r
             UNION ALL
             SELECT 'OBJECT',o.object_id::text,false,t.reclaiming,
@@ -97,7 +103,7 @@ final class DocumentRevisionRetentionInventory {
               (SELECT count(*) FROM document_read_pins p WHERE p.object_id=o.object_id),
               (SELECT count(*) FROM archive_read_pins p WHERE p.object_id=o.object_id),
               (SELECT count(*) FROM document_assessment_objects a WHERE a.object_id=o.object_id),
-              (SELECT count(*) FROM repository_object_references r WHERE r.object_id=o.object_id),t.retiring
+              (SELECT count(*) FROM repository_object_references r WHERE r.object_id=o.object_id),t.retiring,0::bigint
             FROM objects o LEFT JOIN repository_object_retention t USING(object_id)
             UNION ALL
             SELECT 'ARTIFACT',encode(a.artifact_sha256,'hex'),false,false,
@@ -106,7 +112,7 @@ final class DocumentRevisionRetentionInventory {
               (SELECT count(*) FROM repository_schema_artifact_claims c WHERE c.account_id=a.account_id AND c.artifact_sha256=a.artifact_sha256),
               0::bigint,0::bigint,
               (SELECT count(*) FROM document_assessment_artifacts s WHERE s.account_id=a.account_id AND s.artifact_sha256=a.artifact_sha256),
-              0::bigint,false
+              0::bigint,false,0::bigint
             FROM artifacts a
             ORDER BY kind,identity
             """;

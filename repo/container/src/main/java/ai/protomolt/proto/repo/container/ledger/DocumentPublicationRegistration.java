@@ -90,6 +90,19 @@ final class DocumentPublicationRegistration {
                 registrations, null, Objects.requireNonNull(drives), sources);
     }
 
+    static DocumentPublicationRegistration historicalAccepted(Tx tx, PayloadBudget budget,
+            DocumentPublicationPreparationRecord preparation, DocumentHistoricalAssessmentSources sources,
+            DocumentHistoricalAssessmentSources.Work accepted, UUID coordinator,
+            DocumentPublicationScopeCalls registrations, DriveLedger drives, RepositoryReadControl control) {
+        accepted.histories(sources);
+        var references = accepted.references(preparation.command(), control::check);
+        if (references.isEmpty()) throw new IllegalArgumentException("Historical registration requires pinned sources");
+        var prepared = DocumentOperationUploadAdmission.prepareHistorical(preparation.command(), preparation.placements(),
+                preparation.seeds().attempts(), preparation.lease(), preparation.seeds().uploadTokens(), references, control::check);
+        return new DocumentPublicationRegistration(tx, budget, preparation, prepared.plan(), coordinator,
+                registrations, null, Objects.requireNonNull(drives), sources);
+    }
+
     static DocumentPublicationRegistration successor(Tx tx, PayloadBudget budget, RepositorySuccessorInstall.Plan successor,
             UUID coordinator, DocumentPublicationScopeCalls registrations) {
         return successor(tx, budget, successor, coordinator, registrations, null);
@@ -131,16 +144,23 @@ final class DocumentPublicationRegistration {
     /** Initial journal and executable owner share one commit and one registration scope. */
     java.util.Optional<RepositoryOperationLedger.Owner> admitInitial(RepositoryCaller caller,
             Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        return admitInitialAccepted(caller, fixedModes, control, null);
+    }
+
+    java.util.Optional<RepositoryOperationLedger.Owner> admitInitialAccepted(RepositoryCaller caller,
+            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control,
+            DocumentHistoricalAssessmentSources.Work accepted) {
         if (successor != null) throw new IllegalStateException("Successor must attach installed owner");
         Objects.requireNonNull(control).check();
         DocumentAdmissionAuthorization.requireCaller(caller, preparation.key(), preparation.key().account());
         if (fixedModes == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                 "Publication modes must be fixed before durable registration");
-        try (var sourceWork = historical == null ? null : historical.work();
+        try (var sourceWork = historical == null ? null : accepted == null ? historical.work() : accepted.fork();
              var scope = registrations.enter();
              var reserved = budget.reserve((long) DocumentPublicationPreparationCodec.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES
                      + ai.protomolt.proto.repo.spi.DocumentPublicationCommand.MAX_COMMAND_BYTES
                      + (historical == null ? 0 : DocumentPreparationSourcePins.MAX_BYTES))) {
+            if (sourceWork != null) sourceWork.histories(historical);
             // Reject an immediately denied caller before marking the session uncertain.
             // Authorization is checked again under the claim lock before any domain writes.
             preflight(caller,control,sourceWork);
@@ -215,13 +235,19 @@ final class DocumentPublicationRegistration {
 
     DocumentHistoricalExecution historicalExecution(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control) {
+        return historicalExecutionAccepted(caller, owner, fixedModes, control, null);
+    }
+
+    DocumentHistoricalExecution historicalExecutionAccepted(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Map<String, DocumentPublicationCandidate.Mode> fixedModes, RepositoryReadControl control,
+            DocumentHistoricalAssessmentSources.Work accepted) {
         if (historical == null || successor != null || historicalCapture == null)
             throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                     "Historical execution requires an initial registered capture");
         var scope = registrations.enter();
         try {
             return DocumentHistoricalExecution.open(tx, budget, access, preparation, historical, historicalCapture,
-                    caller, owner, fixedModes, drives, control, scope);
+                    caller, owner, fixedModes, drives, control, scope, accepted);
         } catch (RuntimeException | Error failure) {
             scope.close(); throw failure;
         }

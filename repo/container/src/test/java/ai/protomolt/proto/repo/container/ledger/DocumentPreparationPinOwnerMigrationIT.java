@@ -21,7 +21,7 @@ class DocumentPreparationPinOwnerMigrationIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
 
     @Test void oldCaptureRemainsUnownedAndCannotBeAssignedToTheCurrentCoordinator() throws Exception {
-        try (var c = context(POSTGRES, "104")) {
+        try (var c = DocumentPreparationRootReleaseIT.legacyReaderContext(POSTGRES, "104").context()) {
             var original = DocumentSchemaRetentionFixture.prepare(c);
             new DocumentSchemaPolicies(c.tx()).activate(original.batch().policy().policy(), 0, () -> {});
             var revision = DocumentSchemaRetentionFixture.publishBound(c, original, (em, candidate) -> {},
@@ -43,9 +43,7 @@ class DocumentPreparationPinOwnerMigrationIT {
                         var acquired = RepositoryExecutionClaimLedger.acquireHistoricalInitialInTransaction(
                                 em, key, command, UUID.randomUUID(), Duration.ofMinutes(5), sources);
                         RepositoryCoordinatorBinding.bindInitial(em, acquired, coordinator);
-                        var bytes = DocumentPublicationPreparationCodec.encode(record);
-                        DocumentPublicationPreparationJournal.insert(em, acquired.claim(), record, bytes,
-                                DocumentPublicationPreparationJournal.digest(bytes), sources.references(command, () -> {}));
+                        LegacyPublicationPreparationFixture.insertProjected(em, record, sources.references(command, () -> {}));
                         var objects = pins.pins().stream().map(DocumentHistoricalSourcePin::object).collect(java.util.stream.Collectors.toSet());
                         var locks = DocumentPublicationLocks.lockIndependentOrigins(em,
                                 Set.of(ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(fixture.address())), objects, Set.of());

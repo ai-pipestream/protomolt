@@ -61,6 +61,18 @@ final class DocumentPreparationRootReleases {
         }
     }
 
+    /** Locking confirmation in the caller's transaction; never creates a release. */
+    static Receipt requireReleased(EntityManager em, RepositoryCaller caller,
+            DocumentPublicationPreparationRecord record, RepositoryReadControl control) {
+        var release = new DocumentPreparationRootReleases(record);
+        var outcome = release.terminal.lockAndRequire(em, caller, control);
+        var state = release.inspect(em, outcome);
+        if (state.coverage() != Coverage.RELEASED_EXACT)
+            throw incomplete("Preparation roots have no exact completed release");
+        control.check();
+        return state.receipt();
+    }
+
     /** Terminal inspector already holds claim and exact V81 locks. Header is the next lock. */
     private State inspect(EntityManager em,DocumentPreparationTerminalEvidence.Evidence outcome) {
         var headers=scope(em.createNativeQuery("""

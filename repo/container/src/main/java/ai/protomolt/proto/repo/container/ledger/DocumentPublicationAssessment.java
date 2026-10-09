@@ -64,7 +64,7 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         command.requireExecutionSupported();
         return prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
-                evaluatedAt, control, null, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+                evaluatedAt, control, null, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE, null);
     }
 
     static Historical prepareHistorical(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
@@ -87,14 +87,41 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
             DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration, Object executionIdentity,
             ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+        return prepareHistoricalAccepted(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
+                evaluatedAt, accepted, registration, executionIdentity, control, null);
+    }
+
+    /** Own the reader's single budgeted fragment snapshot rather than copying it again. */
+    static Historical prepareHistoricalFromReaderAccepted(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> ordinary,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
+            DocumentHistoricalAssessmentSources sources, DocumentHistoricalRetainedReader reader,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration, Object executionIdentity,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control) throws InvalidProtocolBufferException {
+        return prepareHistoricalAccepted(command, policy, modes, ordinary, container, resolver, budget, opaqueLimits,
+                evaluatedAt, accepted, registration, executionIdentity, control,
+                work -> DocumentHistoricalFragmentPreparation.capture(command, sources, work, reader, ordinary, budget, control));
+    }
+
+    private static Historical prepareHistoricalAccepted(DocumentPublicationCommand command, DocumentSchemaPolicies.Selection policy,
+            Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
+            Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
+            PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt,
+            DocumentHistoricalAssessmentSources.Work accepted, DocumentPublicationScopeCalls.Call registration, Object executionIdentity,
+            ai.protomolt.proto.repo.spi.RepositoryReadControl control,
+            java.util.function.Function<DocumentHistoricalAssessmentSources.Work, DocumentPublicationFragments> snapshotFactory)
+            throws InvalidProtocolBufferException {
         DocumentHistoricalAssessmentSources.Work work = null;
         DocumentPublicationAssessment assessment = null;
         Throwable pending = null;
         boolean delivered = false;
         try {
             work = accepted.fork();
+            var retainedWork = work;
             assessment = prepareInternal(command, policy, modes, supplied, container, resolver, budget, opaqueLimits,
-                    evaluatedAt, control::check, work, control);
+                    evaluatedAt, control::check, work, control,
+                    snapshotFactory == null ? null : () -> snapshotFactory.apply(retainedWork));
             work.authorize(control);
             var result = new Historical(assessment, work, registration, executionIdentity);
             delivered = true;
@@ -328,7 +355,8 @@ final class DocumentPublicationAssessment implements AutoCloseable {
             Map<String, DocumentPublicationCandidate.Mode> modes, Map<String, Map<Integer, ByteString>> supplied,
             Optional<DocumentSchemaAdmission.Definition> container, DocumentPublicationCandidate.Resolver resolver,
             PayloadBudget budget, DocumentRevisionAssembly.Limits opaqueLimits, Instant evaluatedAt, Runnable control,
-            DocumentHistoricalAssessmentSources.Work historical, ai.protomolt.proto.repo.spi.RepositoryReadControl readControl)
+            DocumentHistoricalAssessmentSources.Work historical, ai.protomolt.proto.repo.spi.RepositoryReadControl readControl,
+            java.util.function.Supplier<DocumentPublicationFragments> snapshotFactory)
             throws InvalidProtocolBufferException {
         Objects.requireNonNull(command); Objects.requireNonNull(policy); Objects.requireNonNull(modes);
         Objects.requireNonNull(container); Objects.requireNonNull(resolver); Objects.requireNonNull(budget);
@@ -344,7 +372,8 @@ final class DocumentPublicationAssessment implements AutoCloseable {
         var reservations = reservations(budget);
         var typed = new LinkedHashMap<String, DocumentSchemaAssessment>();
         var owners = new ArrayList<DocumentSchemaAssessment>();
-        var snapshot = historical == null ? DocumentPublicationFragments.capture(command, supplied, budget, control)
+        var snapshot = snapshotFactory != null ? snapshotFactory.get()
+                : historical == null ? DocumentPublicationFragments.capture(command, supplied, budget, control)
                 : DocumentPublicationFragments.captureHistorical(command, supplied, historical.references(command, control), budget, control);
         boolean transferred = false;
         try {

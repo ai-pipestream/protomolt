@@ -31,6 +31,7 @@ class DocumentRevisionRetentionInventoryIT {
             assertThat(initial.current()).isTrue();
             assertThat(initial.sourceReadPins()).isZero();
             assertThat(initial.sourceAssessmentSlots()).isZero();
+            assertThat(initial.sourcePreparationRoots()).isZero();
             assertThat(initial.objects()).hasSize(1).allSatisfy(object -> {
                 assertThat(object.historicalRevisions()).isEqualTo(1);
                 assertThat(object.currentRevisions()).isEqualTo(1);
@@ -106,11 +107,15 @@ class DocumentRevisionRetentionInventoryIT {
                     .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").load().migrate();
             long indexes = c.tx().readOnly(em -> ((Number) em.createNativeQuery("""
                     SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema()
-                    AND indexname IN ('document_read_pin_revision','document_assessment_slot_source_revision')
+                    AND indexname IN ('document_read_pin_revision','document_assessment_slot_source_revision',
+                                      'repository_preparation_history_revision')
                     """).getSingleResult()).longValue());
-            assertThat(indexes).isEqualTo(2);
+            assertThat(indexes).isEqualTo(3);
             var inventory = new DocumentRevisionRetentionInventory(c.tx());
             var baseline = inventory.inspect(ADMIN, address, revision, RepositoryReadControl.NONE);
+            assertThat(baseline.sourcePreparationRoots()).isZero();
+            assertThat(baseline.unresolved()).contains(
+                    DocumentRevisionRetentionInventory.UnresolvedReachability.PREPARATION_JOURNAL_SELECTORS);
             var stagedFixture = new DocumentAssessmentRetentionFixture(c.tx());
             var pending = stagedFixture.candidate(120);
             var digests = new RepositorySchemaArtifacts(c.tx()).stage(pending.owner(),

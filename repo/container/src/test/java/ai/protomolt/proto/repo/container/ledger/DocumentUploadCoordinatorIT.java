@@ -70,6 +70,56 @@ class DocumentUploadCoordinatorIT {
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<UUID, DocumentUploadPlan.Placement> placements, UUID attempt) {}
 
+    @Test void deliveryAuthorityFailurePreservesVerifiedWritesForExactReplay() throws Exception {
+        var f=fixture(2,LEASE);
+        var puts=new java.util.concurrent.atomic.AtomicInteger();
+        var verified=new java.util.concurrent.atomic.AtomicInteger();
+        var delivered=new java.util.concurrent.atomic.AtomicInteger();
+        var store=intercept((method,args,call)->{
+            if(method.equals("put")) puts.incrementAndGet();
+            return call.call();
+        });
+        var budget=new PayloadBudget(1_000_000);
+        try(var coordinator=coordinator(store,budget,Duration.ofMillis(25))) {
+            var authority=new DocumentUploadAuthority() {
+                public DocumentOperationUploadAdmission.Admission admit() {
+                    return admission.admitOrReuseVerified(ADMIN,f.owner,f.prepared);
+                }
+                public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal=selections.isEmpty()?null:DocumentSelectedAttemptLedger.prepareRenewal(selections,LEASE);
+                    tx.inTransaction(em->{DocumentSelectedAttemptLedger.renewOwnerAndSelections(em,f.owner,renewal,LEASE);});
+                }
+                public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal=DocumentSelectedAttemptLedger.prepareRenewal(selections,LEASE);
+                    return tx.inTransaction(em->{return DocumentSelectedAttemptLedger.renew(em,f.owner,renewal);});
+                }
+                public void verify(DocumentSelectedAttemptLedger.Selected selection,List<DocumentSelectedAttemptLedger.Observation> rows) {
+                    var encoded=DocumentSelectedAttemptLedger.prepareVerification(rows);
+                    tx.inTransaction(em->{DocumentSelectedAttemptLedger.verifyBatch(em,f.owner,selection,encoded);});
+                    verified.addAndGet(rows.size());
+                }
+                public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections,Runnable active) {
+                    throw new AssertionError("Staging does not perform assessment preparation");
+                }
+                public void afterDrain() {
+                    assertThat(coordinator.providerActivity().active()).isZero();
+                    assertThat(verified.get()).isEqualTo(2);
+                    delivered.incrementAndGet();
+                    throw new IllegalStateException("injected delivery authority failure");
+                }
+            };
+            assertThatThrownBy(()->coordinator.stageAuthorized(f.prepared,f.bodies,Map.of(),()->{},authority))
+                    .hasMessageContaining("injected delivery authority failure");
+            assertThat(delivered.get()).isEqualTo(1);
+            assertThat(puts.get()).isEqualTo(2);
+            assertThat(budget.reservedBytes()).isZero();
+            var replay=coordinator.stage(ADMIN,f.owner,f.prepared,f.bodies,Map.of(),()->{});
+            assertThat(replay.members()).allSatisfy(member->assertThat(member.attempt().state()).isEqualTo("VERIFIED"));
+            assertThat(puts.get()).isEqualTo(2);
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void exactVerifiedInitialRetryDoesNotWriteProviderAgain() throws Exception {
         var f = fixture(2, LEASE);
         var puts = new java.util.concurrent.atomic.AtomicInteger();
@@ -268,14 +318,16 @@ class DocumentUploadCoordinatorIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"success", "cancel", "owner", "cleanup"})
-    void ownedPreparationTransfersOnlyAfterPostChecksAndDraining(String outcome) throws Exception {
+    @org.junit.jupiter.params.provider.CsvSource({"success,false", "cancel,false", "owner,false", "cleanup,false",
+            "success,true", "cancel,true", "owner,true", "cleanup,true", "delivery,true"})
+    void ownedPreparationTransfersOnlyAfterPostChecksAndDraining(String outcome, boolean explicitAuthority) throws Exception {
         var f = fixture(1, LEASE);
         var budget = new PayloadBudget(1024 * 1024);
         var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
         var closes = new java.util.concurrent.atomic.AtomicInteger();
         var cancelledFailure = new java.util.concurrent.CancellationException("cancel after owned preparation");
         var cleanupFailure = new java.io.IOException("candidate cleanup failed");
+        var deliveryFailure = new IllegalStateException("injected delivery denial after preparation");
         Runnable control = () -> { if (cancelled.get()) throw cancelledFailure; };
         DocumentUploadCoordinator.Preparation<AutoCloseable> preparation = (staged, bytes, active) -> {
             assertThat(bytes.keys()).hasSize(1);
@@ -299,16 +351,48 @@ class DocumentUploadCoordinatorIT {
             }
         };
         try (var coordinator = coordinator(opened.store(), budget, Duration.ofMillis(25))) {
+            var authority = new DocumentUploadAuthority() {
+                public DocumentOperationUploadAdmission.Admission admit() {
+                    return admission.admitOrReuseVerified(ADMIN, f.owner, f.prepared);
+                }
+                public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal = selections.isEmpty() ? null : DocumentSelectedAttemptLedger.prepareRenewal(selections, LEASE);
+                    tx.inTransaction(em -> { DocumentSelectedAttemptLedger.renewOwnerAndSelections(em, f.owner, renewal, LEASE); });
+                }
+                public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                    var renewal = DocumentSelectedAttemptLedger.prepareRenewal(selections, LEASE);
+                    return tx.inTransaction(em -> { return DocumentSelectedAttemptLedger.renew(em, f.owner, renewal); });
+                }
+                public void verify(DocumentSelectedAttemptLedger.Selected selection, List<DocumentSelectedAttemptLedger.Observation> rows) {
+                    var encoded = DocumentSelectedAttemptLedger.prepareVerification(rows);
+                    tx.inTransaction(em -> { DocumentSelectedAttemptLedger.verifyBatch(em, f.owner, selection, encoded); });
+                }
+                public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections, Runnable active) {
+                    active.run();
+                    tx.inTransaction(em -> {
+                        RepositoryOperationLedger.fenceLiveOwner(em, f.owner);
+                        DocumentOperationUploadAdmission.requireInitialSelections(em, f.owner, f.prepared);
+                    });
+                    active.run();
+                }
+                public void afterDrain() {
+                    assertThat(coordinator.providerActivity().active()).isZero();
+                    control.run();
+                    if (outcome.equals("delivery")) throw deliveryFailure;
+                }
+            };
+            java.util.function.Supplier<AutoCloseable> run = () -> explicitAuthority
+                    ? coordinator.stageAndPrepareAuthorizedOwned(f.prepared, f.bodies, Map.of(), control, authority, preparation)
+                    : coordinator.stageAndPrepareOwned(ADMIN, f.owner, f.prepared, f.bodies, Map.of(), control, preparation);
             if (outcome.equals("success")) {
-                try (var candidate = coordinator.stageAndPrepareOwned(ADMIN, f.owner, f.prepared, f.bodies,
-                        Map.of(), control, preparation)) {
+                try (var candidate = run.get()) {
                     assertThat(closes).hasValue(0);
                     assertThat(budget.reservedBytes()).isEqualTo(19); // All upload workers/views have drained.
                 }
             } else {
-                var caught = catchThrowable(() -> coordinator.stageAndPrepareOwned(ADMIN, f.owner, f.prepared,
-                        f.bodies, Map.of(), control, preparation));
+                var caught = catchThrowable(run::get);
                 if (outcome.equals("owner")) assertThat(caught).isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+                else if (outcome.equals("delivery")) assertThat(caught).isSameAs(deliveryFailure);
                 else assertThat(caught).isSameAs(cancelledFailure);
                 if (outcome.equals("cleanup")) assertThat(caught.getSuppressed()).containsExactly(cleanupFailure);
                 else assertThat(caught.getSuppressed()).isEmpty();
@@ -960,7 +1044,8 @@ class DocumentUploadCoordinatorIT {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "invalid-inputs", "wrong-operation", "wrong-owner", "lifecycle", "lifecycle-cancel"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"read", "cancel", "inputs", "inputs-close", "invalid-inputs",
+            "invalid-inputs-close", "wrong-operation", "wrong-owner", "lifecycle", "lifecycle-cancel"})
     void protectedRetainedReadsKeepPinsUntilBatchesAndActualWorkersEnd(String mode) throws Exception {
         boolean cancel = mode.equals("cancel") || mode.equals("lifecycle-cancel");
         boolean managedLifecycle = mode.startsWith("lifecycle");
@@ -1034,7 +1119,7 @@ class DocumentUploadCoordinatorIT {
                 2, 1024 * 1024, budget)) {
             DocumentRetainedReader retainedReader = reader;
             var lifecycle = new DocumentReadLifecycle(ledger, reader, 2);
-            if (mode.equals("inputs") || mode.equals("invalid-inputs") || mode.startsWith("wrong-")) {
+            if (mode.startsWith("inputs") || mode.startsWith("invalid-inputs") || mode.startsWith("wrong-")) {
                 var uploadBudget = new PayloadBudget(1024 * 1024);
                 var snapshotBudget = new PayloadBudget(1024 * 1024);
                 var bodies = Map.of(new DocumentUploadPayloads.Key("member", 0),
@@ -1055,18 +1140,32 @@ class DocumentUploadCoordinatorIT {
                                 fail("mismatched operation or owner returned inputs");
                             }
                         }).hasMessageContaining("differs from publication command or owner");
-                    } else if (mode.equals("invalid-inputs")) {
+                    } else if (mode.startsWith("invalid-inputs") || mode.equals("inputs-close")) {
                         // Corrupt only the returned batch shape after real provider reads.
+                        var closeFailure = new IllegalStateException("injected retained batch close failure");
                         DocumentRetainedReader wrongCount = (pinned, id, control) -> {
                             var actual = retainedReader.readRetained(pinned, id, control);
                             return new DocumentRetainedReader.Batch() {
-                                @Override public List<PartObject> parts() { return actual.parts().subList(0, 1); }
-                                @Override public void close() { actual.close(); }
+                                @Override public List<PartObject> parts() {
+                                    return mode.equals("inputs-close") ? actual.parts() : actual.parts().subList(0, 1);
+                                }
+                                @Override public void close() {
+                                    actual.close();
+                                    if (mode.endsWith("-close")) throw closeFailure;
+                                }
                             };
                         };
-                        assertThatThrownBy(() -> DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
-                                wrongCount, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
-                                .hasMessageContaining("wrong part count");
+                        var failure = catchThrowable(() -> {
+                            try (var inputs = DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
+                                    wrongCount, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                                assertThat(inputs.fragments().get("member")).containsOnlyKeys(0, 1, 3);
+                            }
+                        });
+                        if (mode.equals("inputs-close")) assertThat(failure).isSameAs(closeFailure);
+                        else {
+                            assertThat(failure).hasMessageContaining("wrong part count");
+                            if (mode.endsWith("-close")) assertThat(failure.getSuppressed()).containsExactly(closeFailure);
+                        }
                     } else {
                         try (var inputs = DocumentPublicationInputs.capture(command, owner, view, protectedPlan,
                                 retainedReader, ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);

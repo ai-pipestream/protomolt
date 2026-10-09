@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.spi.*;
 import java.util.*;
 
@@ -23,11 +24,25 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     private final DocumentHistoricalSuccessorBinding successor;
     private final Object assessmentIdentity = new Object();
     private DocumentAssessmentStartJournal.Started acknowledgedStart;
+    private record AttemptedStart(UUID assessment, java.time.Duration retention) {}
+    private AttemptedStart attemptedStart;
+    private boolean startAttempted;
+    private DocumentAssessmentStartJournal.Started observedStart;
     private boolean assessmentCreateAttempted;
     private AttemptedCreate attemptedCreate;
     private boolean publicationAttempted;
     private boolean closed;
     private boolean successorAttachmentVerified;
+
+    /** Local routing facts only; none replace current authority or durable receipt checks. */
+    record Progress(boolean closed, boolean startAttempted, Optional<DocumentAssessmentStartJournal.Started> observedStart,
+            Optional<DocumentAssessmentStartJournal.Started> acknowledgedStart,
+            boolean createAttempted, boolean publicationAttempted) {}
+
+    synchronized Progress progress() {
+        return new Progress(closed, startAttempted, Optional.ofNullable(observedStart), Optional.ofNullable(acknowledgedStart),
+                assessmentCreateAttempted, publicationAttempted);
+    }
 
     /** Exact original proposal, retained even when CREATE's transaction reply is lost. */
     private record AttemptedCreate(DocumentAssessmentCreation.Created stage,
@@ -56,6 +71,15 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             Map<String, DocumentPublicationCandidate.Mode> modes, DriveLedger drives, RepositoryReadControl control,
             DocumentPublicationScopeCalls.Call registration) {
+        return open(tx, budget, access, record, sources, capture, caller, owner, modes, drives, control, registration, null);
+    }
+
+    static DocumentHistoricalExecution open(Tx tx, PayloadBudget budget,
+            DocumentPublicationRegistration.JournalAccess access, DocumentPublicationPreparationRecord record,
+            DocumentHistoricalAssessmentSources sources, DocumentPreparationCaptureDrain.Capture capture,
+            RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
+            Map<String, DocumentPublicationCandidate.Mode> modes, DriveLedger drives, RepositoryReadControl control,
+            DocumentPublicationScopeCalls.Call registration, DocumentHistoricalAssessmentSources.Work accepted) {
         Objects.requireNonNull(capture); Objects.requireNonNull(control).check();
         access.requireOwner(caller, owner, record.command(), control);
         if (record.predecessorGeneration() != 0 || owner.generation() != 1)
@@ -66,9 +90,10 @@ final class DocumentHistoricalExecution implements AutoCloseable {
                 || !identity.owner().commandSha256().equals(record.command().sha256())
                 || identity.owner().epoch() != claim.epoch() || !identity.owner().token().equals(claim.token()))
             throw new IllegalArgumentException("Historical execution capture differs from registered owner");
-        var work = sources.work();
+        var work = accepted == null ? sources.work() : accepted.fork();
         PayloadBudget.Lease retained = null;
         try {
+            work.histories(sources);
             work.requireCaller(caller); work.authorize(control);
             retained = budget.reserve(DocumentPreparationSourcePins.MAX_BYTES + DocumentPublicationModesJournal.MAX_BYTES);
             var references = work.references(record.command(), control::check);
@@ -154,14 +179,26 @@ final class DocumentHistoricalExecution implements AutoCloseable {
     /** Synchronous accepted operation; close cannot release either lifetime while SQL is running. */
     synchronized DocumentAssessmentStartJournal.Started start(RepositoryCaller caller, java.time.Duration retention,
             RepositoryReadControl control) {
-        var result = mutate(caller, control, em -> successor == null
-                ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), retention, control)
-                : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), retention, control));
-        // Only a positively acknowledged INSERT grants this handle CREATE authority.
-        // Loading coordinates after an uncertain acknowledgement is reconciliation-only.
-        if (result.inserted()) acknowledgedStart = result.started();
-        else if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
+        var result = mutate(caller, control, em -> {
+            Objects.requireNonNull(retention);
+            if (retention.isNegative() || retention.isZero() || retention.compareTo(java.time.Duration.ofDays(1)) > 0
+                    || retention.getNano() % 1000 != 0)
+                throw new IllegalArgumentException("Retention requires exact microseconds within one day");
+            if (attemptedStart == null) attemptedStart = new AttemptedStart(UUID.randomUUID(), retention);
+            else if (!attemptedStart.retention().equals(retention))
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Historical assessment retention differs from its start");
+            startAttempted = true;
+            return successor == null
+                    ? DocumentAssessmentStartJournal.startOrLoadHistoricalOwned(em, owner, record.command(), attemptedStart.assessment(), retention, control)
+                    : DocumentAssessmentStartJournal.startOrLoadHistoricalBound(em, owner, record.command(), attemptedStart.assessment(), retention, control);
+        });
+        // A retained private proposal can reconcile this handle's lost INSERT reply.
+        // mutate has rechecked all current fences and authorized delivery after commit.
+        if (acknowledgedStart != null && !acknowledgedStart.equals(result.started()))
             throw new RepositoryException(RepositoryException.Code.DATA_LOSS, "Historical assessment start changed");
+        if (attemptedStart.assessment().equals(result.started().assessment())) acknowledgedStart = result.started();
+        observedStart = result.started();
         return result.started();
     }
 
@@ -176,6 +213,92 @@ final class DocumentHistoricalExecution implements AutoCloseable {
         }
     }
 
+    /** Transfer owns a separate execution lifetime; callbacks do not acquire the parent monitor. */
+    DocumentUploadCoordinator.Staged stageUploads(RepositoryCaller caller, DocumentUploadCoordinator coordinator,
+            Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies,
+            Map<String, String> attributes, RepositoryReadControl control) {
+        try (var child = forkTransfer(caller, control, coordinator.boundedAuthority(tx))) {
+            return coordinator.stageAuthorized(prepared, bodies, attributes, control::check, child.uploadAuthority(caller, control));
+        }
+    }
+
+    private synchronized DocumentHistoricalExecution forkTransfer(RepositoryCaller caller, RepositoryReadControl control, Tx bounded) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller); work.authorize(control);
+        var cleanup = new ArrayList<AutoCloseable>();
+        try {
+            var bytes = budget.reserve(retained.bytes()); cleanup.add(bytes);
+            var source = work.fork(); cleanup.add(source);
+            var scope = registration.forkAccepted(); cleanup.add(scope);
+            var child = new DocumentHistoricalExecution(source, bytes, owner, prepared, modes, pins, scope,
+                    bounded, budget, drives, record, capture, preparationDigest, successor);
+            child.successorAttachmentVerified = successorAttachmentVerified;
+            return child;
+        } catch (RuntimeException | Error failure) {
+            try { DocumentHistoricalAssessmentSources.closeAll(cleanup); }
+            catch (RuntimeException | Error failed) { if (failed != failure) failure.addSuppressed(failed); }
+            throw failure;
+        }
+    }
+
+    DocumentHistoricalPublicationPreparation.Prepared stageAndPrepareAssessment(RepositoryCaller caller,
+            DocumentUploadCoordinator coordinator, Map<DocumentUploadPayloads.Key, ai.protomolt.proto.repo.codec.PartObject> bodies,
+            Map<String, String> attributes, DocumentReadLedger reads, DocumentRetainedReader ordinaryReader,
+            DocumentSchemaPolicies.Selection policy,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver, DocumentRevisionAssembly.Limits limits,
+            java.time.Instant evaluatedAt, DocumentHistoricalAssessmentSources sources,
+            DocumentHistoricalRetainedReader historicalReader, RepositoryReadControl control)
+            throws com.google.protobuf.InvalidProtocolBufferException {
+        DocumentHistoricalPublicationPreparation.Prepared result = null;
+        try (var child = forkTransfer(caller, control, coordinator.boundedAuthority(tx))) {
+            result = DocumentHistoricalPublicationPreparation.prepare(caller, owner, prepared,
+                    new DocumentOperationUploadAdmission(child.tx, drives), reads, ordinaryReader, coordinator,
+                    child.uploadAuthority(caller, control), bodies, attributes,
+                    (ordinary, active) -> prepareAssessmentFromReader(caller, policy, ordinary, container, resolver,
+                            limits, evaluatedAt, sources, historicalReader, active), control);
+        } catch (RuntimeException | Error failure) {
+            if (result != null) {
+                try { result.close(); }
+                catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+        return result;
+    }
+
+    private DocumentUploadAuthority uploadAuthority(RepositoryCaller caller, RepositoryReadControl control) {
+        return new DocumentUploadAuthority() {
+            public DocumentOperationUploadAdmission.Admission admit() { return admitUploads(caller, control); }
+            public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                var renewal = selections.isEmpty() ? null : DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                mutate(caller, control, em -> {
+                    DocumentSelectedAttemptLedger.renewOwnerAndSelections(em, owner, renewal, prepared.lease());
+                    return null;
+                });
+            }
+            public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                var renewal = DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                return mutate(caller, control, em -> DocumentSelectedAttemptLedger.renew(em, owner, renewal));
+            }
+            public void verify(DocumentSelectedAttemptLedger.Selected selection, List<DocumentSelectedAttemptLedger.Observation> observations) {
+                var verification = DocumentSelectedAttemptLedger.prepareVerification(observations);
+                mutate(caller, control, em -> DocumentSelectedAttemptLedger.verifyBatch(em, owner, selection, verification));
+            }
+            public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections, Runnable active) {
+                var renewal = selections.isEmpty() ? null : DocumentSelectedAttemptLedger.prepareRenewal(selections, prepared.lease());
+                mutate(caller, control, em -> {
+                    active.run();
+                    DocumentOperationUploadAdmission.requireInitialSelections(em, owner, prepared);
+                    DocumentSelectedAttemptLedger.renewOwnerAndSelections(em, owner, renewal, prepared.lease());
+                    active.run();
+                    return null;
+                });
+            }
+            public void afterDrain() { mutate(caller, control, em -> null); }
+        };
+    }
+
     /** Owns a child of this exact source/registration scope through all assessment work and cleanup. */
     synchronized DocumentPublicationAssessment.Historical prepareAssessment(RepositoryCaller caller,
             DocumentSchemaPolicies.Selection policy,
@@ -184,10 +307,36 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             DocumentPublicationCandidate.Resolver resolver,
             ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
             RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        return prepareAssessment(caller, policy, fragments, container, resolver, limits, evaluatedAt, control, null, null);
+    }
+
+    synchronized DocumentPublicationAssessment.Historical prepareAssessmentFromReader(RepositoryCaller caller,
+            DocumentSchemaPolicies.Selection policy,
+            Map<String, Map<Integer, com.google.protobuf.ByteString>> ordinary,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver,
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
+            DocumentHistoricalAssessmentSources sources, DocumentHistoricalRetainedReader reader,
+            RepositoryReadControl control) throws com.google.protobuf.InvalidProtocolBufferException {
+        return prepareAssessment(caller, policy, ordinary, container, resolver, limits, evaluatedAt, control,
+                java.util.Objects.requireNonNull(sources), java.util.Objects.requireNonNull(reader));
+    }
+
+    private DocumentPublicationAssessment.Historical prepareAssessment(RepositoryCaller caller,
+            DocumentSchemaPolicies.Selection policy,
+            Map<String, Map<Integer, com.google.protobuf.ByteString>> fragments,
+            Optional<ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> container,
+            DocumentPublicationCandidate.Resolver resolver,
+            ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits limits, java.time.Instant evaluatedAt,
+            RepositoryReadControl control, DocumentHistoricalAssessmentSources sources, DocumentHistoricalRetainedReader reader)
+            throws com.google.protobuf.InvalidProtocolBufferException {
         mutate(caller, control, em -> null);
         var child = registration.forkAccepted();
-        var assessment = DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
-                fragments, container, resolver, budget, limits, evaluatedAt, work, child, assessmentIdentity, control);
+        var assessment = reader == null
+                ? DocumentPublicationAssessment.prepareHistoricalAccepted(record.command(), policy, modes,
+                    fragments, container, resolver, budget, limits, evaluatedAt, work, child, assessmentIdentity, control)
+                : DocumentPublicationAssessment.prepareHistoricalFromReaderAccepted(record.command(), policy, modes,
+                    fragments, container, resolver, budget, limits, evaluatedAt, sources, reader, work, child, assessmentIdentity, control);
         try {
             // Resolution can outlast credential, claim or source changes; authorize findings at delivery.
             mutate(caller, control, em -> null);
@@ -315,6 +464,51 @@ final class DocumentHistoricalExecution implements AutoCloseable {
             return publication.commitHistoricalOwned(caller, owner, prepared, candidate.opaque(), selected,
                     candidate.schemas(), observedControl, references, fence);
         });
+    }
+
+    /** Constructed only by a synchronized operation on its live execution handle. */
+    final class RejectionFence {
+        private final PublicationFence stage;
+        private RejectionFence(PublicationFence stage) { this.stage = stage; }
+        void requireBinding(RepositoryOperationLedger.Owner expectedOwner,
+                DocumentPublicationCommand command, DocumentAssessmentCreation.Created expectedStage) {
+            if (!owner.equals(expectedOwner) || !record.command().canonical().equals(command.canonical())
+                    || !stage.stage.equals(expectedStage)) throw new IllegalArgumentException("Historical rejection binding differs");
+        }
+        void lockRegistration(jakarta.persistence.EntityManager em) { stage.lockRegistration(em); }
+        void verifyEvidence(jakarta.persistence.EntityManager em) {
+            DocumentPublicationModesJournal.requireBoundModes(em, owner.key(), record.command(), owner.generation(), encodedModes);
+            stage.verifyStage(em);
+            stage.verifyCapture(em);
+            stage.requireLiveStage(em);
+        }
+    }
+
+    /** Revalidate exact retained evidence; a validation exception alone is never a rejection decision. */
+    synchronized DocumentPublicationReplay.Observation rejectAssessment(RepositoryCaller caller,
+            Map<String, DocumentSelectedAttemptLedger.Selected> selections, DocumentAssessmentCreation.Created stage,
+            DocumentReadLedger reads, DocumentAssessmentReader reader, DocumentRevisionAssembly.Limits limits,
+            DocumentAssessmentRuntimeObserver.Observation observation, java.time.Duration minimumRemaining,
+            RepositoryReadControl control) {
+        if (closed) throw new IllegalStateException("Historical execution is closed");
+        work.requireCaller(caller);
+        if (attemptedCreate == null || !attemptedCreate.stage().equals(stage)
+                || !attemptedCreate.selections().equals(Map.copyOf(selections)))
+            throw new IllegalArgumentException("Historical rejection differs from original CREATE");
+        var terminal = new DocumentPublicationReplay(tx).observe(caller, record.command());
+        control.check();
+        if (terminal.state() == DocumentPublicationReplay.State.COMMITTED
+                || terminal.state() == DocumentPublicationReplay.State.TERMINATED) return terminal;
+        work.authorize(control);
+        var fence = new RejectionFence(new PublicationFence(caller, selections, stage, control));
+        try (var capture = reads.captureAssessment(caller, owner, record.command(),
+                DocumentAssessmentRetainedSlots.uploadSelections(selections), stage.assessment(), stage.manifestSha256(),
+                stage.retainUntil(), budget, control::check);
+             var verified = DocumentAssessmentReplay.verify(capture, reader, budget, limits, observation, control)) {
+            work.authorize(control);
+            return new DocumentAssessmentRejections(tx, minimumRemaining).decideHistorical(
+                    caller, owner, record.command(), verified, control, fence);
+        }
     }
 
     /** Constructed only by a synchronized operation on its live execution handle. */

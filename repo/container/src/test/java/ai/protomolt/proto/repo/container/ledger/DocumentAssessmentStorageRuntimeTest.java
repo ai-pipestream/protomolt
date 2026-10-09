@@ -6,8 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
@@ -25,6 +23,56 @@ class DocumentAssessmentStorageRuntimeTest {
     private static final int HOST_DIAGNOSTIC_TAIL_BYTES = 64 * 1024;
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
 
+    @Test void boundedPublicHostBinding() throws Exception {
+        boundedPublicHostBinding("BoundedDocumentPublicFactoryProbe", "BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK", "BOUNDED_PUBLIC_CONSUMER_RPC_OK",
+                "BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
+    }
+
+    @Test void managedHistoricalHostBinding() throws Exception {
+        boundedPublicHostBinding("ManagedHistoricalHostProbe", "MANAGED_HISTORICAL_ENABLED_LIBRARY_OK", "MANAGED_HISTORICAL_ENABLED_RPC_OK",
+                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK", "MANAGED_HISTORICAL_DISABLED_RPC_OK",
+                "MANAGED_HISTORICAL_UNAVAILABLE_LIBRARY_OK", "MANAGED_HISTORICAL_UNAVAILABLE_RPC_OK");
+    }
+
+    @Test void managedHistoricalShutdown() throws Exception {
+        boundedPublicHostBinding("ManagedHistoricalShutdownProbe", "MANAGED_HISTORICAL_HELD_PUT_LIBRARY_OK",
+                "MANAGED_HISTORICAL_HELD_PUT_RPC_OK", "MANAGED_HISTORICAL_HELD_GET_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_GET_RPC_OK",
+                "MANAGED_HISTORICAL_HELD_SCHEMA_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_SCHEMA_RPC_OK");
+    }
+
+    private void boundedPublicHostBinding(String probe, String... markers) throws Exception {
+        var compiled = StorageRuntimeProbeCompiler.compile(directory);
+        try (var postgres = new PostgreSQLContainer("postgres:18-alpine");
+             var redis = new org.testcontainers.containers.GenericContainer<>("redis:7-alpine")
+                     .withCommand("redis-server", "--appendonly", "yes", "--appendfsync", "always", "--maxmemory-policy", "noeviction")
+                     .withExposedPorts(6379)) {
+            postgres.start(); redis.start();
+            var log = directory.resolve("bounded-public-host.log");
+            var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    compiled.classpath() + java.io.File.pathSeparator + compiled.probe(),
+                    "ai.protomolt.proto.repo.service." + probe, compiled.bundle().toString());
+            builder.environment().put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl());
+            builder.environment().put("PROTOMOLT_TEST_USER", postgres.getUsername());
+            builder.environment().put("PROTOMOLT_TEST_PASSWORD", postgres.getPassword());
+            builder.environment().put("PROTOMOLT_TEST_REDIS_URI", "redis://" + redis.getHost() + ":" + redis.getMappedPort(6379));
+            var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+            try {
+                assertThat(process.waitFor(90, TimeUnit.SECONDS)).as("Bounded public host completed; log: %s", log).isTrue();
+                assertThat(Files.size(log)).isLessThan(1_048_576);
+                String result = Files.readString(log);
+                assertThat(process.exitValue()).as(result).isZero();
+                assertThat(result).contains(markers);
+                System.out.println(result);
+            } finally {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    assertThat(process.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
+        }
+    }
+
     @Test void hostTimeoutDiagnosticIsBoundedAndRedactsFixtureSecrets() throws Exception {
         var source = directory.resolve("synthetic-host.log");
         var diagnostic = directory.resolve("repository-host-diagnostics/observed-sql-host-timeout.log");
@@ -41,48 +89,10 @@ class DocumentAssessmentStorageRuntimeTest {
     }
 
     @Test void observedAssessmentAndSqlRunTogetherOnProductionJars() throws Exception {
-        String bundleProperty = System.getProperty("protomolt.test.admissionRuntimeBundle");
-        String hostProperty = System.getProperty("protomolt.test.storageHostClasspath");
-        assertThat(bundleProperty).as("Run :protomolt-repo-container:admissionStorageTest").isNotBlank();
-        assertThat(hostProperty).isNotBlank();
-        var bundle = Path.of(bundleProperty);
-        var inventory = DocumentRuntimeInventory.read(bundle, () -> {});
-        var jars = new LinkedHashMap<String, Path>();
-        inventory.identities().forEach(artifact -> jars.put(artifact.getArtifactSha256(),
-                bundle.resolve("artifacts/" + artifact.getArtifactSha256() + ".jar")));
-        // The production host shares admission dependencies. Include each exact
-        // artifact once, by bytes; conflicting class providers still fail observation.
-        for (String entry : hostProperty.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
-            var path = Path.of(entry);
-            var identity = DocumentRuntimeArtifact.observe("storage-host", path,
-                    new DocumentRuntimeArtifact.Limits(Files.size(path), 65536, 64), () -> {});
-            jars.putIfAbsent(identity.getArtifactSha256(), path);
-        }
-        String classpath = String.join(java.io.File.pathSeparator, jars.values().stream().map(Path::toString).toList());
-        var classes = Files.createDirectory(directory.resolve("classes"));
-        var sources = new ArrayList<String>();
-        for (String name : List.of("BoundedDocumentPublicConsumer", "BoundedDocumentPublicFactoryProbe", "BoundedPublicationSchemaShutdownProbe", "BoundedPublicationRpcCancellationProbe", "BoundedPublicationShutdownProbe", "BoundedDocumentRejectionProbe", "BoundedDocumentDelayedWrite", "DocumentDelayedWriteRecoveryProbe", "BoundedDocumentReadGate", "DocumentCleanupRetryProbe", "DocumentCleanupRetentionProbe", "BoundedDocumentWriteFault", "BoundedDocumentRestartProbe", "BoundedDocumentHostProbe", "FencedSchemaWorkerProbe", "JournaledSuccessorPublicationProbe", "ManagedJournaledDrainProbe", "ObservedAssessmentProbe", "AssessmentCreationProbe", "AssessmentCaptureFaultProbe", "AssessmentProviderProbe", "AssessmentMixedReuseProbe", "AssessmentReplayInputsProbe", "AssessmentOperationReplayProbe", "AssessmentOperationReplayHost", "JournaledAssessmentProbe", "AssessmentRejectionProbe", "AssessmentStorageProbe", "AssessmentRestartProbe", "RejectedAssessmentRestartProbe", "RejectedAssessmentExpiryProbe", "RejectedAssessmentSourceProbe", "NativeAssessmentPreparationProbe", "PromotedAssessmentCommitProbe", "AssessmentStageFaultProbe", "NativeAssessmentExecutionProbe", "NativeAssessmentRestartProbe", "NativeAssessmentRuntimeProbe", "NativeSchemaRevisionProbe", "HistoricalAssessmentCreationProbe", "HistoricalCreateCommitFault", "HistoricalPublicationExpiryProbe", "HistoricalPublicationRevocationProbe", "HistoricalClaimedMixedPublicationProbe", "HistoricalConcurrentStartProbe", "HistoricalSuccessorCreateProbe", "HistoricalInstalledOwnerProbe", "HistoricalOwnerReconciliationHost", "HistoricalReconciliationExpiryProbe", "HistoricalCreateAuthorizationProbe", "HistoricalAuthorizationCommitGate", "HistoricalCreateWinnerProbe", "HistoricalMixedOriginContentionProbe", "HistoricalPublicationProbe", "HistoricalMixedPublicationProbe", "NativeHistoricalMaterializationProbe", "NativeHistoricalMaterializationTransportProbe", "NativeHistoricalMaterializationLifecycleProbe")) {
-            var source = directory.resolve(name + ".java");
-            try (var input = getClass().getResourceAsStream("/runtime-inventory/" + name + ".java")) {
-                assertThat(input).isNotNull(); Files.copy(input, source);
-            }
-            sources.add(source.toString());
-        }
-        var crashSource = directory.resolve("JournaledAssessmentCrashProbe.java");
-        try (var input = getClass().getResourceAsStream("/runtime-inventory/JournaledAssessmentCrashProbe.java")) {
-            assertThat(input).isNotNull(); Files.copy(input, crashSource);
-        }
-        sources.add(crashSource.toString());
-        var arguments = new ArrayList<>(List.of("-proc:none", "-classpath", classpath, "-d", classes.toString()));
-        arguments.addAll(sources);
-        assertThat(javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, arguments.toArray(String[]::new))).isZero();
-        var probe = directory.resolve("storage-probe.jar");
-        try (var output = new java.util.jar.JarOutputStream(Files.newOutputStream(probe)); var paths = Files.walk(classes)) {
-            for (var file : paths.filter(Files::isRegularFile).sorted().toList()) {
-                output.putNextEntry(new java.util.jar.JarEntry(classes.relativize(file).toString().replace(java.io.File.separatorChar, '/')));
-                Files.copy(file, output); output.closeEntry();
-            }
-        }
+        var compiled = StorageRuntimeProbeCompiler.compile(directory);
+        var bundle = compiled.bundle();
+        var classpath = compiled.classpath();
+        var probe = compiled.probe();
         final int redisPort;
         try (var reservation=new java.net.ServerSocket(0)) { redisPort=reservation.getLocalPort(); }
         // Docker can reassign an ephemeral published port on restart. Pin this fixture endpoint.
@@ -151,6 +161,37 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(replay.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
             }
+            // Native schema revisions and the historical creation cases take about a minute on their own,
+            // so they run in a separate host and database rather than inside the aggregate host's budget.
+            try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                 var statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE DATABASE native_schema_revision");
+            }
+            var schemaRevisionBuilder = new ProcessBuilder(
+                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    classpath + java.io.File.pathSeparator + probe,
+                    "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString(), "schema-revision");
+            schemaRevisionBuilder.environment().putAll(builder.environment());
+            String schemaRevisionJdbc = postgres.getJdbcUrl().replaceFirst(
+                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/native_schema_revision");
+            assertThat(schemaRevisionJdbc).isNotEqualTo(postgres.getJdbcUrl());
+            schemaRevisionBuilder.environment().put("PROTOMOLT_TEST_JDBC", schemaRevisionJdbc);
+            var schemaRevisionLog = directory.resolve("native-schema-revision.log");
+            var schemaRevision = schemaRevisionBuilder.redirectErrorStream(true).redirectOutput(schemaRevisionLog.toFile()).start();
+            final String schemaRevisionResult;
+            try {
+                assertThat(schemaRevision.waitFor(150, TimeUnit.SECONDS)).as("Schema revision host completed; log: %s", schemaRevisionLog).isTrue();
+                assertThat(Files.size(schemaRevisionLog)).isLessThan(1_048_576);
+                schemaRevisionResult = Files.readString(schemaRevisionLog);
+                assertThat(schemaRevision.exitValue()).as(schemaRevisionResult).isZero();
+                assertThat(schemaRevisionResult).contains("NATIVE_SCHEMA_REVISION_HOST_OK", "NATIVE_SCHEMA_METADATA_REVISIONS_OK");
+            } finally {
+                if (schemaRevision.isAlive()) {
+                    schemaRevision.destroyForcibly();
+                    assertThat(schemaRevision.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
             var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
             try {
                 // This host runs the aggregate provider, publication and crash-recovery probes.
@@ -177,10 +218,11 @@ class DocumentAssessmentStorageRuntimeTest {
                 }
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 // Preserve every existing marker assertion across both mandatory hosts.
-                String result = Files.readString(log) + "\n" + replayResult;
+                String result = Files.readString(log) + "\n" + replayResult + "\n" + schemaRevisionResult;
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK","BOUNDED_DOCUMENT_TYPED_REJECTION_OK","BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK","BOUNDED_PUBLICATION_RPC_CANCELLATION_OK","BOUNDED_PUBLICATION_SCHEMA_SHUTDOWN_OK","BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK","BOUNDED_PUBLIC_CONSUMER_RPC_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
+                assertThat(result).contains("BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
                 assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("RECOVERY_OPEN_TERMINAL_DISPOSAL_OK");
                 assertThat(result).contains("OBSERVED_ASSESSMENT_CREATION_OK", "CLOSED_SCOPE_ASSESSMENT_ACK_OK");
@@ -202,7 +244,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 assertThat(result).contains("HISTORICAL_CREATE_RECONCILED_OK", "HISTORICAL_CREATE_ROLLBACK_RECONCILED_OK",
                         "HISTORICAL_RECONCILIATION_MANIFEST_REFUSED_OK");
-                assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK", "HISTORICAL_ASSESSMENT_CREATE_OK", "HISTORICAL_ASSESSMENT_LOST_ACK_OK", "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK", "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK", "CLAIMED_HISTORICAL_MIXED_ORIGIN_CONTENTION_OK", "CLAIMED_HISTORICAL_STAGE_REVOCATION_OK", "CLAIMED_HISTORICAL_STAGE_WINS_OK", "CLAIMED_HISTORICAL_CREATE_WINS_OK", "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK", "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK", "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK", "CLAIMED_HISTORICAL_START_LOST_ACK_REFUSED_OK", "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK", "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK", "CLAIMED_HISTORICAL_SUCCESSOR_PUBLICATION_OK", "CLAIMED_HISTORICAL_OPAQUE_PUBLICATION_OK", "HISTORICAL_PUBLICATION_OK", "HISTORICAL_PUBLICATION_LOST_ACK_OK", "HISTORICAL_MIXED_UPLOAD_OK", "HISTORICAL_UNVERIFIED_UPLOAD_REFUSED_OK");
+                assertThat(result).contains("ASSESSMENT_MIXED_REUSE_OK", "HISTORICAL_ASSESSMENT_CREATE_OK", "HISTORICAL_ASSESSMENT_LOST_ACK_OK", "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK", "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK", "CLAIMED_HISTORICAL_MIXED_ORIGIN_CONTENTION_OK", "CLAIMED_HISTORICAL_STAGE_REVOCATION_OK", "CLAIMED_HISTORICAL_STAGE_WINS_OK", "CLAIMED_HISTORICAL_CREATE_WINS_OK", "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK", "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK", "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK", "CLAIMED_HISTORICAL_START_LOST_ACK_CREATE_OK", "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK", "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK", "CLAIMED_HISTORICAL_SUCCESSOR_PUBLICATION_OK", "CLAIMED_HISTORICAL_OPAQUE_PUBLICATION_OK", "HISTORICAL_PUBLICATION_OK", "HISTORICAL_PUBLICATION_LOST_ACK_OK", "HISTORICAL_MIXED_UPLOAD_OK", "HISTORICAL_UNVERIFIED_UPLOAD_REFUSED_OK");
                 assertThat(result).contains("HISTORICAL_MIXED_MEMBER_PROVIDER_OK", "HISTORICAL_MIXED_MEMBER_UNVERIFIED_REFUSED_OK");
                 assertThat(result).contains("SCOPED_NATIVE_ASSESSMENT_EXECUTION_OK");
                 assertThat(result).contains("ASSESSMENT_SOURCE_ADVANCED_OK");
@@ -332,37 +374,98 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry", "historical_takeover_first", "historical_initial_owner", "historical_initial_owner_rejections", "historical_cold_owner")) {
+                boolean coldOwner = databaseName.equals("historical_cold_owner");
+                boolean initialOwner = databaseName.equals("historical_initial_owner");
+                boolean initialOwnerRejections = databaseName.equals("historical_initial_owner_rejections");
+                boolean takeoverFirst = databaseName.equals("historical_takeover_first");
+                boolean claimExpiry = databaseName.equals("historical_claim_expiry");
+                boolean oldFirst = databaseName.equals("historical_commit_winner_old_first");
+                boolean commitWins = databaseName.equals("historical_commit_winner") || oldFirst;
+                boolean overlap = databaseName.equals("historical_generation_overlap");
+                boolean selfSupersession = databaseName.equals("historical_self_supersession");
+                try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                     var statement = connection.createStatement()) {
+                    statement.executeUpdate("CREATE DATABASE " + databaseName);
+                }
+                var reconciliationBuilder = new ProcessBuilder(
+                        Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                        "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                        classpath + java.io.File.pathSeparator + probe,
+                        "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
+                if (takeoverFirst) reconciliationBuilder.command().add("takeover-first");
+                if (initialOwner) reconciliationBuilder.command().add("initial-owner");
+                if (initialOwnerRejections) reconciliationBuilder.command().add("initial-owner-rejections");
+                if (coldOwner) reconciliationBuilder.command().add("cold-owner");
+                if (claimExpiry) reconciliationBuilder.command().add("claim-expires");
+                if (commitWins) reconciliationBuilder.command().add(oldFirst ? "commit-wins-old-first" : "commit-wins");
+                if (overlap) reconciliationBuilder.command().add("overlap");
+                if (selfSupersession) reconciliationBuilder.command().add("self-supersession");
+                reconciliationBuilder.environment().putAll(builder.environment());
+                String reconciliationJdbc = postgres.getJdbcUrl().replaceFirst(
+                        "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/" + databaseName);
+                assertThat(reconciliationJdbc).isNotEqualTo(postgres.getJdbcUrl());
+                reconciliationBuilder.environment().put("PROTOMOLT_TEST_JDBC", reconciliationJdbc);
+                var reconciliationLog = directory.resolve(databaseName.replace('_', '-') + ".log");
+                var reconciliation = reconciliationBuilder.redirectErrorStream(true).redirectOutput(reconciliationLog.toFile()).start();
+                try {
+                    assertThat(reconciliation.waitFor(90, TimeUnit.SECONDS)).as("Historical reconciliation host completed; log: %s", reconciliationLog).isTrue();
+                    assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
+                    String result = Files.readString(reconciliationLog);
+                    assertThat(reconciliation.exitValue()).as(result).isZero();
+                    if (initialOwner) {
+                        assertThat(result).contains("HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                                "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
+                    } else if (initialOwnerRejections) {
+                        assertThat(result).contains("HISTORICAL_INITIAL_OWNER_REJECTIONS_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                                "HISTORICAL_INITIAL_REJECTION_OK", "HISTORICAL_INITIAL_REJECTION_REPLY_LOST_OK",
+                                "HISTORICAL_REJECTION_BEATS_CANCELLATION_OK", "HISTORICAL_CANCELLATION_BEFORE_REJECTION_OK",
+                                "HISTORICAL_REJECTION_REPLAY_REVOKED_OK");
+                    } else if (coldOwner) {
+                        assertThat(result).contains("HISTORICAL_COLD_OWNER_HOST_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
+                                "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
+                    } else if (takeoverFirst) {
+                        assertThat(result).contains("HISTORICAL_TAKEOVER_FIRST_HOST_OK", "HISTORICAL_TAKEOVER_BEFORE_CLAIM_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
+                    } else if (claimExpiry) {
+                        assertThat(result).contains("HISTORICAL_CLAIM_EXPIRY_HOST_OK", "HISTORICAL_PRE_FINALIZATION_CLAIM_EXPIRY_OK", "HISTORICAL_POST_ROLLBACK_SUCCESSOR_PUBLICATION_OK");
+                    } else if (commitWins) {
+                        assertThat(result).contains("HISTORICAL_PUBLICATION_COMMIT_WINNER_HOST_OK",
+                                "HISTORICAL_POST_FINALIZATION_PUBLICATION_WINS_OK", "HISTORICAL_LOSING_LOCAL_SUCCESSOR_RETIRED_OK");
+                        assertThat(result).contains(oldFirst ? "HISTORICAL_LOSER_OLD_FIRST_OK" : "HISTORICAL_LOSER_NEW_FIRST_OK");
+                    } else if (overlap) {
+                        assertThat(result).contains("HISTORICAL_GENERATION_OVERLAP_HOST_OK",
+                                "SCOPED_HISTORICAL_GENERATION_OVERLAP_PUBLICATION_OK");
+                    } else if (selfSupersession) {
+                        assertThat(result).contains("HISTORICAL_SELF_SUPERSESSION_HOST_OK",
+                                "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_PUBLICATION_OK",
+                                "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
+                    } else {
+                        assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK", "HISTORICAL_RECONCILIATION_HOST_OK");
+                        assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
+                                "HISTORICAL_RECONCILIATION_RELEASED_OK");
+                    }
+                    if (!initialOwner && !initialOwnerRejections) {
+                        assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
+                        assertThat(result).contains((claimExpiry || takeoverFirst) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
+                    }
+                } finally {
+                    if (reconciliation.isAlive()) {
+                        reconciliation.destroyForcibly();
+                        assertThat(reconciliation.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                    }
+                }
+            }
+            for (String phase : List.of("initial", "reserved", "installed")) {
+            String coldDatabase = "historical_cold_restart_" + phase;
             try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
                  var statement = connection.createStatement()) {
-                statement.executeUpdate("CREATE DATABASE historical_reconciliation");
+                statement.executeUpdate("CREATE DATABASE " + coldDatabase);
             }
-            var reconciliationBuilder = new ProcessBuilder(
-                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
-                    classpath + java.io.File.pathSeparator + probe,
-                    "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
-            reconciliationBuilder.environment().putAll(builder.environment());
-            String reconciliationJdbc = postgres.getJdbcUrl().replaceFirst(
-                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/historical_reconciliation");
-            assertThat(reconciliationJdbc).isNotEqualTo(postgres.getJdbcUrl());
-            reconciliationBuilder.environment().put("PROTOMOLT_TEST_JDBC", reconciliationJdbc);
-            var reconciliationLog = directory.resolve("historical-reconciliation.log");
-            var reconciliation = reconciliationBuilder.redirectErrorStream(true).redirectOutput(reconciliationLog.toFile()).start();
-            try {
-                assertThat(reconciliation.waitFor(90, TimeUnit.SECONDS)).as("Historical reconciliation host completed; log: %s", reconciliationLog).isTrue();
-                assertThat(Files.size(reconciliationLog)).isLessThan(1_048_576);
-                String result = Files.readString(reconciliationLog);
-                assertThat(reconciliation.exitValue()).as(result).isZero();
-                assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_CREATE_RECONCILED_PUBLICATION_OK", "HISTORICAL_RECONCILIATION_HOST_OK");
-                assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
-                assertThat(result).contains("SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
-                assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
-                        "HISTORICAL_RECONCILIATION_RELEASED_OK");
-            } finally {
-                if (reconciliation.isAlive()) {
-                    reconciliation.destroyForcibly();
-                    assertThat(reconciliation.waitFor(10, TimeUnit.SECONDS)).isTrue();
-                }
+            var coldEnvironment = new java.util.HashMap<>(builder.environment());
+            coldEnvironment.put("PROTOMOLT_TEST_JDBC", postgres.getJdbcUrl().replaceFirst(
+                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/" + coldDatabase));
+            HistoricalColdRestartDriver.run(new StorageRuntimeProbeCompiler.Compiled(bundle, classpath, probe),
+                    coldEnvironment, directory.resolve("cold-restart-" + phase), phase);
             }
             }
         }

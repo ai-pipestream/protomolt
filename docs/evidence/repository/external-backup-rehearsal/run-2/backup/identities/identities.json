@@ -1,0 +1,500 @@
+{
+  "accounts": [
+    "rehearsal-alpha-61cddf1c",
+    "rehearsal-beta-61cddf1c"
+  ],
+  "generation": "rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b",
+  "realm": "rehearsal-realm",
+  "endpoint": "http://127.0.0.1:44867",
+  "artifacts": {
+    "type.test/protomolt.rehearsal.Record": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+    "type.test/protomolt.rehearsal.Attachment": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412"
+  },
+  "drives": {
+    "rehearsal-alpha-61cddf1c": {
+      "bucket": "rehearsal-alpha-61cddf1c",
+      "id": "88de9295-a326-336d-844c-986987993103",
+      "prefix": "rehearsal-pipeline"
+    },
+    "rehearsal-beta-61cddf1c": {
+      "bucket": "rehearsal-beta-61cddf1c",
+      "id": "b554c721-96cb-32c2-97d1-7cc762ab4b02",
+      "prefix": "rehearsal-pipeline"
+    }
+  },
+  "policies": {
+    "rehearsal-alpha-61cddf1c": "7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5",
+    "rehearsal-beta-61cddf1c": "21cc239fb48b9bbb98198b7027bb5b1d6d21f956c4062bbe8b859c957bd53228"
+  },
+  "revisions": [
+    {
+      "tag": "alpha-v1",
+      "account": "rehearsal-alpha-61cddf1c",
+      "revisionId": "130cff64-f95d-43bd-ab50-d60adacbd76d",
+      "mutationRevision": 1,
+      "operationId": "0e346558-94f3-48be-b76a-21ef85152b94",
+      "rawFragments": [
+        {
+          "revisionOrdinal": 0,
+          "size": 319,
+          "sha256": "6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4"
+        }
+      ],
+      "commandSha256Sha256": "0d2eadd5a7910898acd5210e47f98861426492fd92efb801b00c5b35b2e7a920",
+      "policySha256": "7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "fd9cfafa1c79e87edd360793a94b6b7fa52caff6d3836850293017f01966f558",
+      "manifestSha256": "22d4cee5b8461f768c55d3b900a3cf39d3271a9eb15301d9416e84bf50513b51",
+      "selections": [
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "d5523e04ea6bc44e3c611634240556d29692f6c1eaee7aab4515d48df93429ad",
+          "pathSha256": "af64909e33e58e54a1d335707c5a10ba587e65e8fcc9a737e679cdbf4f198a2a",
+          "steps": 1,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "alpha-v1"
+        },
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "d5523e04ea6bc44e3c611634240556d29692f6c1eaee7aab4515d48df93429ad",
+          "pathSha256": "23fa3d6e397d6dfb83e948707c768efdbdab9fdd925389cbe5a4c40f8da1fc6b",
+          "steps": 3,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-one"
+        }
+      ]
+    },
+    {
+      "tag": "alpha-v2",
+      "account": "rehearsal-alpha-61cddf1c",
+      "revisionId": "0867a6cf-eda7-403b-8910-160c1547bbf3",
+      "mutationRevision": 2,
+      "operationId": "55f489c9-db21-4cc3-9dc7-2ac90c832bca",
+      "rawFragments": [
+        {
+          "revisionOrdinal": 0,
+          "size": 326,
+          "sha256": "57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac"
+        }
+      ],
+      "commandSha256Sha256": "439d1799d68ae153e9a8c3880cc84d4831372b8585423be92692a0567de999f2",
+      "policySha256": "7e9e1fd9671fb3abd6838a08d44080c654d7eb67281c0c938e1160b75af9ccd5",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "e40d92b5bae1b251b9c5c2158eec49b94d24f56b2281963b47f24c6c025c161e",
+      "manifestSha256": "7d90e75599f2e0d2cba17b88778464b4b6a25a1fe66e46ba78284514ffbed14f",
+      "selections": [
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "aae27965b501f63b979b9063e4186f242ab9c5cd1203cd0215459d1dc516e1a0",
+          "pathSha256": "c0e6d34c14b329c1a5f92b1db1223b87c74f7dc2f7ba8d195ddcc9d379a0d071",
+          "steps": 1,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "alpha-v2"
+        },
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "aae27965b501f63b979b9063e4186f242ab9c5cd1203cd0215459d1dc516e1a0",
+          "pathSha256": "714622e9f974061189c6c1a033170ee0639b0612d8b19d37fe029a8ac15671b3",
+          "steps": 3,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-two"
+        }
+      ]
+    },
+    {
+      "tag": "beta-v1",
+      "account": "rehearsal-beta-61cddf1c",
+      "revisionId": "47526413-a77d-4c94-8248-7a093fd3f35e",
+      "mutationRevision": 3,
+      "operationId": "242504a5-9854-428f-baf9-ffafaf7e8704",
+      "rawFragments": [
+        {
+          "revisionOrdinal": 0,
+          "size": 291,
+          "sha256": "203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685"
+        }
+      ],
+      "commandSha256Sha256": "1b5f555b3120bbd3536f6fd5c51b8fe48d5370936cad39b90e531c0196cc1083",
+      "policySha256": "21cc239fb48b9bbb98198b7027bb5b1d6d21f956c4062bbe8b859c957bd53228",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "1b37a5723ff3b84ea075e940d867b9eecc8735e0dbcc406a40aa808bb757236e",
+      "manifestSha256": "f9c9f7c2d5ccae63d5c800c7b68f5af1e37050c28c162f9831bd34558af1552a",
+      "selections": [
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "372e4e29753e3f52544aedf13483367d2735cda2a712153348d519f301360963",
+          "pathSha256": "416cabaea73835d7b8cc5737e91af23af3431ccca667c72fef85f8681b8281a7",
+          "steps": 1,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "beta-v1"
+        },
+        {
+          "revisionOrdinal": 0,
+          "rootSha256": "372e4e29753e3f52544aedf13483367d2735cda2a712153348d519f301360963",
+          "pathSha256": "813716374301bee387d76a32302cc32d288cca8021cb78f92f30b4f879aa3221",
+          "steps": 3,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-beta"
+        }
+      ]
+    }
+  ],
+  "pending": {
+    "operationId": "198dda1d-e136-4195-910b-c3f57e47879a",
+    "principal": "operator",
+    "account": "rehearsal-alpha-61cddf1c",
+    "commandSha256": "77ca32dcc743ccabf778d068fd02f07b7abc907ccb3b31e5834d5c5b99c7e6df",
+    "coverage": {
+      "repository_publication_preparations": [
+        0,
+        1,
+        2
+      ],
+      "repository_preparation_coverage_certificates": [
+        0
+      ],
+      "repository_preparation_coverage_unresolved": [
+        2
+      ],
+      "repository_preparation_coverage_lineage": [
+        1
+      ],
+      "repository_successor_installs": [
+        1,
+        2
+      ],
+      "repository_successor_executions": [],
+      "repository_preparation_history_sets": [
+        0
+      ],
+      "repository_operation_success": [],
+      "repository_execution_claims": [
+        3
+      ],
+      "lineageRows": [
+        {
+          "generation": 1,
+          "anchorGeneration": 0,
+          "depth": 1,
+          "rootCount": 0,
+          "preparationSha256": "2f2e2c1b563f42efecc29b12ec8e64feaba5f328d254c67f57abd285caf273bf",
+          "anchorSha256": "2ba4f0e3905fe7b0614f245410cecb2bdf7113edc1fd0ca57e74f27f4e3313c7"
+        }
+      ],
+      "certificateRows": [
+        {
+          "generation": 0,
+          "proofKind": "LIVE_ROOTS",
+          "rootCount": 0,
+          "preparationSha256": "2ba4f0e3905fe7b0614f245410cecb2bdf7113edc1fd0ca57e74f27f4e3313c7",
+          "commandSha256": "77ca32dcc743ccabf778d068fd02f07b7abc907ccb3b31e5834d5c5b99c7e6df",
+          "rootsSha256": "149e1437ea8ce8988c7120b6e5f61b2bd0d492807721eb068dd0dd962f4ee161"
+        }
+      ],
+      "installRows": [
+        {
+          "generation": 1,
+          "successorEpoch": 2,
+          "installXid": "1080",
+          "preparationSha256": "2f2e2c1b563f42efecc29b12ec8e64feaba5f328d254c67f57abd285caf273bf",
+          "predecessorPreparationSha256": "2ba4f0e3905fe7b0614f245410cecb2bdf7113edc1fd0ca57e74f27f4e3313c7"
+        },
+        {
+          "generation": 2,
+          "successorEpoch": 3,
+          "installXid": "1083",
+          "preparationSha256": "6864b545ab3fe92b5a06bb7be0f80f0c34dd3a080c3a03598daa0885ecc7442f",
+          "predecessorPreparationSha256": "2f2e2c1b563f42efecc29b12ec8e64feaba5f328d254c67f57abd285caf273bf"
+        }
+      ]
+    }
+  },
+  "documentObjects": [
+    {
+      "revisionId": "130cff64-f95d-43bd-ab50-d60adacbd76d",
+      "revisionOrdinal": 0,
+      "part": 1,
+      "subKey": "",
+      "objectId": "428dc050-b6db-4d2d-bba6-668381bcb825",
+      "generation": "rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-alpha-61cddf1c",
+      "key": "rehearsal-pipeline/documents/rehearsal-alpha-61cddf1c/108524ce-4c53-309f-b56b-c7eab90ce620/attempts/c57ee2ee-f9ac-47bf-9c33-b1a22c5bb37a/part-0",
+      "providerVersion": "312f4c08-171e-41c6-9417-5baab68a1019",
+      "etag": "\"0792a809b1187fe919ac36760c796835\"",
+      "sha256": "6e5cfa1735271dd327a676678be4d0c320db956e7483358952ce587a061476c4",
+      "size": 319,
+      "contentType": "application/protobuf",
+      "verified": true
+    },
+    {
+      "revisionId": "0867a6cf-eda7-403b-8910-160c1547bbf3",
+      "revisionOrdinal": 0,
+      "part": 1,
+      "subKey": "",
+      "objectId": "c5f786f1-9cf0-4b0f-830d-2993da25e688",
+      "generation": "rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-alpha-61cddf1c",
+      "key": "rehearsal-pipeline/documents/rehearsal-alpha-61cddf1c/108524ce-4c53-309f-b56b-c7eab90ce620/attempts/92ab366c-72ba-453c-9a39-b8ac8c32ba41/part-0",
+      "providerVersion": "1e7eddb5-4ad1-4a0f-bcfa-19dd038e4624",
+      "etag": "\"481efa2b7f00fdae9504015a21a1cbc6\"",
+      "sha256": "57e760a1e74e10c6ddddb0e9108274d1e21e8cf32fc650f87627b88cb235a4ac",
+      "size": 326,
+      "contentType": "application/protobuf",
+      "verified": true
+    },
+    {
+      "revisionId": "47526413-a77d-4c94-8248-7a093fd3f35e",
+      "revisionOrdinal": 0,
+      "part": 1,
+      "subKey": "",
+      "objectId": "eac2b2f7-8293-4efb-8892-aa3780690f87",
+      "generation": "rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-beta-61cddf1c",
+      "key": "rehearsal-pipeline/documents/rehearsal-beta-61cddf1c/52694ba3-49f5-3a69-a828-b41dfa31dc3e/attempts/d2959964-26f5-40d1-b809-9f56bb9194a1/part-0",
+      "providerVersion": "ba878fde-7e9e-45e7-9414-3f0e986bff22",
+      "etag": "\"6c1b9c6d6b7c7974c79e016bc7e6d03b\"",
+      "sha256": "203a0466c24bcb74e26c602fdaa998676bdfb33c8dd88a8e436420411b375685",
+      "size": 291,
+      "contentType": "application/protobuf",
+      "verified": true
+    }
+  ],
+  "schemaCatalog": {
+    "rehearsal-alpha-61cddf1c/0addbe700db2330fd2301ba876b9fb010b29016964de23f5f4324a26db606836": 305,
+    "rehearsal-alpha-61cddf1c/12c4bf1b8b8533ca6c8a33c0d6ed58b2f2740bb09f8bc32aebc839f885cf7b17": 297,
+    "rehearsal-alpha-61cddf1c/ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce": 20297,
+    "rehearsal-alpha-61cddf1c/d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412": 114,
+    "rehearsal-alpha-61cddf1c/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319,
+    "rehearsal-alpha-61cddf1c/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482,
+    "rehearsal-beta-61cddf1c/0addbe700db2330fd2301ba876b9fb010b29016964de23f5f4324a26db606836": 305,
+    "rehearsal-beta-61cddf1c/12c4bf1b8b8533ca6c8a33c0d6ed58b2f2740bb09f8bc32aebc839f885cf7b17": 297,
+    "rehearsal-beta-61cddf1c/ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce": 20297,
+    "rehearsal-beta-61cddf1c/d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412": 114,
+    "rehearsal-beta-61cddf1c/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319,
+    "rehearsal-beta-61cddf1c/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 0,
+    "document_mutation_revision_seq": 3
+  },
+  "rowCounts": {
+    "archive_entries": 0,
+    "archive_mutation_observations": 0,
+    "archive_mutation_targets": 0,
+    "archive_mutations": 0,
+    "archive_object_bindings": 0,
+    "archive_object_uploads": 0,
+    "archive_read_pins": 0,
+    "archive_rendition_stats": 0,
+    "archive_stats": 0,
+    "archive_version_object_refs": 0,
+    "archive_versions": 0,
+    "archives": 0,
+    "document_assessment_artifacts": 0,
+    "document_assessment_objects": 0,
+    "document_assessment_owners": 0,
+    "document_assessment_read_identities": 0,
+    "document_assessment_read_sessions": 0,
+    "document_assessment_roots": 0,
+    "document_assessment_slot_snapshots": 0,
+    "document_assessment_slots": 0,
+    "document_events_outbox": 3,
+    "document_operation_selection_attempts": 3,
+    "document_operation_selection_current": 3,
+    "document_operation_selections": 3,
+    "document_part_attempt_cleanup": 0,
+    "document_part_attempt_objects": 3,
+    "document_part_attempt_sources": 0,
+    "document_part_attempts": 3,
+    "document_part_key_reservations": 3,
+    "document_part_publication_history": 0,
+    "document_part_publications": 0,
+    "document_purges": 0,
+    "document_raw_refs": 0,
+    "document_read_pins": 6,
+    "document_revision_commits": 3,
+    "document_revision_current": 2,
+    "document_revision_parts": 3,
+    "document_revision_publications": 3,
+    "document_revision_schema_admissions": 3,
+    "document_revision_schema_artifacts": 18,
+    "document_revision_schema_assets": 9,
+    "document_revision_schema_evidence": 3,
+    "document_schema_policies": 2,
+    "document_schema_policy_current": 2,
+    "documents": 2,
+    "drives": 2,
+    "flyway_schema_history": 119,
+    "managed_backend_profiles": 1,
+    "raw_objects": 0,
+    "repository_coordinator_bindings": 4,
+    "repository_coordinator_drains": 1,
+    "repository_coordinator_expirations": 0,
+    "repository_coordinator_handoffs": 1,
+    "repository_coordinator_local_drains": 1,
+    "repository_coordinator_reservations": 2,
+    "repository_coordinator_supersessions": 1,
+    "repository_creation_grants": 0,
+    "repository_credential_authorities": 0,
+    "repository_execution_claims": 4,
+    "repository_execution_scopes": 4,
+    "repository_historical_activations": 0,
+    "repository_object_keys": 3,
+    "repository_object_references": 11,
+    "repository_object_retention": 3,
+    "repository_operation_owners": 4,
+    "repository_operation_rejection": 0,
+    "repository_operation_success": 3,
+    "repository_operations": 4,
+    "repository_physical_locations": 3,
+    "repository_preparation_capture_drains": 0,
+    "repository_preparation_coverage_certificates": 4,
+    "repository_preparation_coverage_lineage": 1,
+    "repository_preparation_coverage_unresolved": 1,
+    "repository_preparation_history_roots": 0,
+    "repository_preparation_history_sets": 4,
+    "repository_preparation_pin_batches": 0,
+    "repository_preparation_pin_owners": 0,
+    "repository_preparation_root_releases": 0,
+    "repository_preparation_source_pins": 0,
+    "repository_publication_abandonments": 0,
+    "repository_publication_assessment_starts": 0,
+    "repository_publication_modes": 6,
+    "repository_publication_preparations": 6,
+    "repository_reader_external_quiescence": 0,
+    "repository_reader_host_executions": 0,
+    "repository_reader_host_terminations": 0,
+    "repository_reader_incarnations": 2,
+    "repository_recovery_limit_decisions": 0,
+    "repository_schema_artifact_claims": 18,
+    "repository_schema_artifacts": 12,
+    "repository_successor_executions": 0,
+    "repository_successor_installs": 2
+  },
+  "migrationLevel": 119,
+  "backendProfile": "{\"region\": null, \"endpoint\": null, \"provider\": \"s3\", \"created_at\": \"2026-10-08T08:22:54.613756-04:00\", \"generation\": \"rehearsal-gen-42496076-a520-4d51-bd36-b70ccf75de6b\", \"path_style\": null, \"identity_json\": {\"region\": \"us-east-1\", \"endpoint\": \"http://127.0.0.1:44867\", \"path-style\": \"true\"}, \"storage_realm\": \"rehearsal-realm\", \"identity_schema\": \"s3/v1\"}",
+  "registryOpensBeforeHistoricalReads": 3,
+  "accessMatrix": {
+    "member.alpha-v1": "OK",
+    "stranger.alpha-v1": "NOT_FOUND",
+    "outsider.alpha-v1": "NOT_FOUND",
+    "cross-account-member.alpha-v1": "NOT_FOUND",
+    "member.alpha-v2": "OK",
+    "stranger.alpha-v2": "NOT_FOUND",
+    "outsider.alpha-v2": "NOT_FOUND",
+    "cross-account-member.alpha-v2": "NOT_FOUND",
+    "member.beta-v1": "OK",
+    "stranger.beta-v1": "NOT_FOUND",
+    "outsider.beta-v1": "NOT_FOUND",
+    "cross-account-member.beta-v1": "NOT_FOUND"
+  },
+  "readerIncarnations": {
+    "ACTIVE": 0,
+    "FENCED": 0,
+    "UNKNOWN": 0,
+    "QUIESCED": 2
+  },
+  "rowCountsAfterClose": {
+    "archive_entries": 0,
+    "archive_mutation_observations": 0,
+    "archive_mutation_targets": 0,
+    "archive_mutations": 0,
+    "archive_object_bindings": 0,
+    "archive_object_uploads": 0,
+    "archive_read_pins": 0,
+    "archive_rendition_stats": 0,
+    "archive_stats": 0,
+    "archive_version_object_refs": 0,
+    "archive_versions": 0,
+    "archives": 0,
+    "document_assessment_artifacts": 0,
+    "document_assessment_objects": 0,
+    "document_assessment_owners": 0,
+    "document_assessment_read_identities": 0,
+    "document_assessment_read_sessions": 0,
+    "document_assessment_roots": 0,
+    "document_assessment_slot_snapshots": 0,
+    "document_assessment_slots": 0,
+    "document_events_outbox": 3,
+    "document_operation_selection_attempts": 3,
+    "document_operation_selection_current": 3,
+    "document_operation_selections": 3,
+    "document_part_attempt_cleanup": 0,
+    "document_part_attempt_objects": 3,
+    "document_part_attempt_sources": 0,
+    "document_part_attempts": 3,
+    "document_part_key_reservations": 3,
+    "document_part_publication_history": 0,
+    "document_part_publications": 0,
+    "document_purges": 0,
+    "document_raw_refs": 0,
+    "document_read_pins": 0,
+    "document_revision_commits": 3,
+    "document_revision_current": 2,
+    "document_revision_parts": 3,
+    "document_revision_publications": 3,
+    "document_revision_schema_admissions": 3,
+    "document_revision_schema_artifacts": 18,
+    "document_revision_schema_assets": 9,
+    "document_revision_schema_evidence": 3,
+    "document_schema_policies": 2,
+    "document_schema_policy_current": 2,
+    "documents": 2,
+    "drives": 2,
+    "flyway_schema_history": 119,
+    "managed_backend_profiles": 1,
+    "raw_objects": 0,
+    "repository_coordinator_bindings": 4,
+    "repository_coordinator_drains": 1,
+    "repository_coordinator_expirations": 0,
+    "repository_coordinator_handoffs": 1,
+    "repository_coordinator_local_drains": 1,
+    "repository_coordinator_reservations": 2,
+    "repository_coordinator_supersessions": 1,
+    "repository_creation_grants": 0,
+    "repository_credential_authorities": 0,
+    "repository_execution_claims": 4,
+    "repository_execution_scopes": 4,
+    "repository_historical_activations": 0,
+    "repository_object_keys": 3,
+    "repository_object_references": 5,
+    "repository_object_retention": 3,
+    "repository_operation_owners": 4,
+    "repository_operation_rejection": 0,
+    "repository_operation_success": 3,
+    "repository_operations": 4,
+    "repository_physical_locations": 3,
+    "repository_preparation_capture_drains": 0,
+    "repository_preparation_coverage_certificates": 4,
+    "repository_preparation_coverage_lineage": 1,
+    "repository_preparation_coverage_unresolved": 1,
+    "repository_preparation_history_roots": 0,
+    "repository_preparation_history_sets": 4,
+    "repository_preparation_pin_batches": 0,
+    "repository_preparation_pin_owners": 0,
+    "repository_preparation_root_releases": 0,
+    "repository_preparation_source_pins": 0,
+    "repository_publication_abandonments": 0,
+    "repository_publication_assessment_starts": 0,
+    "repository_publication_modes": 6,
+    "repository_publication_preparations": 6,
+    "repository_reader_external_quiescence": 0,
+    "repository_reader_host_executions": 0,
+    "repository_reader_host_terminations": 0,
+    "repository_reader_incarnations": 2,
+    "repository_recovery_limit_decisions": 0,
+    "repository_schema_artifact_claims": 18,
+    "repository_schema_artifacts": 12,
+    "repository_successor_executions": 0,
+    "repository_successor_installs": 2
+  }
+}

@@ -1,0 +1,3 @@
+1232c53b2312af044b479fbaac3751ba1c7b7dea0a7ff06fc4c2371cd1981f60  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalRetainedReader.java
+b062066ba9a6810d938b88ae2349478e491efef0ae38b72feeeb467a664af548  repo/engine/src/main/java/ai/protomolt/proto/repo/engine/DocumentPartReader.java
+1ad8217d0ea345db371746f2acf26b1408ffc0db2af86f8ae0c650186a6db9b2  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationCommitIT.java

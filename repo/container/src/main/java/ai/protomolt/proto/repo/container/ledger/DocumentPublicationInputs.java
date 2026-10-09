@@ -36,6 +36,7 @@ final class DocumentPublicationInputs implements AutoCloseable {
         var use = Objects.requireNonNull(pinned).use();
         var batches = new ArrayList<DocumentRetainedReader.Batch>();
         boolean transferred = false;
+        Throwable primary = null;
         try {
             var plan = use.plan();
             if (!plan.command().operationId().equals(command.operationId())
@@ -103,10 +104,16 @@ final class DocumentPublicationInputs implements AutoCloseable {
             var result = new DocumentPublicationInputs(use, batches, fragments);
             transferred = true;
             return result;
+        } catch (RuntimeException | Error failure) {
+            primary = failure;
+            throw failure;
         } finally {
             if (!transferred) {
-                for (int i = batches.size() - 1; i >= 0; i--) batches.get(i).close();
-                use.close();
+                try { closeResources(batches, use); }
+                catch (RuntimeException | Error cleanup) {
+                    if (primary == null) throw cleanup;
+                    if (cleanup != primary) primary.addSuppressed(cleanup);
+                }
             }
         }
     }
@@ -118,7 +125,22 @@ final class DocumentPublicationInputs implements AutoCloseable {
     @Override public synchronized void close() {
         if (fragments == null) return;
         fragments = null;
-        for (int i = batches.size() - 1; i >= 0; i--) batches.get(i).close();
-        batches.clear(); use.close();
+        try { closeResources(batches, use); }
+        finally { batches.clear(); }
+    }
+
+    private static void closeResources(List<DocumentRetainedReader.Batch> batches, DocumentReadLedger.PinnedPlan.Use use) {
+        try (use) {
+            Throwable first = null;
+            for (int i = batches.size() - 1; i >= 0; i--) {
+                try { batches.get(i).close(); }
+                catch (RuntimeException | Error failure) {
+                    if (first == null) first = failure;
+                    else if (failure != first) first.addSuppressed(failure);
+                }
+            }
+            if (first instanceof RuntimeException failure) throw failure;
+            if (first instanceof Error failure) throw failure;
+        }
     }
 }

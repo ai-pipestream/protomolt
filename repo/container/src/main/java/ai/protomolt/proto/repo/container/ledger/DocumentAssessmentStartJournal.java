@@ -97,14 +97,20 @@ final class DocumentAssessmentStartJournal {
 
     static StartOutcome startOrLoadHistoricalOwned(EntityManager em, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Duration retention, RepositoryReadControl control) {
+        return startOrLoadHistoricalOwned(em, owner, command, UUID.randomUUID(), retention, control);
+    }
+
+    static StartOutcome startOrLoadHistoricalOwned(EntityManager em, RepositoryOperationLedger.Owner owner,
+            DocumentPublicationCommand command, UUID proposedId, Duration retention, RepositoryReadControl control) {
         if (owner.generation() != 1 || owner.executionClaim().orElseThrow().epoch() != 1)
             throw new IllegalArgumentException("Historical start requires the initial execution owner");
-        return startOrLoadHistoricalBound(em, owner, command, retention, control);
+        return startOrLoadHistoricalBound(em, owner, command, proposedId, retention, control);
     }
 
     /** Caller has verified initial registration or exact live successor activation and capture. */
     static StartOutcome startOrLoadHistoricalBound(EntityManager em, RepositoryOperationLedger.Owner owner,
-            DocumentPublicationCommand command, Duration retention, RepositoryReadControl control) {
+            DocumentPublicationCommand command, UUID proposedId, Duration retention, RepositoryReadControl control) {
+        Objects.requireNonNull(proposedId);
         Objects.requireNonNull(retention); control.check();
         if (!owner.key().operationId().equals(command.operationId())
                 || !owner.executionClaim().orElseThrow().commandSha256().equals(command.sha256()))
@@ -117,7 +123,7 @@ final class DocumentAssessmentStartJournal {
                 WHERE account_id=:a AND principal=:p AND operation_id=:o AND predecessor_generation=:g FOR UPDATE
                 """).setParameter("a", owner.key().account()).setParameter("p", owner.key().principal())
                 .setParameter("o", owner.key().operationId()).setParameter("g", owner.generation()-1).getResultList();
-        if (rows.isEmpty()) return insertStartedOutcome(em, owner, command, UUID.randomUUID(), retention, control, true);
+        if (rows.isEmpty()) return insertStartedOutcome(em, owner, command, proposedId, retention, control, true);
         return new StartOutcome(historicalBinding(em, owner, command, retention, (Object[]) rows.getFirst(), control), false);
     }
 

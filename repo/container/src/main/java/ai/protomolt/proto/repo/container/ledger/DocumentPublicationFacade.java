@@ -17,6 +17,7 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
     private final Semaphore permits;
     private final Execution execution;
     private final int maxObjectBytes;
+    private final boolean historical;
 
     DocumentPublicationFacade(DocumentPublicationScopeCalls calls, PayloadBudget budget, Semaphore permits, Execution execution) {
         this(calls,budget,permits,execution,(int)DocumentPublicationInput.MAX_UPLOAD_BYTES);
@@ -24,9 +25,15 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
 
     DocumentPublicationFacade(DocumentPublicationScopeCalls calls, PayloadBudget budget, Semaphore permits,
             Execution execution, int maxObjectBytes) {
+        this(calls, budget, permits, execution, maxObjectBytes, false);
+    }
+
+    DocumentPublicationFacade(DocumentPublicationScopeCalls calls, PayloadBudget budget, Semaphore permits,
+            Execution execution, int maxObjectBytes, boolean historical) {
         if (maxObjectBytes < 1 || maxObjectBytes > DocumentPublicationInput.MAX_UPLOAD_BYTES)
             throw new IllegalArgumentException("Upload object limit must be positive and at most 8 MiB");
         this.maxObjectBytes=maxObjectBytes;
+        this.historical=historical;
         this.calls=Objects.requireNonNull(calls); this.budget=Objects.requireNonNull(budget);
         this.permits=Objects.requireNonNull(permits); this.execution=Objects.requireNonNull(execution);
     }
@@ -44,13 +51,17 @@ final class DocumentPublicationFacade implements DocumentPublicationRepository {
                 // Account for retained input and bounded canonical command copies. Parser memory is host-owned.
                 try (var inputLease=budget.reserve((long)size+2L*DocumentPublicationCommand.MAX_COMMAND_BYTES)) {
                     var input=DocumentPublicationInput.validate(request,control,maxObjectBytes);
-                    input.command().requireExecutionSupported();
+                    if (!historical) input.command().requireExecutionSupported();
                     // Reserve before materializing ByteString uploads as the runtime's private byte arrays.
                     try (var copyLease=budget.reserve(input.uploadBytes())) {
                         return execution.publish(caller,input,control);
                     }
                 }
             } finally { permits.release(); }
+        } catch (RepositoryOperationLedger.CommandConflictException conflict) {
+            throw new RepositoryException(RepositoryException.Code.CONFLICT, conflict.getMessage(), conflict);
+        } catch (DocumentSchemaPolicies.StalePolicy stale) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, stale.getMessage(), stale);
         } catch (PayloadBudget.CapacityExceededException exhausted) {
             throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,"Publication byte capacity exhausted",exhausted);
         }

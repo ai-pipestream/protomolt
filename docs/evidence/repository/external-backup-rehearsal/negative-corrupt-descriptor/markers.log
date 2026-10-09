@@ -1,0 +1,10 @@
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:46207
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-rehearsal-3a1a9d408-1f966760-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1644 > max stored xid8 1083 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (V118 certificates/unresolved and V119 lineage/install edges included)
+CHECK_OK restore.coverage_invariants :: V118/V119 invariants equal the source: {certifiedAndUnresolved=0, lineageAndUnresolved=0, certifiedAndLineage=0, certificateDiffersFromPreparation=0, certificateDiffersFromSealedHeader=0, lineageDiffersFromInstallEdge=0, lineageDiffersFromCertifiedAnchor=0, lineageDepthOrPredecessorInvalid=0, preparationNotInExactlyOneState=0, installXidNotBelowCurrent=0, certificates=4, lineage=1, unresolved=1, successorInstalls=2, successorExecutions=0}
+CHECK_OK corrupt-descriptor.injected :: retained attachment descriptor d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 damaged on the disposable restored ledger
+CHECK_OK corrupt-descriptor.observed :: recovered host observed the refusal: REPOSITORY_BACKUP_REHEARSAL_RECOVERED_CORRUPT_DESCRIPTOR_OK; no READY advertised
+CHECK_OK corrupt-descriptor.original_backup_untouched :: run-1 backup set unchanged

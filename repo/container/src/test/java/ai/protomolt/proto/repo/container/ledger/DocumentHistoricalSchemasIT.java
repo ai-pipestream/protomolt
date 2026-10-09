@@ -249,6 +249,34 @@ class DocumentHistoricalSchemasIT {
         }
     }
 
+    @Test void corruptRetainedArtifactIsReportedAsHistoricalDataLoss() throws Exception {
+        try (var c = context(POSTGRES)) {
+            var f = DocumentSchemaRetentionFixture.prepare(c); activate(c, f);
+            var revision = publishTyped(c, f);
+            c.tx().inTransaction(em -> {
+                // Simulate retained bytes that no longer match their digest. The digest CHECK is dropped in this
+                // test's private schema only; production application connections retain all guards and constraints.
+                em.createNativeQuery("""
+                        DO $$ DECLARE c text; BEGIN
+                          SELECT conname INTO STRICT c FROM pg_constraint
+                           WHERE conrelid = 'repository_schema_artifacts'::regclass AND contype = 'c'
+                             AND pg_get_constraintdef(oid) LIKE '%sha256(artifact_bytes)%';
+                          EXECUTE format('ALTER TABLE repository_schema_artifacts DROP CONSTRAINT %I', c);
+                        END $$
+                        """).executeUpdate();
+                em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+                int damaged = em.createNativeQuery("""
+                        UPDATE repository_schema_artifacts a SET artifact_bytes = a.artifact_bytes || '\\x00'::bytea
+                        FROM document_revision_schema_artifacts r
+                        WHERE r.revision_id=:revision AND a.account_id=r.account_id AND a.artifact_sha256=r.artifact_sha256
+                        """).setParameter("revision", revision).executeUpdate();
+                assertThat(damaged).isPositive();
+            });
+            assertDataLoss(() -> new DocumentHistoricalSchemas(new Tx(c.emf())).check(ADMIN, address(f), revision,
+                    f.batch().proofs().get("member").fragments(), () -> {}));
+        }
+    }
+
     private static void activate(Context c, DocumentSchemaRetentionFixture.Fixture f) {
         new DocumentSchemaPolicies(c.tx()).activate(f.batch().policy().policy(), 0, () -> {});
     }

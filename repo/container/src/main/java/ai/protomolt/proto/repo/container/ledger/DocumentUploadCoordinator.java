@@ -62,6 +62,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     private final Resolver resolver;
     private final int parallelism;
     private final Duration flushAge;
+    private final SqlTimeouts timeouts;
     private final Semaphore operationsInFlight = new Semaphore(32);
     private final Semaphore partsInFlight = new Semaphore(32, true);
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -82,6 +83,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         if (flushAge.compareTo(Duration.ofMillis(1)) < 0 || flushAge.compareTo(Duration.ofSeconds(1)) > 0)
             throw new IllegalArgumentException("Observation flush age must be one millisecond to one second");
         var bounded = tx.withTimeouts(timeouts);
+        this.timeouts = timeouts;
         this.admission = new DocumentOperationUploadAdmission(bounded, drives);
         this.selected = new DocumentSelectedAttemptLedger(bounded);
         this.budget = Objects.requireNonNull(budget);
@@ -89,6 +91,9 @@ final class DocumentUploadCoordinator implements AutoCloseable {
         this.parallelism = parallelism;
         this.flushAge = flushAge;
     }
+
+    /** Apply this coordinator's lock and statement bounds to operation-specific SQL authority. */
+    Tx boundedAuthority(Tx authority) { return authority.withTimeouts(timeouts); }
 
     Staged stage(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
@@ -111,10 +116,15 @@ final class DocumentUploadCoordinator implements AutoCloseable {
     <T extends AutoCloseable> T stageAndPrepareOwned(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control, Preparation<T> preparation) {
+        return prepareOwned(preparation, callback -> stageAndPrepare(caller, owner, prepared, bodies, attributes, control, callback));
+    }
+
+    private static <T extends AutoCloseable> T prepareOwned(Preparation<T> preparation,
+            java.util.function.Function<Preparation<T>, T> stage) {
         Objects.requireNonNull(preparation);
         var pending = new AtomicReference<T>();
         try {
-            var result = stageAndPrepare(caller, owner, prepared, bodies, attributes, control, (staged, bytes, active) -> {
+            var result = stage.apply((staged, bytes, active) -> {
                 var candidate = Objects.requireNonNull(preparation.prepare(staged, bytes, active), "Owned preparation result");
                 pending.set(candidate);
                 return candidate;
@@ -144,6 +154,57 @@ final class DocumentUploadCoordinator implements AutoCloseable {
             DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
             Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements,
             Preparation<T> preparation, boolean recheckPreparation) {
+        var authority = new DocumentUploadAuthority() {
+            public DocumentOperationUploadAdmission.Admission admit() {
+                return replacements.isEmpty() ? admission.admitOrReuseVerified(caller, owner, prepared)
+                        : new DocumentOperationUploadAdmission.Admission(admission.retry(caller, owner, prepared, replacements), false);
+            }
+            public void renewOwnerAndSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                selected.renewOwnerAndSelections(owner, selections, prepared.lease());
+            }
+            public List<DocumentPartAttemptLedger.Attempt> renewSelections(List<DocumentSelectedAttemptLedger.Selected> selections) {
+                return selected.renew(owner, selections, prepared.lease());
+            }
+            public void verify(DocumentSelectedAttemptLedger.Selected selection, List<DocumentSelectedAttemptLedger.Observation> observations) {
+                selected.verifyBatch(owner, selection, observations);
+            }
+            public void recheckPreparation(List<DocumentSelectedAttemptLedger.Selected> selections, Runnable active) {
+                admission.captureRetainedReads(caller, owner, prepared);
+                active.run();
+                admission.recheckInitialSelections(owner, prepared);
+                active.run();
+                renewOwnerAndSelections(selections);
+                active.run();
+            }
+            public void afterDrain() { check(control); }
+        };
+        return execute(prepared, bodies, attributes, control, replacements, preparation, recheckPreparation, authority);
+    }
+
+    /** The caller owns the operation authority until this synchronous transfer and worker cleanup finish. */
+    Staged stageAuthorized(DocumentOperationUploadAdmission.Prepared prepared,
+            Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
+            Runnable control, DocumentUploadAuthority authority) {
+        return execute(prepared, bodies, attributes, control, Map.of(), (staged, bytes, active) -> staged, false,
+                Objects.requireNonNull(authority));
+    }
+
+    /**
+     * The callback borrows verified upload bytes while the explicit operation
+     * authority remains live. Transfer its owned result only after preparation
+     * fences, provider drain and delivery authorization succeed.
+     */
+    <T extends AutoCloseable> T stageAndPrepareAuthorizedOwned(DocumentOperationUploadAdmission.Prepared prepared,
+            Map<DocumentUploadPayloads.Key, PartObject> bodies, Map<String, String> attributes,
+            Runnable control, DocumentUploadAuthority authority, Preparation<T> preparation) {
+        Objects.requireNonNull(authority);
+        return prepareOwned(preparation, callback -> execute(prepared, bodies, attributes, control,
+                Map.of(), callback, true, authority));
+    }
+
+    private <T> T execute(DocumentOperationUploadAdmission.Prepared prepared, Map<DocumentUploadPayloads.Key, PartObject> bodies,
+            Map<String, String> attributes, Runnable control, Map<String, DocumentOperationSelection.Expected> replacements,
+            Preparation<T> preparation, boolean recheckPreparation, DocumentUploadAuthority authority) {
         Objects.requireNonNull(control); Objects.requireNonNull(prepared);
         var metadata = Map.copyOf(attributes);
         synchronized (lifecycle) {
@@ -160,19 +221,18 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                 check(control);
                 var backends = resolve(prepared, members);
                 check(control);
-                var admitted = replacements.isEmpty() ? admission.admitOrReuseVerified(caller, owner, prepared)
-                        : new DocumentOperationUploadAdmission.Admission(admission.retry(caller, owner, prepared, replacements), false);
+                var admitted = authority.admit();
                 var bindings = bind(prepared, admitted.attempts(), replacements, backends, admitted.reusedVerified());
                 var selections = bindings.values().stream().map(Bound::selection).toList();
                 check(control);
-                selected.renewOwnerAndSelections(owner, selections, prepared.lease());
+                authority.renewOwnerAndSelections(selections);
                 check(control);
                 var failure = new AtomicReference<Throwable>();
                 Runnable active = () -> {
                     rethrow(failure.get());
                     check(control);
                 };
-                var flusher = selections.isEmpty() || admitted.reusedVerified() ? null : new DocumentObservationFlusher(selected, owner, selections, flushAge, active,
+                var flusher = selections.isEmpty() || admitted.reusedVerified() ? null : new DocumentObservationFlusher(authority::verify, selections, flushAge, active,
                         cause -> failure.compareAndSet(null, cause));
                 // Both background tasks are drained before Use releases its private bytes.
                 T result;
@@ -183,7 +243,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                             try {
                                 while (!stopHeartbeat.await(Math.max(1, prepared.lease().toMillis() / 3), TimeUnit.MILLISECONDS)) {
                                     active.run();
-                                    selected.renewOwnerAndSelections(owner, selections, prepared.lease());
+                                    authority.renewOwnerAndSelections(selections);
                                     active.run();
                                 }
                             } catch (InterruptedException interrupted) {
@@ -217,7 +277,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                         }
                         active.run();
                         var verified = selections.isEmpty() ? List.<DocumentPartAttemptLedger.Attempt>of()
-                                : selected.renew(owner, selections, prepared.lease());
+                                : authority.renewSelections(selections);
                         if (verified.stream().anyMatch(a -> !a.state().equals("VERIFIED")))
                             throw new IllegalStateException("Selected upload did not verify every declared part");
                         var byId = verified.stream().collect(Collectors.toMap(DocumentPartAttemptLedger.Attempt::id, a -> a));
@@ -229,11 +289,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                         }
                         active.run();
                         if (recheckPreparation) {
-                            admission.captureRetainedReads(caller, owner, prepared);
-                            active.run();
-                            admission.recheckInitialSelections(owner, prepared);
-                            active.run();
-                            selected.renewOwnerAndSelections(owner, selections, prepared.lease());
+                            authority.recheckPreparation(selections, active);
                             active.run();
                         }
                         active.run();
@@ -247,6 +303,7 @@ final class DocumentUploadCoordinator implements AutoCloseable {
                     }
                 }
                 active.run();
+                authority.afterDrain();
                 return result;
             }
         } finally { operationsInFlight.release(); }

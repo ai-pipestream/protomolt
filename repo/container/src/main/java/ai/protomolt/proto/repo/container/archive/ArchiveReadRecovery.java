@@ -4,7 +4,7 @@ import ai.protomolt.proto.repo.container.ledger.Tx;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Bounded release of pins whose owning lifecycle durably attested local quiescence. */
+/** Bounded release of pins protected by durable local or externally verified quiescence. */
 public final class ArchiveReadRecovery {
     private final Tx tx;
     private Candidate cursor;
@@ -24,6 +24,45 @@ public final class ArchiveReadRecovery {
         if (limit < 1 || limit > 1000) throw new IllegalArgumentException("Recovery limit must be between 1 and 1000");
         var candidates = candidates(limit, cursor);
         if (candidates.isEmpty() && cursor != null) candidates = candidates(limit, null);
+        RuntimeException failures = releaseCandidates(candidates);
+        // Scheduling only: failed pins remain durable and are retried after wrap.
+        // Update before reporting failures so they cannot monopolize the first page.
+        if (!candidates.isEmpty()) cursor = candidates.getLast();
+        if (failures != null) throw failures;
+        return candidates.size();
+    }
+
+    /**
+     * Recover at most limit pins for one already-QUIESCED reader. Requires proven
+     * quiescence even when no pins exist. Zero proves this reader has no archive
+     * pins; other retention families must be checked separately. Each pin release
+     * commits independently. A failure is reported after trying the selected page;
+     * prior commits remain valid and remaining pins can be rediscovered on retry.
+     * Counts selected identities, including pins concurrently released elsewhere.
+     * This method does not advance the global recovery cursor.
+     */
+    public int recoverReaderBatch(UUID reader, int limit) {
+        Objects.requireNonNull(reader);
+        if (limit < 1 || limit > 1000) throw new IllegalArgumentException("Recovery limit must be between 1 and 1000");
+        var candidates = tx.inTransaction(em -> {
+            em.createNativeQuery("SELECT require_repository_read_committed()").getSingleResult();
+            if (!Boolean.TRUE.equals(em.createNativeQuery("""
+                    SELECT EXISTS(SELECT 1 FROM repository_reader_incarnations
+                    WHERE incarnation=:reader AND state='QUIESCED')
+                    """).setParameter("reader", reader).getSingleResult()))
+                throw new IllegalStateException("Archive recovery requires proven reader quiescence");
+            java.util.List<Object[]> rows = em.createNativeQuery("""
+                    SELECT pin_id,object_id FROM archive_read_pins
+                    WHERE reader_incarnation=:reader ORDER BY pin_id LIMIT :limit
+                    """).setParameter("reader", reader).setParameter("limit", limit).getResultList();
+            return rows.stream().map(row -> new Candidate((UUID) row[0], reader, (UUID) row[1])).toList();
+        });
+        RuntimeException failures = releaseCandidates(candidates);
+        if (failures != null) throw failures;
+        return candidates.size();
+    }
+
+    private RuntimeException releaseCandidates(java.util.List<Candidate> candidates) {
         RuntimeException failures = null;
         for (var candidate : candidates) {
             try {
@@ -38,11 +77,7 @@ public final class ArchiveReadRecovery {
                 else failures.addSuppressed(failure);
             }
         }
-        // Scheduling only: failed pins remain durable and are retried after wrap.
-        // Update before reporting failures so they cannot monopolize the first page.
-        if (!candidates.isEmpty()) cursor = candidates.getLast();
-        if (failures != null) throw failures;
-        return candidates.size();
+        return failures;
     }
 
     private java.util.List<Candidate> candidates(int limit, Candidate after) {

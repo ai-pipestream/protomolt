@@ -11,6 +11,7 @@ import com.google.protobuf.ByteString;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.*;
 import org.testcontainers.junit.jupiter.Container;
@@ -495,6 +496,89 @@ class DocumentPublicationCommitIT {
         assertThat(new DocumentPublicationReplay(tx).observe(ADMIN,fixture.command).result()).contains(result);
     }
 
+    @Test void preparesSharedHistoricalFragmentsOnceAndCleansUpOnCancellation() throws Exception {
+        var fixture=fixture(1,1,publicReadGrant());
+        var checked=stage(fixture);
+        var published=publisher().commit(ADMIN,fixture.owner,fixture.prepared,checked.content,checked.selected,()->{});
+        var revision=published.getMembers(0);
+        var caller=historyCaller();
+        var ledger=new DocumentReadLedger(tx,UUID.randomUUID());
+        var history=ledger.captureHistorical(caller,revision.getAddress(),UUID.fromString(revision.getRevisionId()));
+        var control=ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE;
+        var budget=new PayloadBudget(16L*1024*1024);
+        try {
+            DocumentHistoricalReadPlan.Entry entry;
+            try(var use=history.use()) { entry=use.plan().entries().getFirst(); }
+            var part=entry.part().part(); var binding=entry.part().binding();
+            var slot=DocumentPublicationSlot.newBuilder().setPart(part.part()).setSubKey(part.subKey()).build();
+            var object=PublicationObjectIdentity.newBuilder().setObjectId(entry.objectId().toString())
+                    .setBackendGeneration(binding.generation()).setStorageRealm(binding.profile().storageRealm())
+                    .setNamespace(binding.namespace()).setObjectKey(part.key()).setSizeBytes(part.size())
+                    .setSha256(part.sha256()).setContentType(part.contentType());
+            if(part.providerVersion()!=null) object.setProviderVersion(part.providerVersion());
+            var selected=DocumentPublicationPart.newBuilder().setSlot(slot).setHistoricalReuse(
+                    PublicationHistoricalReuse.newBuilder().setSource(revision.getAddress()).setRevisionId(revision.getRevisionId())
+                            .setRevisionOrdinal(entry.revisionOrdinal()).setSourceSlot(slot).setObject(object)).build();
+            var intent=fixture.command.intent().toBuilder().setOperationId(UUID.randomUUID().toString()).clearMembers();
+            for(String id:List.of("copy-a","copy-b")) {
+                var member=fixture.command.intent().getMembers(0).toBuilder().setMemberId(id).clearParts().addParts(selected);
+                member.setDestination(member.getDestination().toBuilder().setAddress(
+                        member.getDestination().getAddress().toBuilder().setDocId(id)));
+                intent.addMembers(member);
+            }
+            var command=new DocumentPublicationCommand(intent.build());
+            var expected=fixture.bodies.values().stream().filter(body->body.part()==part.part()
+                    &&body.subKey().equals(part.subKey())).findFirst().orElseThrow().bytes();
+            try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,budget);
+                    var sources=DocumentHistoricalAssessmentSources.open(command,caller,List.of(history),control);
+                    var work=sources.work()) {
+                var calls=new java.util.concurrent.atomic.AtomicInteger();
+                DocumentHistoricalRetainedReader counted=(capture,ordinal,c)->{
+                    calls.incrementAndGet(); return reader.readHistorical(capture,ordinal,c);
+                };
+                try(var copied=DocumentHistoricalFragmentPreparation.capture(command,sources,work,counted,Map.of(),budget,control)) {
+                    assertThat(calls.get()).isEqualTo(1);
+                    assertThat(copied.fragments().get("copy-a").get(0).toByteArray()).containsExactly(expected);
+                    assertThat(copied.fragments().get("copy-b").get(0).toByteArray()).containsExactly(expected);
+                    assertThat(budget.reservedBytes()).isEqualTo(expected.length*2L);
+                }
+                assertThat(budget.reservedBytes()).isZero();
+                assertThatThrownBy(()->DocumentHistoricalFragmentPreparation.capture(command,sources,work,counted,
+                        Map.of("copy-b",Map.of(0,ByteString.copyFrom(expected))),budget,control))
+                        .isInstanceOf(IllegalArgumentException.class);
+                assertThat(calls.get()).isEqualTo(1);
+                assertThatThrownBy(()->DocumentHistoricalFragmentPreparation.capture(command,sources,work,counted,
+                        Map.of("unknown",Map.of()),budget,control)).isInstanceOf(IllegalArgumentException.class);
+                assertThat(calls.get()).isEqualTo(1);
+                var exhausted=new PayloadBudget(1);
+                assertThatThrownBy(()->DocumentHistoricalFragmentPreparation.capture(command,sources,work,counted,
+                        Map.of(),exhausted,control)).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+                assertThat(exhausted.reservedBytes()).isZero();
+                assertThat(budget.reservedBytes()).isZero();
+                var cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+                var cancellation=new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+                    public boolean isCancelled(){return cancelled.get();}
+                    public long remainingNanos(){return Long.MAX_VALUE;}
+                };
+                DocumentHistoricalRetainedReader cancelling=(capture,ordinal,c)->{
+                    var batch=counted.readHistorical(capture,ordinal,c); cancelled.set(true); return batch;
+                };
+                assertThatThrownBy(()->DocumentHistoricalFragmentPreparation.capture(command,sources,work,cancelling,
+                        Map.of(),budget,cancellation)).isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                                failure->assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED));
+                assertThat(calls.get()).isEqualTo(3);
+                assertThat(budget.reservedBytes()).isZero();
+                work.authorize(control);
+                assertThat(history.isReleased()).isFalse();
+            }
+        } finally {
+            history.close(); assertThat(history.awaitDrained(Duration.ofSeconds(5))).isTrue();
+            history.release(); ledger.fence(); ledger.attestLocalQuiescence();
+            assertThat(budget.reservedBytes()).isZero();
+        }
+    }
+
     @Test void readsExactHistoricalProviderVersionAndKeepsPinsWithReturnedBatch() throws Exception {
         var grant=publicReadGrant();
         var fixture=fixture(1,1,grant);
@@ -516,6 +600,14 @@ class DocumentPublicationCommitIT {
         long reserved=plan.entries().stream().mapToLong(e->e.part().part().size()).sum()*2;
         var budget=new PayloadBudget(reserved);
         try(var reader=new ai.protomolt.proto.repo.engine.DocumentPartReader((generation,p)->opened.store(),4,1_000_000,budget)) {
+            DocumentHistoricalRetainedReader historical = reader;
+            try (var selected = historical.readHistorical(history, first.revisionOrdinal(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(selected.parts()).hasSize(1);
+                var expected = fixture.bodies.values().stream().filter(body -> body.part()==part.part()
+                        && body.subKey().equals(part.subKey())).findFirst().orElseThrow();
+                assertThat(selected.parts().getFirst().bytes()).containsExactly(expected.bytes());
+            }
+            assertThat(budget.reservedBytes()).isZero();
             var batch=reader.readHistorical(history,ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
             assertThat(batch.parts()).hasSize(plan.entries().size());
             for(int i=0;i<plan.entries().size();i++) {

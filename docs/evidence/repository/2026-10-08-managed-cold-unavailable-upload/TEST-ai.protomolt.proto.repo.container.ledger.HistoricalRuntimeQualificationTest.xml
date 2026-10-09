@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-08T08:57:33.473Z" hostname="krick" time="94.898">
+  <properties/>
+  <testcase name="[1] &quot;initial&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="27.375"/>
+  <testcase name="[2] &quot;reserved&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="33.291"/>
+  <testcase name="[3] &quot;installed&quot;" classname="ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest" time="34.202"/>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE initial
+HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK initial
+NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE reserved
+HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK reserved
+NATIVE_STORAGE_BACKEND=localstack image=localstack/localstack:3.8 image_id=sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
+HISTORICAL_COLD_WRITER_EXIT_23_SQL_SESSIONS_GONE installed
+HISTORICAL_COLD_UNAVAILABLE_UPLOAD_PROCESS_OK installed
+]]></system-out>
+  <system-err><![CDATA[Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: bce46503842438d44233b5d63429e51cda47047b2149aec3cac8e55cf4707aaf
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.350288181S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 110f50d541852ea3d161d62e824d27d888a05f488785b7fc742cf64ee0d48e3a
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.921779711S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55945/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 839fe8dc0cea1a5068481f677a0b53e50a75bf1a840f5a06c79188557f004402
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.436588409S
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@54fb9fef
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 115 migrations (execution time 00:00.042s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 115
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 4:57:48 AM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 08, 2026 4:57:48 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 4:57:48 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 4:57:49 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 4:57:49 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:55945/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 4:57:49 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: d664c1f0a3c5f10e98b977832e809be650733595545f415371b955a26e071357
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.882827941S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55947/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: c869a1461f16362e750154828af8a6cf17432d0ca3147635e6173cef4f171bd0
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT0.95899596S
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@3a5e238b
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 115 migrations (execution time 00:00.020s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 115
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 4:58:21 AM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 08, 2026 4:58:21 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 4:58:21 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 4:58:21 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:55947/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 4:58:21 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 53a4fc404a309a3867b40ef6d4b9c77abd3069baf99ba00981269da7e87cee0c
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.874641619S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:55949/test?loggerLevel=OFF)
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 06260410053aa376df3ef44604903444ae5469829abca6312221b609ae9afd8b
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.878376788S
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@30ec6e34
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 115 migrations (execution time 00:00.020s)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 115
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 4:58:55 AM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 08, 2026 4:58:55 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 4:58:55 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 4:58:55 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:55949/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 4:58:55 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+]]></system-err>
+</testsuite>

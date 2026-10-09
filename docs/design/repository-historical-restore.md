@@ -798,15 +798,14 @@ wire fields or a promise of recovery on behalf of a revoked caller.
 V83 coordinates are not a transferable CREATE capability. Preserve `start()`'s
 coordinate idempotence: competing handles load one committed UUID/deadline, a
 rolled-back start may retry, and a lost start acknowledgement reloads its original
-coordinates. Only the handle whose INSERT is positively acknowledged may CREATE.
-Record an internal insert outcome from the SQL update count; do not infer the
-winner from a proposed UUID or a pre-insert read. Arm its private permission only
-after commit and final authorization return normally. Validate full persisted
-scope, command, owner, retention and expiry on readback/conflict.
+coordinates. CREATE requires a positively acknowledged START, either the original
+INSERT or the exact original handle's reconciliation described below. A fresh
+handle cannot claim a persisted proposal. Arm the private permission only after
+commit and final authorization return normally. Validate full persisted scope,
+command, owner, retention and expiry on readback/conflict.
 
 Repeated start on the acknowledged winning handle keeps the same permission.
-A handle that only loads a start, including the original handle after losing its
-start acknowledgement, is reconciliation-only. Refuse its CREATE before schema
+A different handle that only loads a start is reconciliation-only. Refuse its CREATE before schema
 claims even when it prepares its own valid assessment. A CREATE SQL attempt
 consumes the local permission before entering the transaction; loaded coordinates
 or empty discovery cannot restore it. Schema staging is a separate authorized,
@@ -815,9 +814,10 @@ idempotent transaction and is not represented by the CREATE-attempt marker.
 Qualification must show two independent handles returning identical start
 coordinates but only one able to CREATE; the other must write no schema claims.
 Real before-commit rollback must allow a later acknowledged start to win. Real
-after-commit acknowledgement loss must leave both coordinate recovery and new
-handles unable to CREATE, while a positively committed assessment can still be
-discovered and reconciled under current authority. Repeat, expiry, retention
+after-commit acknowledgement loss must allow the original handle to reconcile
+its retained proposal under current authority, while new handles remain unable
+to CREATE. A positively committed assessment can still be discovered and
+reconciled separately. Repeat, expiry, retention
 mismatch and credential revocation checks must retain their existing semantics.
 
 This is an intermediate ownership boundary, not complete crash recovery. If the
@@ -829,7 +829,149 @@ qualification before they can serve that purpose. Keep the public path closed
 until this recovery sequence and publication are proven. No protobuf change or
 new repository-wide transaction boundary is introduced by the private permit.
 
+### Reconciliation of an uncertain START acknowledgement
+
+The private execution handle can reconcile its own uncertain START. This replaces
+the earlier restriction that required a positively acknowledged INSERT on that
+handle. Public historical publication remains gated while its complete dispatch
+and recovery sequence are qualified.
+
+Retain a private proposed assessment UUID and exact retention duration on the
+synchronized historical execution handle before entering its first START
+transaction. Reuse that proposal on retry. A loaded row may grant CREATE only
+when it matches this retained proposal and the complete current-authority
+transaction succeeds, including claim, owner nonce, command, fixed modes,
+placements, captured sources, retention and expiry checks. Final authorization
+must succeed after commit before the local permission is armed. Observation
+alone, including journal load or a fresh handle with matching coordinates,
+never grants permission. This revises the acknowledged-INSERT-only rule solely
+for the original handle's exact private attempt.
+
+CREATE remains single-attempt on that handle. Its existing uncertain-commit
+reconciliation is separate; repeating START cannot clear a CREATE-attempt marker.
+Process loss still requires qualified successor or drain recovery rather than
+reconstructing this private permission from persisted coordinates.
+
+Required tests use real transactions: committed START with lost reply followed
+by same-handle CREATE; rolled-back START followed by retry; competing and fresh
+handles denied before schema claims; duration mismatch, expiry, claim fencing,
+owner fencing and credential revocation denied. Preserve the existing CREATE
+lost-acknowledgement tests. Keep public historical dispatch gated until these
+cases and its complete publication and recovery sequence pass.
+
+Sol reviewed this boundary against the current journal and execution fences.
+Qualification evidence must distinguish internal CREATE from public publication.
+
 ### Acceptance before enabling public restore
+
+#### Public dispatch composition
+
+Keep the existing `PublishDocument` envelope and validate it before any registry
+entry or provider work. That envelope requires every upload body, including on a
+cold retry. A new bodyless recovery API is not part of this entry point.
+
+Reuse `DocumentPublicationInputs.capture` for verified upload views and pinned
+current-reuse reads. Its result contains only ordinary ordinals;
+`DocumentHistoricalFragmentPreparation.capture` checks that exact set and fills
+historical ordinals from retained source readers. The upload coordinator's
+`stageAndPrepareAuthorizedOwned` callback keeps the borrowed upload view alive
+while the original execution handle prepares an independently owned assessment.
+The coordinator transfers that result only after preparation fences, worker drain
+and final authorization. The callback must not prepare through the temporary
+transfer child: CREATE binds assessment identity to the original execution handle.
+Retain the assessment in the attempt entry only after successful transfer; failed
+delivery must close it without leaving a closed assessment in the registry.
+
+The internal retained attempt now composes this path through
+`DocumentHistoricalPublicationPreparation` and installs the assessment only after
+the owned callback and transfer-child cleanup succeed. Ordinary input cleanup
+attempts every batch release and the plan use, preserving the original failure.
+Closing the ordinary pinned plan leaves SQL release to the reader lifecycle after
+actual drain, as in ordinary publication.
+
+`DocumentHistoricalPublicationDispatch` now implements this routing behind a
+package-private runtime factory. It observes authorized terminal replay before
+host selection, inspects local entries before allocating a capture, and requires
+explicit host recovery authority. It branches before the ordinary operation-wide
+guard and uses the facade's accepted call through synchronous execution. Cold
+restart now has authenticated in-process gRPC qualification at the initial,
+reserved and installed crash boundaries, with provider readback and original
+writer cleanup. Concurrent takeover also passes with a library predecessor held
+after its real provider PUT and an authenticated in-process gRPC successor. The
+successor commits once with fresh upload identities; the old reply remains
+unverified and its worker must drain before retirement. Public failure-boundary
+qualification remains before the host factory becomes public. Existing public factories retain the historical
+execution guard. No default coordinator, provider, schema or credential fallback
+is supplied.
+
+The attempt retains verified upload selections with its owned assessment. A
+CREATE retry reconciles those exact selections without resolving schemas again.
+After authorized terminal replay, the dispatcher marks retained generations for
+disposal without performing cleanup SQL on the receipt-delivery path. Bounded
+maintenance runs before new nonterminal work and through runtime `tick()`. It
+borrows only proven, unborrowed retirement entries and performs authority lookup
+and disposal outside the registry monitor. Failed cleanup remains visible and
+retryable; borrowed workers continue to protect their generations and source pins.
+Each bounded pass moves its selected ready generation IDs to the tail of the
+maintenance order before disposal. A held worker or failed authority lookup cannot
+permanently monopolize the first batch. Rotation changes neither selected retry
+routing nor ownership and runs only under the short registry monitor; disposal
+still runs outside it and rechecks each entry before borrowing.
+
+`inspectSelected` returns only a staleable local generation ID and borrowed,
+attached and disposal state. It neither borrows the entry nor changes capacity,
+retention or SQL. Exact caller identity and canonical command are checked before
+revealing local state. Discovery and the eventual mutation still require their
+existing authority and fences; this snapshot cannot authorize either one.
+
+Apply the following routing order:
+
+1. Authorize exact command/mode terminal replay. A terminal discovery status alone
+   cannot deliver a receipt; reread through the authorized replay boundary.
+2. Preserve any local proposal with uncertain reservation or installation. Resume
+   that exact proposal if free; report in-use conflict while it is borrowed.
+3. For an attached current generation and an `EXPIRED_BOUND` observation, call
+   `beginSuccessor` with the observed local generation ID. A borrowed predecessor
+   is allowed here: its workers stay retained while the successor fences it.
+4. Resume other eligible local entries if free. Never bypass a busy local entry
+   by pretending the host has restarted.
+5. With no local entry, use initial admission only for `ABSENT`. Cold recovery
+   requires an expired bound candidate or the existing qualified unactivated
+   candidate. `LIVE`, incomplete journals, absent owners, unbound claims, local
+   drain and exhausted generations do not grant cold takeover authority.
+
+The selected route can change between lookup and mutation. `resume`,
+`beginSuccessor` and the SQL transitions must recheck identity and reject stale
+decisions. Tests must retain a borrowed predecessor through actual successor
+reservation, then prove that its mutation is refused and its resources remain
+protected until disposal. Also retain uncertain proposals across retries and
+refuse wrong callers or altered commands before disclosing busy state.
+
+#### End-to-end acceptance
+
+The facade enables the historical branch only for the internal qualification
+factory. `RemoteDocumentPublicationRepository` validates the envelope and response
+but leaves execution capability decisions to the authenticated server. Qualify
+the complete historical branch through both the shared library and that client
+before exposing host configuration. Keep guards on ordinary-only internals;
+removing every occurrence would bypass their distinct historical ownership path.
+
+For synchronous dispatch, the facade's existing accepted call is sufficient.
+`shutdownStep` waits for those calls before closing and detaching historical
+entries, and each entry owns its own parent scope. Do not enter a second external
+admission scope through `withHistoricalAttempts` after the facade has accepted the
+request: shutdown may have closed external admission in between.
+
+Read the current account policy through `DocumentSchemaPolicies.read` before
+preparing an assessment; publication rechecks that policy under its existing
+SQL fence. Retain the original execution handle across retries. An attempted
+CREATE without an acknowledged result must use `reconcileAssessment` with its
+original selections and evidence. An absent reconciliation result does not
+authorize another CREATE. After an uncertain publication, first use authorized
+terminal replay; absence is not permission to repeat the original mutation.
+
+These composition choices received a read-only Sol review on 2026-10-08. They
+are implementation requirements, not evidence that public dispatch is available.
 
 - With r3 current, selecting r1 publishes a new r4; retained r1 and r3 are
   unchanged. Exact retries return the same terminal receipt without uploads.
@@ -856,6 +998,157 @@ provider evidence, followed by shared session integration and transport parity.
 Published examples must wait for the public acceptance cases. Pending-source
 retention and safe cleanup are prerequisites for claimed restore activation;
 broader backup qualification and progressive hydration remain required afterward.
+
+#### Remaining factory exposure checks
+
+These public-route checks gate managed factory exposure. Existing private execution
+tests are useful regression coverage but do not prove that facade routing carries
+the same identity, control and cleanup rules. The reviewed dispatcher now has an
+explicit managed wrapper; host composition qualification is recorded below.
+
+- Transport cancellation and deadline: hold a real provider reply, cancel through
+  the remote client, prove server capacity and delivery reservations remain held
+  until the actual producer exits, then prove no assessment or commit occurred.
+  Qualify orderly close independently; an accepted uncancelled call may finish.
+  Library cancellation and orderly close, plus cancellation through the remote
+  client and authenticated in-process gRPC service, now pass. The transport test
+  proves server-side capacity remains occupied after the client returns CANCELLED.
+  An explicit client gRPC deadline now reports DEADLINE_EXCEEDED while server
+  capacity, delivery bytes and historical captures remain held until the actual
+  producer exits. Orderly service admission close refuses new RPCs but permits
+  the accepted call to commit once before service/runtime drainage. These are
+  authenticated in-process transport cases; they do not qualify network listener
+  shutdown or socket disconnects. See [deadline and close evidence](../evidence/repository/2026-10-08-historical-public-transport-stop/README.md).
+- Negative identity and intent: change modes, canonical command or destination
+  condition under an existing operation identity; reject before selector, schema
+  resolution or provider work. Cover uncertain local proposals and corrupt journal
+  contents without treating corruption as permission for initial admission.
+  Terminal replay and an uncertain START acknowledgement now have library and
+  authenticated in-process gRPC cases for changed destination condition, changed
+  historical object identity, changed mode, missing account bindings and invalid
+  credential generation. Refused retries leave the original operation usable and
+  perform no placement selection, schema resolution or PUT. Changed intent maps
+  to public CONFLICT rather than exposing the private ledger exception. Pending
+  mode changes return CONFLICT; terminal fixed-mode changes return
+  FAILED_PRECONDITION. Committed reservation/install acknowledgement loss with
+  cancelled immediate confirmation now preserves the exact local successor and
+  durable recovery row across public retry. Altered and unauthorized requests are
+  refused at that uncertain checkpoint without selector, schema or provider work.
+  See [recovery acknowledgement evidence](../evidence/repository/2026-10-08-historical-public-recovery-ack/README.md).
+  A fresh process after reserved-phase writer termination now rejects a damaged
+  preparation on library/gRPC with the exact DATA_LOSS integrity error, unchanged
+  journal and no selection, schema, provider, installation or publication work.
+  Restoring the original bytes lets the same runtime recover and publish once.
+  See [corrupt-journal evidence](../evidence/repository/2026-10-08-historical-public-corrupt-journal/README.md).
+  This covers preparation-byte corruption, not every persisted journal field.
+- Current authorization and policy: revoke source READ, destination WRITE or
+  credential generation, or change admission policy between capture and commit.
+  Prove both SQL orderings through public dispatch, including authorized replay
+  when publication wins. A retained source is not a retained authorization grant.
+  Library and authenticated in-process gRPC now cover credential revocation
+  committed while a real upload reply is held. Both refuse completion and retry
+  with UNAUTHENTICATED, create no assessment/commit/success rows, and drain through
+  separate process cleanup authority. See [credential evidence](../evidence/repository/2026-10-08-historical-public-credential-revocation/README.md).
+  This proves revocation before upload completion, not the publication-lock race.
+  READ and WRITE now have separate library/gRPC cases using selective ACLs on the
+  shared source/destination node. Revocation commits before the upload reply is
+  released; the call and retry return NOT_FOUND without assessment or publication.
+  The opposite permission remains available and the original ACL is restored after
+  cleanup. See [ACL evidence](../evidence/repository/2026-10-08-historical-public-acl-revocation/README.md).
+  Publication-first READ/WRITE ordering now uses an exact success-transaction gate
+  and PostgreSQL confirmation that the ACL writer waits on the publisher PID.
+  READ removal after commit denies receipt delivery and replay; WRITE-only removal
+  preserves the exact SQL receipt when READ remains. See [commit-winner evidence](../evidence/repository/2026-10-08-historical-public-acl-commit-winner/README.md).
+  Credential and admission-policy publication-first cases now also pass through
+  library/gRPC. The actual administration connection waits on the publisher PID;
+  its transaction completes before the publication reply resumes. Credential
+  revocation denies delivery/replay with UNAUTHENTICATED while preserving success.
+  Policy replacement preserves exact authorized delivery/replay of that success.
+  See [authority commit-winner evidence](../evidence/repository/2026-10-08-historical-public-authority-commit-winner/README.md).
+  Active policy replacement during upload now has library/gRPC cases. The facade
+  maps `DocumentSchemaPolicies.StalePolicy` to FAILED_PRECONDITION; exact retry
+  preserves the stale assessment and reports the same specific failure without
+  new upload, selection or schema work. Private exception behavior is unchanged.
+  See [policy-change evidence](../evidence/repository/2026-10-08-historical-public-policy-change/README.md).
+  These cases cover replacement before upload completion and publication before
+  administration. They do not establish every possible intermediate race boundary.
+- Publication acknowledgement loss: commit the real publication transaction and
+  lose its reply. An exact public retry must recover the authorized durable receipt
+  with one revision, no second PUT and no second assessment CREATE.
+  The library lost-acknowledgement path and library/gRPC terminal retries now have
+  a focused qualification case. It snapshots the SQL receipt before any retry and
+  compares both public paths directly with that receipt, including real provider
+  readback and single-commit/assessment counts.
+- Cleanup failure: fail a real pin or generation retirement step after terminal
+  publication. Receipt delivery remains independent of cleanup; bounded maintenance
+  reports the failure, retries it, and eventually returns capacity without dropping
+  retained ownership. Qualify fairness when an earlier entry remains undrainable.
+  Bounded internal maintenance now has real-SQL fairness cases for a held source
+  worker and an authority lookup failure. Public terminal replay and maintenance
+  retry have an authority-failure case with real provider publication. A real SQL
+  pin-release rollback now restores exact pins and retention mirrors, preserves
+  library/gRPC terminal receipts, and succeeds on retry with one capture-drain
+  receipt. See [the rollback evidence](../evidence/repository/2026-10-08-historical-public-sql-cleanup/README.md).
+  This does not qualify every cleanup failure or lost cleanup acknowledgement.
+
+These checks supplement cold-process and concurrent takeover evidence; they do
+not replace the remaining full-goal pruning, backup, performance or hydration work.
+
+#### Next managed-host integration
+
+The shared dispatcher remains implemented in `historicalJournaled`. Its public
+`managedHistoricalJournaled` wrapper now requires explicit generation capacity and
+recovery authority. `ManagedPublicationOptions.withHistoricalPublication` opts the
+managed service into that wrapper after `withRecovery` has supplied authority.
+Existing constructors keep historical publication disabled. No protobuf operation,
+field number, import or stored type URL changed.
+
+Configuration rejects nonpositive capacity and absent recovery authority before
+host acquisition. Drain authority remains separate. The service transfers schema
+worker ownership only after constructing the repository facade; on failure it
+drains a constructed runtime rather than just its reader. Schema close completion
+is recorded only after success, so repeated shutdown is idempotent and exceptions
+remain retryable. Caller-owned schema access remains usable after failed composition.
+
+Retained reads and recovered uploads must resolve their original backend generation
+and profile, including storage identity. New initial uploads may use the current
+placement selector. The existing managed host accepts only its configured backend;
+an unavailable historical identity must remain an explicit failure. Supporting
+additional retained backends requires an identity-based resolver with owned provider
+lifetime, not substitution of the current backend or provider-specific defaults.
+
+The hosted bounded-document builder now has real PostgreSQL, Redis and Git coverage
+for ordinary publication followed by mixed historical/new content, library-first
+and authenticated gRPC-first execution, exact retries, retained-schema readback and
+physical identity preservation. Disabled configuration refuses historical requests
+on both boundaries. Real registry lifecycle tests and ordinary/historical observation
+failure tests cover schema ownership and reader cleanup.
+
+See [managed host evidence](../evidence/repository/2026-10-08-managed-historical-host/README.md).
+Cold recovery now passes through the full S3 hosted builder at initial, reserved
+and installed crash boundaries, with exact public retries and both hosted readers
+drained. Preparation retains its actual encoded plan allowance rather than a fixed
+16 MiB reservation that exceeded the host budget during activation. See
+[managed cold evidence](../evidence/repository/2026-10-08-managed-historical-cold/README.md).
+A new historical publication now refuses an unavailable source generation with
+`FAILED_PRECONDITION` through both hosted boundaries, with no current-backend
+substitution. See [unavailable source evidence](../evidence/repository/2026-10-08-managed-historical-unavailable/README.md).
+Hosted cancellation and timed close now retain exact source pins and shared resources
+while a real Redis PUT or selected historical GET reply is held. Repeated close after actual worker exit quiesces
+the reader and fences the host. See [held-provider evidence](../evidence/repository/2026-10-08-managed-historical-shutdown/README.md).
+The [held historical read evidence](../evidence/repository/2026-10-08-managed-historical-read-shutdown/README.md)
+also distinguishes caller cancellation from the lifetime of the actual read worker.
+A fresh Git descriptor load now has hosted library/gRPC cancellation and timed-close
+coverage: the actual resolver worker and shared resources remain owned until it exits,
+and the closed resolver does not cache its late result. See
+[held schema evidence](../evidence/repository/2026-10-08-managed-historical-schema-shutdown/README.md).
+Cold recovery with a mounted source generation and unavailable saved upload generation
+now refuses both public paths after actual successor activation, preserving journaled
+placement identity and the provider's object-version set. See
+[unavailable upload evidence](../evidence/repository/2026-10-08-managed-cold-unavailable-upload/README.md).
+The next full-goal work is atomic pruning with historical preparations included in
+liveness decisions. Multi-backend operation, deployed recovery and performance remain
+unqualified. Keep those features out of availability claims until their cases pass.
 
 ### Pending source projection checkpoint (2026-10-07)
 

@@ -311,7 +311,7 @@ final class DocumentOperationUploadAdmission {
         });
     }
 
-    private static void requireInitialSelections(EntityManager em, RepositoryOperationLedger.Owner owner, Prepared prepared) {
+    static void requireInitialSelections(EntityManager em, RepositoryOperationLedger.Owner owner, Prepared prepared) {
             boolean matches = (Boolean) em.createNativeQuery("""
                     WITH expected AS (
                       SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) q(member_id text,node_id uuid,

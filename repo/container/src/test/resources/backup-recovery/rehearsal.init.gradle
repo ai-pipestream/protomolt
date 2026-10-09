@@ -1,0 +1,33 @@
+// Dedicated wiring for the RepositoryBackupRehearsal suite (isolated repository
+// backup and recovery rehearsal). The suite's seed and recovered hosts run as
+// child JVMs on the production transport runtime only; this script resolves that
+// runtime and the admission inventory bundle without touching shared build files.
+// Used only via -I on the documented rehearsal command; never affects other tasks.
+gradle.projectsEvaluated { g ->
+    def p = g.rootProject.project(':protomolt-repo-container')
+    def hostClasspath = p.objects.fileCollection()
+    hostClasspath.from(p.tasks.named('jar').map { it.archiveFile }, p.configurations.named('assessmentTransportRuntime'))
+    p.tasks.register('backupRehearsalHostClasspath') {
+        def out = p.layout.buildDirectory.file('backup-recovery/host-classpath.txt')
+        outputs.file(out)
+        doLast {
+            out.get().asFile.parentFile.mkdirs()
+            out.get().asFile.text = hostClasspath.files.join(File.pathSeparator) + '\n'
+        }
+    }
+    p.tasks.named('test') {
+        dependsOn 'admissionTransportRuntimeInventory', 'backupRehearsalHostClasspath'
+        // build.gradle keeps the rehearsal out of the ordinary test task; this script is its only entry.
+        setExcludes(excludes.findAll { it != '**/RepositoryBackupRehearsalIT*' })
+        // A rehearsal is evidence of this run; never replay a cached or up-to-date result.
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        // -Pprotomolt.rehearsalKeep=true leaves each case's containers and volumes for inspection.
+        systemProperty 'protomolt.test.rehearsalKeep', p.findProperty('protomolt.rehearsalKeep') ?: 'false'
+        doFirst {
+            systemProperty 'protomolt.test.backupHostClasspath', hostClasspath.files.join(File.pathSeparator)
+            systemProperty 'protomolt.test.admissionRuntimeBundle',
+                    p.layout.buildDirectory.dir('admission-transport-runtime').get().asFile.absolutePath
+        }
+    }
+}

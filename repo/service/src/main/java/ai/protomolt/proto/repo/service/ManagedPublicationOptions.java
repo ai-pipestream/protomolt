@@ -17,7 +17,20 @@ import java.util.function.Function;
  */
 public record ManagedPublicationOptions(Path assessmentRuntimeBundle, Duration assessmentRetention,
         Duration minimumAssessmentRemaining, OperationAuthority drainAuthority,
-        Optional<OperationAuthority> recoveryAuthority, Optional<Transport> transport) {
+        Optional<OperationAuthority> recoveryAuthority, Optional<Transport> transport,
+        Optional<Historical> historical) {
+
+    /** Capacity counts retained generations, including predecessors still draining. */
+    public record Historical(int generationCapacity) {
+        public Historical {
+            if (generationCapacity < 1) throw new IllegalArgumentException("Historical generation capacity must be positive");
+        }
+    }
+
+    public ManagedPublicationOptions(Path bundle, Duration retention, Duration minimumRemaining,
+            OperationAuthority drainAuthority, Optional<OperationAuthority> recoveryAuthority, Optional<Transport> transport) {
+        this(bundle, retention, minimumRemaining, drainAuthority, recoveryAuthority, transport, Optional.empty());
+    }
 
     /** Separate host policies select drain and recovery authority; neither implies the other. */
     @FunctionalInterface public interface OperationAuthority {
@@ -51,6 +64,9 @@ public record ManagedPublicationOptions(Path assessmentRuntimeBundle, Duration a
         Objects.requireNonNull(drainAuthority, "drainAuthority");
         Objects.requireNonNull(recoveryAuthority, "recoveryAuthority");
         Objects.requireNonNull(transport, "transport");
+        Objects.requireNonNull(historical, "historical");
+        if (historical.isPresent() && recoveryAuthority.isEmpty())
+            throw new IllegalArgumentException("Historical publication requires explicit recovery authority");
         // Use the runtime's window rules so composition cannot accept a divergent policy.
         new ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.Assessments(
                 assessmentRuntimeBundle, assessmentRetention, minimumAssessmentRemaining);
@@ -59,12 +75,18 @@ public record ManagedPublicationOptions(Path assessmentRuntimeBundle, Duration a
 
     public ManagedPublicationOptions withRecovery(OperationAuthority authority) {
         return new ManagedPublicationOptions(assessmentRuntimeBundle, assessmentRetention, minimumAssessmentRemaining,
-                drainAuthority, Optional.of(authority), transport);
+                drainAuthority, Optional.of(authority), transport, historical);
     }
 
     public ManagedPublicationOptions withTransport(Transport access) {
         return new ManagedPublicationOptions(assessmentRuntimeBundle, assessmentRetention, minimumAssessmentRemaining,
-                drainAuthority, recoveryAuthority, Optional.of(access));
+                drainAuthority, recoveryAuthority, Optional.of(access), historical);
+    }
+
+    /** Explicit opt-in after configuring recovery authority; no authority or capacity is inferred. */
+    public ManagedPublicationOptions withHistoricalPublication(int generationCapacity) {
+        return new ManagedPublicationOptions(assessmentRuntimeBundle, assessmentRetention, minimumAssessmentRemaining,
+                drainAuthority, recoveryAuthority, transport, Optional.of(new Historical(generationCapacity)));
     }
 
     ManagedDocumentServices.Journaled journaled() {
@@ -73,6 +95,6 @@ public record ManagedPublicationOptions(Path assessmentRuntimeBundle, Duration a
                         assessmentRuntimeBundle, assessmentRetention, minimumAssessmentRemaining),
                 drainAuthority::forOperation,
                 recoveryAuthority.<ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.RecoveryAuthority>
-                        map(authority -> authority::forOperation).orElse(null), transport.orElse(null));
+                        map(authority -> authority::forOperation).orElse(null), transport.orElse(null), historical);
     }
 }

@@ -26,6 +26,65 @@ class RepositoryHistoricalAttemptRetirementIT {
     private static final RepositoryCaller CALLER = new RepositoryCaller("principal", true);
     private static final RepositoryReadControl NONE = RepositoryReadControl.NONE;
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void boundedMaintenanceDoesNotStarveLaterReadyGeneration(boolean authorityFailure) throws Exception {
+        try (var c = context(POSTGRES); var first = historicalInitial(c)) {
+            var firstPlan = installedHistoricalSuccessor(c, first);
+            try (var second = HistoricalRetirementFixture.sibling(c, first)) {
+                var secondPlan = installedHistoricalSuccessor(c, second);
+                var budget = new PayloadBudget(256L * 1024 * 1024);
+                var attempts = new RepositoryInstalledHistoricalAttempts(c.tx(), budget, new DriveLedger(c.tx()), 2);
+                try (var firstSources = capture(c, first); var secondSources = capture(c, second);
+                     var firstRoot = firstSources.sources().work(); var firstWorker = firstRoot.fork();
+                     var secondRoot = secondSources.sources().work(); var secondWorker = secondRoot.fork()) {
+                    try (var one = attempts.beginInstalled(CALLER, firstPlan, first.record());
+                         var two = attempts.beginInstalled(CALLER, secondPlan, second.record())) {
+                        one.attachSources(firstSources.sources(), firstRoot, NONE);
+                        one.openExecution(CALLER, NONE);
+                        two.attachSources(secondSources.sources(), secondRoot, NONE);
+                        two.openExecution(CALLER, NONE);
+                        for (var plan : java.util.List.of(firstPlan, secondPlan)) {
+                            var owner = c.tx().inTransaction(em -> {
+                                var claim = RepositoryExecutionClaimLedger.lockLive(em, plan.next().key(), plan.next().command().sha256(),
+                                        plan.reservation().predecessor().epoch() + 1, plan.reservation().successorToken());
+                                return RepositoryOperationLedger.lockLiveOwner(em, plan.next().key(), plan.next().predecessorGeneration() + 1,
+                                        plan.next().seeds().ownerNonce(), Optional.of(claim));
+                            });
+                            new DocumentPublicationRejections(c.tx()).cancel(CALLER, owner, plan.next().command(), NONE);
+                        }
+                        assertThat(one.retireTerminal(CALLER, Duration.ZERO, NONE)).isEqualTo(RepositoryInstalledHistoricalAttempts.Retirement.RETAINED);
+                        assertThat(two.retireTerminal(CALLER, Duration.ZERO, NONE)).isEqualTo(RepositoryInstalledHistoricalAttempts.Retirement.RETAINED);
+                    }
+                    secondWorker.close();
+                    var lookups = new java.util.ArrayList<RepositoryOperationLedger.Key>();
+                    var failure = new IllegalStateException("injected cleanup authority failure");
+                    java.util.function.Function<RepositoryOperationLedger.Key, RepositoryCaller> authority = key -> {
+                        lookups.add(key);
+                        if (authorityFailure && key.equals(firstPlan.next().key())) throw failure;
+                        return CALLER;
+                    };
+                    if (authorityFailure) assertThatThrownBy(() -> attempts.retireReady(1, authority, NONE)).isSameAs(failure);
+                    else assertThat(attempts.retireReady(1, authority, NONE)).isZero();
+                    assertThat(lookups).containsExactly(firstPlan.next().key());
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 2));
+                    assertThat(attempts.retireReady(1, authority, NONE)).isEqualTo(1);
+                    assertThat(lookups).containsExactly(firstPlan.next().key(), secondPlan.next().key());
+                    assertThat(firstSources.history().isReleased()).isFalse();
+                    assertThat(secondSources.history().isReleased()).isTrue();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 1));
+                    firstWorker.close();
+                    assertThat(attempts.retireReady(1, ignored -> CALLER, NONE)).isEqualTo(1);
+                    assertThat(firstSources.history().isReleased()).isTrue();
+                    assertThat(attempts.drain()).isEqualTo(new RepositoryInstalledHistoricalAttempts.Drain(0, 0));
+                    assertThat(budget.reservedBytes()).isZero();
+                } finally {
+                    attempts.close();
+                    assertThat(attempts.detachClosed(Duration.ofSeconds(1), ignored -> CALLER, NONE)).isTrue();
+                }
+            }
+        }
+    }
+
     @org.junit.jupiter.api.Test
     void cancellationAfterTerminalProofRetainsDisposalOnlyEntryUntilWorkerExits() throws Exception {
         try (var c = context(POSTGRES); var rig = historicalInitial(c)) {

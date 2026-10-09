@@ -25,6 +25,11 @@ final class ManagedArchiveServices {
 
     ManagedArchiveServices(Tx tx, ArchiveLedger archive, BlobStore store, Set<BlobCapability> capabilities,
             String generation, ManagedBackendLedger.Profile profile, ObjectReclaimer reclaimer) {
+        this(tx, archive, store, capabilities, generation, profile, reclaimer, null);
+    }
+
+    ManagedArchiveServices(Tx tx, ArchiveLedger archive, BlobStore store, Set<BlobCapability> capabilities,
+            String generation, ManagedBackendLedger.Profile profile, ObjectReclaimer reclaimer, UUID hostExecution) {
         var profiles = new ManagedBackendLedger(tx);
         if (!profiles.find(generation).filter(profile::equals).isPresent())
             throw new IllegalStateException("Original archive backend profile is not bound");
@@ -39,7 +44,9 @@ final class ManagedArchiveServices {
         });
         // Register only after all configuration-dependent components are built.
         // The final reader constructor accepts the non-null ledger and resolver only.
-        reader = new ArchiveObjectReader(new ArchiveReadLedger(tx, UUID.randomUUID()), (original, realm) -> {
+        var ledger = hostExecution == null ? new ArchiveReadLedger(tx, UUID.randomUUID())
+                : new ArchiveReadLedger(tx, UUID.randomUUID(), hostExecution);
+        reader = new ArchiveObjectReader(ledger, (original, realm) -> {
             if (!generation.equals(original) || !profile.storageRealm().equals(realm))
                 throw new IllegalStateException("Original archive backend is not configured on this host");
             return store;

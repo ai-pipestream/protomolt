@@ -12,11 +12,11 @@ import java.util.*;
 /** Real provider reads, production-JAR observation, and SQL CREATE of historical evidence. */
 public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
-        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE,
+        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, PUBLIC_RECOVERY, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, INITIAL_OWNER_REJECTIONS, OWNED_SCOPED_COLD, OWNED_SCOPED_COLD_RESTART_WRITER,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
         SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
-        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED
+        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP, OWNED_SCOPED_COMMIT_WINS, OWNED_SCOPED_COMMIT_WINS_OLD_FIRST, OWNED_SCOPED_CLAIM_EXPIRES, OWNED_SCOPED_TAKEOVER_FIRST, OWNED_SCOPED_REJECTION
     }
     static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
@@ -26,6 +26,8 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
             boolean reconciliationOnly) throws Exception {
         for (var scenario : Scenario.values()) {
+            if (scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.OWNED_SCOPED_REJECTION || scenario == Scenario.OWNED_SCOPED_COLD || scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER) continue;
+            if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION || scenario == Scenario.OWNED_SCOPED_OVERLAP || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST || scenario == Scenario.OWNED_SCOPED_CLAIM_EXPIRES || scenario == Scenario.OWNED_SCOPED_TAKEOVER_FIRST) continue;
             if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
             if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
                     || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK
@@ -49,23 +51,87 @@ public final class HistoricalAssessmentCreationProbe {
         }
     }
 
+    static void publicCommitWinner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.PUBLIC_COMMIT_WINNER, null, null, tx);
+    }
+
+    static void publicRecovery(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.PUBLIC_RECOVERY, null, null, tx);
+    }
+
+    static void initialOwner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_REJECTION, null, null, tx);
+        run(tx, provider, source, revision, database, Scenario.INITIAL_OWNER, null, null, tx);
+        try (var fault = new HistoricalCreateCommitFault(database, true)) {
+            run(fault.tx(), provider, source, revision, database, Scenario.INITIAL_OWNER, fault, null, tx);
+        }
+    }
+
+    static void initialOwnerRejections(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.INITIAL_OWNER_REJECTIONS, null, null, tx);
+    }
+
+    static void selfSupersession(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_SELF_SUPERSESSION, null, null, tx);
+    }
+
+    static void coldOwner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_COLD, null, null, tx);
+    }
+
+    static void coldRestartWriter(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_COLD_RESTART_WRITER, null, null, tx);
+        throw new AssertionError("Crash writer returned without terminating");
+    }
+
+    static void overlappingGenerations(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_OVERLAP, null, null, tx);
+    }
+
+    static void takeoverFirst(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_TAKEOVER_FIRST, null, null, tx);
+    }
+
+    static void claimExpires(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_CLAIM_EXPIRES, null, null, tx);
+    }
+
+    static void commitWins(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database, boolean oldFirst) throws Exception {
+        run(tx, provider, source, revision, database, oldFirst ? Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST
+                : Scenario.OWNED_SCOPED_COMMIT_WINS, null, null, tx);
+    }
+
     private static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
             DocumentPublishedRevision revision, javax.sql.DataSource database, Scenario scenario,
             HistoricalCreateCommitFault fault, HistoricalAuthorizationCommitGate gate, Tx independent) throws Exception {
         boolean lostAck = scenario == Scenario.ORDINARY_LOST_ACK;
         boolean installedOwner = installedOwner(scenario);
         boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
-        boolean mixed = scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
+        boolean mixed = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
                 || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION
                 || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || installedOwner;
-        boolean scoped = scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
+        boolean scoped = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
                 || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
                 || installedOwner || gate != null;
-        var credential = new RepositoryCredentialBinding("historical-create", UUID.randomUUID(), 1);
+        var credential = new RepositoryCredentialBinding("historical-create",
+                scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER
+                        ? UUID.fromString(System.getenv("PROTOMOLT_TEST_COLD_CREDENTIAL")) : UUID.randomUUID(), 1);
         var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
                 : new RepositoryCaller("principal", true);
         if (scoped) new RepositoryCredentialAuthorities(tx).register(new RepositoryCaller("operator", true), credential, caller.principalName());
-        var ledger = new DocumentReadLedger(tx, UUID.randomUUID());
+        var ledger = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER
+                ? HistoricalColdRestartProbe.writerReads(tx) : new DocumentReadLedger(tx, UUID.randomUUID());
         var history = ledger.captureHistorical(caller, revision.getAddress(), UUID.fromString(revision.getRevisionId()));
         var budget = new PayloadBudget(128_000_000);
         try {
@@ -102,7 +168,17 @@ public final class HistoricalAssessmentCreationProbe {
             var policy = new DocumentSchemaPolicies(tx).read("account", () -> {});
             var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")), () -> {});
             if (claimed) {
-                if (gate != null) {
+                if (scenario == Scenario.PUBLIC_RECOVERY) {
+                    HistoricalPublicDispatchProbe.runRecovery(tx, provider, caller, command, source.placement(), revision,
+                            fragments, budget, database);
+                } else if (scenario == Scenario.PUBLIC_COMMIT_WINNER) {
+                    HistoricalPublicDispatchProbe.runWinners(tx, provider, caller, command, source.placement(), revision,
+                            fragments, budget, database);
+                } else if ((scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS)) {
+                    HistoricalInitialOwnerProbe.run(tx, provider, caller, command, policy, source.placement(), revision,
+                            fragments, budget, observation, fault, database, scenario == Scenario.INITIAL_OWNER_REJECTIONS
+                                    ? HistoricalInitialOwnerProbe.Part.REJECTIONS : HistoricalInitialOwnerProbe.Part.PUBLIC_DISPATCH);
+                } else if (gate != null) {
                     HistoricalCreateWinnerProbe.run(tx, independent, gate, scenario == Scenario.CREATE_WINS, caller,
                             command, policy, source.placement(), history, fragments, budget, observation);
                 } else if (scenario == Scenario.REVOKED_BEFORE_STAGE) {
@@ -115,7 +191,7 @@ public final class HistoricalAssessmentCreationProbe {
                             : scenario == Scenario.SUCCESSOR ? "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK"
                             : scenario == Scenario.START_CONCURRENT ? "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK"
                             : scenario == Scenario.START_ROLLBACK ? "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK"
-                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_REFUSED_OK"
+                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_CREATE_OK"
                             : fault == null ? (mixed ? "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK")
                             : fault.lostAcknowledgement() ? "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK");
                 }
@@ -188,10 +264,16 @@ public final class HistoricalAssessmentCreationProbe {
         System.out.println(lostAck ? "HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "HISTORICAL_ASSESSMENT_CREATE_OK");
     }
     private static void claimed(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
-            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement,
+            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement originalPlacement,
             DocumentReadLedger.PinnedHistory history, Map<Integer, ByteString> fragments, PayloadBudget budget,
             DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault, boolean mixed,
             javax.sql.DataSource contentionDatabase, javax.sql.DataSource database, Scenario scenario) throws Exception {
+        boolean missingUpload = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER && ManagedHistoricalUnavailableUploadProbe.enabled();
+        if (missingUpload) {
+            new ManagedBackendLedger(tx).bind(ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile());
+        }
+        var placement = missingUpload ? new DocumentUploadPlan.Placement(originalPlacement.drive(),
+                ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile()) : originalPlacement;
         boolean startFault = scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK;
         boolean installedOwner = installedOwner(scenario);
         boolean createFault = fault != null && !startFault;
@@ -228,8 +310,10 @@ public final class HistoricalAssessmentCreationProbe {
                 var started = execution.start(caller, retention, RepositoryReadControl.NONE);
                 require(execution.start(caller, retention, RepositoryReadControl.NONE).equals(started),
                         "repeated start preserves coordinates and acknowledged permission");
-                if (startFault) require(started.assessment().equals(fault.proposedStart()) == fault.lostAcknowledgement(),
-                        "lost START acknowledgement recovers identity; rolled back START permits a new identity");
+                if (scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER)
+                    HistoricalColdRestartProbe.checkpointAndHalt(tx, command, caller, fragments, budget);
+                if (startFault) require(started.assessment().equals(fault.proposedStart()),
+                        "START retry retains the original private proposal across rollback or lost acknowledgement");
                 if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
                         || installedOwner) {
                     HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
@@ -237,6 +321,14 @@ public final class HistoricalAssessmentCreationProbe {
                             installedOwner, fault, database, switch (scenario) {
                                 case OWNED_SCOPED_RECONCILE_REVOKED -> HistoricalInstalledOwnerProbe.Check.REVOKED;
                                 case OWNED_SCOPED_RECONCILE_EXPIRED -> HistoricalInstalledOwnerProbe.Check.EXPIRED;
+                                case OWNED_SCOPED_SELF_SUPERSESSION -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
+                                case OWNED_SCOPED_OVERLAP -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
+                                case OWNED_SCOPED_COMMIT_WINS -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS;
+                                case OWNED_SCOPED_COMMIT_WINS_OLD_FIRST -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS_OLD_FIRST;
+                                case OWNED_SCOPED_CLAIM_EXPIRES -> HistoricalInstalledOwnerProbe.Check.CLAIM_EXPIRES;
+                                case OWNED_SCOPED_TAKEOVER_FIRST -> HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST;
+                                case OWNED_SCOPED_REJECTION -> HistoricalInstalledOwnerProbe.Check.REJECTION;
+                                case OWNED_SCOPED_COLD -> HistoricalInstalledOwnerProbe.Check.COLD;
                                 default -> HistoricalInstalledOwnerProbe.Check.ORDINARY;
                             });
                     return;
@@ -297,24 +389,6 @@ public final class HistoricalAssessmentCreationProbe {
                                 "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
                                 .setParameter("op", command.operationId()).getSingleResult()).longValue());
                         require(claims == 0, "foreign handle staged no schema claims");
-                    }
-                    if (scenario == Scenario.START_LOST_ACK) {
-                        try {
-                            execution.createAssessment(caller, assessment, selections, observation,
-                                    new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
-                            throw new AssertionError("Lost START acknowledgement granted CREATE permission");
-                        } catch (RepositoryException expected) {
-                            require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
-                                    && expected.getMessage().contains("requires reconciliation"),
-                                    "original handle without acknowledged START cannot CREATE");
-                        }
-                        long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
-                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
-                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
-                        require(claims == 0, "lost START acknowledgement stages no schema claims on either handle");
-                        require(new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).isEmpty(),
-                                "START coordinates alone do not establish an assessment");
-                        return;
                     }
                     var authorityBefore = authority(tx, owner.key());
                     DocumentAssessmentCreation.Created created = null;
@@ -595,8 +669,8 @@ public final class HistoricalAssessmentCreationProbe {
 
     private static boolean installedOwner(Scenario scenario) {
         return switch (scenario) {
-            case OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
-                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED -> true;
+            case OWNED_SCOPED_COLD_RESTART_WRITER, OWNED_SCOPED_COLD, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP, OWNED_SCOPED_COMMIT_WINS, OWNED_SCOPED_COMMIT_WINS_OLD_FIRST, OWNED_SCOPED_CLAIM_EXPIRES, OWNED_SCOPED_TAKEOVER_FIRST, OWNED_SCOPED_REJECTION -> true;
             default -> false;
         };
     }

@@ -24,6 +24,7 @@ import java.util.concurrent.Future;
 /** Original-backend reads of an already-authorized, published document snapshot. */
 public final class DocumentPartReader implements AutoCloseable,
         ai.protomolt.proto.repo.container.ledger.DocumentRetainedReader,
+        ai.protomolt.proto.repo.container.ledger.DocumentHistoricalRetainedReader,
         ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReader,
         ai.protomolt.proto.repo.container.ledger.DocumentReadLifecycle.Reader {
     @FunctionalInterface
@@ -255,6 +256,7 @@ public final class DocumentPartReader implements AutoCloseable,
     }
 
     /** Read only one complete-revision ordinal, using the same provider identity and delivery checks. */
+    @Override
     public DocumentReadBatch readHistorical(DocumentReadLedger.PinnedHistory history, int ordinal, RepositoryReadControl control) {
         return readHistorical(history, java.util.OptionalInt.of(ordinal), control);
     }

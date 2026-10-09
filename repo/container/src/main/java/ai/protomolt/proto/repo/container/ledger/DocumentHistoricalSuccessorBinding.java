@@ -16,7 +16,9 @@ final class DocumentHistoricalSuccessorBinding {
     private final byte[] preparationBytes;
     private final byte[] retentionDigest;
     private final String modes;
-    private RepositoryHistoricalActivationEvidence.Receipt verified;
+    // Upload callbacks may verify concurrently. The first receipt is immutable for this handle.
+    private final java.util.concurrent.atomic.AtomicReference<RepositoryHistoricalActivationEvidence.Receipt> verified =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     DocumentHistoricalSuccessorBinding(RepositorySuccessorInstall.Plan plan,
             DocumentPublicationPreparationRecord retention, DocumentPreparationCaptureDrain.Identity capture,
@@ -86,24 +88,26 @@ final class DocumentHistoricalSuccessorBinding {
                 .orElseThrow(() -> new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                         "Successor historical activation is absent"));
         if (!receipt.captureSha256().equals(capture.pinsSha256()) || !receipt.execution().equals(capture.owner())) throw corrupt();
-        if (verified != null && !verified.equals(receipt)) throw corrupt();
-        verified = receipt;
+        var previous = verified.compareAndExchange(null, receipt);
+        if (previous != null && !previous.equals(receipt)) throw corrupt();
     }
 
     /** Full verification at attachment; no execution authority is conferred by this helper alone. */
     void requireCapture(EntityManager em, RepositoryOperationLedger.Owner owner, Runnable control) {
-        if (verified == null) throw new IllegalStateException("Successor activation must be verified before its capture");
+        var receipt = verified.get();
+        if (receipt == null) throw new IllegalStateException("Successor activation must be verified before its capture");
         if (DocumentPreparationHistoryRoots.coverage(em, retention, retentionDigest)
                 != DocumentPreparationHistoryRoots.Coverage.EXACT) throw corrupt();
         DocumentPreparationSourcePins.requireSuccessor(em, retention, pins, owner.executionClaim().orElseThrow(),
-                capture.owner().incarnation(), verified.activationTransaction(), control);
+                capture.owner().incarnation(), receipt.activationTransaction(), control);
     }
 
     /** Immutable contents were verified on this handle; mutable lifetime checks remain mandatory. */
     void requireActiveCapture(EntityManager em, RepositoryOperationLedger.Owner owner, Runnable control) {
-        if (verified == null) throw new IllegalStateException("Successor activation must be verified before its capture");
+        var receipt = verified.get();
+        if (receipt == null) throw new IllegalStateException("Successor activation must be verified before its capture");
         DocumentPreparationSourcePins.requireActiveSuccessor(em, retention, pins, owner.executionClaim().orElseThrow(),
-                capture.owner().incarnation(), verified.activationTransaction(), control);
+                capture.owner().incarnation(), receipt.activationTransaction(), control);
     }
 
     private static RepositoryException corrupt() {

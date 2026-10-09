@@ -8,6 +8,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -219,5 +221,86 @@ class DocumentHistoricalReaderPinsIT {
         assertThatThrownBy(() -> insert(pin, reader, source, actualRevision, recordedRevision, object, node, "HISTORICAL"))
                 .isInstanceOf(RuntimeException.class);
         assertThat(pinCount(pin)).isZero(); assertThat(mirrorCount(pin)).isZero();
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"CURRENT", "HISTORICAL"})
+    void exclusiveDocumentFenceRejectsSqlHistoricalCaptureWithoutPartialPins(String scope) throws Exception {
+        var source = supersededSource(); var reader = reader(); var pin = UUID.randomUUID();
+        var node = source.old().row().nodeId;
+        var revision = scope.equals("CURRENT") ? source.current().attempt() : source.old().attempt();
+        var object = scope.equals("CURRENT") ? source.currentObject() : source.oldObject();
+        try (var connection = java.sql.DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setAutoCommit(false);
+            try (var lock = connection.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+                lock.setLong(1, node.getMostSignificantBits() ^ node.getLeastSignificantBits());
+                lock.execute();
+            }
+            // Separate database session; no provider activity or timing-only race.
+            var failure = catchThrowable(() -> insert(pin, reader, source, revision, revision, object, node, scope));
+            assertThat(failure).hasStackTraceContaining("Historical source acquisition conflicts with document mutation");
+            Throwable cause = failure;
+            while (cause != null && !(cause instanceof java.sql.SQLException)) cause = cause.getCause();
+            assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+            assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("40001");
+            assertThat(pinCount(pin)).isZero(); assertThat(mirrorCount(pin)).isZero();
+            connection.rollback();
+            insert(pin, reader, source, revision, revision, object, node, scope);
+            assertThat(pinCount(pin)).isEqualTo(1); assertThat(mirrorCount(pin)).isEqualTo(1);
+            release(pin, reader, object);
+        }
+    }
+
+    @Test void sqlCaptureHoldsDocumentFenceUntilRollbackAndRollsBackItsMirror() throws Exception {
+        var source = supersededSource(); var reader = reader(); var pin = UUID.randomUUID();
+        var node = source.old().row().nodeId;
+        long key = node.getMostSignificantBits() ^ node.getLeastSignificantBits();
+        try (var connection = java.sql.DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setAutoCommit(false);
+            try (var insert = connection.prepareStatement("""
+                    INSERT INTO document_read_pins(pin_id,reader_incarnation,object_id,source_node,
+                        source_revision,publication_revision,read_scope)
+                    SELECT ?,?,?,node_id,revision_id,publication_revision,'HISTORICAL'
+                    FROM document_revision_publications WHERE revision_id=?
+                    """)) {
+                insert.setObject(1, pin); insert.setObject(2, reader);
+                insert.setObject(3, source.oldObject()); insert.setObject(4, source.old().attempt());
+                assertThat(insert.executeUpdate()).isEqualTo(1);
+            }
+            assertThat(exclusiveAvailable(key)).isFalse();
+            connection.rollback();
+            assertThat(exclusiveAvailable(key)).isTrue();
+            assertThat(pinCount(pin)).isZero(); assertThat(mirrorCount(pin)).isZero();
+        }
+    }
+
+    @Test void sourceFenceMatchesJavaSignedUuidKeysAndHashCollisions() throws Exception {
+        for (String value : java.util.List.of("00000000-0000-0000-0000-000000000000",
+                "80000000-0000-0000-0000-000000000001", "00000000-0000-0001-8000-000000000000",
+                "ffffffff-ffff-ffff-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff")) {
+            var node = UUID.fromString(value);
+            long key = node.getMostSignificantBits() ^ node.getLeastSignificantBits();
+            try (var connection = java.sql.DriverManager.getConnection(
+                    POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                connection.setAutoCommit(false);
+                try (var acquire = connection.prepareStatement("SELECT require_document_source_acquisition(?)")) {
+                    acquire.setObject(1, node);
+                    try (var result = acquire.executeQuery()) { assertThat(result.next()).isTrue(); assertThat(result.getBoolean(1)).isTrue(); }
+                }
+                assertThat(exclusiveAvailable(key)).as(value).isFalse();
+                // Swapping UUID halves preserves the Java XOR key, including signed keys.
+                var collision = new UUID(node.getLeastSignificantBits(), node.getMostSignificantBits());
+                assertThat(exclusiveAvailable(collision.getMostSignificantBits() ^ collision.getLeastSignificantBits())).isFalse();
+                assertThat(exclusiveAvailable(key ^ 1)).isTrue();
+                connection.commit();
+                assertThat(exclusiveAvailable(key)).isTrue();
+            }
+        }
+    }
+
+    private static boolean exclusiveAvailable(long key) {
+        return tx.inTransaction(em -> (Boolean) em.createNativeQuery("SELECT pg_try_advisory_xact_lock(:key)")
+                .setParameter("key", key).getSingleResult());
     }
 }

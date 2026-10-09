@@ -57,6 +57,21 @@ class RepositorySuccessorInstallIT {
             assertThat(before[1]).isEqualTo(plan.next().seeds().ownerNonce());
             RepositorySuccessorInstall.install(c.tx(),budget,CALLER,plan,NONE);
             assertThat(state(c,plan)).containsExactly(before);
+            // Installation keeps the successor unresolved; it must not invent
+            // root ownership or execution rights, including on exact retry.
+            for (String table : List.of("repository_preparation_history_sets", "repository_preparation_history_roots",
+                    "repository_preparation_pin_batches", "repository_preparation_coverage_certificates"))
+                assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table
+                        + " WHERE operation_id=:operation AND predecessor_generation=:generation")
+                        .setParameter("operation", plan.next().key().operationId())
+                        .setParameter("generation", plan.next().predecessorGeneration()).getSingleResult()).longValue()))
+                        .as(table).isZero();
+            assertThat(c.tx().<Long>readOnly(em -> ((Number) em.createNativeQuery("""
+                    SELECT count(*) FROM repository_preparation_coverage_unresolved
+                    WHERE operation_id=:operation AND predecessor_generation=:generation
+                    """).setParameter("operation", plan.next().key().operationId())
+                    .setParameter("generation", plan.next().predecessorGeneration()).getSingleResult()).longValue())).isEqualTo(1);
+
             for(String table:List.of("repository_successor_installs","repository_publication_preparations","repository_publication_modes")) {
                 long count=c.tx().readOnly(em -> ((Number)em.createNativeQuery("SELECT count(*) FROM "+table+" WHERE predecessor_generation=1").getSingleResult()).longValue());
                 assertThat(count).isEqualTo(1);

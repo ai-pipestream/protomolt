@@ -11,9 +11,11 @@ import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
 import ai.protomolt.proto.repo.container.ledger.SqlTimeouts;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.engine.DocumentPartReader;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Host-owned native document resources and explicitly configured historical transport. */
 final class ManagedDocumentServices {
@@ -27,8 +29,16 @@ final class ManagedDocumentServices {
     private final boolean managedDrain;
 
     record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
-            DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport) {
-        Journaled { Objects.requireNonNull(assessments); Objects.requireNonNull(authority); }
+            DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport,
+            Optional<ManagedPublicationOptions.Historical> historical) {
+        Journaled {
+            Objects.requireNonNull(assessments); Objects.requireNonNull(authority); Objects.requireNonNull(historical);
+            if (historical.isPresent()) Objects.requireNonNull(recovery, "Historical recovery authority");
+        }
+        Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
+                DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport) {
+            this(assessments,authority,recovery,transport,Optional.empty());
+        }
         Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
                 DocumentPublicationRuntime.RecoveryAuthority recovery) {
             this(assessments,authority,recovery,null);
@@ -63,6 +73,13 @@ final class ManagedDocumentServices {
     ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
             ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
             ManagedSchemaAccess schemas, Journaled journaled, BoundedDocumentProfile boundedDocuments) {
+        this(tx, drives, generation, profile, backing, deliverEvents, access, schemas, journaled,
+                boundedDocuments, null);
+    }
+
+    ManagedDocumentServices(Tx tx, DriveLedger drives, String generation,
+            ManagedBackendLedger.Profile profile, OpenedBlobStore backing, boolean deliverEvents, HistoricalReadAccess access,
+            ManagedSchemaAccess schemas, Journaled journaled, BoundedDocumentProfile boundedDocuments, UUID hostExecution) {
         Objects.requireNonNull(backing);
         managedDrain = journaled != null;
         if (managedDrain) Objects.requireNonNull(schemas, "Managed journaled publication requires owned schema access");
@@ -84,7 +101,17 @@ final class ManagedDocumentServices {
             requireOriginal(generation, profile, original, selected);
             return backing.store();
         }, 16, 8L * 1024 * 1024, budget);
-        var ledger = new DocumentReadLedger(bounded, UUID.randomUUID(), 32);
+        // Neither object has escaped and the reader starts no provider work during construction.
+        final DocumentReadLedger ledger;
+        try {
+            ledger = hostExecution == null ? new DocumentReadLedger(bounded, UUID.randomUUID(), 32)
+                    : new DocumentReadLedger(bounded, UUID.randomUUID(), hostExecution, 32);
+        } catch (RuntimeException | Error failure) {
+            reader.close();
+            throw failure;
+        }
+        DocumentPublicationRuntime constructed = null;
+        var schemaOwnership = managedDrain ? new ManagedSchemaOwnership(schemas) : null;
         try {
             history = new ai.protomolt.proto.repo.engine.DocumentHistoricalOperations(ledger, reader, budget);
             var responses = access == null ? null : new PayloadBudget(access.responseBudgetBytes());
@@ -98,25 +125,37 @@ final class ManagedDocumentServices {
                 return new DocumentPublicationRuntime.Backend(profile.identity(), backing);
             };
             var limits = new DocumentRevisionAssembly.Limits(8L * 1024 * 1024, 10_000, 100, 100_000, 1_000_000);
-            if (journaled == null) publication = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, backends,
+            if (journaled == null) constructed = new DocumentPublicationRuntime(bounded, drives, ledger, reader, budget, backends,
                     limits, timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100, deliverEvents);
             else {
                 try {
-                    publication = DocumentPublicationRuntime.managedJournaled(bounded, drives, ledger, reader, budget, backends,
+                    if (journaled.historical().isPresent()) constructed = DocumentPublicationRuntime.managedHistoricalJournaled(
+                            bounded, drives, ledger, reader, budget, backends,
                             limits, timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100,
-                            deliverEvents, journaled.assessments(), journaled.authority(), new DocumentPublicationRuntime.ExternalWorkers() {
-                                public void closeAdmission() { schemas.close(); }
-                                public boolean awaitIdle(Duration timeout) throws InterruptedException { return schemas.awaitIdle(timeout); }
-                            },journaled.recovery());
+                            deliverEvents, journaled.assessments(), journaled.authority(), schemaOwnership,
+                            journaled.historical().orElseThrow().generationCapacity(), journaled.recovery());
+                    else constructed = DocumentPublicationRuntime.managedJournaled(bounded, drives, ledger, reader, budget, backends,
+                            limits, timeouts, 4, Duration.ofMillis(25), Duration.ofMinutes(5), 32, 8L * 1024 * 1024, 100,
+                            deliverEvents, journaled.assessments(), journaled.authority(), schemaOwnership, journaled.recovery());
                 } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException("Cannot observe managed publication runtime", failure); }
             }
-            publicationRepository=selection==null ? null : publication.repository(selection,
+            var repository=selection==null ? null : constructed.repository(selection,
                     boundedDocuments == null ? (int)ai.protomolt.proto.repo.spi.DocumentPublicationInput.MAX_UPLOAD_BYTES
                             : boundedDocuments.maxObjectBytes());
+            if (schemaOwnership != null) schemaOwnership.transfer();
+            publication = constructed;
+            publicationRepository = repository;
         } catch (RuntimeException | Error failure) {
             // Nothing has been exposed: no calls, batches or provider workers can exist.
             try {
-                if (!new DocumentReadLifecycle(ledger, reader, 100).shutdownStep(Duration.ofSeconds(5)))
+                if (publicationService != null) publicationService.close();
+                boolean drained;
+                if (constructed == null) drained = new DocumentReadLifecycle(ledger, reader, 100).shutdownStep(Duration.ofSeconds(5));
+                else {
+                    constructed.close();
+                    drained = constructed.shutdownStep(Duration.ofSeconds(5));
+                }
+                if (!drained)
                     throw new IllegalStateException("Fresh publication reader did not quiesce after startup failure");
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
@@ -131,7 +170,8 @@ final class ManagedDocumentServices {
     private static void requireOriginal(String generation, ManagedBackendLedger.Profile profile,
             String original, ManagedBackendLedger.Profile selected) {
         if (!generation.equals(original) || !profile.equals(selected))
-            throw new IllegalStateException("Original document backend is not configured on this host");
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Original document backend is unavailable");
     }
 
     private ai.protomolt.proto.repo.v1.PublishDocumentResponse publish(

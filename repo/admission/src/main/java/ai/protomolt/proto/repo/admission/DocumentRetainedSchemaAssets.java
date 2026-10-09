@@ -47,7 +47,7 @@ final class DocumentRetainedSchemaAssets {
         LimitExceeded(String message) { super(message); }
     }
 
-    static final class DataLoss extends IllegalStateException {
+    static final class DataLoss extends DocumentSchemaAdmission.DataLoss {
         DataLoss(String message) { super(message); }
         DataLoss(String message, Throwable cause) { super(message, cause); }
     }
