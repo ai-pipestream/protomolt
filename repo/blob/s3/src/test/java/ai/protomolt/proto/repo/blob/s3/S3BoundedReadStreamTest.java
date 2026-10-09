@@ -36,8 +36,18 @@ class S3BoundedReadStreamTest {
                 e -> assertThat(e.code()).isEqualTo(BlobStoreException.Code.DATA_LOSS));
     }
 
+    /** An early end of stream is the same fact as a dropped connection: UNAVAILABLE with the counts, never a partial result or DATA_LOSS. */
     @Test void prematureEofDoesNotReturnPartialSuccess() {
         assertThatThrownBy(() -> read(3L, new ByteArrayInputStream(new byte[2]), 3))
+                .isInstanceOfSatisfying(BlobStoreException.class, e -> {
+                    assertThat(e.code()).isEqualTo(BlobStoreException.Code.UNAVAILABLE);
+                    assertThat(e.getMessage()).contains("received 2 of 3 declared bytes");
+                });
+    }
+
+    /** A body that runs past its declared length while staying under the caller's limit is the provider's framing disagreeing with itself. */
+    @Test void bodyLongerThanDeclaredLengthIsDataLoss() {
+        assertThatThrownBy(() -> read(2L, new ByteArrayInputStream(new byte[3]), 10))
                 .isInstanceOfSatisfying(BlobStoreException.class,
                         e -> assertThat(e.code()).isEqualTo(BlobStoreException.Code.DATA_LOSS));
     }
