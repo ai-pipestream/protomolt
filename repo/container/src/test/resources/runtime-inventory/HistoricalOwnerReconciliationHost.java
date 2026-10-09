@@ -11,6 +11,7 @@ public final class HistoricalOwnerReconciliationHost {
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
         var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
             case "initial-owner" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER;
+            case "initial-owner-rejections" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER_REJECTIONS;
             case "public-commit-winner" -> HistoricalInstalledOwnerProbe.Check.PUBLIC_COMMIT_WINNER;
             case "public-recovery" -> HistoricalInstalledOwnerProbe.Check.PUBLIC_RECOVERY;
             case "cold-owner" -> HistoricalInstalledOwnerProbe.Check.COLD;
@@ -36,6 +37,7 @@ public final class HistoricalOwnerReconciliationHost {
         }
         System.out.println(switch (check) {
             case INITIAL_OWNER -> "HISTORICAL_INITIAL_OWNER_HOST_OK";
+            case INITIAL_OWNER_REJECTIONS -> "HISTORICAL_INITIAL_OWNER_REJECTIONS_HOST_OK";
             case PUBLIC_COMMIT_WINNER -> "HISTORICAL_PUBLIC_COMMIT_WINNER_HOST_OK";
             case PUBLIC_RECOVERY -> "HISTORICAL_PUBLIC_RECOVERY_HOST_OK";
             case COLD -> "HISTORICAL_COLD_OWNER_HOST_OK";

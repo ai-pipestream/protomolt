@@ -11,16 +11,23 @@ import java.util.*;
 /** Real provider publication through a retained initial owner, without a successor installation. */
 final class HistoricalInitialOwnerProbe {
     private enum ReplayInterruption { NONE, CANCEL, REVOKE }
+    /**
+     * Each initial-owner host runs the accepted publication and then one of these follow-ups. The rejection
+     * follow-up waits for two natural ten-second lease expiries, so it runs in its own process budget.
+     */
+    enum Part { PUBLIC_DISPATCH, REJECTIONS }
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
             DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement placement, DocumentPublishedRevision revision,
             Map<Integer, ByteString> fragments, PayloadBudget budget, DocumentAssessmentRuntimeObserver.Observation observation,
-            HistoricalCreateCommitFault fault, javax.sql.DataSource database) throws Exception {
+            HistoricalCreateCommitFault fault, javax.sql.DataSource database, Part part) throws Exception {
         run(tx, provider, caller, command, policy, placement, revision, fragments, budget, observation, fault, database, false);
-        if (fault == null) {
+        if (fault == null && part == Part.PUBLIC_DISPATCH) {
             HistoricalPublicDispatchProbe.run(tx, provider, caller, command, placement, revision, fragments, budget, database);
             var currentPolicy = new DocumentSchemaPolicies(tx).read(command.intent().getAccountId(), () -> {});
             require(currentPolicy.policy().bytes().equals(policy.policy().bytes()), "public policy fixtures restore original content");
-            policy = currentPolicy;
+        }
+        if (fault == null && part == Part.REJECTIONS) {
+            policy = new DocumentSchemaPolicies(tx).read(command.intent().getAccountId(), () -> {});
             var current = new DocumentLedger(tx).findByNodeId(
                     ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(revision.getAddress())).orElseThrow();
             var member = command.intent().getMembers(0);

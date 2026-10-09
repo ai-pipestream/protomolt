@@ -343,9 +343,10 @@ class DocumentAssessmentStorageRuntimeTest {
             // Keep independent qualification after every lease-sensitive restart.
             // New owner-recovery qualification has a separate bounded JVM and database;
             // it does not consume or enlarge the established aggregate host deadline.
-            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry", "historical_takeover_first", "historical_initial_owner", "historical_cold_owner")) {
+            for (String databaseName : List.of("historical_reconciliation", "historical_self_supersession", "historical_generation_overlap", "historical_commit_winner", "historical_commit_winner_old_first", "historical_claim_expiry", "historical_takeover_first", "historical_initial_owner", "historical_initial_owner_rejections", "historical_cold_owner")) {
                 boolean coldOwner = databaseName.equals("historical_cold_owner");
                 boolean initialOwner = databaseName.equals("historical_initial_owner");
+                boolean initialOwnerRejections = databaseName.equals("historical_initial_owner_rejections");
                 boolean takeoverFirst = databaseName.equals("historical_takeover_first");
                 boolean claimExpiry = databaseName.equals("historical_claim_expiry");
                 boolean oldFirst = databaseName.equals("historical_commit_winner_old_first");
@@ -363,6 +364,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString());
                 if (takeoverFirst) reconciliationBuilder.command().add("takeover-first");
                 if (initialOwner) reconciliationBuilder.command().add("initial-owner");
+                if (initialOwnerRejections) reconciliationBuilder.command().add("initial-owner-rejections");
                 if (coldOwner) reconciliationBuilder.command().add("cold-owner");
                 if (claimExpiry) reconciliationBuilder.command().add("claim-expires");
                 if (commitWins) reconciliationBuilder.command().add(oldFirst ? "commit-wins-old-first" : "commit-wins");
@@ -383,6 +385,11 @@ class DocumentAssessmentStorageRuntimeTest {
                     if (initialOwner) {
                         assertThat(result).contains("HISTORICAL_INITIAL_OWNER_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
                                 "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK");
+                    } else if (initialOwnerRejections) {
+                        assertThat(result).contains("HISTORICAL_INITIAL_OWNER_REJECTIONS_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                                "HISTORICAL_INITIAL_REJECTION_OK", "HISTORICAL_INITIAL_REJECTION_REPLY_LOST_OK",
+                                "HISTORICAL_REJECTION_BEATS_CANCELLATION_OK", "HISTORICAL_CANCELLATION_BEFORE_REJECTION_OK",
+                                "HISTORICAL_REJECTION_REPLAY_REVOKED_OK");
                     } else if (coldOwner) {
                         assertThat(result).contains("HISTORICAL_COLD_OWNER_HOST_OK", "SCOPED_HISTORICAL_COLD_OWNER_INSTALLED_OK",
                                 "SCOPED_HISTORICAL_COLD_OWNER_PUBLICATION_OK", "SCOPED_INSTALLED_HISTORICAL_MULTICALL_PUBLICATION_OK");
@@ -406,7 +413,7 @@ class DocumentAssessmentStorageRuntimeTest {
                         assertThat(result).contains("HISTORICAL_RECONCILIATION_REVOKED_OK", "HISTORICAL_RECONCILIATION_EXPIRED_OK",
                                 "HISTORICAL_RECONCILIATION_RELEASED_OK");
                     }
-                    if (!initialOwner) {
+                    if (!initialOwner && !initialOwnerRejections) {
                         assertThat(result).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK");
                         assertThat(result).contains((claimExpiry || takeoverFirst) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                     }

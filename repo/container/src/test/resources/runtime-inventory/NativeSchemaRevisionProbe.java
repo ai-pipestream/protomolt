@@ -94,6 +94,7 @@ public final class NativeSchemaRevisionProbe {
                 if (check == HistoricalInstalledOwnerProbe.Check.PUBLIC_RECOVERY) HistoricalAssessmentCreationProbe.publicRecovery(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.PUBLIC_COMMIT_WINNER) HistoricalAssessmentCreationProbe.publicCommitWinner(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER) HistoricalAssessmentCreationProbe.initialOwner(tx, provider, source, published.getFirst(), database);
+                else if (check == HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER_REJECTIONS) HistoricalAssessmentCreationProbe.initialOwnerRejections(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.COLD) HistoricalAssessmentCreationProbe.coldOwner(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.COLD_RESTART_WRITER) HistoricalAssessmentCreationProbe.coldRestartWriter(tx, provider, source, published.getFirst(), database);
                 else if (check == HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST) HistoricalAssessmentCreationProbe.takeoverFirst(tx, provider, source, published.getFirst(), database);
