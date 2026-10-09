@@ -170,7 +170,8 @@ class HistoricalRuntimeQualificationTest {
                 String output = Files.readString(log);
                 assertThat(process.exitValue()).as(output).isZero();
                 assertThat(output).contains(markers);
-                if (!"initial-owner".equals(mode) && !"public-commit-winner".equals(mode) && !"public-recovery".equals(mode)) {
+                if (!"initial-owner".equals(mode) && !"initial-owner-rejections".equals(mode)
+                        && !"public-commit-winner".equals(mode) && !"public-recovery".equals(mode)) {
                     assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
                             "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 }
