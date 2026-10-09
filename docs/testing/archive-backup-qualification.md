@@ -120,18 +120,23 @@ or the raw exception type) and recorded with its cause chain in the markers.
 
 ## Running
 
+The lock wait bound exceeds the longest single holder of the shared lock,
+`admissionStorageTest` at about twenty minutes; a shorter bound expires behind it and
+produces no result, which is a lock timeout to record, not a test outcome.
+
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew -I repo/container/src/test/resources/archive-backup-qualification/qualification.init.gradle \
   :protomolt-repo-container:test --tests '*ArchiveBackupQualificationIT' --max-workers=2 --console=plain
 ```
 
 The init script wires the module's ordinary `test` task the way the document rehearsal's
 does: it adds the admission inventory bundle and the production host classpath, marks the
-task never up to date and sets the opt-in property. Without the script the class reports
-itself skipped with that reason (it cannot be excluded from the ordinary task without
-editing `build.gradle`, which this qualification does not own); with the script every case
-runs and a passing run has zero skipped cases. `-Pprotomolt.qualificationKeep=true` leaves
+task never up to date, re-includes the class that `build.gradle` excludes from the ordinary
+`test` task, and sets the opt-in property. The ordinary task therefore never selects the
+class and never reports it skipped; selecting it without the script finds no tests and
+fails, as `RepositoryBackupRehearsalIT` does. With the script every case runs and a passing
+run has zero skipped cases. `-Pprotomolt.qualificationKeep=true` leaves
 each case's containers and volumes. Evidence lands under
 `repo/container/build/archive-backup-qualification/<timestamp>/`.
 
@@ -203,9 +208,6 @@ changed here.
 - When a recovered host exits through a failed check, the interrupted lifecycle lanes log
   "Closed by interrupt" JDBC warnings during shutdown; the passing hosts show none. This is
   shutdown noise of the lanes' one-second intervals, not a data effect.
-- The ordinary `test` task of `protomolt-repo-container` reports this class as skipped,
-  with the reason naming the init script; excluding it the way `RepositoryBackupRehearsalIT`
-  is excluded needs one `build.gradle` line, which this qualification does not own.
 
 ## Affected archive suites
 
@@ -213,7 +215,7 @@ The archive suites of `protomolt-repo-container` and `protomolt-repo-service` we
 the same tree to show the behaviors the qualification relies on are the current ones:
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew :protomolt-repo-container:test --tests '*Archive*' \
   :protomolt-repo-service:test --tests '*Archive*' --max-workers=2 --console=plain
 ```
