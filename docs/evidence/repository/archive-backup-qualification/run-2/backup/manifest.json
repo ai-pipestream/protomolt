@@ -1,0 +1,257 @@
+{
+  "format": "protomolt-repository-backup-rehearsal/v2",
+  "createdAt": "2026-10-09T19:38:36.398430741Z",
+  "required": [
+    "sql/ledger.dump",
+    "provider/rustfs-data.tar",
+    "schema/catalog.tsv",
+    "catalog/fingerprints.json",
+    "identities/identities.json"
+  ],
+  "components": {
+    "catalog/fingerprints.json": {
+      "size": 5774,
+      "sha256": "977a0b9160d2ce31def8aadb39f6fdb2865e2c2980e6cb76847b23e8baf5ca26"
+    },
+    "identities/entry-alpha-notes-v1.pb": {
+      "size": 1173,
+      "sha256": "8b152d25aa76dc77bd4d728d16a0614a22b0b6b24dc470de824682de5446a5ba"
+    },
+    "identities/entry-alpha-report-v1.pb": {
+      "size": 4215,
+      "sha256": "7627c93487c602203e758b37c0a66ad813e16cb5db117b2bb1e1651bf7415d2b"
+    },
+    "identities/entry-alpha-report-v2.pb": {
+      "size": 4222,
+      "sha256": "f4f1d8c44db91f73c54eed91d739af95845f1074ec96a793cef8af5318417738"
+    },
+    "identities/entry-alpha-report-v3.pb": {
+      "size": 1053220,
+      "sha256": "1effb8becf535c4f6630c18e36d3ebda221cb4c6afc360c40029f1a25bbd26c5"
+    },
+    "identities/entry-beta-draft-v2.pb": {
+      "size": 1107,
+      "sha256": "4faf57a9ca7e15f6dcbd839ada50aa40e845aebe15752fc999b8746b057d883e"
+    },
+    "identities/entry-beta-subject-v1.pb": {
+      "size": 1550,
+      "sha256": "3e083997fdf96bda0838bab68c75bc679d470496cfdf0bc4f20b47f211b4c60b"
+    },
+    "identities/entry-beta-subject-v2.pb": {
+      "size": 1550,
+      "sha256": "82966640232c608e0346361061db35120dc893653586ac0be852a4ac8404f70a"
+    },
+    "identities/identities.json": {
+      "size": 26858,
+      "sha256": "b1751920de15a8ec6f2aeaac052e86000236a288f3b6fddb704a9e09af925261"
+    },
+    "identities/markers.log": {
+      "size": 15129,
+      "sha256": "887793d53f2a99a2cea1d75e40b168bb7c62ed08e3479bd9f4e16198451013ec"
+    },
+    "identities/mutation-receipt-beta-subject.pb": {
+      "size": 187,
+      "sha256": "d2c75ee44239c71e453476662ddb364654c4e2f26017db2d1d77fd62208c3c70"
+    },
+    "identities/mutation-request-beta-subject.pb": {
+      "size": 112,
+      "sha256": "f395e0bb3bf8b9c77bb80731ca40ac1a5ea8b9285165daf4e6918f41a27b90d7"
+    },
+    "identities/put-replay-alpha-report.pb": {
+      "size": 217,
+      "sha256": "8fa95da9bb1cdb1ce2a0cc26520ab6690b877852ed0478fb12d7b9cca3898dff"
+    },
+    "identities/seed-results.xml": {
+      "size": 25859,
+      "sha256": "61e109ee49f1cdad52e9a9eb7521a3521509df4967a2f79237635b1e4f994b31"
+    },
+    "identities/stats-abq-alpha-a9442bc8-qualification-docs.pb": {
+      "size": 123,
+      "sha256": "dab8ed652c57c87b7882d043c407690cf36cf5d5234f25ab70c8bec9e9dcfd61"
+    },
+    "identities/stats-abq-beta-a9442bc8-qualification-docs.pb": {
+      "size": 71,
+      "sha256": "ad926ddb103fbb720673cd402ac5b612b79318e393a5bd1cf72fc874ad73673f"
+    },
+    "identities/stats-abq-beta-a9442bc8-qualification-scratch.pb": {
+      "size": 74,
+      "sha256": "bcdf552f77848653fcf3f605698d97866f4323e7ce407c21cfa7202c30dc0f36"
+    },
+    "identities/versions-alpha-notes.pb": {
+      "size": 883,
+      "sha256": "fd7f3553d5fe377abc6b007909b2993b01cf60fc95e24e4cd2adb8e832bb00ea"
+    },
+    "identities/versions-alpha-report.pb": {
+      "size": 4935,
+      "sha256": "93dc92ee29d98f57622da3b286a53e24a2041e0e445edd0311b4eb7d6231fe39"
+    },
+    "identities/versions-beta-draft.pb": {
+      "size": 805,
+      "sha256": "b826d1dcf5bc3fa1e5dc8518764a6e8bd8cc08bf272dfe5c789c3a57a0d0d236"
+    },
+    "identities/versions-beta-subject.pb": {
+      "size": 2482,
+      "sha256": "4f008a1e4a887bb713f3861092ec3d32c314bb5d629af95fc443f0a143aa837e"
+    },
+    "provider/rustfs-data.tar": {
+      "size": 1355776,
+      "sha256": "39eccd3a2933b3d4d2107c3888117539c564c1c552b0af745457ed64fe2b2b0d"
+    },
+    "schema/catalog.tsv": {
+      "size": 20,
+      "sha256": "88b98d6071e9876500e1fcbbc9aabd695829e2feb2d7f5d96e1d832a376de00d"
+    },
+    "sql/ledger.dump": {
+      "size": 774045,
+      "sha256": "a6f5ee9f021f8c2e04740291447532cc6afb04d3637b41340ceaf4dc4c873c50"
+    }
+  },
+  "images": {
+    "postgres": {
+      "id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "tag": "postgres:18-alpine"
+    },
+    "rustfs": {
+      "id": "sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b",
+      "tag": "rustfs/rustfs:1.0.0-beta.11-preview.1"
+    }
+  },
+  "backend": {
+    "providerPort": 38369,
+    "pathStyle": true,
+    "region": "us-east-1",
+    "generation": "qualification-gen-5561333d-5a4f-4034-ba65-27c5641d2ec7",
+    "endpoint": "http://127.0.0.1:38369",
+    "realm": "qualification-realm"
+  },
+  "database": {
+    "migrationLevel": 119,
+    "user": "repo",
+    "name": "repo"
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 31,
+    "document_mutation_revision_seq": 0
+  },
+  "rowCounts": {
+    "archive_entries": 4,
+    "archive_mutation_observations": 1,
+    "archive_mutation_targets": 2,
+    "archive_mutations": 1,
+    "archive_object_bindings": 10,
+    "archive_object_uploads": 10,
+    "archive_read_pins": 0,
+    "archive_rendition_stats": 6,
+    "archive_stats": 3,
+    "archive_version_object_refs": 11,
+    "archive_versions": 7,
+    "archives": 3,
+    "document_assessment_artifacts": 0,
+    "document_assessment_objects": 0,
+    "document_assessment_owners": 0,
+    "document_assessment_read_identities": 0,
+    "document_assessment_read_sessions": 0,
+    "document_assessment_roots": 0,
+    "document_assessment_slot_snapshots": 0,
+    "document_assessment_slots": 0,
+    "document_events_outbox": 0,
+    "document_operation_selection_attempts": 0,
+    "document_operation_selection_current": 0,
+    "document_operation_selections": 0,
+    "document_part_attempt_cleanup": 0,
+    "document_part_attempt_objects": 0,
+    "document_part_attempt_sources": 0,
+    "document_part_attempts": 0,
+    "document_part_key_reservations": 0,
+    "document_part_publication_history": 0,
+    "document_part_publications": 0,
+    "document_purges": 0,
+    "document_raw_refs": 0,
+    "document_read_pins": 0,
+    "document_revision_commits": 0,
+    "document_revision_current": 0,
+    "document_revision_parts": 0,
+    "document_revision_publications": 0,
+    "document_revision_schema_admissions": 0,
+    "document_revision_schema_artifacts": 0,
+    "document_revision_schema_assets": 0,
+    "document_revision_schema_evidence": 0,
+    "document_schema_policies": 0,
+    "document_schema_policy_current": 0,
+    "documents": 0,
+    "drives": 2,
+    "flyway_schema_history": 119,
+    "managed_backend_profiles": 1,
+    "raw_objects": 0,
+    "repository_coordinator_bindings": 0,
+    "repository_coordinator_drains": 0,
+    "repository_coordinator_expirations": 0,
+    "repository_coordinator_handoffs": 0,
+    "repository_coordinator_local_drains": 0,
+    "repository_coordinator_reservations": 0,
+    "repository_coordinator_supersessions": 0,
+    "repository_creation_grants": 0,
+    "repository_credential_authorities": 0,
+    "repository_execution_claims": 0,
+    "repository_execution_scopes": 0,
+    "repository_historical_activations": 0,
+    "repository_object_keys": 10,
+    "repository_object_references": 11,
+    "repository_object_retention": 10,
+    "repository_operation_owners": 0,
+    "repository_operation_rejection": 0,
+    "repository_operation_success": 0,
+    "repository_operations": 0,
+    "repository_physical_locations": 10,
+    "repository_preparation_capture_drains": 0,
+    "repository_preparation_coverage_certificates": 0,
+    "repository_preparation_coverage_lineage": 0,
+    "repository_preparation_coverage_unresolved": 0,
+    "repository_preparation_history_roots": 0,
+    "repository_preparation_history_sets": 0,
+    "repository_preparation_pin_batches": 0,
+    "repository_preparation_pin_owners": 0,
+    "repository_preparation_root_releases": 0,
+    "repository_preparation_source_pins": 0,
+    "repository_publication_abandonments": 0,
+    "repository_publication_assessment_starts": 0,
+    "repository_publication_modes": 0,
+    "repository_publication_preparations": 0,
+    "repository_reader_external_quiescence": 0,
+    "repository_reader_host_executions": 0,
+    "repository_reader_host_terminations": 0,
+    "repository_reader_incarnations": 2,
+    "repository_recovery_limit_decisions": 0,
+    "repository_schema_artifact_claims": 0,
+    "repository_schema_artifacts": 0,
+    "repository_successor_executions": 0,
+    "repository_successor_installs": 0
+  },
+  "stopped": {
+    "postgres": {
+      "exitCode": "0",
+      "status": "exited",
+      "finishedAt": "2026-10-09T19:38:35.449888009Z"
+    },
+    "rustfs": {
+      "exitCode": "0",
+      "status": "exited",
+      "finishedAt": "2026-10-09T19:38:35.696985119Z"
+    }
+  },
+  "catalog": {
+    "tables": 92,
+    "xidColumns": 22,
+    "maxStoredXid": 0
+  },
+  "archive": {
+    "archiveReadPins": 0,
+    "uploadsNotLive": 0,
+    "uploads": 10,
+    "admittedMutations": 1,
+    "pendingTargets": 2,
+    "versionReferences": 11,
+    "versions": 7,
+    "entries": 4
+  }
+}

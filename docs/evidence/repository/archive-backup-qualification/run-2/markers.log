@@ -1,0 +1,21 @@
+CHECK_OK source.started :: postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:38369
+CHECK_OK seed.exit :: seed host exit=0 with ARCHIVE_BACKUP_QUALIFICATION_SEED_OK
+CHECK_OK capture.quiescent :: no other client backend, no ACTIVE reader incarnation, no read pin, no staging part attempt, no archive pin, every upload LIVE: {activeReaderIncarnations=0, documentReadPins=0, stagingPartAttempts=0} {archiveReadPins=0, uploadsNotLive=0, uploads=10, admittedMutations=1, pendingTargets=2, versionReferences=11, versions=7, entries=4} (the admitted mutation's two pending targets are durable state, not process activity)
+CHECK_OK capture.catalog_fingerprinted :: tables=92 V119 xid8 columns=22 maxStoredXid=0; no document publication journal, every V118/V119 invariant and count zero
+CHECK_OK capture.pg_dump :: exit=0 bytes=774045
+CHECK_OK capture.post_dump_quiescent :: no client backend after pg_dump; every table fingerprint unchanged across the dump window
+CHECK_OK capture.stopped :: postgres {exitCode=0, status=exited, finishedAt=2026-10-09T19:38:35.449888009Z}; rustfs {exitCode=0, status=exited, finishedAt=2026-10-09T19:38:35.696985119Z}
+CHECK_OK capture.provider_archive :: stopped RustFS volume archived, bytes=1355776
+CHECK_OK capture.sealed :: components=24 manifest sha256=5ec23f33b012d3ddaa718532713457fa2d633b1abfcd46ec8e9d425ceb7855c7
+CHECK_OK capture.preflight :: sealed set verifies; 26 files fingerprinted before restore
+CHECK_OK source.unreachable :: source containers removed; database refuses connections; provider port 38369 free
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:38369
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-qualification-29c83f8a5-6418cb7b-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1617 > max stored xid8 0 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=31, document_mutation_revision_seq=0}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (archive bindings, uploads with provider version ids, references, mutation admission and retention rows included)
+CHECK_OK restore.archive_state :: archive pins, upload states, admitted mutations, pending targets, references, versions and entries equal the source: {archiveReadPins=0, uploadsNotLive=0, uploads=10, admittedMutations=1, pendingTargets=2, versionReferences=11, versions=7, entries=4}
+CHECK_OK recovered.exit :: recovered host exit=0, READY written after verification, fresh write and lifecycle operation
+CHECK_OK source.volume_untouched :: source provider volume digest unchanged 2c2d742602ac7630861d1ed0fdd556e675e5b35705f94d89284089b44c00d8c5
+CHECK_OK backup.untouched :: every file of the sealed set, including manifest.json and SEALED, unchanged after restore and verification
