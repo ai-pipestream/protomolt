@@ -157,7 +157,7 @@ does not replace the older prompt, validation, workflow or frontend work.
 - [DelegationRuntime](../../apps/serve/src/main/java/ai/protomolt/proto/serve/DelegationRuntime.java)
   restores transcripts through the configured repository service and fails
   startup on repository/key errors rather than silently falling back to memory.
-  [S3BlobStore](../../repo/container/src/main/java/ai/protomolt/proto/repo/container/blob/S3BlobStore.java)
+  [S3BlobStore](../../repo/blob/s3/src/main/java/ai/protomolt/proto/repo/blob/s3/S3BlobStore.java)
   implements the repository's S3-compatible blob adapter. The checked-in
   [NAS topology](../../deploy/portainer/README.md) connects repository service,
   PostgreSQL, and RustFS. This is source/configuration evidence, not a fresh

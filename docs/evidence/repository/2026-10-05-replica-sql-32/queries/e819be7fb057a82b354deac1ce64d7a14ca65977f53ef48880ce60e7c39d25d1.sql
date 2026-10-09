@@ -1,0 +1,1 @@
+select asr1_0.account_id,asr1_0.archive,asr1_0.current_bytes,asr1_0.entries,asr1_0.retained_bytes,asr1_0.versions from archive_stats asr1_0 where (asr1_0.account_id,asr1_0.archive) in (($1,$2)) for no key update of asr1_0

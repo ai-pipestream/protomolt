@@ -1,0 +1,10 @@
+CHECK_OK inconsistent-snapshot.provider_versions_absent :: 3/3 recorded versions absent from the other capture's provider
+CHECK_OK inconsistent-snapshot.history_refused.alpha-v1 :: readRaw -> BlobStoreException: Object provider rejected the read; readValidated -> BlobStoreException: Object provider rejected the read
+CHECK_OK inconsistent-snapshot.history_refused.alpha-v2 :: readRaw -> BlobStoreException: Object provider rejected the read; readValidated -> BlobStoreException: Object provider rejected the read
+CHECK_OK inconsistent-snapshot.history_refused.beta-v1 :: readRaw -> BlobStoreException: Object provider rejected the read; readValidated -> BlobStoreException: Object provider rejected the read
+CHECK_OK inconsistent-snapshot.replay.alpha-v1 :: receipt byte-equal, revision=04be464b-9e6e-481c-8a09-466fb07e2913
+CHECK_OK inconsistent-snapshot.replay.alpha-v2 :: receipt byte-equal, revision=fd033829-9c2f-4754-8484-3c86f101b1f0
+CHECK_OK inconsistent-snapshot.replay.beta-v1 :: receipt byte-equal, revision=752b475b-101f-4c5d-ac3a-886075094405
+CHECK_OK inconsistent-snapshot.catalog_intact :: catalog evidence is the recorded capture's; only provider content is from another capture
+CHECK_OK inconsistent-snapshot.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK inconsistent-snapshot.not_ready :: READY is only written by a fully verified host

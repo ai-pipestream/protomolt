@@ -1,0 +1,207 @@
+{
+  "account": "recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+  "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+  "realm": "recovery-realm",
+  "endpoint": "http://127.0.0.1:39165",
+  "typeUrl": "type.test/protomolt.recovery.RecoveryRecord",
+  "schemaArtifactSha256": "40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588",
+  "toolIdentity": {
+    "name": "repository-recovery-rehearsal",
+    "version": "1"
+  },
+  "drive": {
+    "id": "9994fd25-54ce-352c-b713-f6c45479aec1",
+    "prefix": "recovery-pipeline",
+    "bucket": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e"
+  },
+  "archiveDrive": {
+    "id": "aa07c036-a16a-3b5c-908c-05ccac63ad70",
+    "prefix": "recovery-archive",
+    "bucket": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e"
+  },
+  "policySha256": "c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232",
+  "revisions": [{
+    "tag": "v1",
+    "revisionId": "95dcf320-f0cf-406b-9960-1b083ec66649",
+    "mutationRevision": 1.0,
+    "operationId": "0b36a7c1-77cc-4548-b849-66216c239650",
+    "rawFragments": [{
+      "sha256": "f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e",
+      "revisionOrdinal": 0.0,
+      "size": 239.0
+    }],
+    "commandSha256Sha256": "0a86225849d0b946c329c09b9722c10636377e0bad6f65f253765b935ef9910d",
+    "policySha256": "c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232",
+    "validationProfile": "protomolt-retained-schema-admission/v1",
+    "metadataSha256": "a402cb79ff4a086b5d4eca699ac068250ac3b46a0dfec5d5b59734a8e51a0475",
+    "manifestSha256": "6584ea4726f6be9e9ba991e6e0eca4c1c0d543bc0ce929cd5edc470c3f309801"
+  }, {
+    "tag": "v2",
+    "revisionId": "91bd7b6f-a85e-4442-85e8-4eab83e7f790",
+    "mutationRevision": 2.0,
+    "operationId": "187d0cd4-7679-4c0c-9dc0-c1f79bb20c30",
+    "rawFragments": [{
+      "sha256": "39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39",
+      "revisionOrdinal": 0.0,
+      "size": 246.0
+    }],
+    "commandSha256Sha256": "bc25aa5ea347b632b78260488d39c468afb4f4e18e6d32e6b9fae669788152de",
+    "policySha256": "c80ee3667751ba4f56c831a1c72218f16d1fc74dc734f3e9177543c4585e8232",
+    "validationProfile": "protomolt-retained-schema-admission/v1",
+    "metadataSha256": "16266a5a78d9eb203a978de33573755d1256df4b7a705a170a33cf5ab68ce612",
+    "manifestSha256": "c7bde5fa2815764be54c78282eab1660f43b26026e559ab95f3ba656af6d1a44"
+  }],
+  "archive": {
+    "name": "recovery-docs",
+    "entryId": "report.pdf#2026",
+    "entryUuid": "b0ccef99-5979-3f76-8bf5-6807a3e4faaf",
+    "sharedObjectKey": "recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506",
+    "markdownV2": "# Report, revised",
+    "retainedBytes": 92.0,
+    "v3Bytes": 18.0
+  },
+  "documentObjects": [{
+    "revisionId": "95dcf320-f0cf-406b-9960-1b083ec66649",
+    "revisionOrdinal": 0.0,
+    "part": 1.0,
+    "subKey": "",
+    "objectId": "40f19756-fc7d-4e7b-86fa-2a09bc6b28f2",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-pipeline/documents/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/17f69be0-bd23-3c63-a3eb-87473a23a87f/attempts/6d91bac1-fb48-4e2b-af1c-a17cefcd0939/part-0",
+    "providerVersion": "7ec11e77-0c03-4390-9922-b9a97018ea3d",
+    "etag": "\"bc32af01b407b9a9db7935f02c709001\"",
+    "sha256": "f7d8f5034559173a494e282051db3df804115362784ef1a6d33f722f5d238f4e",
+    "size": 239.0,
+    "contentType": "application/protobuf"
+  }, {
+    "revisionId": "91bd7b6f-a85e-4442-85e8-4eab83e7f790",
+    "revisionOrdinal": 0.0,
+    "part": 1.0,
+    "subKey": "",
+    "objectId": "655b7aaa-b565-425c-82b3-92a367323b9b",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-pipeline/documents/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/17f69be0-bd23-3c63-a3eb-87473a23a87f/attempts/d8c19d70-7aa7-4d25-b5cf-198f6527b7f1/part-0",
+    "providerVersion": "286d2799-f010-4a4f-ac45-bebc6a397792",
+    "etag": "\"a73ed3a3e00e8e3d4d46caf44600ab33\"",
+    "sha256": "39cf4e3002a16b1001f02a35e912d06e428fae8d24fb8926db4dea17d82c4e39",
+    "size": 246.0,
+    "contentType": "application/protobuf"
+  }],
+  "archiveObjects": [{
+    "version": 1.0,
+    "objectId": "fd144b64-7db5-472b-812d-36f6922fc06a",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/markdown/writes/5b883651-8524-43db-ae10-23969097055d/04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d",
+    "providerVersion": "dd7dc5f2-c72e-4631-b356-5eb93faca3c1",
+    "etag": "\"a4d1c5ae1e2b525dc20dc6cafe2055fa\"",
+    "sha256": "04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d",
+    "size": 8.0,
+    "contentType": "text/markdown",
+    "state": "LIVE"
+  }, {
+    "version": 1.0,
+    "objectId": "be4948a2-6212-4e1e-bbb6-86e0be5a52d7",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506",
+    "providerVersion": "b787b4ab-49d4-46dc-ac61-9279617178dc",
+    "etag": "\"dc4f8e913786a7b91d3bdaf9ba22af43\"",
+    "sha256": "6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506",
+    "size": 67.0,
+    "contentType": "application/pdf",
+    "state": "LIVE"
+  }, {
+    "version": 2.0,
+    "objectId": "3651b0f6-6800-433f-a65d-a0eafc28b08b",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/markdown/writes/1393afed-45f2-42e3-882c-154a33c1d04b/0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc",
+    "providerVersion": "900e4e49-21e2-40ca-b4cf-1ed30f113ccb",
+    "etag": "\"ab8d98c564c09941a815b7e52495cf77\"",
+    "sha256": "0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc",
+    "size": 17.0,
+    "contentType": "text/markdown",
+    "state": "LIVE"
+  }, {
+    "version": 2.0,
+    "objectId": "be4948a2-6212-4e1e-bbb6-86e0be5a52d7",
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "realm": "recovery-realm",
+    "namespace": "recovery-recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e",
+    "key": "recovery-archive/archive/recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/recovery-docs/b0ccef99-5979-3f76-8bf5-6807a3e4faaf/original/writes/71727070-1d02-4b81-a867-4366aff28367/6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506",
+    "providerVersion": "b787b4ab-49d4-46dc-ac61-9279617178dc",
+    "etag": "\"dc4f8e913786a7b91d3bdaf9ba22af43\"",
+    "sha256": "6f384ac5960c98d7deef8d6f5cdd72c1c52478b9fe90c5446da9bb65a3e86506",
+    "size": 67.0,
+    "contentType": "application/pdf",
+    "state": "LIVE"
+  }],
+  "schemaCatalog": {
+    "recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588": 20005.0,
+    "recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319.0,
+    "recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/f00ca5310219fa024e94440130d304fc1b6450e2ba5cb426a380348ec803e757": 313.0,
+    "recovery-account-53095bec-6908-43db-b112-aa6c9f4a944e/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482.0
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 7.0,
+    "document_mutation_revision_seq": 2.0
+  },
+  "rowCounts": {
+    "archive_entries": 1.0,
+    "archive_object_bindings": 3.0,
+    "archive_object_uploads": 3.0,
+    "archive_version_object_refs": 4.0,
+    "archive_versions": 2.0,
+    "archives": 1.0,
+    "document_part_attempt_cleanup": 0.0,
+    "document_part_attempts": 2.0,
+    "document_revision_commits": 2.0,
+    "document_revision_parts": 2.0,
+    "document_revision_publications": 2.0,
+    "document_revision_schema_artifacts": 8.0,
+    "document_revision_schema_assets": 4.0,
+    "document_revision_schema_evidence": 2.0,
+    "documents": 1.0,
+    "flyway_schema_history": 111.0,
+    "managed_backend_profiles": 1.0,
+    "repository_execution_claims": 2.0,
+    "repository_operation_success": 2.0,
+    "repository_operations": 2.0,
+    "repository_physical_locations": 5.0,
+    "repository_reader_incarnations": 2.0,
+    "repository_schema_artifacts": 4.0
+  },
+  "migrationLevel": 111.0,
+  "backendProfile": {
+    "generation": "recovery-gen-abe1536e-2d56-4c8c-acb7-63ce6459b1ae",
+    "provider": "s3",
+    "realm": "recovery-realm",
+    "identitySchema": "s3/v1",
+    "identityJson": "{\"region\": \"us-east-1\", \"endpoint\": \"http://127.0.0.1:39165\", \"path-style\": \"true\"}"
+  },
+  "materialization": {
+    "revisionOrdinal": 0.0,
+    "rootSha256": "f7283a1b806560207e7fd370dbf4ec74eb9e59b792dd9eb0178f2a13edf1c821",
+    "pathSha256": "c0735bba1d54aead00b5a83404b253400562380a867b9a1b7872160bec1efc58",
+    "artifactSha256": "40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588",
+    "label": "rehearsal-v1"
+  },
+  "readerIncarnations": 2.0,
+  "registryOpensBeforeHistoricalReads": 2.0,
+  "accessMatrix": {
+    "member.v1": "OK",
+    "member.v2": "OK",
+    "stranger.v1": "NOT_FOUND",
+    "stranger.v2": "NOT_FOUND",
+    "outsider.v1": "NOT_FOUND",
+    "outsider.v2": "NOT_FOUND"
+  }
+}

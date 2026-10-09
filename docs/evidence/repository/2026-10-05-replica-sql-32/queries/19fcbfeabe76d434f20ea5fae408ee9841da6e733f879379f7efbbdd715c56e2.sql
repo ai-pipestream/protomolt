@@ -1,0 +1,1 @@
+select avr1_0.entry_uuid,avr1_0.version,avr1_0.created_at,avr1_0.manifest,avr1_0.mutation_revision,avr1_0.root_checksum,avr1_0.total_bytes from archive_versions avr1_0 where (avr1_0.entry_uuid,avr1_0.version) in (($1,$2))

@@ -1,0 +1,335 @@
+2026-10-07T07:42:19Z
+abba0c2b92ccf2aee68f5256de692901c9539018
+=== stage ===
+> Task :protomolt-asset-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-cel:processResources NO-SOURCE
+> Task :protomolt-formats:processResources NO-SOURCE
+> Task :protomolt-protobuf-validation:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractProto UP-TO-DATE
+> Task :protomolt-asset-proto:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:processResources UP-TO-DATE
+> Task :protomolt-cel:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-asset-proto:generateProto UP-TO-DATE
+> Task :protomolt-formats:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:extractIncludeProto UP-TO-DATE
+> Task :protomolt-asset-proto:processResources UP-TO-DATE
+> Task :protomolt-protobuf-validation:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-validation:compileJava UP-TO-DATE
+> Task :protomolt-cel:classes UP-TO-DATE
+> Task :protomolt-cel:jar
+> Task :protomolt-asset-proto:sourcesJar
+> Task :protomolt-asset-proto:compileJava UP-TO-DATE
+> Task :protomolt-asset-proto:classes UP-TO-DATE
+> Task :protomolt-asset-proto:jar
+> Task :protomolt-cel:javadoc
+> Task :protomolt-cel:javadocJar
+> Task :protomolt-cel:sourcesJar
+> Task :protomolt-cel:generateMetadataFileForMavenPublication
+> Task :protomolt-cel:generatePomFileForMavenPublication
+> Task :protomolt-cel:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-descriptors:compileJava UP-TO-DATE
+> Task :protomolt-descriptors:processResources NO-SOURCE
+> Task :protomolt-descriptors:classes UP-TO-DATE
+> Task :protomolt-descriptors:jar
+> Task :protomolt-descriptors:javadoc
+> Task :protomolt-descriptors:javadocJar
+> Task :protomolt-descriptors:sourcesJar
+> Task :protomolt-descriptors:generateMetadataFileForMavenPublication
+> Task :protomolt-descriptors:generatePomFileForMavenPublication
+> Task :protomolt-asset-proto:javadoc
+> Task :protomolt-descriptors:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-formats:classes UP-TO-DATE
+> Task :protomolt-formats:jar
+> Task :protomolt-asset-proto:javadocJar
+> Task :protomolt-asset-proto:generateMetadataFileForMavenPublication
+> Task :protomolt-asset-proto:generatePomFileForMavenPublication
+> Task :protomolt-asset-proto:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-protobuf-metadata:protobufDummy UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractIncludeProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:extractProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:generateProto UP-TO-DATE
+> Task :protomolt-protobuf-metadata:compileJava UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processProtoResources UP-TO-DATE
+> Task :protomolt-protobuf-metadata:processResources UP-TO-DATE
+> Task :protomolt-protobuf-metadata:classes UP-TO-DATE
+> Task :protomolt-protobuf-metadata:jar
+> Task :protomolt-formats:javadoc
+> Task :protomolt-formats:javadocJar
+> Task :protomolt-formats:sourcesJar
+> Task :protomolt-formats:generateMetadataFileForMavenPublication
+> Task :protomolt-formats:generatePomFileForMavenPublication
+> Task :protomolt-formats:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-protobuf-validation:classes UP-TO-DATE
+> Task :protomolt-protobuf-validation:jar
+> Task :protomolt-protobuf-metadata:javadoc
+> Task :protomolt-protobuf-metadata:javadocJar
+> Task :protomolt-protobuf-metadata:sourcesJar
+> Task :protomolt-protobuf-metadata:generateMetadataFileForMavenPublication
+> Task :protomolt-protobuf-metadata:generatePomFileForMavenPublication
+> Task :protomolt-protobuf-metadata:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-blob-spi:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-cache:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-cache:processResources NO-SOURCE
+> Task :protomolt-repo-blob-cache:classes UP-TO-DATE
+> Task :protomolt-repo-blob-cache:jar
+> Task :protomolt-repo-blob-cache:javadoc
+> Task :protomolt-repo-blob-cache:javadocJar
+> Task :protomolt-repo-blob-cache:sourcesJar
+> Task :protomolt-repo-blob-cache:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-blob-cache:generatePomFileForMavenPublication
+> Task :protomolt-repo-blob-cache:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-proto:protobufDummy UP-TO-DATE
+> Task :protomolt-repo-proto:extractIncludeProto UP-TO-DATE
+> Task :protomolt-repo-proto:extractProto UP-TO-DATE
+> Task :protomolt-repo-proto:generateProto UP-TO-DATE
+> Task :protomolt-repo-proto:compileJava UP-TO-DATE
+> Task :protomolt-repo-codec:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-grpc:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-grpc:processResources NO-SOURCE
+> Task :protomolt-repo-blob-grpc:classes UP-TO-DATE
+> Task :protomolt-repo-blob-grpc:jar
+> Task :protomolt-protobuf-validation:javadoc
+> Task :protomolt-repo-blob-grpc:javadoc
+> Task :protomolt-protobuf-validation:javadocJar
+> Task :protomolt-protobuf-validation:sourcesJar
+> Task :protomolt-repo-blob-grpc:javadocJar
+> Task :protomolt-repo-blob-grpc:sourcesJar
+> Task :protomolt-protobuf-validation:generateMetadataFileForMavenPublication
+> Task :protomolt-protobuf-validation:generatePomFileForMavenPublication
+> Task :protomolt-repo-blob-grpc:generateMetadataFileForMavenPublication
+> Task :protomolt-protobuf-validation:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-blob-grpc:generatePomFileForMavenPublication
+> Task :protomolt-repo-blob-redis:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-redis:processResources UP-TO-DATE
+> Task :protomolt-repo-blob-redis:classes UP-TO-DATE
+> Task :protomolt-repo-blob-redis:jar
+> Task :protomolt-repo-blob-grpc:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-blob-s3:compileJava UP-TO-DATE
+> Task :protomolt-repo-blob-s3:processResources UP-TO-DATE
+> Task :protomolt-repo-blob-s3:classes UP-TO-DATE
+> Task :protomolt-repo-blob-s3:jar
+> Task :protomolt-repo-blob-redis:javadoc
+> Task :protomolt-repo-blob-s3:javadoc
+> Task :protomolt-repo-blob-redis:javadocJar
+> Task :protomolt-repo-blob-redis:sourcesJar
+> Task :protomolt-repo-blob-s3:javadocJar
+> Task :protomolt-repo-blob-redis:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-blob-redis:generatePomFileForMavenPublication
+> Task :protomolt-repo-blob-s3:sourcesJar
+> Task :protomolt-repo-blob-redis:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-blob-s3:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-blob-spi:processResources NO-SOURCE
+> Task :protomolt-repo-blob-spi:classes UP-TO-DATE
+> Task :protomolt-repo-blob-spi:jar
+> Task :protomolt-repo-blob-spi:javadoc
+> Task :protomolt-repo-blob-spi:javadocJar
+> Task :protomolt-repo-blob-spi:sourcesJar
+> Task :protomolt-repo-blob-spi:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-blob-spi:generatePomFileForMavenPublication
+> Task :protomolt-repo-blob-spi:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-codec:processResources NO-SOURCE
+> Task :protomolt-repo-codec:classes UP-TO-DATE
+> Task :protomolt-repo-blob-s3:generatePomFileForMavenPublication
+> Task :protomolt-repo-codec:jar
+> Task :protomolt-repo-blob-s3:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-proto:generateCompilerIdentity UP-TO-DATE
+> Task :protomolt-repo-proto:processProtoResources UP-TO-DATE
+> Task :protomolt-repo-proto:processResources UP-TO-DATE
+> Task :protomolt-repo-proto:classes UP-TO-DATE
+> Task :protomolt-repo-proto:jar
+> Task :protomolt-repo-codec:javadoc
+> Task :protomolt-repo-codec:javadocJar
+> Task :protomolt-repo-codec:sourcesJar
+> Task :protomolt-repo-proto:javadoc
+> Task :protomolt-repo-proto:javadocJar
+> Task :protomolt-repo-proto:sourcesJar
+> Task :protomolt-repo-proto:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-proto:generatePomFileForMavenPublication
+> Task :protomolt-repo-codec:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-proto:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-codec:generatePomFileForMavenPublication
+> Task :protomolt-repo-spi:compileJava UP-TO-DATE
+> Task :protomolt-repo-publication-grpc:compileJava UP-TO-DATE
+> Task :protomolt-repo-publication-grpc:processResources NO-SOURCE
+> Task :protomolt-repo-publication-grpc:classes UP-TO-DATE
+> Task :protomolt-repo-publication-grpc:jar
+> Task :protomolt-repo-codec:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-spi:processResources NO-SOURCE
+> Task :protomolt-repo-spi:classes UP-TO-DATE
+> Task :protomolt-repo-spi:jar
+> Task :protomolt-repo-publication-grpc:javadoc
+> Task :protomolt-repo-publication-grpc:javadocJar
+> Task :protomolt-repo-publication-grpc:sourcesJar
+> Task :protomolt-repo-spi:javadoc
+> Task :protomolt-repo-spi:javadocJar
+> Task :protomolt-repo-spi:sourcesJar
+> Task :protomolt-repo-spi:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-spi:generatePomFileForMavenPublication
+> Task :protomolt-repo-publication-grpc:generateMetadataFileForMavenPublication
+> Task :protomolt-repo-spi:publishMavenPublicationToRepositoryConsumerRepository
+> Task :protomolt-repo-publication-grpc:generatePomFileForMavenPublication
+> Task :protomolt-repo-publication-grpc:publishMavenPublicationToRepositoryConsumerRepository
+> Task :stageRepositoryConsumer
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/repository-provider-qualification/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 14s
+143 actionable tasks: 105 executed, 38 up-to-date
+STAGE_EXIT=0
+=== check gradle-module ===
+
+> Task :inspectPublishedMetadata
+Published metadata inspection passed for 8 modules
+
+> Task :recordConsumerMatrix
+
+> Task :recordStagedArtifactHashes
+Recorded 45 staged artifact hashes
+
+> Task :compileJava
+> Task :processResources NO-SOURCE
+> Task :classes
+> Task :compileTestJava NO-SOURCE
+> Task :processTestResources NO-SOURCE
+> Task :testClasses UP-TO-DATE
+> Task :test NO-SOURCE
+> Task :compileBrokenDiscoveryProbeJava
+> Task :processBrokenDiscoveryProbeResources NO-SOURCE
+> Task :brokenDiscoveryProbeClasses
+
+> Task :verifyBrokenServiceMissing
+BROKEN-DISCOVERY-PROBE OK: missing service registration detected
+
+> Task :verifyBrokenServiceWrongClass
+BROKEN-DISCOVERY-PROBE OK: corrupt service registration detected: ai.protomolt.proto.repo.blob.spi.BlobStoreProvider: Provider ai.protomolt.proto.repo.blob.redis.DeliberatelyMissingProvider not found
+
+> Task :compileGrpcClientJava
+> Task :processGrpcClientResources NO-SOURCE
+> Task :grpcClientClasses
+> Task :compilePublicationClientJava
+> Task :processPublicationClientResources NO-SOURCE
+> Task :publicationClientClasses
+> Task :verifyConsumer
+
+> Task :verifyConsumerBoundaries
+Published publication client runtime (gradle-module): [:repository-published-consumer:unspecified, ai.pipestream:protomolt-asset-proto:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-cel:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-descriptors:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-formats:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-protobuf-metadata:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-protobuf-validation:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-proto:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-publication-grpc:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-spi:0.1.0-provider-qualification-abba0c2b9, com.google.api.grpc:proto-google-common-protos:2.64.1, com.google.auto.value:auto-value-annotations:1.11.1, com.google.code.findbugs:jsr305:3.0.2, com.google.code.gson:gson:2.8.9, com.google.errorprone:error_prone_annotations:2.50.0, com.google.guava:failureaccess:1.0.3, com.google.guava:guava:33.6.0-jre, com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava, com.google.j2objc:j2objc-annotations:3.1, com.google.protobuf:protobuf-java-util:4.36.2, com.google.protobuf:protobuf-java:4.36.2, com.google.re2j:re2j:1.8, dev.cel:cel:0.14.0, dev.cel:common:0.14.0, dev.cel:compiler:0.14.0, dev.cel:protobuf:0.14.0, dev.cel:runtime:0.14.0, dev.cel:v1alpha1:0.14.0, io.grpc:grpc-api:1.84.0, io.grpc:grpc-protobuf-lite:1.84.0, io.grpc:grpc-protobuf:1.84.0, io.grpc:grpc-stub:1.84.0, org.antlr:antlr4-runtime:4.13.2, org.codehaus.mojo:animal-sniffer-annotations:1.27, org.jspecify:jspecify:1.0.0, org.slf4j:slf4j-api:2.0.20, org.threeten:threeten-extra:1.10.0, org.yaml:snakeyaml:2.6]
+
+> Task :verifyForbiddenDependencyDetection
+NEGATIVE-FIXTURE forbidden dependency detected as expected (gradle-module): [redis.clients:jedis:8.0.1 [redis-sdk]]
+
+> Task :compileProviderDiscoveryJava
+> Task :processProviderDiscoveryResources NO-SOURCE
+> Task :providerDiscoveryClasses
+
+> Task :verifyProviderDiscovery
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+PROVIDER-DISCOVERY-CONSUMER OK: packaged discovery, identity, capabilities, selection
+
+> Task :compileRedisConsumerJava
+> Task :processRedisConsumerResources NO-SOURCE
+> Task :redisConsumerClasses
+
+> Task :verifyRedisPublishedConsumer
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+REDIS-PUBLISHED-CONSUMER OK: real conditional operations with AWS/Azure SDK absent
+
+> Task :check
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/repository-provider-qualification/verification/repository-consumer/build-gradle-module/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 2s
+16 actionable tasks: 16 executed
+GRADLE_MODULE_EXIT=0
+=== check pom-only ===
+
+> Task :inspectPublishedMetadata
+Published metadata inspection passed for 8 modules
+
+> Task :recordConsumerMatrix
+
+> Task :recordStagedArtifactHashes
+Recorded 45 staged artifact hashes
+
+> Task :compileJava
+> Task :processResources NO-SOURCE
+> Task :classes
+> Task :compileTestJava NO-SOURCE
+> Task :processTestResources NO-SOURCE
+> Task :testClasses UP-TO-DATE
+> Task :test NO-SOURCE
+> Task :compileBrokenDiscoveryProbeJava
+> Task :processBrokenDiscoveryProbeResources NO-SOURCE
+> Task :brokenDiscoveryProbeClasses
+
+> Task :verifyBrokenServiceMissing
+BROKEN-DISCOVERY-PROBE OK: missing service registration detected
+
+> Task :verifyBrokenServiceWrongClass
+BROKEN-DISCOVERY-PROBE OK: corrupt service registration detected: ai.protomolt.proto.repo.blob.spi.BlobStoreProvider: Provider ai.protomolt.proto.repo.blob.redis.DeliberatelyMissingProvider not found
+
+> Task :compileGrpcClientJava
+> Task :processGrpcClientResources NO-SOURCE
+> Task :grpcClientClasses
+> Task :compilePublicationClientJava
+> Task :processPublicationClientResources NO-SOURCE
+> Task :publicationClientClasses
+> Task :verifyConsumer
+
+> Task :verifyConsumerBoundaries
+Published publication client runtime (pom-only): [:repository-published-consumer:unspecified, ai.pipestream:protomolt-asset-proto:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-cel:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-descriptors:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-formats:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-protobuf-metadata:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-protobuf-validation:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-proto:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-publication-grpc:0.1.0-provider-qualification-abba0c2b9, ai.pipestream:protomolt-repo-spi:0.1.0-provider-qualification-abba0c2b9, com.google.api.grpc:proto-google-common-protos:2.64.1, com.google.auto.value:auto-value-annotations:1.11.1, com.google.code.findbugs:jsr305:3.0.2, com.google.code.gson:gson:2.8.9, com.google.errorprone:error_prone_annotations:2.50.0, com.google.guava:failureaccess:1.0.3, com.google.guava:guava:33.6.0-jre, com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava, com.google.j2objc:j2objc-annotations:3.1, com.google.protobuf:protobuf-java-util:4.36.2, com.google.protobuf:protobuf-java:4.36.2, com.google.re2j:re2j:1.8, dev.cel:cel:0.14.0, dev.cel:common:0.14.0, dev.cel:compiler:0.14.0, dev.cel:protobuf:0.14.0, dev.cel:runtime:0.14.0, dev.cel:v1alpha1:0.14.0, io.grpc:grpc-api:1.84.0, io.grpc:grpc-protobuf-lite:1.84.0, io.grpc:grpc-protobuf:1.84.0, io.grpc:grpc-stub:1.84.0, org.antlr:antlr4-runtime:4.13.2, org.codehaus.mojo:animal-sniffer-annotations:1.27, org.jspecify:jspecify:1.0.0, org.slf4j:slf4j-api:2.0.20, org.threeten:threeten-extra:1.10.0, org.yaml:snakeyaml:2.6]
+
+> Task :verifyForbiddenDependencyDetection
+NEGATIVE-FIXTURE forbidden dependency detected as expected (pom-only): [redis.clients:jedis:8.0.1 [redis-sdk]]
+
+> Task :compileProviderDiscoveryJava
+> Task :processProviderDiscoveryResources NO-SOURCE
+> Task :providerDiscoveryClasses
+
+> Task :verifyProviderDiscovery
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+PROVIDER-DISCOVERY-CONSUMER OK: packaged discovery, identity, capabilities, selection
+
+> Task :compileRedisConsumerJava
+> Task :processRedisConsumerResources NO-SOURCE
+> Task :redisConsumerClasses
+
+> Task :verifyRedisPublishedConsumer
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+REDIS-PUBLISHED-CONSUMER OK: real conditional operations with AWS/Azure SDK absent
+
+> Task :check
+
+[Incubating] Problems report is available at: file:///work/worktrees/protomolt/repository-provider-qualification/verification/repository-consumer/build-pom-only/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 2s
+16 actionable tasks: 16 executed
+POM_ONLY_EXIT=0

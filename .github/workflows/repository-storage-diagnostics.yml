@@ -1,0 +1,40 @@
+name: Repository storage diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-storage-diagnostic:
+    name: repository storage diagnostic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run packaged repository storage host
+        env:
+          PROTOMOLT_TEST_HOST_DIAGNOSTIC_PATH: ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
+        run: ./gradlew :protomolt-repo-container:admissionStorageTest --rerun --console=plain -PtestJdk=25 --max-workers=2
+
+      - name: Save repository storage diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-storage-diagnostics-${{ github.run_attempt }}
+          path: |
+            repo/container/build/test-results/admissionStorageTest/*.xml
+            repo/container/build/reports/tests/admissionStorageTest/
+            ${{ runner.temp }}/repository-host-diagnostics/observed-sql-host-timeout.log
+          if-no-files-found: warn
+          retention-days: 3

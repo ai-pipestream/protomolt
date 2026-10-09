@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the HTTP door identifies without any declaration, ClassifyEntry
  * re-resolves after the fact, and the per-state counts are exact.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ArchiveClassificationIT {
 
     @Container
@@ -103,7 +103,7 @@ class ArchiveClassificationIT {
                         .setDriveName("classify-drive")
                         .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
                 .build());
-        http = services.startHttp(0);
+        http = services.startHttp(0, "synthetic-http-operator-key");
     }
 
     @AfterAll
@@ -220,6 +220,7 @@ class ArchiveClassificationIT {
                                 + "?account_id=" + ACCOUNT + "&archive=classified"
                                 + "&entry_id=scan&rendition=original&filename=scan.pdf"))
                         .header("Content-Type", "application/pdf")
+                        .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(pdf))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -279,6 +280,7 @@ class ArchiveClassificationIT {
                                         + "?account_id=" + ACCOUNT + "&archive=classified"
                                         + "&entry_id=" + entryId
                                         + "&rendition=original&filename=" + filename))
+                        .header("api_token", "synthetic-http-operator-key")
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -297,7 +299,7 @@ class ArchiveClassificationIT {
 
     @Test
     void classifyEntryDeclaresAfterTheFactAndRereadsTheBytes() {
-        archives.putEntry(PutEntryRequest.newBuilder()
+        var saved = archives.putEntry(PutEntryRequest.newBuilder()
                 .setAddress(address("late"))
                 .setFilename("late.tar")
                 .addRenditions(RenditionContent.newBuilder()
@@ -317,6 +319,11 @@ class ArchiveClassificationIT {
                 .getClassification();
         assertThat(after.getState())
                 .isEqualTo(ClassificationState.CLASSIFICATION_STATE_VERIFIED);
+        var retained = archives.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address("late")).build());
+        assertThat(retained.getInfo().getClassification()).isEqualTo(after);
+        assertThat(retained.getManifest().getMetadataSnapshot()).isEqualTo(saved.getManifest().getMetadataSnapshot());
+        assertThat(retained.getManifest().getMetadataSnapshot().getClassification()).isEqualTo(before);
     }
 
     @Test

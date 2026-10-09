@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" tests="23" skipped="0" failures="0" errors="0" timestamp="2026-10-05T21:24:16.434Z" hostname="krick" time="1.252">
+  <properties/>
+  <testcase name="selectedWireVerificationReleasesReservationsAtEveryCancellationPoint()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.763"/>
+  <testcase name="threeBoundariesRequireEveryParentAndNeverReturnAPartialTarget()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.032"/>
+  <testcase name="[1] TYPE_INT64" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.063"/>
+  <testcase name="[2] TYPE_UINT64" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.061"/>
+  <testcase name="[3] TYPE_INT32" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.015"/>
+  <testcase name="[4] TYPE_FIXED64" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.013"/>
+  <testcase name="[5] TYPE_FIXED32" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.015"/>
+  <testcase name="[6] TYPE_BOOL" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.009"/>
+  <testcase name="[7] TYPE_STRING" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.009"/>
+  <testcase name="[8] TYPE_UINT32" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.008"/>
+  <testcase name="[9] TYPE_SFIXED32" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.008"/>
+  <testcase name="[10] TYPE_SFIXED64" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.01"/>
+  <testcase name="[11] TYPE_SINT32" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.005"/>
+  <testcase name="[12] TYPE_SINT64" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.007"/>
+  <testcase name="cancellationAtEveryControlPointPropagatesWithoutReturningPartialParents()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.123"/>
+  <testcase name="singularAndSemanticMapCoordinatesSelectTheActualChild()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.008"/>
+  <testcase name="selectedWireEvidenceRejectsChangedRequestContentAndArtifacts()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.008"/>
+  <testcase name="duplicateMapKeysFailEvenWhenTheRequestedKeyIsElsewhere()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.006"/>
+  <testcase name="changedIndexesWrongStepKindsAndUnknownFieldsAreDataLoss()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.009"/>
+  <testcase name="repeatedChildrenWithTheSameUrlDecodeThroughIndependentPinnedDefinitions()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.011"/>
+  <testcase name="aggregateBytesDecodeCountAndReferenceCountsAreBoundedBeforeReturningAnyChild()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.007"/>
+  <testcase name="malformedMapEntryDescriptorCannotHideAnExtraRoute()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.005"/>
+  <testcase name="missingChildArtifactAndConflictingFullReferencesCannotFallBack()" classname="ai.protomolt.proto.repo.admission.DocumentRetainedPathMaterializationTest" time="0.006"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

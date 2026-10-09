@@ -1,0 +1,137 @@
+CHECK_OK restore.row_counts :: every base table's row count equals the seed record after close: tables=92
+CHECK_OK restore.row_counts_manifest :: row counts equal the sealed manifest
+CHECK_OK restore.reader_incarnations.active :: restored ACTIVE incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.fenced :: restored FENCED incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.unknown :: restored UNKNOWN incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.quiesced :: restored QUIESCED incarnations=2 (restored verbatim, none revived)
+CHECK_OK restore.backend_profile :: managed_backend_profiles row equals recorded identity for generation rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344
+CHECK_OK restore.sequences :: sequence values={archive_mutation_revision_seq=0, document_mutation_revision_seq=3}
+CHECK_OK restore.schema_catalog :: catalog digests=12
+CHECK_OK restore.migration_level :: flyway level V119
+CHECK_OK restore.xid_past_stored :: current=1647 maxStored=1083
+CHECK_OK restore.fresh_incarnation :: recovered host registered 2 new ACTIVE incarnation(s); restored states unchanged
+CHECK_OK restore.raw.alpha-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.alpha-v1.fragment0 :: ordinal=0 sha256=dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e size=319
+CHECK_OK restore.raw.alpha-v1.publication_revision :: publicationRevision=1
+CHECK_OK restore.validated.alpha-v1.document :: document bytes equal recorded, sha256=dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e
+CHECK_OK restore.validated.alpha-v1.bindings :: policy=0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.raw.alpha-v2.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.alpha-v2.fragment0 :: ordinal=0 sha256=fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3 size=326
+CHECK_OK restore.raw.alpha-v2.publication_revision :: publicationRevision=2
+CHECK_OK restore.validated.alpha-v2.document :: document bytes equal recorded, sha256=fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3
+CHECK_OK restore.validated.alpha-v2.bindings :: policy=0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.raw.beta-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK restore.raw.beta-v1.fragment0 :: ordinal=0 sha256=f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e size=291
+CHECK_OK restore.raw.beta-v1.publication_revision :: publicationRevision=3
+CHECK_OK restore.validated.beta-v1.document :: document bytes equal recorded, sha256=f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e
+CHECK_OK restore.validated.beta-v1.bindings :: policy=5dab75e2cc7a09cb2d7930abe7e5106566cd93a287671a5b6625524f03338ee7 profile=protomolt-retained-schema-admission/v1
+CHECK_OK restore.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK restore.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v1.root.offline_decode :: decoded=alpha-v1 files=6 steps=1
+CHECK_OK restore.materialized.alpha-v1.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.alpha-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v1.nested.offline_decode :: decoded=attachment-one files=1 steps=3
+CHECK_OK restore.materialized.alpha-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v2.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.alpha-v2.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v2.root.offline_decode :: decoded=alpha-v2 files=6 steps=1
+CHECK_OK restore.materialized.alpha-v2.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.alpha-v2.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.alpha-v2.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.alpha-v2.nested.offline_decode :: decoded=attachment-two files=1 steps=3
+CHECK_OK restore.materialized.alpha-v2.nested.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.beta-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK restore.materialized.beta-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.beta-v1.root.offline_decode :: decoded=beta-v1 files=6 steps=1
+CHECK_OK restore.materialized.beta-v1.root.selection_identity :: ordinal=0
+CHECK_OK restore.materialized.beta-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK restore.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK restore.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
+CHECK_OK restore.materialized.beta-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.provider.cf8273718e34 :: bucket=rehearsal-alpha-9d296750 key=rehearsal-pipeline/documents/rehearsal-alpha-9d296750/57cc91ed-b21e-3e56-a1a4-11390e0c7b85/attempts/90fb7264-7e9b-48a8-bafd-1efd90ef63d8/part-0 version=7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3 sha256=dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e etag="640169e712d979d2f9abd5a57f2391e2"
+CHECK_OK restore.provider.b470638b80d1 :: bucket=rehearsal-alpha-9d296750 key=rehearsal-pipeline/documents/rehearsal-alpha-9d296750/57cc91ed-b21e-3e56-a1a4-11390e0c7b85/attempts/dd6ab5ca-d83b-4fb8-9414-1f243b1922d9/part-0 version=7c383373-11f4-445f-bf8b-8a0ab1ac278c sha256=fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3 etag="3f51935d8b1233953cff492679477c67"
+CHECK_OK restore.provider.3c21729a3158 :: bucket=rehearsal-beta-9d296750 key=rehearsal-pipeline/documents/rehearsal-beta-9d296750/018cb065-3a53-370e-b15f-2dbea13e2a2b/attempts/9d358102-9bca-4c82-b47d-083c70a7eb3d/part-0 version=ac3e4c93-f025-4ef4-96c6-e2f21986dce7 sha256=f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e etag="5f1b6f4c5e9be87183a94957f0106178"
+CHECK_OK restore.provider.count :: objects=3
+CHECK_OK restore.replay.alpha-v1 :: receipt byte-equal, revision=04be464b-9e6e-481c-8a09-466fb07e2913
+CHECK_OK restore.replay.alpha-v2 :: receipt byte-equal, revision=fd033829-9c2f-4754-8484-3c86f101b1f0
+CHECK_OK restore.replay.beta-v1 :: receipt byte-equal, revision=752b475b-101f-4c5d-ac3a-886075094405
+CHECK_OK restore.access.alpha-v1.member :: granted member reads alpha-v1
+CHECK_OK restore.access.alpha-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.alpha-v1.outsider :: foreign account denied
+CHECK_OK restore.access.alpha-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access.alpha-v2.member :: granted member reads alpha-v2
+CHECK_OK restore.access.alpha-v2.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.alpha-v2.outsider :: foreign account denied
+CHECK_OK restore.access.alpha-v2.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access.beta-v1.member :: granted member reads beta-v1
+CHECK_OK restore.access.beta-v1.stranger :: same-account caller without the granted identity: NOT_FOUND
+CHECK_OK restore.access.beta-v1.outsider :: foreign account denied
+CHECK_OK restore.access.beta-v1.cross_account :: the other account's member denied: NOT_FOUND
+CHECK_OK restore.access_matrix_unchanged :: matrix={member.alpha-v1=OK, stranger.alpha-v1=NOT_FOUND, outsider.alpha-v1=NOT_FOUND, cross-account-member.alpha-v1=NOT_FOUND, member.alpha-v2=OK, stranger.alpha-v2=NOT_FOUND, outsider.alpha-v2=NOT_FOUND, cross-account-member.alpha-v2=NOT_FOUND, member.beta-v1=OK, stranger.beta-v1=NOT_FOUND, outsider.beta-v1=NOT_FOUND, cross-account-member.beta-v1=NOT_FOUND}
+CHECK_OK restore.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK restore.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK restore.pending.command_identity :: recorded command digest reproduced from the persisted intent
+CHECK_OK restore.pending.chain_identity :: V118/V119 rows, install edges (including install_xid) and generations equal the seed record: publication_preparations=[0, 1, 2] preparation_coverage_certificates=[0] preparation_coverage_lineage=[1] preparation_coverage_unresolved=[2] successor_installs=[1, 2] successor_executions=[] operation_success=[]
+CHECK_OK restore.pending.replay_pending :: exact replay still observes PENDING; no result was invented
+CHECK_OK restore.pending.discovery :: recovery discovery observes INSTALLED_NOT_ACTIVATED with the installed successor; leases restored verbatim and expired
+CHECK_OK restore.pending.lineage_verifiable :: generation 2 verified against the restored install edge (VERIFIED_SUCCESSOR): depth 2, no header, no execution; a new transaction never equals a restored install_xid
+CHECK_OK restore.pending.recoverable_not_executed :: a third successor installed on the restored catalog; still unresolved, unexecuted and PENDING
+CHECK_OK restore.pending.budget_released :: verification released its reservations
+CHECK_OK restore.schema.no_live_lookup :: live schema resolution attempts during historical verification=0
+CHECK_OK after-write.typed_without_registry_refused :: typed publication with no registry -> IllegalStateException: Recovered host attempted live schema resolution; no registry is configured
+CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Record :: artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce
+CHECK_OK after-write.registry_rebuilt_from_retained_bytes.Attachment :: artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK after-write.registry_definitions :: two retained definitions rebuilt: [type.test/protomolt.rehearsal.Record, type.test/protomolt.rehearsal.Attachment]
+CHECK_OK after-write.new_revision :: revision=d32b1749-6bac-4fe0-8c1b-4715bfcc9028 mutation=4 > restored sequence 3
+CHECK_OK after-write.rebuilt_registry_used :: resolutions=1
+CHECK_OK after-write.readable :: new revision readable
+CHECK_OK after-write.sequences_advanced :: document sequence 4 > restored 3
+CHECK_OK after-write.old_bindings_intact :: restored object bindings unchanged by the new revision
+CHECK_OK after-write.raw.alpha-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.alpha-v1.fragment0 :: ordinal=0 sha256=dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e size=319
+CHECK_OK after-write.raw.alpha-v1.publication_revision :: publicationRevision=1
+CHECK_OK after-write.validated.alpha-v1.document :: document bytes equal recorded, sha256=dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e
+CHECK_OK after-write.validated.alpha-v1.bindings :: policy=0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.raw.alpha-v2.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.alpha-v2.fragment0 :: ordinal=0 sha256=fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3 size=326
+CHECK_OK after-write.raw.alpha-v2.publication_revision :: publicationRevision=2
+CHECK_OK after-write.validated.alpha-v2.document :: document bytes equal recorded, sha256=fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3
+CHECK_OK after-write.validated.alpha-v2.bindings :: policy=0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.alpha-v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.raw.beta-v1.fragment_count :: fragments=1 expected=1
+CHECK_OK after-write.raw.beta-v1.fragment0 :: ordinal=0 sha256=f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e size=291
+CHECK_OK after-write.raw.beta-v1.publication_revision :: publicationRevision=3
+CHECK_OK after-write.validated.beta-v1.document :: document bytes equal recorded, sha256=f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e
+CHECK_OK after-write.validated.beta-v1.bindings :: policy=5dab75e2cc7a09cb2d7930abe7e5106566cd93a287671a5b6625524f03338ee7 profile=protomolt-retained-schema-admission/v1
+CHECK_OK after-write.validated.beta-v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK after-write.materialized.alpha-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.alpha-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v1.root.offline_decode :: decoded=alpha-v1 files=6 steps=1
+CHECK_OK after-write.materialized.alpha-v1.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.alpha-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v1.nested.offline_decode :: decoded=attachment-one files=1 steps=3
+CHECK_OK after-write.materialized.alpha-v1.nested.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v2.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.alpha-v2.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v2.root.offline_decode :: decoded=alpha-v2 files=6 steps=1
+CHECK_OK after-write.materialized.alpha-v2.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.alpha-v2.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.alpha-v2.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.alpha-v2.nested.offline_decode :: decoded=attachment-two files=1 steps=3
+CHECK_OK after-write.materialized.alpha-v2.nested.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.beta-v1.root.descriptor_identity :: retained descriptor artifact sha256=ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce type=type.test/protomolt.rehearsal.Record
+CHECK_OK after-write.materialized.beta-v1.root.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.beta-v1.root.offline_decode :: decoded=beta-v1 files=6 steps=1
+CHECK_OK after-write.materialized.beta-v1.root.selection_identity :: ordinal=0
+CHECK_OK after-write.materialized.beta-v1.nested.descriptor_identity :: retained descriptor artifact sha256=d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412 type=type.test/protomolt.rehearsal.Attachment
+CHECK_OK after-write.materialized.beta-v1.nested.tool_identity :: admission runtime repository-backup-rehearsal/1
+CHECK_OK after-write.materialized.beta-v1.nested.offline_decode :: decoded=attachment-beta files=1 steps=3
+CHECK_OK after-write.materialized.beta-v1.nested.selection_identity :: ordinal=0
+CHECK_OK restore.ready :: recovered host advertised ready after verification
+CHECK_OK verify.not_ready :: READY is only written by a fully verified host

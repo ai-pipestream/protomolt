@@ -1,0 +1,15 @@
+description = 'Descriptor-driven document parts and assembly without storage providers'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api libs.protobuf.java
+    implementation project(':protomolt-descriptors')
+    implementation libs.protobuf.java.util
+}
+
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-container', 'protomolt-repo-service',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+        'flyway-core', 'kafka-clients'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

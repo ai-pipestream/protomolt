@@ -11,12 +11,19 @@ import java.util.UUID;
 public final class DriveLedger {
 
     private final Tx tx;
+    private final java.util.function.Consumer<DriveRecord> readGate;
 
     /**
      * @param tx the transactional EntityManager wrapper shared by this service
      */
     public DriveLedger(Tx tx) {
+        this(tx, record -> {});
+    }
+
+    /** A composition may reject incompatible drive metadata before returning it to storage callers. */
+    public DriveLedger(Tx tx, java.util.function.Consumer<DriveRecord> readGate) {
         this.tx = tx;
+        this.readGate = java.util.Objects.requireNonNull(readGate);
     }
 
     /**
@@ -41,7 +48,29 @@ public final class DriveLedger {
      * @return the drive, or empty
      */
     public Optional<DriveRecord> findById(UUID driveId) {
-        return tx.readOnly(em -> Optional.ofNullable(em.find(DriveRecord.class, driveId)));
+        return tx.readOnly(em -> Optional.ofNullable(em.find(DriveRecord.class, driveId))).map(this::checked);
+    }
+
+    /** Account filtering precedes backend validation so foreign configuration stays private. */
+    public Optional<DriveRecord> findById(String accountId, UUID driveId) {
+        java.util.Objects.requireNonNull(accountId); java.util.Objects.requireNonNull(driveId);
+        return findByIds(accountId,java.util.Set.of(driveId)).map(records -> records.get(driveId));
+    }
+
+    /** Complete account-scoped batch, up to 64 drives. Missing IDs never reach the backend gate. */
+    public Optional<java.util.Map<UUID,DriveRecord>> findByIds(String accountId, java.util.Set<UUID> driveIds) {
+        java.util.Objects.requireNonNull(accountId);
+        var ids=java.util.Set.copyOf(driveIds);
+        if (ids.isEmpty() || ids.size()>64) throw new IllegalArgumentException("Drive batch must contain 1 to 64 IDs");
+        var records=tx.inTransaction(em -> { return em.createQuery(
+                "SELECT d FROM DriveRecord d WHERE d.accountId = :account AND d.driveId IN :ids ORDER BY d.driveId", DriveRecord.class)
+                .setParameter("account",accountId).setParameter("ids",ids).setMaxResults(64).getResultList(); });
+        if (records.size()!=ids.size()) return Optional.empty();
+        var result=new java.util.LinkedHashMap<UUID,DriveRecord>();
+        records.forEach(record -> result.put(record.driveId,record));
+        if (!result.keySet().equals(ids)) return Optional.empty();
+        records.forEach(this::checked);
+        return Optional.of(java.util.Map.copyOf(result));
     }
 
     /**
@@ -58,7 +87,7 @@ public final class DriveLedger {
                 .setParameter("accountId", accountId)
                 .setParameter("name", name)
                 .getResultStream()
-                .findFirst());
+                .findFirst()).map(this::checked);
     }
 
     /**
@@ -76,7 +105,7 @@ public final class DriveLedger {
      */
     public List<DriveRecord> listByAccount(String accountId, int limit, String continuationToken) {
         int effectiveLimit = limit > 0 ? limit : 100;
-        return tx.readOnly(em -> {
+        return checkedList(tx.readOnly(em -> {
             var query = em.createQuery(
                     "SELECT d FROM DriveRecord d WHERE d.accountId = :accountId"
                             + (continuationToken == null || continuationToken.isBlank()
@@ -89,7 +118,7 @@ public final class DriveLedger {
                 query.setParameter("afterName", continuationToken);
             }
             return query.getResultList();
-        });
+        }));
     }
 
     /**
@@ -102,10 +131,34 @@ public final class DriveLedger {
      */
     public List<DriveRecord> listAll(int limit) {
         int effectiveLimit = limit > 0 ? limit : 1000;
-        return tx.readOnly(em -> em.createQuery(
+        return checkedList(tx.readOnly(em -> em.createQuery(
                         "SELECT d FROM DriveRecord d ORDER BY d.accountId ASC, d.name ASC",
                         DriveRecord.class)
                 .setMaxResults(effectiveLimit)
-                .getResultList());
+                .getResultList()));
+    }
+
+    private DriveRecord checked(DriveRecord record) {
+        validateBackend(record);
+        return record;
+    }
+
+    /** Apply the composition's backend gate to a row already locked by a caller's transaction. */
+    public void validateBackend(DriveRecord record) {
+        readGate.accept(java.util.Objects.requireNonNull(record, "record"));
+    }
+
+    /** Legacy blob coordinates omit the account; never choose arbitrarily between tenants. */
+    public Optional<DriveRecord> findUniqueByName(String name) {
+        List<DriveRecord> matches = tx.readOnly(em -> em.createQuery(
+                "SELECT d FROM DriveRecord d WHERE d.name = :name", DriveRecord.class)
+                .setParameter("name", name).setMaxResults(2).getResultList());
+        if (matches.size() > 1) throw new IllegalArgumentException("Drive name is ambiguous across accounts");
+        return matches.stream().findFirst().map(this::checked);
+    }
+
+    private List<DriveRecord> checkedList(List<DriveRecord> records) {
+        records.forEach(readGate);
+        return records;
     }
 }

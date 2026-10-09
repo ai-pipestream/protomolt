@@ -1,0 +1,11 @@
+description = 'Authenticated publication repository client without SQL or storage provider implementations'
+dependencies {
+    api project(':protomolt-repo-spi')
+    api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-blob-spi')
+}
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-service', 'protomolt-repo-container', 'protomolt-repo-engine',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'flyway-core', 'kafka-clients'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

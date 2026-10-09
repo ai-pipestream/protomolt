@@ -1,0 +1,1 @@
+NATIVE_STORAGE_BACKEND=rustfs image=rustfs/rustfs:1.0.0-beta.11-preview.1 image_id=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b

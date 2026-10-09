@@ -1,0 +1,3 @@
+base_commit=aaded923819b4dda1a9ead9fbf33952b78e0f063
+raw_directory=repo/service/build/reports/replica-scale/2026-10-05T12-08-12.429868657Z
+production_changes=ArchiveStatistics additive SQL, rendition-byte and overflow corrections

@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/repo/v1/document_publication_result.proto";
+import "ai/protomolt/proto/repo/v1/document_publication_rejection.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Staged contract. No host mounts this service until shared execution, authenticated
+// transport, resource limits and shutdown pass the implementation acceptance gates.
+service DocumentPublicationService {
+  // Atomic complete-revision publication. Retry the same operation and inputs after
+  // an ambiguous error; errors do not prove rollback. No partial success result.
+  rpc PublishDocument(PublishDocumentRequest) returns (PublishDocumentResponse);
+}
+
+// Explicit admission behavior, subject to current host schema policy.
+enum DocumentPublicationMode {
+  // Missing mode is invalid.
+  DOCUMENT_PUBLICATION_MODE_UNSPECIFIED = 0;
+  // Resolve and validate through current host schema policy.
+  DOCUMENT_PUBLICATION_MODE_TYPED = 1;
+  // Preserve bytes without claiming typed validity; host policy can disallow it.
+  DOCUMENT_PUBLICATION_MODE_OPAQUE = 2;
+}
+
+// One member's explicit admission choice.
+message DocumentPublicationMemberMode {
+  // Exact member ID from the publication intent.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[a-zA-Z0-9_.-]+$"}];
+  // Fixed for the admitted operation, not inferred from payload content.
+  DocumentPublicationMode mode = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+}
+
+// Bytes for one declared upload, never an arbitrary provider key or object handle.
+message DocumentPublicationPayload {
+  // Exact member ID from the publication intent.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[a-zA-Z0-9_.-]+$"}];
+  // Full position in the member's parts list, including empty and reused slots.
+  uint32 revision_ordinal = 2 [(ai.protomolt.proto.validate.v1.field).uint32.lt = 10000];
+  // Empty bytes are a present zero-length upload, not missing content.
+  bytes content = 3 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 8388608];
+}
+
+// Hosts reject unknown fields and cap the serialized envelope at 10 MiB before
+// parsing. The shared boundary separately enforces the 1 MiB canonical intent
+// limit, checked aggregate payload capacity, duplicate keys, exact upload coverage,
+// declared lengths and checksums. Annotation validity does not authorize execution.
+message PublishDocumentRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-request-modes"
+    message: "exactly one explicit mode is required for each intent member"
+    expression: "size(this.modes) == size(this.intent.members) && this.intent.members.all(m, this.modes.filter(v, v.member_id == m.member_id).size() == 1)"
+  };
+  // Existing canonical command vocabulary, including operation identity.
+  DocumentPublicationIntent intent = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact member coverage; duplicates and missing members are invalid.
+  repeated DocumentPublicationMemberMode modes = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64}];
+  // Exactly the upload slots from intent; retained and empty slots have no payload.
+  repeated DocumentPublicationPayload payloads = 3 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 10000];
+}
+
+// Only durable terminal outcomes use this envelope. Authentication, cancellation,
+// timeout, capacity, operation-key conflicts and transient failures are status errors.
+// A recorded revision-precondition rejection uses the existing rejected receipt.
+// Handlers verify the exact command/account/principal/member receipt binding and
+// current delivery authorization; protobuf validity alone is not commit evidence.
+message PublishDocumentResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-response-outcome"
+    message: "one durable publication outcome is required"
+    expression: "has(this.committed) || has(this.rejected)"
+  };
+  // Exactly one persisted terminal receipt; no transient failure alternative.
+  oneof outcome {
+    // All members committed atomically with these revision identities.
+    DocumentPublicationResult committed = 1;
+    // Existing durable rejection, including its original reason and evidence.
+    DocumentPublicationRejection rejected = 2;
+  }
+}

@@ -1,0 +1,4 @@
+c05617353a71ad08d37dc7648053dc32d4ee283f7121a58a450442b4c8ba532c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentAssessmentRetainedSlots.java
+b1abea240f51b69bdf344b927462af0d3f9762398398b4f2b627aaea11095b73  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/NativeReplicaRuntimeTest.java
+5598de2126e4d2c8ce4d7c2806df658514c9eefe1d44d7bfaa0bc0f92fbe9ae2  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/NativeTrafficSampler.java
+9f058007b93162c119f9dcd312bbae40c330f44021730995c76bb32a72350dc3  repo/container/src/test/resources/runtime-inventory/NativeMixedTrafficProbe.java

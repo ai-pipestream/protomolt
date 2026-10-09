@@ -27,6 +27,31 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class RuleClassificationTest {
 
+    @Test
+    void firstViolationMatchesFullValidationWithoutSuppressingLaterRuleErrors() {
+        var at = java.time.Instant.parse("2000-01-01T00:00:00Z");
+        var person = Person.newBuilder().setName("x").setAge(200).setEmail("bad").build();
+        var validator = ProtoValidator.create();
+        var all = validator.validate(person, at);
+        assertThat(all.violations()).hasSizeGreaterThan(1);
+        assertThat(validator.firstViolation(person, at)).contains(all.violations().getFirst());
+        assertThat(validator.firstViolation(Person.newBuilder().setName("valid").setAge(20).build(), at)).isEmpty();
+
+        var laterFailure = ProtoValidator.create(List.of(new ValidationRuleSource() {
+            @Override public Optional<FieldConstraints> fieldConstraints(FieldDescriptor field) {
+                return switch (field.getName()) {
+                    case "name" -> Optional.of(FieldConstraints.builder()
+                            .addCel(new CelConstraint("invalid", "false", "first violation")).build());
+                    case "age" -> Optional.of(FieldConstraints.builder()
+                            .addCel(new CelConstraint("runtime", "this / (this - this) == 1", "")).build());
+                    default -> Optional.empty();
+                };
+            }
+            @Override public Optional<MessageConstraints> messageConstraints(Descriptor message) { return Optional.empty(); }
+        }));
+        assertThatThrownBy(() -> laterFailure.firstViolation(person, at)).isInstanceOf(RuleEvaluationException.class);
+    }
+
     /** A rule source contributing a fixed constraint set to one named field of any message. */
     private record FieldSource(String fieldName, FieldConstraints constraints)
             implements ValidationRuleSource {

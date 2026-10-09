@@ -31,7 +31,10 @@ import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -177,13 +180,42 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     public Optional<ByteString> descriptorSet(String fingerprint) {
         DescriptorSetArtifacts.requireFingerprint(fingerprint);
         Path path = descriptorPath(fingerprint);
-        if (!Files.isRegularFile(path)) {
-            return Optional.empty();
-        }
         try {
+            requireDescriptorRepository();
+            if (!descriptorDirectoryExists(repoDir.resolve("descriptors"))
+                    || !descriptorDirectoryExists(path.getParent())) {
+                requireDescriptorRepository();
+                return Optional.empty();
+            }
+            var attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.isRegularFile()) throw new IOException("Descriptor artifact is not a regular file: " + path);
             return Optional.of(DescriptorSetArtifacts.read(path, fingerprint));
+        } catch (NoSuchFileException missing) {
+            // An absent artifact is meaningful only while the backing repository is available.
+            try { requireDescriptorRepository(); }
+            catch (IOException unavailable) {
+                throw new RegistryStoreException("Descriptor repository is unavailable", unavailable);
+            }
+            return Optional.empty();
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to read descriptor " + fingerprint, e);
+        }
+    }
+
+    private void requireDescriptorRepository() throws IOException {
+        if (!Files.readAttributes(repoDir, BasicFileAttributes.class).isDirectory()
+                || !Files.readAttributes(repoDir.resolve(".git"), BasicFileAttributes.class,
+                        LinkOption.NOFOLLOW_LINKS).isDirectory())
+            throw new IOException("Descriptor repository is not a Git working directory");
+    }
+
+    private static boolean descriptorDirectoryExists(Path path) throws IOException {
+        try {
+            if (!Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory())
+                throw new IOException("Descriptor parent is not a directory: " + path);
+            return true;
+        } catch (NoSuchFileException missing) {
+            return false;
         }
     }
 

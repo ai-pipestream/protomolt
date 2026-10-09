@@ -1,15 +1,68 @@
-description = 'The claim-check storage engine: descriptor-driven part codec, S3 blob store with virtual-thread part fan-out, and the Postgres ledger (Hibernate + HikariCP + Flyway)'
+description = 'Claim-check part storage and Postgres ledger over the provider-neutral byte SPI'
+
+// Test host composition resolved as one production graph, without JUnit/test fixtures.
+configurations {
+    // Correctness transport host only. Keep performance hosts and published runtime unchanged.
+    assessmentTransportRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+            attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+        }
+    }
+    assessmentHostRuntime {
+        canBeConsumed = false
+        canBeResolved = true
+        extendsFrom runtimeClasspath
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+            attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+        }
+    }
+}
+
+configurations.assessmentTransportRuntime.extendsFrom(configurations.assessmentHostRuntime)
 
 dependencies {
+    assessmentTransportRuntime project(':protomolt-repo-service')
+    assessmentTransportRuntime project(':protomolt-repo-history-grpc')
+    assessmentTransportRuntime project(':protomolt-repo-publication-grpc')
+    assessmentTransportRuntime project(':protomolt-repo-schema-registry')
+    assessmentTransportRuntime project(':protomolt-schema-registry-git')
+    assessmentHostRuntime project(':protomolt-repo-engine')
+    assessmentHostRuntime project(':protomolt-repo-blob-s3')
+    api project(':protomolt-repo-admission')
+    testImplementation project(':protomolt-descriptors')
+    testImplementation project(':protomolt-repo-schema-registry')
+    testImplementation project(':protomolt-schema-registry-git')
+    api project(':protomolt-repo-codec')
+    api project(':protomolt-repo-blob-spi')
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation project(':protomolt-repo-blob-redis')
+    testImplementation project(':protomolt-repo-blob-cache')
+    // Real SQL/provider integration of ledger-issued read plans with the shared reader.
+    // This test-only edge does not add engine code to the container's published runtime.
+    testImplementation project(':protomolt-repo-engine')
+    // Historical conformance runs the real adapter over the same native revisions.
+    // This test-only edge does not alter the container's published runtime.
+    testImplementation project(':protomolt-repo-service')
+    testImplementation project(':protomolt-authz-grpc')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.grpc.netty.shaded
     api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-spi')
     api libs.protobuf.java
-    api libs.awssdk.s3
+    testImplementation libs.awssdk.s3
     api libs.hibernate.core
     api libs.hikari
-    api libs.jedis
+    testImplementation libs.jedis
 
     implementation libs.protobuf.java.util
-    implementation libs.awssdk.url.connection.client
+    // Parse the persisted JSONB snapshot with exact numeric lexemes. This is the
+    // same Gson component/version already selected by protobuf-java-util.
+    implementation libs.gson
+    testImplementation libs.awssdk.url.connection.client
     implementation libs.flyway.core
     implementation libs.flyway.database.postgresql
     implementation libs.postgresql
@@ -24,4 +77,196 @@ dependencies {
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
+}
+
+tasks.named('test') {
+    def documentBenchmark = providers.environmentVariable('PROTOMOLT_DOCUMENT_BENCHMARK').map { it == 'true' }.orElse(false)
+    inputs.property('documentBenchmark', documentBenchmark)
+    // Timing evidence must execute, never come from an up-to-date or cached test result.
+    outputs.upToDateWhen { !documentBenchmark.get() }
+    outputs.cacheIf { !documentBenchmark.get() }
+    doFirst {
+        systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath
+    }
+}
+
+// Qualify the resolved production admission bundle without ambient test dependencies.
+// The ordinary test task excludes this fixture because it requires the generated bundle.
+tasks.named('test') { exclude '**/DocumentAdmissionRuntimeTest*' }
+def admissionInventory = project(':protomolt-repo-admission').layout.buildDirectory.dir('admission-runtime')
+tasks.register('admissionRuntimeTest', Test) {
+    group = 'verification'
+    description = 'Run the admission validator in an isolated production bundle classloader'
+    dependsOn ':protomolt-repo-admission:admissionRuntimeInventory'
+    dependsOn tasks.named('jar')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAdmissionRuntimeTest' }
+    inputs.dir(admissionInventory)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    systemProperty 'protomolt.test.admissionRuntimeBundle', admissionInventory.get().asFile.absolutePath
+    systemProperty 'protomolt.test.containerJar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+    ['protomolt-repo-spi', 'protomolt-repo-blob-spi'].each { module ->
+        def supportJar = project(":" + module).tasks.named('jar')
+        dependsOn supportJar
+        inputs.file(supportJar.flatMap { it.archiveFile })
+        systemProperty 'protomolt.test.' + module, supportJar.get().archiveFile.get().asFile.absolutePath
+    }
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('admissionRuntimeTest') }
+
+// Observe the actual admission runtime alongside the production SQL host. The
+// subprocess receives JARs only; Gradle/JUnit classloaders cannot attest it.
+ext.admissionRuntimeRootProject = ':protomolt-repo-admission'
+ext.admissionRuntimeConfiguration = 'assessmentHostRuntime'
+apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
+def hostAdmissionInventory = layout.buildDirectory.dir('admission-runtime')
+// The transport host must inventory the admission subtree selected in that same
+// graph. Combining independently resolved closures can shadow attested classes.
+ext.admissionRuntimeConfiguration = 'assessmentTransportRuntime'
+ext.admissionRuntimeTaskName = 'admissionTransportRuntimeInventory'
+ext.admissionRuntimeDirectory = 'admission-transport-runtime'
+apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
+def transportAdmissionInventory = layout.buildDirectory.dir('admission-transport-runtime')
+tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
+// The scoped publication parity suite needs the observed admission runtime bundle;
+// run it through the dedicated scopedPublicationTest task below.
+tasks.named('test') { exclude '**/ScopedPublicationParityIT*' }
+tasks.register('scopedPublicationTest', Test) {
+    group = 'verification'
+    description = 'Run scoped publication authorization parity across library and authenticated gRPC'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.ScopedPublicationParityIT' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+        // Persisted probe log: replaced by every run, kept after temporary-directory cleanup.
+        systemProperty 'protomolt.test.scopedPublicationLog',
+                reports.junitXml.outputLocation.file('scoped-publication.log').get().asFile.absolutePath
+    }
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('scopedPublicationTest') }
+
+tasks.register('admissionStorageTest', Test) {
+    group = 'verification'
+    description = 'Qualify observed admission and PostgreSQL together in a production JAR host'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+    }
+    useJUnitPlatform()
+}
+tasks.named('check') { dependsOn tasks.named('admissionStorageTest') }
+
+// Opt-in backend parity before native RustFS latency/replica qualification. The
+// fault-injection and expiry waits are correctness checks, never benchmark samples.
+tasks.register('admissionRustFsTest', Test) {
+    group = 'verification'
+    description = 'Run native publication and retained recovery against pinned RustFS'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.DocumentAssessmentStorageRuntimeTest' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    systemProperty 'protomolt.test.nativeStorage', 'rustfs'
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+    }
+    useJUnitPlatform()
+}
+
+// Separate native multi-process workload. Not part of the fault/expiry benchmark.
+tasks.named('test') { exclude '**/NativeReplicaRuntimeTest*' }
+tasks.register('nativeReplicaTest', Test) {
+    group = 'verification'
+    description = 'Exercise native publication across 1/2/4 production-JAR processes on RustFS'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.assessmentHostRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentHostRuntime).asPath
+    }
+    useJUnitPlatform()
+}
+
+// Explicit measurements must execute; never replay cached benchmark results.
+tasks.register('nativeReplicaBenchmark', Test) {
+    group = 'verification'
+    description = 'Measure bounded native mixed traffic on shared PostgreSQL and RustFS'
+    dependsOn tasks.named('admissionRuntimeInventory'), tasks.named('jar'), configurations.assessmentHostRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest' }
+    inputs.dir(hostAdmissionInventory)
+    inputs.files(configurations.assessmentHostRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+    systemProperty 'protomolt.test.nativeBenchmark', 'true'
+    systemProperty 'protomolt.test.nativeBenchmarkJournaled', providers.gradleProperty('nativeBenchmarkJournaled').getOrElse('false')
+    systemProperty 'protomolt.test.nativeBenchmarkTrace', providers.gradleProperty('nativeBenchmarkTrace').getOrElse('false')
+    systemProperty 'protomolt.test.nativeBenchmarkClients', providers.gradleProperty('nativeBenchmarkClients').getOrElse('4')
+    // Zero preserves the original eight reader slots per worker. Positive values
+    // fix total reader capacity across the one/two/four-replica comparison.
+    systemProperty 'protomolt.test.nativeBenchmarkReadSlots', providers.gradleProperty('nativeBenchmarkReadSlots').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkReadHandles', providers.gradleProperty('nativeBenchmarkReadHandles').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkBudgetBytes', providers.gradleProperty('nativeBenchmarkBudgetBytes').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkPayloadBytes', providers.gradleProperty('nativeBenchmarkPayloadBytes').getOrElse('0')
+    systemProperty 'protomolt.test.nativeBenchmarkIterations', providers.gradleProperty('nativeBenchmarkIterations').getOrElse('32')
+    systemProperty 'protomolt.test.nativeBenchmarkOutput', layout.buildDirectory.dir('native-replica-benchmark').get().asFile.absolutePath
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', hostAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentHostRuntime).asPath
+    }
+    useJUnitPlatform()
+}
+
+// Focused iteration only. admissionStorageTest still executes every historical host.
+tasks.named('test') { exclude '**/HistoricalRuntimeQualificationTest*' }
+// The backup/recovery rehearsal runs only through -I src/test/resources/backup-recovery/rehearsal.init.gradle,
+// which supplies its runtime and re-includes it. Selecting it without the script finds no tests and fails.
+tasks.named('test') { exclude '**/RepositoryBackupRehearsalIT*' }
+tasks.register('admissionHistoricalRuntimeTest', Test) {
+    group = 'verification'
+    description = 'Run individual historical production-JAR qualification hosts'
+    dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    filter { includeTestsMatching 'ai.protomolt.proto.repo.container.ledger.HistoricalRuntimeQualificationTest' }
+    inputs.dir(transportAdmissionInventory)
+    inputs.files(configurations.assessmentTransportRuntime)
+    inputs.file(tasks.named('jar').flatMap { it.archiveFile })
+    doFirst {
+        systemProperty 'protomolt.test.admissionRuntimeBundle', transportAdmissionInventory.get().asFile.absolutePath
+        systemProperty 'protomolt.test.storageHostClasspath', files(tasks.named('jar').get().archiveFile,
+                configurations.assessmentTransportRuntime).asPath
+    }
+    useJUnitPlatform()
 }

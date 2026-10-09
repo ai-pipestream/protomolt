@@ -1,0 +1,141 @@
+// Standalone production artifact bundle. This is build evidence, not runtime attestation.
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+final int maximumArtifacts = 64
+final long maximumBytes = 1024L * 1024 * 1024
+final String format = 'protomolt-admission-runtime-inventory/v1'
+def runtime = configurations.getByName(project.hasProperty('admissionRuntimeConfiguration')
+        ? project.admissionRuntimeConfiguration : 'runtimeClasspath')
+def admissionPath = project.hasProperty('admissionRuntimeRootProject') ? project.admissionRuntimeRootProject : project.path
+def admissionProject = project(admissionPath)
+def ownJar = admissionProject.tasks.named('jar')
+def destination = layout.buildDirectory.dir(project.hasProperty('admissionRuntimeDirectory')
+        ? project.admissionRuntimeDirectory : 'admission-runtime')
+def inventoryTaskName = project.hasProperty('admissionRuntimeTaskName')
+        ? project.admissionRuntimeTaskName : 'admissionRuntimeInventory'
+
+tasks.register(inventoryTaskName) {
+    group = 'build'
+    description = 'Copy and identify the resolved production admission runtime artifacts'
+    dependsOn runtime, ownJar, admissionProject.tasks.named('checkRuntimeBoundaries')
+    inputs.files(runtime)
+    inputs.file(ownJar.flatMap { it.archiveFile })
+    outputs.dir(destination)
+    // Observation must check the actual files, including an already published bundle.
+    outputs.upToDateWhen { false }
+    doLast {
+        Set admissionComponents = null
+        if (admissionPath != project.path) {
+            // Traverse the admission dependency subtree in THIS host's resolved
+            // graph. A host may select newer transitive versions than the leaf.
+            // Never combine two independently resolved closures on one classpath.
+            def roots = runtime.incoming.resolutionResult.allComponents.findAll { component ->
+                component.id instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier &&
+                        component.id.projectPath == admissionPath
+            }
+            if (roots.size() != 1) throw new GradleException('Missing or ambiguous admission project in host runtime')
+            admissionComponents = new HashSet()
+            def pending = new ArrayDeque(roots)
+            while (!pending.isEmpty()) {
+                def component = pending.removeFirst()
+                if (!admissionComponents.add(component.id)) continue
+                component.dependencies.each { dependency ->
+                    if (dependency instanceof org.gradle.api.artifacts.result.UnresolvedDependencyResult)
+                        throw new GradleException('Unresolved admission runtime dependency', dependency.failure)
+                    if (dependency instanceof org.gradle.api.artifacts.result.ResolvedDependencyResult && !dependency.isConstraint())
+                        pending.addLast(dependency.selected)
+                }
+            }
+        }
+        def selected = runtime.incoming.artifacts.artifacts.findAll { artifact ->
+            admissionComponents == null || admissionComponents.contains(artifact.id.componentIdentifier)
+        }.collect { artifact ->
+            [name: artifact.id.componentIdentifier.displayName + ' :: ' + artifact.file.name,
+             file: artifact.file.toPath()]
+        }
+        if (admissionComponents == null) {
+            selected.add([name: 'project ' + admissionPath + ' :: ' + ownJar.get().archiveFile.get().asFile.name,
+                          file: ownJar.get().archiveFile.get().asFile.toPath()])
+        } else {
+            // The observer's root identity uses the same spelling as the standalone bundle.
+            def rootJar = ownJar.get().archiveFile.get().asFile.toPath()
+            def matching = selected.findAll { it.file == rootJar }
+            if (matching.size() != 1) throw new GradleException('Admission root JAR missing from resolved host artifacts')
+            matching.first().name = 'project ' + admissionPath + ' :: ' + rootJar.fileName
+        }
+        if (selected.size() < 1 || selected.size() > maximumArtifacts)
+            throw new GradleException('Admission runtime artifact count exceeds 64')
+        def names = new HashSet<String>()
+        selected.each { entry ->
+            if (entry.name.length() > 200 || entry.name.any { Character.isISOControl(it.charAt(0)) } || !names.add(entry.name))
+                throw new GradleException('Invalid or ambiguous runtime artifact identity: ' + entry.name)
+        }
+        selected.sort { a, b -> a.name <=> b.name }
+        def output = destination.get().asFile.toPath()
+        Files.createDirectories(output.resolve('artifacts'))
+        byte[] buffer = new byte[8192]
+        def digestFile = { path ->
+            def digest = MessageDigest.getInstance('SHA-256')
+            long size = 0
+            Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS).withCloseable { input ->
+                int n
+                while ((n = input.read(buffer)) != -1) {
+                    if (n > maximumBytes - size) throw new GradleException('Runtime artifact exceeds byte bound')
+                    digest.update(buffer, 0, n); size += n
+                }
+            }
+            [hash: HexFormat.of().formatHex(digest.digest()), size: size]
+        }
+        long total = 0
+        def rows = []
+        selected.each { entry ->
+            def before = Files.readAttributes(entry.file, BasicFileAttributes, LinkOption.NOFOLLOW_LINKS)
+            if (!before.isRegularFile() || !entry.file.fileName.toString().endsWith('.jar'))
+                throw new GradleException('Admission runtime requires regular JAR artifacts: ' + entry.name)
+            if (before.size() > maximumBytes - total) throw new GradleException('Admission runtime exceeds aggregate byte bound')
+            // Reject renamed non-JAR inputs before copying. Entries are not extracted or executed.
+            new ZipFile(entry.file.toFile()).withCloseable { ignored -> }
+            def temporary = Files.createTempFile(output.resolve('artifacts'), '.staging-', '.jar')
+            try {
+                def digest = MessageDigest.getInstance('SHA-256')
+                long size = 0
+                Files.newInputStream(entry.file, LinkOption.NOFOLLOW_LINKS).withCloseable { input ->
+                    Files.newOutputStream(temporary).withCloseable { target ->
+                        int n
+                        while ((n = input.read(buffer)) != -1) {
+                            if (n > maximumBytes - total - size) throw new GradleException('Admission runtime grew beyond byte bound')
+                            target.write(buffer, 0, n); digest.update(buffer, 0, n); size += n
+                        }
+                    }
+                }
+                def after = Files.readAttributes(entry.file, BasicFileAttributes, LinkOption.NOFOLLOW_LINKS)
+                if (size != before.size() || after.size() != before.size() || after.lastModifiedTime() != before.lastModifiedTime()
+                        || after.fileKey() != before.fileKey()) throw new GradleException('Runtime artifact changed during copy: ' + entry.name)
+                def hash = HexFormat.of().formatHex(digest.digest())
+                def copied = digestFile(temporary)
+                if (copied.hash != hash || copied.size != size) throw new GradleException('Runtime artifact copy verification failed')
+                new ZipFile(temporary.toFile()).withCloseable { ignored -> }
+                def relative = 'artifacts/' + hash + '.jar'
+                def blob = output.resolve(relative)
+                if (Files.exists(blob, LinkOption.NOFOLLOW_LINKS)) {
+                    if (!Files.isRegularFile(blob, LinkOption.NOFOLLOW_LINKS)) throw new GradleException('Runtime artifact blob is not regular')
+                    def prior = digestFile(blob)
+                    if (prior.hash != hash || prior.size != size) throw new GradleException('Existing runtime artifact blob is corrupt')
+                } else Files.move(temporary, blob, StandardCopyOption.ATOMIC_MOVE)
+                total += size
+                rows.add(entry.name + '\t' + hash + '\t' + size + '\t' + relative)
+            } finally { Files.deleteIfExists(temporary) }
+        }
+        def manifest = Files.createTempFile(output, '.inventory-', '.tsv')
+        try {
+            Files.writeString(manifest, format + '\n' + rows.join('\n') + '\n', java.nio.charset.StandardCharsets.UTF_8)
+            Files.move(manifest, output.resolve('inventory.tsv'), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally { Files.deleteIfExists(manifest) }
+        logger.lifecycle('Admission runtime inventory: {} artifacts, {} bytes', selected.size(), total)
+    }
+}

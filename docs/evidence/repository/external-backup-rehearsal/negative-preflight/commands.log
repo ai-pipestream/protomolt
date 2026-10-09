@@ -1,0 +1,21 @@
+2026-10-08T12:23:17.067444157Z exit=0 $ id -u
+  stdout: 1000
+2026-10-08T12:23:17.069900830Z exit=0 $ id -g
+  stdout: 1000
+2026-10-08T12:23:17.087442033Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-08T12:23:17.113614860Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T12:23:17.133681817Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T12:23:17.249733786Z exit=0 $ docker network create protomolt-rehearsal-ed7ae5054-b2b45b9c-net
+  stdout: 023586abca2443b1f9aca869dcb6b0deb142067091135ea8ee790c7b6ab01955
+2026-10-08T12:23:17.264420524Z exit=0 $ docker volume create protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied
+  stdout: protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied
+2026-10-08T12:23:17.720126203Z exit=0 $ docker run --rm -v protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied:/data postgres:18-alpine sh -c echo occupied > /data/marker
+2026-10-08T12:23:18.203021239Z exit=0 $ docker run --rm -v protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+  stdout: /data/marker
+2026-10-08T12:23:18.223683361Z exit=0 $ docker volume rm -f protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied
+  stdout: protomolt-rehearsal-ed7ae5054-b2b45b9c-occupied
+2026-10-08T12:23:18.384709081Z exit=0 $ docker network rm protomolt-rehearsal-ed7ae5054-b2b45b9c-net
+  stdout: protomolt-rehearsal-ed7ae5054-b2b45b9c-net

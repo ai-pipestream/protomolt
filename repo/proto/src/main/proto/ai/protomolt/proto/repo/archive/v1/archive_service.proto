@@ -281,7 +281,8 @@ message GetEntryRequest {
 // Unary: the requested renditions transit memory — size the read
 // accordingly, or read the manifest first and fetch selectively.
 message GetEntryResponse {
-  // The entry's metadata.
+  // Current entry metadata, even when reading an older version. Historical
+  // descriptive metadata, when recorded, is manifest.metadata_snapshot.
   EntryInfo info = 1;
   // The read version's full manifest — including renditions NOT requested
   // and renditions whose bytes are gone.
@@ -306,7 +307,8 @@ message GetEntryManifestRequest {
 
 // Response carrying only the manifest and the entry metadata.
 message GetEntryManifestResponse {
-  // The entry's metadata.
+  // Current entry metadata. Historical descriptive metadata, when recorded,
+  // is manifest.metadata_snapshot.
   EntryInfo info = 1;
   // The requested version's manifest.
   VersionManifest manifest = 2;
@@ -416,7 +418,8 @@ message ClassifyEntryResponse {
   ai.protomolt.proto.asset.v1.Classification classification = 1;
 }
 
-// Request to delete one entry: every retained version, every object.
+// Delete-entry payload for ArchiveMutationRequest. Logical removal is atomic;
+// physical cleanup is tracked separately by the mutation receipt.
 message DeleteEntryRequest {
   // The entry's logical identity.
   EntryAddress address = 1 [
@@ -424,20 +427,9 @@ message DeleteEntryRequest {
   ];
 }
 
-// Result of a DeleteEntry RPC. Idempotent: deleting an absent entry
-// succeeds with deleted=false.
-message DeleteEntryResponse {
-  // False when the entry did not exist.
-  bool deleted = 1;
-  // Number of versions removed.
-  int64 versions_removed = 2;
-  // Number of storage objects deleted.
-  int64 objects_deleted = 3;
-}
-
 // Request to remove one rendition's bytes from EVERY retained version of
-// an entry — the right-to-be-forgotten door. The manifests keep tombstones
-// (size, hash, reason) as provenance; the bytes are gone.
+// an entry through ArchiveMutationRequest. Manifests keep tombstones
+// (size, hash, reason) as provenance; the receipt tracks physical cleanup.
 message DeleteRenditionRequest {
   // The entry's logical identity.
   EntryAddress address = 1 [
@@ -460,14 +452,6 @@ message DeleteRenditionRequest {
   ];
 }
 
-// Result of a DeleteRendition RPC.
-message DeleteRenditionResponse {
-  // Number of storage objects deleted.
-  int64 objects_deleted = 1;
-  // Number of version manifests that now carry the tombstone.
-  int64 versions_tombstoned = 2;
-}
-
 // Request to prune an entry's old retained versions.
 message PruneVersionsRequest {
   // The entry's logical identity.
@@ -482,15 +466,6 @@ message PruneVersionsRequest {
       int32: {gte: 1}
     }
   ];
-}
-
-// Result of a PruneVersions RPC. Objects still referenced by a kept
-// version survive (entry-local sharing); only unreferenced objects delete.
-message PruneVersionsResponse {
-  // Number of versions removed.
-  int64 versions_removed = 1;
-  // Number of storage objects deleted.
-  int64 objects_deleted = 2;
 }
 
 // Request for one archive's ledger-maintained counters.
@@ -598,16 +573,6 @@ service ArchiveService {
 
   // List an entry's retained versions, newest first.
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
-
-  // Delete one entry: every retained version and every object. Idempotent.
-  rpc DeleteEntry(DeleteEntryRequest) returns (DeleteEntryResponse);
-
-  // Remove one rendition's bytes from every retained version, leaving
-  // tombstones with the stated reason.
-  rpc DeleteRendition(DeleteRenditionRequest) returns (DeleteRenditionResponse);
-
-  // Prune old retained versions, keeping the newest N.
-  rpc PruneVersions(PruneVersionsRequest) returns (PruneVersionsResponse);
 
   // Read one archive's exact usage counters.
   rpc GetArchiveStats(GetArchiveStatsRequest) returns (GetArchiveStatsResponse);

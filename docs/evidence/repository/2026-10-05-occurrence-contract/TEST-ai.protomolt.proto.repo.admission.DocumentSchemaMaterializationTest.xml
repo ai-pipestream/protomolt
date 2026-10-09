@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-05T20:12:05.005Z" hostname="krick" time="0.991">
+  <properties/>
+  <testcase name="readerFailuresKeepTheirIdentityEvenWhenTheirTypeResemblesAnInternalLimit()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.671"/>
+  <testcase name="oversizedDescriptorClosureIsAResourceFailureNotCorruption()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.039"/>
+  <testcase name="missingRequiredDefinitionIsDataLossAndResourceRefusalIsSeparate()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.031"/>
+  <testcase name="exactDecodedAllowanceSucceedsAndSmallerBoundsRefuseWithoutLeaking()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.045"/>
+  <testcase name="rootPathAndFragmentMustBelongToTheRecordedSelectionBeforeAnyAssetRead()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.015"/>
+  <testcase name="malformedStoredAssociationFailsAsDataLossBeforeAssetReads()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.01"/>
+  <testcase name="everyReservationRefusalReleasesEarlierLeasesAndPreservesTheHostException()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.091"/>
+  <testcase name="cancellationAndHostLimitErrorsAreNeverCorruptionAndReleaseOwnership()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.052"/>
+  <testcase name="ownsNestedResultUntilCloseAndDoesNotResolveUnselectedAssociations()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.014"/>
+  <testcase name="changedRetainedRowAndEvidenceBytesCannotBeSubstituted()" classname="ai.protomolt.proto.repo.admission.DocumentSchemaMaterializationTest" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

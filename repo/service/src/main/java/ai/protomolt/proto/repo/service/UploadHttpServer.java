@@ -1,17 +1,11 @@
 package ai.protomolt.proto.repo.service;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
-import ai.protomolt.proto.repo.container.blob.DocumentIds;
+import ai.protomolt.proto.repo.spi.ArchiveRepository;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.engine.ArchiveOperations;
+
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
-import ai.protomolt.proto.repo.container.ledger.DriveRecord;
-import ai.protomolt.proto.repo.v1.Blob;
-import ai.protomolt.proto.repo.v1.BlobBag;
-import ai.protomolt.proto.repo.v1.ChecksumType;
-import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
-import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
@@ -28,78 +22,18 @@ import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.security.DigestInputStream;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The streaming raw-upload route of the claim-check store:
- * {@code POST /v1/documents:upload}. The request body streams through a
- * SHA-256 {@link DigestInputStream} straight into
- * {@link BlobStore#put(BlobStore.PutSpec, InputStream, long)} — at no point
- * is the payload buffered in memory, which is why this route (and not the
- * unary {@code PutBlob} RPC) is where bulk bytes belong.
- *
- * <p>Plain JDK {@link HttpServer} on a virtual-thread executor, deliberately
- * NOT protomolt-server-jdk: that host is a protobuf-JSON REST gateway bound
- * to {@code ProtoRestGateway}'s invoke(body, headers, query) shape, and a raw
- * octet-stream body has no place in it. Blocking style end to end — a parked
- * virtual thread per in-flight upload, no reactive bridging.
- *
- * <p><b>Identity contract.</b> Every identity value is accepted as a query
- * parameter or as a header (the query parameter wins when both are present):
- * <ul>
- *   <li>{@code account_id} / {@code x-account-id} — required;</li>
- *   <li>{@code datasource_id} / {@code x-datasource-id} — required (it is the
- *   intake storage address);</li>
- *   <li>{@code drive} / {@code x-drive-name} — required;</li>
- *   <li>{@code filename} / {@code x-filename} — required;</li>
- *   <li>{@code content_type} query param, else the {@code Content-Type}
- *   header, else {@code application/octet-stream};</li>
- *   <li>{@code connector_id} / {@code x-connector-id} — optional;</li>
- *   <li>{@code crawl_id} / {@code x-crawl-id} — optional;</li>
- *   <li>{@code doc_id} / {@code x-doc-id} — optional; blank derives a
- *   name-based UUID from the content SHA-256 (see below).</li>
- * </ul>
- *
- * <p><b>Content-Length is REQUIRED</b> — a deliberate contract, not an
- * oversight: the S3 sync client behind {@link BlobStore} needs a known length
- * to stream a PUT, so chunked/absent-length requests are rejected with
- * {@code 411 Length Required} before a single byte is read.
- *
- * <p><b>Landing and dedupe.</b> The body lands at
- * {@code <drive.prefix>/blobs/<accountId>/<blobId>.bin} where
- * {@code blobId = DocumentIds.blobId(docId, datasourceId, accountId)} — a
- * deterministic key, so a re-upload of the same logical document overwrites
- * in place instead of orphaning a randomly-keyed object. The assembled
- * Document (ownership + blob_bag with a {@code FileStorageReference} and the
- * computed SHA-256) then runs through the SAME intake-save path as gRPC
- * {@code SaveDocument} ({@link DocumentGrpcService#saveBlocking},
- * use_datasource_id arm, graph {@code "intake:<accountId>"}), whose
- * root-checksum dedupe answers an identical re-upload with
- * {@code deduplicated=true} and skips the part re-write.
- *
- * <p><b>Blank doc_id costs one server-side copy.</b> The deterministic blob
- * key depends on the doc id, but a derived doc id needs the content hash,
- * which only exists once the stream has landed. So a blank-doc_id upload
- * streams to a staging key, derives {@code doc_id} from the landed SHA-256,
- * server-side copies to the final deterministic key, and deletes the staging
- * object. An explicit doc_id never pays this.
- *
- * <p><b>Client checksum.</b> An {@code X-Content-Sha256} header is verified
- * against the digest computed while streaming: a mismatch is a 400 and the
- * landed object is best-effort deleted (a corrupt landing must not pose as
- * the document's body).
- *
- * <p><b>Errors.</b> 400 names the offending parameter; 404 = unknown drive;
- * 405 = non-POST; 411 = absent/invalid Content-Length; 502 = the backing
- * store or the intake save failed.
+ * HTTP parsing and receipts for shared raw ingestion and archive operations.
+ * Document uploads require a qualified RawIngestionRepository. Legacy constructors
+ * remain source compatible but refuse document uploads until that port is supplied.
+ * Content-Length is required. Physical keys are immutable per-attempt keys; the
+ * receipt returns the committed reference, including on deduplicated uploads.
  */
 public final class UploadHttpServer implements AutoCloseable {
 
@@ -112,60 +46,41 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final DocumentGrpcService documentService;
-    private final DriveLedger drives;
-    private final BlobStore blobStore;
+    private final ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion;
     private final byte[] expectedToken;
-    private final ArchiveOperations archiveOperations;
+    private final ArchiveRepository archiveOperations;
 
     private HttpServer server;
     private ExecutorService executor;
 
-    /**
-     * @param documentService the gRPC document service whose blocking intake
-     *        save this route reuses (one save path, one dedupe semantic)
-     * @param drives the drive ledger (drive name + account → bucket/prefix)
-     * @param blobStore the object-storage port the body streams into
-     */
-    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore) {
-        this(documentService, drives, blobStore, null);
-    }
-
-    /**
-     * @param documentService the gRPC document service whose blocking intake
-     *        save this route reuses (one save path, one dedupe semantic)
-     * @param drives the drive ledger (drive name + account → bucket/prefix)
-     * @param blobStore the object-storage port the body streams into
-     * @param apiToken the credential every request must present in
-     *        {@code api_token} or {@code Authorization: Bearer}, or null to
-     *        serve open on a trusted network. This route writes documents into
-     *        any account's drive, so an open listener reachable beyond that
-     *        network is a write path into the whole repository.
-     */
+    /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
             BlobStore blobStore, String apiToken) {
         this(documentService, drives, blobStore, apiToken, null);
     }
 
-    /**
-     * @param documentService the gRPC document service whose blocking intake
-     *        save this route reuses (one save path, one dedupe semantic)
-     * @param drives the drive ledger (drive name + account → bucket/prefix)
-     * @param blobStore the object-storage port the body streams into
-     * @param apiToken the credential every request must present, or null to
-     *        serve open on a trusted network
-     * @param archiveOperations the archive flows behind
-     *        {@link #ARCHIVE_UPLOAD_PATH}, or null to serve the document
-     *        route alone
-     */
+    /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
     public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore, String apiToken, ArchiveOperations archiveOperations) {
-        this.documentService = documentService;
-        this.drives = drives;
-        this.blobStore = blobStore;
-        this.expectedToken = apiToken == null
-                ? null : apiToken.getBytes(StandardCharsets.UTF_8);
+            BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
+        this(documentService.repository(), drives, blobStore, apiToken, archiveOperations);
+    }
+
+    /** Compatibility factory; document uploads require the RawIngestionRepository constructor. */
+    public static UploadHttpServer forRepository(ai.protomolt.proto.repo.spi.DocumentRepository documents,
+            DriveLedger drives, BlobStore blobStore, String apiToken) {
+        return new UploadHttpServer(documents, drives, blobStore, apiToken, null);
+    }
+
+    private UploadHttpServer(ai.protomolt.proto.repo.spi.DocumentRepository documents,
+            DriveLedger drives, BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
+        this((ai.protomolt.proto.repo.spi.RawIngestionRepository) null, apiToken, archiveOperations);
+    }
+
+    /** Hosts only transport parsing; ingestion owns all byte and document publication behavior. */
+    public UploadHttpServer(ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion,
+            String apiToken, ArchiveRepository archiveOperations) {
+        this.ingestion = ingestion;
+        this.expectedToken = RepositoryNetworkAuthentication.requireOperatorToken(apiToken).getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
     }
 
@@ -176,9 +91,6 @@ public final class UploadHttpServer implements AutoCloseable {
      * missing header and never echoes what was presented.
      */
     private void requireCredential(HttpExchange exchange) throws HttpError {
-        if (expectedToken == null) {
-            return;
-        }
         String presented = exchange.getRequestHeaders().getFirst("api_token");
         if (presented == null) {
             String authorization = exchange.getRequestHeaders().getFirst("Authorization");
@@ -201,7 +113,7 @@ public final class UploadHttpServer implements AutoCloseable {
      * @return the bound port
      */
     public synchronized int start(int port) {
-        if (server != null) {
+        if (server != null || executor != null) {
             throw new IllegalStateException("HTTP upload server already started");
         }
         HttpServer created;
@@ -211,6 +123,8 @@ public final class UploadHttpServer implements AutoCloseable {
             throw new UncheckedIOException("failed to bind HTTP upload server on port " + port, e);
         }
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        this.server = created;
+        this.executor = pool;
         try {
             created.createContext(UPLOAD_PATH, this::handle);
             if (archiveOperations != null) {
@@ -218,13 +132,11 @@ public final class UploadHttpServer implements AutoCloseable {
             }
             created.setExecutor(pool);
             created.start();
-        } catch (RuntimeException e) {
-            created.stop(0);
-            pool.shutdownNow();
+        } catch (RuntimeException | Error e) {
+            try { close(); }
+            catch (RuntimeException | Error cleanup) { e.addSuppressed(cleanup); }
             throw e;
         }
-        this.server = created;
-        this.executor = pool;
         int bound = created.getAddress().getPort();
         LOG.info("HTTP upload route listening on port {} ({})", bound, UPLOAD_PATH);
         return bound;
@@ -244,12 +156,20 @@ public final class UploadHttpServer implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        close(java.time.Duration.ofSeconds(10));
+    }
+
+    synchronized void close(java.time.Duration timeout) {
         if (server != null) {
             server.stop(1);
             server = null;
         }
         if (executor != null) {
-            executor.shutdown();
+            try { ExecutorShutdown.stop(executor, timeout); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("HTTP shutdown interrupted; resources retained", interrupted);
+            }
             executor = null;
         }
     }
@@ -271,7 +191,18 @@ public final class UploadHttpServer implements AutoCloseable {
             writeJson(exchange, 200, upload(exchange));
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
+        } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
+            int status = switch (e.code()) {
+                case INVALID_ARGUMENT -> 400;
+                case NOT_FOUND -> 404;
+                case PERMISSION_DENIED -> 403;
+                case FAILED_PRECONDITION, CONFLICT -> 409;
+                case UNSUPPORTED -> 503;
+                default -> 502;
+            };
+            writeError(exchange, status, e.getMessage());
         } catch (StatusRuntimeException e) {
+
             // The intake save's gRPC status vocabulary, flattened onto HTTP.
             Status.Code code = e.getStatus().getCode();
             int status = switch (code) {
@@ -305,112 +236,27 @@ public final class UploadHttpServer implements AutoCloseable {
         // only with a known length, so chunked/absent-length bodies are 411
         // before any byte is read.
         long contentLength = contentLength(exchange);
+        if (ingestion == null) throw new HttpError(503, "Managed document ingestion is not configured");
 
-        DriveRecord drive = drives.findByName(accountId, driveName)
-                .orElseThrow(() -> new HttpError(404,
-                        "drive '" + driveName + "' not found for account '" + accountId + "'"));
-
-        boolean deriveDocId = docId == null || docId.isBlank();
-        // Blank doc_id: the final key depends on the content hash, which only
-        // exists after the stream lands — stage, derive, server-side copy.
-        String objectKey = deriveDocId
-                ? blobKey(drive, accountId, "staging-" + UUID.randomUUID())
-                : blobKey(drive, accountId,
-                        DocumentIds.blobId(docId, datasourceId, accountId).toString());
-
-        MessageDigest digest = sha256();
-        try (InputStream body = new DigestInputStream(exchange.getRequestBody(), digest)) {
-            // No sha256Hex on the PutSpec: the digest is only complete once
-            // the stream is consumed, which is exactly when put returns. The
-            // landed bytes are proven by the X-Content-Sha256 check below and
-            // by the checksum stamped on the Document's blob.
-            blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey, contentType, null, null),
-                    body, contentLength);
-        } catch (RuntimeException | IOException e) {
-            throw new HttpError(502, "blob store write failed for key " + objectKey
-                    + ": " + e.getMessage());
+        var request = new ai.protomolt.proto.repo.spi.RawIngestionRepository.Request(accountId, datasourceId,
+                driveName, docId, filename, contentType, connectorId, crawlId,
+                exchange.getRequestHeaders().getFirst("X-Content-Sha256"));
+        ai.protomolt.proto.repo.spi.RawIngestionRepository.Result result;
+        try (InputStream body = exchange.getRequestBody()) {
+            result = ingestion.upload(new ai.protomolt.proto.repo.spi.RepositoryCaller("http-upload", true),
+                    request, body, contentLength);
         }
-        String sha256 = HexFormat.of().formatHex(digest.digest());
-
-        if (deriveDocId) {
-            docId = UUID.nameUUIDFromBytes(
-                    ("doc-content|" + sha256).getBytes(StandardCharsets.UTF_8)).toString();
-            String finalKey = blobKey(drive, accountId,
-                    DocumentIds.blobId(docId, datasourceId, accountId).toString());
-            try {
-                blobStore.copy(drive.bucket, objectKey, drive.bucket, finalKey);
-                blobStore.delete(drive.bucket, objectKey);
-            } catch (RuntimeException e) {
-                throw new HttpError(502, "failed to move staged blob to " + finalKey
-                        + ": " + e.getMessage());
-            }
-            objectKey = finalKey;
-        }
-
-        String declaredSha = exchange.getRequestHeaders().getFirst("X-Content-Sha256");
-        if (declaredSha != null && !declaredSha.isBlank()
-                && !declaredSha.trim().equalsIgnoreCase(sha256)) {
-            // The landed bytes are not what the client sent; they must not
-            // pose as the document's body.
-            try {
-                blobStore.delete(drive.bucket, objectKey);
-            } catch (RuntimeException e) {
-                LOG.warn("best-effort delete of mismatched upload {} failed: {}",
-                        objectKey, e.getMessage());
-            }
-            throw new HttpError(400, "X-Content-Sha256 mismatch: declared " + declaredSha.trim()
-                    + " but the received body hashes to " + sha256);
-        }
-
-        UUID blobId = DocumentIds.blobId(docId, datasourceId, accountId);
-        OwnershipContext.Builder ownership = OwnershipContext.newBuilder()
-                .setAccountId(accountId)
-                .setDatasourceId(datasourceId);
-        if (connectorId != null && !connectorId.isBlank()) {
-            ownership.setConnectorId(connectorId);
-        }
-        Document document = Document.newBuilder()
-                .setDocId(docId)
-                .setOwnership(ownership)
-                .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder()
-                        .setBlobId(blobId.toString())
-                        .setDriveId(driveName)
-                        .setStorageRef(FileStorageReference.newBuilder()
-                                .setDriveName(driveName)
-                                .setObjectKey(objectKey))
-                        .setMimeType(contentType)
-                        .setFilename(filename)
-                        .setSizeBytes(contentLength)
-                        .setChecksum(sha256)
-                        .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256)))
-                .build();
-
-        // The SAME intake save as gRPC SaveDocument: use_datasource_id arm at
-        // the account's intake graph — one dedupe, one upsert, one revive.
-        SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
-                .setDocument(document)
-                .setDrive(driveName)
-                .setUseDatasourceId(true)
-                .setGraphId("intake:" + accountId);
-        if (connectorId != null && !connectorId.isBlank()) {
-            save.setConnectorId(connectorId);
-        }
-        if (crawlId != null && !crawlId.isBlank()) {
-            save.setCrawlId(crawlId);
-        }
-        SaveDocumentResponse saved = documentService.saveBlocking(save.build());
-        LOG.debug("Uploaded doc_id={} to {} ({} bytes, sha256={}, deduplicated={})",
-                docId, objectKey, contentLength, sha256, saved.getDeduplicated());
-
+        var saved = result.document();
+        var ref = result.storageRef();
         ObjectNode storageRef = MAPPER.createObjectNode()
-                .put("drive_name", driveName)
-                .put("object_key", objectKey);
+                .put("drive_name", ref.getDriveName()).put("object_key", ref.getObjectKey());
+        if (ref.hasVersionId()) storageRef.put("version_id", ref.getVersionId());
         ObjectNode response = MAPPER.createObjectNode()
                 .put("node_id", saved.getNodeId())
-                .put("doc_id", docId)
+                .put("doc_id", saved.getAddress().getDocId())
                 .put("deduplicated", saved.getDeduplicated())
-                .put("size_bytes", contentLength)
-                .put("sha256", sha256);
+                .put("size_bytes", result.sizeBytes())
+                .put("sha256", result.sha256());
         response.set("storage_ref", storageRef);
         return response;
     }
@@ -429,6 +275,15 @@ public final class UploadHttpServer implements AutoCloseable {
             writeJson(exchange, 200, archiveUpload(exchange));
         } catch (HttpError e) {
             writeError(exchange, e.status, e.getMessage());
+        } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
+            int status = switch (e.code()) {
+                case INVALID_ARGUMENT -> 400;
+                case NOT_FOUND -> 404;
+                case PERMISSION_DENIED -> 403;
+                case FAILED_PRECONDITION, CONFLICT -> 409;
+                default -> 502;
+            };
+            writeError(exchange, status, e.getMessage());
         } catch (StatusRuntimeException e) {
             // The archive flows' gRPC status vocabulary, flattened onto HTTP.
             int status = switch (e.getStatus().getCode()) {
@@ -483,7 +338,7 @@ public final class UploadHttpServer implements AutoCloseable {
                         .setName(rendition == null ? "original" : rendition)
                         .setMediaType(contentType)
                         .build();
-        ArchiveOperations.UploadResult result = archiveOperations.uploadStream(address,
+        ArchiveRepository.UploadResult result = archiveOperations.uploadStream(new RepositoryCaller("http-upload", true), address,
                 descriptor, contentLength,
                 declaredSha == null ? "" : declaredSha,
                 null, filename, null, null, exchange.getRequestBody());
@@ -554,16 +409,6 @@ public final class UploadHttpServer implements AutoCloseable {
         return "application/octet-stream";
     }
 
-    /** Blob object key: {@code <drive.prefix>/blobs/<accountId>/<blobId>.bin}. */
-    private static String blobKey(DriveRecord drive, String accountId, String blobId) {
-        String prefix = drive.prefix == null ? "" : drive.prefix;
-        if (prefix.endsWith("/")) {
-            prefix = prefix.substring(0, prefix.length() - 1);
-        }
-        return (prefix.isBlank() ? "" : prefix + "/")
-                + "blobs/" + accountId + "/" + blobId + ".bin";
-    }
-
     private static Map<String, String> parseQuery(String rawQuery) {
         Map<String, String> out = new HashMap<>();
         if (rawQuery == null || rawQuery.isBlank()) {
@@ -578,14 +423,6 @@ public final class UploadHttpServer implements AutoCloseable {
                     URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
         }
         return out;
-    }
-
-    private static MessageDigest sha256() {
-        try {
-            return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
     }
 
     private void writeJson(HttpExchange exchange, int status, ObjectNode body) throws IOException {

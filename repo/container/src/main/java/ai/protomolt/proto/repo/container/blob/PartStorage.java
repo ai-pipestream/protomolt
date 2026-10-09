@@ -1,14 +1,16 @@
 package ai.protomolt.proto.repo.container.blob;
 
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
 import ai.protomolt.proto.repo.v1.DocumentManifest;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.PartManifestEntry;
 import ai.protomolt.proto.repo.v1.PartState;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
-import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
-import ai.protomolt.proto.repo.container.codec.PartLayout;
-import ai.protomolt.proto.repo.container.codec.PartObject;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.PartLayout;
+import ai.protomolt.proto.repo.codec.PartObject;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;

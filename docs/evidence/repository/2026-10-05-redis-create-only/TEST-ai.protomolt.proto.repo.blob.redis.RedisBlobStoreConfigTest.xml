@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-06T01:04:24.704Z" hostname="krick" time="0.086">
+  <properties/>
+  <testcase name="boundaryValuesAreAccepted()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" time="0.054"/>
+  <testcase name="aMissingUriIsRejected()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" time="0.007"/>
+  <testcase name="negativeTtlAndCeilingAreRejected()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" time="0.001"/>
+  <testcase name="aNullKeyPrefixNormalizesToNoPrefix()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" time="0.001"/>
+  <testcase name="localMatchesTheServiceWiringDefaults()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreConfigTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

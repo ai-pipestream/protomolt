@@ -1,0 +1,417 @@
+plugins { id 'java' }
+
+// The two metadata modes never share outputs: each compiles, resolves and
+// reports into its own build directory, so an up-to-date success in one mode
+// can never be reused as proof of the other mode.
+def pomOnlyMode = providers.gradleProperty('pomOnly').isPresent()
+def metadataMode = pomOnlyMode ? 'pom-only' : 'gradle-module'
+layout.buildDirectory = layout.projectDirectory.dir("build-${metadataMode}")
+
+def candidateVersion = providers.gradleProperty('candidateVersion').get()
+def stagedRepository = new File(providers.gradleProperty('repositoryConsumerRepository').get()).canonicalPath
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                url = uri(stagedRepository)
+                if (pomOnlyMode) {
+                    metadataSources { mavenPom(); ignoreGradleMetadataRedirection() }
+                }
+            }
+        }
+        filter { includeGroup 'ai.pipestream' }
+    }
+    // Disposable negative fixtures only. The group sits outside the exclusive
+    // ai.pipestream filter and the repository lives under the mode-specific
+    // build directory; the staged candidate repository is never contaminated.
+    maven {
+        name = 'NegativeFixtures'
+        url = uri(layout.buildDirectory.dir('negative-fixtures/repository').map { it.asFile }.get())
+        content { includeGroup 'ai.pipestream.negative' }
+    }
+    mavenCentral()
+}
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+sourceSets { grpcClient; publicationClient; providerDiscovery; redisConsumer; brokenDiscoveryProbe }
+configurations {
+    blobSpiOnly; repositorySpiOnly; codecOnly; spiPlusCodec
+    s3Only; redisOnly; cacheOnly; cacheWithRedis; grpcOnly
+}
+dependencies {
+    repositorySpiOnly "ai.pipestream:protomolt-repo-spi:${candidateVersion}"
+    implementation "ai.pipestream:protomolt-repo-spi:${candidateVersion}"
+    grpcClientImplementation "ai.pipestream:protomolt-repo-blob-grpc:${candidateVersion}"
+    publicationClientImplementation "ai.pipestream:protomolt-repo-publication-grpc:${candidateVersion}"
+    providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
+    providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-s3:${candidateVersion}"
+    providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-redis:${candidateVersion}"
+    redisConsumerImplementation "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
+    redisConsumerImplementation "ai.pipestream:protomolt-repo-blob-redis:${candidateVersion}"
+    brokenDiscoveryProbeImplementation "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
+    blobSpiOnly "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
+    s3Only "ai.pipestream:protomolt-repo-blob-s3:${candidateVersion}"
+    redisOnly "ai.pipestream:protomolt-repo-blob-redis:${candidateVersion}"
+    grpcOnly "ai.pipestream:protomolt-repo-blob-grpc:${candidateVersion}"
+    cacheOnly "ai.pipestream:protomolt-repo-blob-cache:${candidateVersion}"
+    codecOnly "ai.pipestream:protomolt-repo-codec:${candidateVersion}"
+    spiPlusCodec "ai.pipestream:protomolt-repo-spi:${candidateVersion}"
+    spiPlusCodec "ai.pipestream:protomolt-repo-codec:${candidateVersion}"
+    cacheWithRedis "ai.pipestream:protomolt-repo-blob-cache:${candidateVersion}"
+    cacheWithRedis "ai.pipestream:protomolt-repo-blob-redis:${candidateVersion}"
+    implementation "ai.pipestream:protomolt-repo-codec:${candidateVersion}"
+    implementation "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
+}
+
+// --- Dependency-family classifier -------------------------------------------
+// Boundary decisions use group:artifact identity, not artifact-name fragments.
+// Families: SQL/ORM/pooling/migration, Kafka, repository server/engine, AWS,
+// Azure and Redis. Azure has no implementation anywhere; no row allows it.
+// In-house modules are classified too: a JDBC adapter, Kafka bridge or server
+// host from this repository is the same leak as the third-party library it wraps.
+def familyOf
+familyOf = { String group, String name ->
+    if (group == 'software.amazon.awssdk') return 'aws-sdk'
+    if (group.startsWith('com.azure')) return 'azure-sdk'
+    if (group == 'redis.clients') return 'redis-sdk'
+    if (['org.postgresql', 'org.hibernate', 'org.hibernate.orm', 'com.zaxxer', 'org.flywaydb',
+            'org.liquibase', 'org.xerial', 'com.h2database', 'org.mariadb.jdbc', 'com.mysql',
+            'org.jooq', 'io.agroal'].contains(group)) return 'sql'
+    if (['org.apache.kafka', 'io.confluent'].contains(group)
+            || (group == 'io.apicurio' && name.contains('kafka'))) return 'kafka'
+    if (['io.vertx', 'io.micronaut', 'io.quarkus', 'org.springframework.boot'].contains(group)) return 'server-engine'
+    if (group == 'ai.pipestream') {
+        if (name.endsWith('-jdbc')) return 'sql'
+        if (name.startsWith('protomolt-kafka-') || name == 'protomolt-config-kafka') return 'kafka'
+        if (name.startsWith('protomolt-server-') || name.endsWith('-service')
+                || ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-serve',
+                    'protomolt-agent-host'].contains(name)) {
+            return 'server-engine'
+        }
+    }
+    return null
+}
+def resolvedModules
+resolvedModules = { Object classpath ->
+    classpath.incoming.resolutionResult.allComponents
+            .collect { it.moduleVersion }.findAll { it != null }
+}
+def familyLeaks
+familyLeaks = { Object classpath, Set<String> allowed ->
+    resolvedModules(classpath).findAll { module ->
+        def family = familyOf(module.group, module.name)
+        family != null && !allowed.contains(family)
+    }.collect { module -> "${module.group}:${module.name}:${module.version} [${familyOf(module.group, module.name)}]" }
+}
+def assertBoundary
+assertBoundary = { String row, Object classpath, Set<String> allowed ->
+    def leaks = familyLeaks(classpath, allowed)
+    if (!leaks.isEmpty()) {
+        throw new GradleException(row + ' resolved forbidden dependency families: ' + leaks.sort())
+    }
+}
+
+// Row -> allowed provider families. Protobuf/gRPC client libraries are
+// legitimate in client rows; the byte SPI row is additionally pinned below to
+// contain nothing but its own artifact (JDK-only).
+def boundaryRows = [
+    'byte-spi-alone':                          [classpath: { configurations.blobSpiOnly }, allowed: [] as Set],
+    'repository-spi-alone':                    [classpath: { configurations.repositorySpiOnly }, allowed: [] as Set],
+    'codec-alone':                             [classpath: { configurations.codecOnly }, allowed: [] as Set],
+    'repository-spi-plus-codec':               [classpath: { configurations.spiPlusCodec }, allowed: [] as Set],
+    's3-provider-alone':                       [classpath: { configurations.s3Only }, allowed: ['aws-sdk'] as Set],
+    'redis-provider-alone':                    [classpath: { configurations.redisOnly }, allowed: ['redis-sdk'] as Set],
+    'cache-alone':                             [classpath: { configurations.cacheOnly }, allowed: [] as Set],
+    'cache-with-selected-redis-provider':      [classpath: { configurations.cacheWithRedis }, allowed: ['redis-sdk'] as Set],
+    'blob-grpc-client-alone':                  [classpath: { configurations.grpcOnly }, allowed: [] as Set],
+    'publication-grpc-client-alone':           [classpath: { configurations.publicationClientRuntimeClasspath }, allowed: [] as Set],
+    'composite-consumer-main':                 [classpath: { configurations.runtimeClasspath }, allowed: [] as Set],
+    'blob-grpc-consumer-sourceset':            [classpath: { configurations.grpcClientRuntimeClasspath }, allowed: [] as Set],
+    'provider-discovery-probe':                [classpath: { configurations.providerDiscoveryRuntimeClasspath }, allowed: ['aws-sdk', 'redis-sdk'] as Set],
+    'redis-published-consumer-probe':          [classpath: { configurations.redisConsumerRuntimeClasspath }, allowed: ['redis-sdk'] as Set],
+    'broken-discovery-probe':                  [classpath: { configurations.brokenDiscoveryProbeRuntimeClasspath }, allowed: [] as Set],
+]
+
+tasks.register('verifyConsumerBoundaries') {
+    group = 'verification'
+    description = 'Reject forbidden dependency families in every published consumer row'
+    inputs.property('metadataMode', metadataMode)
+    inputs.property('candidateVersion', candidateVersion)
+    doLast {
+        def spiModules = resolvedModules(configurations.blobSpiOnly)
+                .collect { it.name }.findAll { it != project.name }
+        if (spiModules != ['protomolt-repo-blob-spi']) {
+            throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
+        }
+        boundaryRows.each { row, spec -> assertBoundary(row, spec.classpath(), spec.allowed) }
+        def publication = resolvedModules(configurations.publicationClientRuntimeClasspath)
+        logger.lifecycle('Published publication client runtime (' + metadataMode + '): '
+                + publication.collect { "${it.group}:${it.name}:${it.version}" }.sort())
+    }
+}
+
+def stagedJar
+stagedJar = { Configuration config, String artifactPrefix ->
+    def jar = config.incoming.artifacts.artifactFiles.files
+            .find { it.name.startsWith(artifactPrefix) && it.name.endsWith('.jar') }
+    if (jar == null) throw new GradleException('staged jar not found: ' + artifactPrefix)
+    return jar
+}
+
+tasks.register('verifyConsumer', JavaExec) {
+    dependsOn classes, grpcClientClasses, publicationClientClasses
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'RepositoryConsumer'
+    inputs.property('metadataMode', metadataMode)
+}
+
+tasks.register('verifyProviderDiscovery', JavaExec) {
+    dependsOn providerDiscoveryClasses
+    classpath = sourceSets.providerDiscovery.runtimeClasspath
+    mainClass = 'ProviderDiscoveryConsumer'
+    inputs.property('metadataMode', metadataMode)
+    args stagedRepository
+}
+
+tasks.register('verifyRedisPublishedConsumer', JavaExec) {
+    dependsOn redisConsumerClasses
+    classpath = sourceSets.redisConsumer.runtimeClasspath
+    mainClass = 'RedisPublishedConsumer'
+    inputs.property('metadataMode', metadataMode)
+}
+
+// Repackage a staged provider jar into a deliberately corrupted fixture:
+// service entries stripped, optionally replaced with a bogus registration.
+def repackageProviderJar
+repackageProviderJar = { File source, File target, String serviceReplacement ->
+    new java.util.jar.JarOutputStream(new FileOutputStream(target)).withCloseable { out ->
+        out.putNextEntry(new java.util.jar.JarEntry('DELIBERATE-TEST-FIXTURE.txt'))
+        out.write(('deliberately corrupted packaging fixture for negative discovery detection; source='
+                + source.name + '\n').getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        out.closeEntry()
+        new java.util.jar.JarFile(source).withCloseable { jar ->
+            jar.entries().each { entry ->
+                if (entry.name.startsWith('META-INF/services/')) return
+                out.putNextEntry(new java.util.jar.JarEntry(entry.name))
+                if (!entry.directory) out.write(jar.getInputStream(entry).bytes)
+                out.closeEntry()
+            }
+        }
+        if (serviceReplacement != null) {
+            out.putNextEntry(new java.util.jar.JarEntry(
+                    'META-INF/services/ai.protomolt.proto.repo.blob.spi.BlobStoreProvider'))
+            out.write((serviceReplacement + '\n').getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            out.closeEntry()
+        }
+    }
+}
+
+['verifyBrokenServiceMissing': 'missing', 'verifyBrokenServiceWrongClass': 'wrong-class'].each { taskName, mode ->
+    tasks.register(taskName, JavaExec) {
+        dependsOn brokenDiscoveryProbeClasses
+        mainClass = 'BrokenDiscoveryProbe'
+        inputs.property('metadataMode', metadataMode)
+        doFirst {
+            def fixtureDir = layout.buildDirectory.dir('negative-fixtures/broken-jars').get().asFile
+            fixtureDir.mkdirs()
+            def redisJar = stagedJar(configurations.redisOnly, 'protomolt-repo-blob-redis-')
+            def fixture = new File(fixtureDir, 'protomolt-repo-blob-redis-DELIBERATE-FIXTURE-' + mode + '.jar')
+            repackageProviderJar(redisJar, fixture,
+                    mode == 'wrong-class' ? 'ai.protomolt.proto.repo.blob.redis.DeliberatelyMissingProvider' : null)
+            classpath = files(sourceSets.brokenDiscoveryProbe.output.classesDirs,
+                    stagedJar(configurations.redisOnly, 'protomolt-repo-blob-spi-'), fixture)
+            args mode
+        }
+    }
+}
+
+tasks.register('verifyForbiddenDependencyDetection') {
+    group = 'verification'
+    description = 'Prove the boundary gate detects an injected forbidden runtime dependency'
+    inputs.property('metadataMode', metadataMode)
+    inputs.property('candidateVersion', candidateVersion)
+    doLast {
+        // Every forbidden family, third-party and in-house, must classify.
+        def expectedFamilies = [
+            'org.hibernate.orm:hibernate-core': 'sql', 'org.xerial:sqlite-jdbc': 'sql',
+            'ai.pipestream:protomolt-authz-jdbc': 'sql', 'org.apache.kafka:kafka-clients': 'kafka',
+            'io.confluent:kafka-protobuf-serializer': 'kafka', 'ai.pipestream:protomolt-kafka-serde': 'kafka',
+            'ai.pipestream:protomolt-repo-container': 'server-engine', 'ai.pipestream:protomolt-server-vertx': 'server-engine',
+            'ai.pipestream:protomolt-registry-service': 'server-engine', 'io.vertx:vertx-web': 'server-engine',
+            'software.amazon.awssdk:s3': 'aws-sdk', 'com.azure:azure-storage-blob': 'azure-sdk',
+            'redis.clients:jedis': 'redis-sdk', 'io.grpc:grpc-stub': null, 'ai.pipestream:protomolt-repo-codec': null,
+        ]
+        expectedFamilies.each { coordinate, family ->
+            def (group, name) = coordinate.split(':')
+            if (familyOf(group, name) != family) {
+                throw new GradleException('classifier maps ' + coordinate + ' to ' + familyOf(group, name)
+                        + ', expected ' + family)
+            }
+        }
+        def jedis = resolvedModules(configurations.redisOnly)
+                .find { it.group == 'redis.clients' && it.name == 'jedis' }
+        if (jedis == null) throw new GradleException('jedis missing from the positive Redis provider graph')
+        def fixtureVersion = candidateVersion + '-DELIBERATE-FIXTURE'
+        def moduleDir = layout.buildDirectory.dir(
+                'negative-fixtures/repository/ai/pipestream/negative/protomolt-repo-blob-spi-injected/'
+                + fixtureVersion).get().asFile
+        moduleDir.mkdirs()
+        def jarFile = new File(moduleDir, 'protomolt-repo-blob-spi-injected-' + fixtureVersion + '.jar')
+        new java.util.jar.JarOutputStream(new FileOutputStream(jarFile)).withCloseable { out ->
+            out.putNextEntry(new java.util.jar.JarEntry('DELIBERATE-TEST-FIXTURE.txt'))
+            out.write('deliberately corrupted metadata fixture: injects a forbidden runtime dependency\n'
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            out.closeEntry()
+        }
+        new File(moduleDir, 'protomolt-repo-blob-spi-injected-' + fixtureVersion + '.pom').text = (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                + '<!-- DELIBERATE TEST FIXTURE: disposable negative publication, never a real artifact. -->\n'
+                + '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+                + '  <modelVersion>4.0.0</modelVersion>\n'
+                + '  <groupId>ai.pipestream.negative</groupId>\n'
+                + '  <artifactId>protomolt-repo-blob-spi-injected</artifactId>\n'
+                + "  <version>${fixtureVersion}</version>\n"
+                + '  <packaging>jar</packaging>\n'
+                + '  <dependencies>\n'
+                + '    <dependency>\n'
+                + '      <groupId>redis.clients</groupId>\n'
+                + '      <artifactId>jedis</artifactId>\n'
+                + "      <version>${jedis.version}</version>\n"
+                + '      <scope>runtime</scope>\n'
+                + '    </dependency>\n'
+                + '  </dependencies>\n'
+                + '</project>\n')
+        def fixtureConfiguration = configurations.detachedConfiguration(
+                dependencies.create("ai.pipestream.negative:protomolt-repo-blob-spi-injected:${fixtureVersion}"))
+        def leaks = familyLeaks(fixtureConfiguration, Set.of())
+        if (!leaks.any { it.startsWith('redis.clients:jedis:') }) {
+            throw new GradleException('Boundary gate failed to detect the injected forbidden dependency in: '
+                    + resolvedModules(fixtureConfiguration))
+        }
+        logger.lifecycle('NEGATIVE-FIXTURE forbidden dependency detected as expected (' + metadataMode + '): '
+                + leaks.sort())
+    }
+}
+
+tasks.register('inspectPublishedMetadata') {
+    group = 'verification'
+    description = 'Inspect the staged POM and Gradle module metadata of the published consumer modules'
+    inputs.property('candidateVersion', candidateVersion)
+    def expected = [
+        'protomolt-repo-blob-spi': [],
+        'protomolt-repo-blob-s3': ['compile:ai.pipestream:protomolt-repo-blob-spi',
+                                   'compile:software.amazon.awssdk:s3',
+                                   'runtime:software.amazon.awssdk:url-connection-client'],
+        'protomolt-repo-blob-redis': ['compile:ai.pipestream:protomolt-repo-blob-spi',
+                                      'runtime:redis.clients:jedis'],
+        'protomolt-repo-blob-cache': ['compile:ai.pipestream:protomolt-repo-blob-spi',
+                                      'runtime:org.slf4j:slf4j-api'],
+        'protomolt-repo-blob-grpc': ['compile:ai.pipestream:protomolt-repo-blob-spi',
+                                     'compile:ai.pipestream:protomolt-repo-proto',
+                                     'runtime:ai.pipestream:protomolt-repo-codec',
+                                     'runtime:ai.pipestream:protomolt-protobuf-validation'],
+        'protomolt-repo-spi': ['compile:ai.pipestream:protomolt-repo-proto',
+                               'runtime:ai.pipestream:protomolt-descriptors'],
+        'protomolt-repo-codec': ['compile:ai.pipestream:protomolt-repo-proto',
+                                 'compile:com.google.protobuf:protobuf-java',
+                                 'runtime:ai.pipestream:protomolt-descriptors',
+                                 'runtime:com.google.protobuf:protobuf-java-util'],
+        'protomolt-repo-publication-grpc': ['compile:ai.pipestream:protomolt-repo-spi',
+                                            'compile:ai.pipestream:protomolt-repo-proto',
+                                            'compile:ai.pipestream:protomolt-repo-blob-spi'],
+    ]
+    doLast {
+        def report = []
+        expected.each { module, expectedDependencies ->
+            def dir = new File(stagedRepository, "ai/pipestream/${module}/${candidateVersion}")
+            def pom = new File(dir, "${module}-${candidateVersion}.pom")
+            def moduleMetadata = new File(dir, "${module}-${candidateVersion}.module")
+            if (!pom.isFile()) throw new GradleException('staged POM missing: ' + pom)
+            if (!moduleMetadata.isFile()) throw new GradleException('staged Gradle module metadata missing: ' + moduleMetadata)
+            if (!pom.text.contains('published-with-gradle-metadata')) {
+                throw new GradleException('POM lacks the Gradle metadata marker: ' + pom)
+            }
+            def factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            factory.namespaceAware = false
+            def parsed = factory.newDocumentBuilder().parse(pom)
+            def nodes = parsed.getElementsByTagName('dependency')
+            def actual = (0..<nodes.length).collect { index ->
+                def dependency = nodes.item(index)
+                def scopes = dependency.getElementsByTagName('scope')
+                def scope = scopes.length > 0 ? scopes.item(0).textContent.trim() : 'compile'
+                (scope ?: 'compile') + ':' + dependency.getElementsByTagName('groupId').item(0).textContent.trim() +
+                        ':' + dependency.getElementsByTagName('artifactId').item(0).textContent.trim()
+            }.sort()
+            if (actual != expectedDependencies.sort()) {
+                throw new GradleException(module + ' POM dependencies differ\nexpected: ' + expectedDependencies.sort()
+                        + '\nactual: ' + actual)
+            }
+            report.add(module + ' -> ' + (actual ?: ['<no dependencies>']).join(', '))
+        }
+        def reportDir = layout.buildDirectory.dir('reports/published-metadata').get().asFile
+        reportDir.mkdirs()
+        new File(reportDir, 'pom-dependencies.txt').text =
+                (["staged POM dependency inspection (${metadataMode})", ''] + report).join('\n') + '\n'
+        logger.lifecycle('Published metadata inspection passed for ' + expected.size() + ' modules')
+    }
+}
+
+tasks.register('recordConsumerMatrix') {
+    group = 'verification'
+    description = 'Record declared and resolved module inventories for every published consumer row'
+    inputs.property('metadataMode', metadataMode)
+    inputs.property('candidateVersion', candidateVersion)
+    outputs.upToDateWhen { false }
+    doLast {
+        def reportDir = layout.buildDirectory.dir('reports/consumer-matrix').get().asFile
+        reportDir.mkdirs()
+        def index = ['metadata-mode: ' + metadataMode, 'candidate: ' + candidateVersion, '']
+        boundaryRows.each { row, spec ->
+            def classpath = spec.classpath()
+            def declared = classpath.allDependencies
+                    .collect { "${it.group}:${it.name}:${it.version}" }.unique().sort()
+            def resolved = resolvedModules(classpath)
+                    .collect { "${it.group}:${it.name}:${it.version}" }.unique().sort()
+            new File(reportDir, row + '.txt').text =
+                    (["row: ${row}", "metadata-mode: ${metadataMode}", 'allowed-provider-families: '
+                            + spec.allowed.sort(), '', 'declared:'] + declared
+                            + ['', 'resolved:'] + resolved).join('\n') + '\n'
+            index.add(row + ' -> ' + resolved.size() + ' resolved modules')
+        }
+        new File(reportDir, 'index.txt').text = index.join('\n') + '\n'
+    }
+}
+
+tasks.register('recordStagedArtifactHashes') {
+    group = 'verification'
+    description = 'Record SHA-256 hashes of the staged jars and metadata files'
+    outputs.upToDateWhen { false }
+    doLast {
+        def root = new File(stagedRepository)
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        def lines = []
+        root.eachFileRecurse { file ->
+            if (!file.name.endsWith('.jar') && !file.name.endsWith('.pom') && !file.name.endsWith('.module')) return
+            if (file.name.contains('-sources') || file.name.contains('-javadoc')) return
+            digest.reset()
+            file.withInputStream { input ->
+                def buffer = new byte[8192]
+                int read
+                while ((read = input.read(buffer)) > 0) digest.update(buffer, 0, read)
+            }
+            lines.add(digest.digest().encodeHex().toString() + '  ' + root.toPath().relativize(file.toPath()))
+        }
+        def reportDir = layout.buildDirectory.dir('reports/staged-artifacts').get().asFile
+        reportDir.mkdirs()
+        new File(reportDir, 'sha256.txt').text = lines.sort().join('\n') + '\n'
+        logger.lifecycle('Recorded ' + lines.size() + ' staged artifact hashes')
+    }
+}
+
+check {
+    dependsOn 'verifyConsumerBoundaries', 'verifyConsumer', 'verifyProviderDiscovery',
+            'verifyRedisPublishedConsumer', 'verifyForbiddenDependencyDetection',
+            'verifyBrokenServiceMissing', 'verifyBrokenServiceWrongClass',
+            'inspectPublishedMetadata', 'recordConsumerMatrix', 'recordStagedArtifactHashes'
+}

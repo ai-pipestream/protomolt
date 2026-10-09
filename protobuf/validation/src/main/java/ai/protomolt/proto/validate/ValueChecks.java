@@ -69,7 +69,7 @@ final class ValueChecks {
             FieldConstraints constraints,
             Object value,
             String path,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, Instant evaluatedAt) {
         switch (field.getJavaType()) {
             case STRING, INT, LONG, FLOAT, DOUBLE, BOOLEAN, BYTE_STRING ->
                     applyScalar(constraints, field.getJavaType(), value, path, violations);
@@ -79,7 +79,7 @@ final class ValueChecks {
                 String type = field.getMessageType().getFullName();
                 switch (type) {
                     case TIMESTAMP_TYPE -> constraints.timestamp().ifPresent(t ->
-                            applyTimestamp(t, toInstant((Message) value), path, violations));
+                            applyTimestamp(t, toInstant((Message) value), path, violations, evaluatedAt));
                     case DURATION_TYPE -> constraints.duration().ifPresent(d ->
                             applyDuration(d, toJavaDuration((Message) value), path, violations));
                     case "google.protobuf.Any" -> constraints.any()
@@ -546,8 +546,7 @@ final class ValueChecks {
 
     private static void applyTimestamp(
             TimestampConstraints rules, Instant value, String path,
-            List<ValidationResult.Violation> violations) {
-        Instant now = Instant.now();
+            List<ValidationResult.Violation> violations, Instant now) {
         if (rules.constant().isPresent() && !value.equals(rules.constant().get())) {
             violations.add(violation(path, "timestamp.const", "must equal " + rules.constant().get()));
         }

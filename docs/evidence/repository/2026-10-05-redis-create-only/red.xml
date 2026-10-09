@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT" tests="3" skipped="0" failures="3" errors="0" timestamp="2026-10-06T01:01:52.058Z" hostname="krick" time="2.068">
+  <properties/>
+  <testcase name="replacementClientsCannotAddressCreateOnlyObjectsWithSameLogicalCoordinates()" classname="ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT" time="0.148">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT.replacementClientsCannotAddressCreateOnlyObjectsWithSameLogicalCoordinates(RedisCreateOnlyIT.java:47)
+</failure>
+  </testcase>
+  <testcase name="createOnlyRejectsExpiryAndOversizedBuffersWithoutMutation()" classname="ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT" time="0.001">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT.createOnlyRejectsExpiryAndOversizedBuffersWithoutMutation(RedisCreateOnlyIT.java:55)
+</failure>
+  </testcase>
+  <testcase name="byteStreamConditionalAndCopyCannotReplaceAnExistingKey()" classname="ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT" time="0.003">
+    <failure message="java.lang.AssertionError: &#10;Expecting code to raise a throwable." type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting code to raise a throwable.
+	at ai.protomolt.proto.repo.blob.redis.RedisCreateOnlyIT.byteStreamConditionalAndCopyCannotReplaceAnExistingKey(RedisCreateOnlyIT.java:28)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 4b59616d3fd4db3fbb7d0d92c61ae315fe299ee40aef8598a7a7c099f8f213b9
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.368321628S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: b9834b967530aac5fa00ca980819f40065d567ba8002b40158e58a558b1dcd1f
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.296930699S
+]]></system-err>
+</testsuite>

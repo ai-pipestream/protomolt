@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/repo/v1/security.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Explicit absence of recorded metadata, never current metadata presented as historical.
+enum HistoricalMetadataUnknown {
+  // Unspecified is invalid when this enum is selected.
+  HISTORICAL_METADATA_UNKNOWN_UNSPECIFIED = 0;
+  // The legacy revision did not record a metadata snapshot.
+  HISTORICAL_METADATA_UNKNOWN_LEGACY_UNRECORDED = 1;
+}
+
+// The recorded metadata state of one immutable revision. No permission grant.
+message HistoricalDocumentMetadata {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "historical-metadata-state"
+    message: "exactly one explicit metadata state is required"
+    expression: "has(this.known) || has(this.unknown)"
+  };
+  // Distinguishes recorded metadata from an explicitly unrecorded legacy state.
+  oneof state {
+    // Metadata captured with the requested revision, not the current row.
+    DocumentRevisionMetadata known = 1;
+    // Reserved for an explicitly unrecorded legacy snapshot, not corruption.
+    HistoricalMetadataUnknown unknown = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+  }
+}
+
+// Typed projection of the persisted v1 document metadata snapshot. The stored
+// JSON snapshot is bounded to 1 MiB; nullable text retains its original length. This is not a
+// JCR frozen node, complete OwnershipContext, restore request or current ACL.
+message DocumentRevisionMetadata {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "revision-metadata-kind"
+    message: "intake snapshots cannot carry pipeline routing"
+    expression: "this.row_kind != 1 || !has(this.cluster_id)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "revision-metadata-deletion"
+    message: "source deletion policy requires an intake row and explicit reason"
+    expression: "this.delete_source_blobs_on_settle == has(this.source_blob_delete_reason) && (!this.delete_source_blobs_on_settle || this.row_kind == 1)"
+  };
+  // Persisted snapshot codec version. Unsupported versions fail explicitly.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Document-domain kind; not a generic content node type.
+  DocumentPublicationRowKind row_kind = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: [0]}];
+  // Original ownership coordinates; current authorization is checked separately.
+  string account_id = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1}];
+  // Original datasource identity.
+  string datasource_id = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1}];
+  // Null in storage remains absent, distinct from a recorded empty string.
+  optional string connector_id = 5;
+  // Original security data for archival inspection; restoring it needs separate policy.
+  DocumentSecurity security = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Original stored content type, preserving null versus an empty value.
+  optional string content_type = 7;
+  // Original stored filename, preserving null versus an empty value.
+  optional string filename = 8;
+  // Original pipeline routing, preserving null versus an empty value.
+  optional string cluster_id = 9;
+  // Original crawl association, preserving null versus an empty value.
+  optional string crawl_id = 10;
+  // Recorded intake lifecycle policy; inspection does not execute deletion.
+  bool delete_source_blobs_on_settle = 11;
+  // Null remains absent. A true deletion policy requires a nonblank reason.
+  optional string source_blob_delete_reason = 12 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, pattern: ".*\\S.*"}];
+  // Exact signed epoch microseconds, never rounded through floating point.
+  int64 created_at_epoch_micros = 13;
+  // Exact signed epoch microseconds, independent of today's row timestamp.
+  int64 updated_at_epoch_micros = 14;
+}

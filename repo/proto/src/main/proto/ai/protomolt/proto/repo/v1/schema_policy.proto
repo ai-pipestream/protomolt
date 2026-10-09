@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Immutable account policy content, not a caller-provided authorization verdict.
+// The host selects the active snapshot and fences its revision at publication.
+// V1 canonical storage rejects unknown fields and sorts unique allowlist entries
+// by exact URL, protobuf type name and canonical descriptor fingerprint.
+message DocumentSchemaPolicy {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-policy-eligibility"
+    message: "exactly one schema eligibility rule is required"
+    expression: "has(this.any_resolved_schema) || has(this.allowed_schemas)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-policy-required-root"
+    message: "a required structured root requires typed admission"
+    expression: "!this.require_structured_root || this.mode == 2"
+  };
+  // Only version 1 is defined.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Match the authenticated account and complete publication command.
+  string account_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Explicit runtime rule dialects and structural ceilings, not provider discovery.
+  string validation_profile = 3 [(ai.protomolt.proto.validate.v1.field).string.const = "protomolt-retained-schema-admission/v1"];
+  // Typed attempts never fall back to opaque after a failure.
+  DocumentSchemaPolicyMode mode = 4 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Additionally require a CORE structured_data payload; otherwise PARSED roots
+  // can satisfy typed admission. A typed verdict always requires at least one root.
+  bool require_structured_root = 5;
+  // Resource ceilings used for preparation and independently checked on proof.
+  DocumentSchemaPolicyLimits limits = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Applies to every payload Any boundary, including nested payloads. The runtime's
+  // containing Document definition is separate and is not an allowlist payload.
+  oneof schema_eligibility {
+    // Explicitly permit any definition selected by the host's authorized resolver.
+    bool any_resolved_schema = 7 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Exact URL and canonical schema identities; no mutable registry aliases.
+    DocumentSchemaPolicyAllowList allowed_schemas = 8;
+  }
+}
+
+// Permission to publish opaque content is distinct from successful validation.
+enum DocumentSchemaPolicyMode {
+  // Invalid for active policy.
+  DOCUMENT_SCHEMA_POLICY_MODE_UNSPECIFIED = 0;
+  // An explicit opaque attempt is allowed; typed attempts still require validation.
+  DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED = 1;
+  // Refuse publication without complete typed evidence and at least one payload root.
+  DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED = 2;
+}
+
+// Member-wide serialized budgets. The host also reserves decoded heap and I/O
+// memory. Fixed subordinate ceilings remain part of validation_profile.
+message DocumentSchemaPolicyLimits {
+  // Includes EMPTY publication slots.
+  uint32 max_fragments = 1 [(ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 10000}];
+  // Sum of raw nonempty fragments, capped at 256 MiB.
+  uint64 max_fragment_bytes = 2 [(ai.protomolt.proto.validate.v1.field).uint64 = {gte: 1, lte: 268435456}];
+  // Aggregate CORE and PARSED payload roots.
+  uint32 max_roots = 3 [(ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 1024}];
+  // Aggregate canonical root evidence bytes.
+  uint64 max_evidence_bytes = 4 [(ai.protomolt.proto.validate.v1.field).uint64 = {gte: 1, lte: 16777216}];
+  // Distinct URL/descriptor pairs, including the containing Document definition.
+  uint32 max_bindings = 5 [(ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 64}];
+  // Unique descriptor, metadata and source artifact bytes; at most 64 artifacts.
+  uint64 max_retained_bytes = 6 [(ai.protomolt.proto.validate.v1.field).uint64 = {gte: 1, lte: 67108864}];
+  // Sum of decoded payload byte lengths, counting nested Any decodes too.
+  uint32 max_decoded_bytes = 7 [(ai.protomolt.proto.validate.v1.field).uint32 = {gte: 1, lte: 268435456}];
+}
+
+// Eligible definitions, independent of the smaller per-member binding limit.
+// At most 1024 unique triples and 512 KiB of canonical policy bytes.
+message DocumentSchemaPolicyAllowList {
+  // Canonical order and uniqueness are codec obligations.
+  repeated DocumentSchemaPolicyBinding bindings = 1 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 1024}];
+}
+
+// Reuses the existing canonical descriptor-closure identity. Exact retained
+// artifact identity is still recorded independently for every admitted occurrence.
+message DocumentSchemaPolicyBinding {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-policy-binding-url"
+    message: "the exact type URL must identify the selected message"
+    expression: "this.type_url.endsWith('/' + this.schema.type_name) && size(this.type_url) > size(this.schema.type_name) + 1"
+  };
+  // Exact prefix and protobuf full name, not a suffix or short-name lookup.
+  string type_url = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 4096}];
+  // Exact canonical type and complete descriptor closure.
+  PublicationSchemaCondition schema = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

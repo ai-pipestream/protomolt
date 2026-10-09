@@ -40,6 +40,18 @@ final class OptionReparse {
         }
     }
 
+    /** Recovers a declared option and rejects occurrences the parser could not consume. */
+    static <T extends Message> T recover(T options, int number, OptionsParser<T> parser, String name) {
+        if (!options.getUnknownFields().hasField(number)) {
+            return options;
+        }
+        T recovered = reparse(options, parser, name);
+        if (recovered.getUnknownFields().hasField(number)) {
+            throw new RuleCompilationException("invalid wire encoding for " + name);
+        }
+        return recovered;
+    }
+
     @FunctionalInterface
     interface OptionsParser<T> {
         T parse(ByteString bytes, ExtensionRegistry registry) throws InvalidProtocolBufferException;

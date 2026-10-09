@@ -1,0 +1,268 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.spi.RepositoryReadControl;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Host-private identities minted before operation admission SQL and retained across uncertain outcomes. */
+final class DocumentPublicationSession {
+    private final RepositoryOperationLedger operations;
+    private final RepositoryOperationLedger.Key key;
+    private final DocumentPublicationCommand command;
+    private final UUID ownerNonce;
+    private final DocumentPublicationSeeds seeds;
+    private final Duration lease;
+    private final long predecessorGeneration;
+    private final DocumentOperationUploadAdmission.Prepared prepared;
+    private final DocumentPublicationRegistration registration;
+    private final AtomicBoolean executing = new AtomicBoolean();
+    private Map<String, DocumentPublicationCandidate.Mode> modes;
+    private boolean assessmentStageStarted;
+
+    DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease) {
+        this(tx, caller, command, placements, lease, 0);
+    }
+
+    /** Host-private opt-in; automatic runtime registration and successor recovery are not enabled. */
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) {
+        return journaled(tx, caller, command, placements, lease, budget, UUID.randomUUID());
+    }
+
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator) {
+        return journaled(tx, caller, command, placements, lease, budget, coordinator, new DocumentPublicationScopeCalls());
+    }
+
+    static DocumentPublicationSession journaled(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return new DocumentPublicationSession(tx, caller, command, placements, lease, 0,
+                Objects.requireNonNull(budget), Objects.requireNonNull(coordinator), Objects.requireNonNull(registrations));
+    }
+
+    /** Initial journaled admission with the host-selected backend gate retained. */
+    static DocumentPublicationSession journaled(Tx tx, DriveLedger drives, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return new DocumentPublicationSession(tx, caller, command, placements, lease, 0,
+                Objects.requireNonNull(budget), Objects.requireNonNull(coordinator), Objects.requireNonNull(registrations), Objects.requireNonNull(drives));
+    }
+
+    /** Attach only an exact activated successor; no fresh identities or owner takeover. */
+    static DocumentPublicationSession successor(Tx tx, RepositoryCaller caller, RepositorySuccessorInstall.Plan plan,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return new DocumentPublicationSession(tx, caller, plan, budget, coordinator, registrations, null);
+    }
+
+    static DocumentPublicationSession successor(Tx tx, DriveLedger drives, RepositoryCaller caller, RepositorySuccessorInstall.Plan plan,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        return new DocumentPublicationSession(tx, caller, plan, budget, coordinator, registrations, Objects.requireNonNull(drives));
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, RepositorySuccessorInstall.Plan successor,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget, UUID coordinator, DocumentPublicationScopeCalls registrations, DriveLedger drives) {
+        var next = successor.next(); key = next.key(); command = next.command(); lease = next.lease();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        predecessorGeneration = next.predecessorGeneration(); seeds = next.seeds(); ownerNonce = seeds.ownerNonce();
+        prepared = next.prepare(); operations = new RepositoryOperationLedger(tx);
+        registration = DocumentPublicationRegistration.successor(tx, budget, successor, coordinator, registrations, drives);
+        modes = checkedModes(successor.modes());
+    }
+
+    /** Explicit host recovery; never selected automatically by ordinary admission. */
+    static DocumentPublicationSession recovering(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
+            Map<String, DocumentPublicationCandidate.Mode> modes) {
+        if (predecessorGeneration < 1 || predecessorGeneration == Long.MAX_VALUE)
+            throw new IllegalArgumentException("Recovery requires a replaceable predecessor generation");
+        var session = new DocumentPublicationSession(tx, caller, command, placements, lease, predecessorGeneration);
+        session.modes = session.checkedModes(modes);
+        return session;
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration) {
+        this(tx, caller, command, placements, lease, predecessorGeneration, null, null, null);
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget, UUID coordinator, DocumentPublicationScopeCalls registrations) {
+        this(tx, caller, command, placements, lease, predecessorGeneration, journalBudget, coordinator, registrations, null);
+    }
+
+    private DocumentPublicationSession(Tx tx, RepositoryCaller caller, DocumentPublicationCommand command,
+            Map<UUID, DocumentUploadPlan.Placement> placements, Duration lease, long predecessorGeneration,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget journalBudget, UUID coordinator, DocumentPublicationScopeCalls registrations,
+            DriveLedger drives) {
+        this.command = Objects.requireNonNull(command); this.lease = Objects.requireNonNull(lease);
+        this.predecessorGeneration = predecessorGeneration;
+        if (caller == null) throw new RepositoryException(RepositoryException.Code.UNAUTHENTICATED,
+                "Authenticated repository caller is required");
+        key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Operation lease requires one second to one day");
+        seeds = DocumentPublicationSeeds.mint(key, command);
+        prepared = DocumentOperationUploadAdmission.prepare(command, placements, seeds.attempts(), lease, seeds.uploadTokens());
+        ownerNonce = seeds.ownerNonce();
+        operations = new RepositoryOperationLedger(Objects.requireNonNull(tx));
+        var record = journalBudget == null ? null : new DocumentPublicationPreparationRecord(key, command, seeds, placements, lease, predecessorGeneration);
+        registration = journalBudget == null ? null : drives == null
+                ? new DocumentPublicationRegistration(tx, journalBudget, record, prepared.plan(), coordinator, registrations)
+                : new DocumentPublicationRegistration(tx, journalBudget, record, prepared.plan(), coordinator, registrations, drives);
+    }
+
+    /**
+     * Exact retry only: never renews or changes owner/attempt identities. A normal
+     * session admits; an explicitly constructed recovery session retries only its
+     * fixed predecessor generation and next nonce through command-bound takeover.
+     * Empty means no executable owner was granted. A terminal operation must use
+     * authorized result replay instead. Failure after SQL, including cancellation,
+     * leaves this session intact for reconciliation; the host must retain it.
+     */
+    Optional<RepositoryOperationLedger.Owner> admit(RepositoryCaller caller, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (registration != null && predecessorGeneration > 0) {
+            var attached = registration.attach(caller, modes, control);
+            assessmentStageStarted |= attached.assessmentStarted();
+            return Optional.of(attached.owner());
+        }
+        if (registration != null) return registration.admitInitial(caller, modes, control);
+        var owner = predecessorGeneration == 0 ? operations.admit(key, command, ownerNonce, lease, null).owner()
+                : Optional.of(operations.takeOver(key, command, predecessorGeneration, ownerNonce, lease));
+        control.check();
+        return owner;
+    }
+
+    DocumentOperationUploadAdmission.Prepared prepared() { return prepared; }
+    DocumentPublicationSeeds seeds() { return seeds; }
+    long predecessorGeneration() { return predecessorGeneration; }
+
+    /** Only the manager with no remaining users may release this proven pre-journal identity. */
+    boolean discardableBeforeRegistration() { return registration != null && !registration.mayHaveCommitted(); }
+
+    Optional<RepositoryCoordinatorDrain.Identity> drainIdentity() {
+        return registration == null || !registration.mayHaveCommitted() ? Optional.empty() : Optional.of(registration.drainIdentity());
+    }
+
+    void abandonRegistration(RepositoryCaller caller, RepositoryReadControl control) {
+        if (registration == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                "Session has no durable registration");
+        try (var execution = begin(caller, control)) { registration.abandon(caller, control); }
+    }
+
+    boolean isSuperseded(RepositoryCaller caller, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        boolean superseded = operations.isSuperseded(key, command, predecessorGeneration + 1, ownerNonce);
+        control.check();
+        return superseded;
+    }
+
+    void requireRecoveryAdvance(RepositoryCaller caller, long nextPredecessor, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (predecessorGeneration == 0 || nextPredecessor != predecessorGeneration + 1)
+            throw new RepositoryException(RepositoryException.Code.CONFLICT, "Retained recovery predecessor changed");
+        operations.requireExpiredRecovery(key, command, nextPredecessor, ownerNonce);
+        control.check();
+    }
+
+    private Map<String, DocumentPublicationCandidate.Mode> checkedModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+        var copy = Map.copyOf(requested);
+        var members = command.intent().getMembersList().stream()
+                .map(member -> member.getMemberId()).collect(java.util.stream.Collectors.toSet());
+        if (!copy.keySet().equals(members)) throw new IllegalArgumentException("Admission modes differ from command members");
+        return copy;
+    }
+
+    /** Fail fast rather than queue borrowed payloads behind another execution. */
+    Execution begin(RepositoryCaller caller, RepositoryReadControl control) {
+        Objects.requireNonNull(control).check();
+        DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+        if (!executing.compareAndSet(false, true)) throw new RepositoryException(
+                RepositoryException.Code.CONFLICT, "Publication session already has an active execution");
+        var execution = new Execution();
+        try {
+            control.check();
+            return execution;
+        } catch (RuntimeException | Error failure) {
+            execution.close();
+            throw failure;
+        }
+    }
+
+    final class Execution implements AutoCloseable {
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        /** Sticky across execution scopes; no borrowed candidate bytes are retained here. */
+        synchronized boolean assessmentStageStarted() {
+            requireOpen();
+            return assessmentStageStarted;
+        }
+
+        /** Call immediately before stage CREATE; uncertainty can only resume original evidence. */
+        synchronized void beginAssessmentStage() {
+            requireOpen();
+            if (registration != null) throw new IllegalStateException("Journaled assessment requires durable start");
+            if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
+            assessmentStageStarted = true;
+        }
+
+        /** Commit the sticky journal before CREATE; uncertainty can only reconcile original evidence. */
+        synchronized DocumentAssessmentStartJournal.Started beginAssessmentStage(RepositoryCaller caller,
+                RepositoryOperationLedger.Owner owner, Duration retention, RepositoryReadControl control) {
+            requireOpen();
+            Objects.requireNonNull(control).check();
+            DocumentAdmissionAuthorization.requireCaller(caller, key, key.account());
+            if (!owner.key().equals(key) || owner.generation() != predecessorGeneration + 1 || !owner.token().equals(ownerNonce))
+                throw new IllegalArgumentException("Assessment owner differs from session");
+            if (retention == null || retention.isNegative() || retention.isZero()
+                    || retention.compareTo(Duration.ofDays(1)) > 0 || retention.getNano() % 1000 != 0)
+                throw new IllegalArgumentException("Assessment retention requires exact microseconds within one day");
+            if (assessmentStageStarted) throw new IllegalStateException("Assessment stage creation already started");
+            // Set before journal I/O: a thrown acknowledgment must never permit a new CREATE attempt.
+            if (registration != null) registration.requireStart(caller, owner, control);
+            assessmentStageStarted = true;
+            if (registration != null) return registration.start(caller, owner, retention, control);
+            return new DocumentAssessmentStartJournal.Started(UUID.randomUUID(),
+                    java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).plus(retention));
+        }
+
+        private void requireOpen() {
+            if (closed.get()) throw new IllegalStateException("Publication execution is closed");
+        }
+
+        /** Host choices remain fixed even when admission or publication fails. */
+        synchronized Map<String, DocumentPublicationCandidate.Mode> bindModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+            var copy = checkModes(requested);
+            if (modes == null) modes = copy;
+            return modes;
+        }
+
+        /** Validate replacement choices without mutating a session that preparation may leave intact. */
+        synchronized Map<String, DocumentPublicationCandidate.Mode> checkModes(Map<String, DocumentPublicationCandidate.Mode> requested) {
+            if (closed.get()) throw new IllegalStateException("Publication execution is closed");
+            var copy = checkedModes(requested);
+            if (modes != null && !modes.equals(copy)) throw new IllegalArgumentException("Publication session admission modes changed");
+            return copy;
+        }
+
+        @Override public synchronized void close() {
+            if (closed.compareAndSet(false, true)) executing.set(false);
+        }
+    }
+}

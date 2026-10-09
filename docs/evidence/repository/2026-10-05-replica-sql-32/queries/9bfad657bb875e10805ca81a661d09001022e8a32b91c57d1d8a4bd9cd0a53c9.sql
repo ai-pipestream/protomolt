@@ -1,0 +1,1 @@
+select arsr1_0.account_id,arsr1_0.archive,arsr1_0.rendition_name,arsr1_0.object_count,arsr1_0.total_bytes from archive_rendition_stats arsr1_0 where (arsr1_0.account_id,arsr1_0.archive,arsr1_0.rendition_name) in (($1,$2,$3)) for no key update of arsr1_0

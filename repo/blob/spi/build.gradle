@@ -1,0 +1,8 @@
+description = 'Provider-neutral byte storage contracts without SDK or protocol dependencies'
+
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-container', 'protomolt-repo-service', 'protomolt-repo-proto',
+        's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+        'flyway-core', 'kafka-clients', 'protobuf-java', 'grpc-api'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

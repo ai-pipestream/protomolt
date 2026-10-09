@@ -1,6 +1,6 @@
 package ai.protomolt.proto.repo.container.lifecycle;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
 import ai.protomolt.proto.repo.container.ledger.DocumentPurgeRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;
@@ -17,42 +17,22 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Phase B of the two-phase delete: drains the purge queue
- * ({@code document_purges}) — re-reads each claimed record's document row
- * under a row lock, applies the staleness guard, batch-deletes the snapshot
- * object keys from the record's drive bucket, and removes the row.
- * <p>
- * <b>The staleness guard.</b> A purge is VOID when the row is AVAILABLE
- * (revived) or its {@code updated_at} is strictly after the record's
- * {@code requested_at} (the body was re-staged after the delete was
- * requested): the snapshot keys describe the OLD body, so deleting them is
- * both pointless (they are gone or orphaned, and the reconciler owns orphans)
- * and dangerous-adjacent — the purge is cancelled and objects and row are
- * left alone. The guard is checked TWICE: once to decide whether the S3
- * delete should happen at all, and again under a fresh row lock in the same
- * transaction that removes the row (a revive landing between the delete and
- * the removal still wins).
- * <p>
- * <b>Eligibility.</b> Rows in PENDING_PURGE are the normal case; rows in
- * PURGE_FAILED are also eligible (an operator re-enqueued purge of a
- * previously failed row — PURGE_FAILED is not a revive, only AVAILABLE is).
- * A row already gone means the row removal already happened (a competing
- * drain, a synchronous purge): the snapshot objects are still deleted
- * (NoSuchKey = success) and the record marked PURGED.
- * <p>
- * <b>Failures.</b> Any store/DB error — including a drive that no longer
- * resolves and partial batch-delete failures — is {@link PurgeQueue#markFailed
- * marked failed}: the record retries until {@link DocumentPurgeRecord#MAX_ATTEMPTS},
- * then lands FAILED (the DLQ) and the document row, if still PENDING_PURGE,
- * is flipped to PURGE_FAILED so the sweeper leaves it for an operator.
- * <p>
- * Idempotent throughout: NoSuchKey = success, terminal queue transitions are
- * conditional on PENDING, and a re-drain of a settled record is a no-op.
- * <p>
- * <b>Eventing.</b> When an event outbox is wired (Kafka configured), a
- * {@code DocumentPurged} event is persisted IN THE SAME TRANSACTION as the
- * row removal and the PURGED transition, so the event stream cannot drift
- * from the purge outcome. A VOIDED purge fires nothing: the body lives on.
+ * Durable object cleanup and document-row removal for admitted purge commands.
+ * Each command freezes its object keys. New admissions bind a tombstone
+ * generation; a body rewrite clears that generation, so its replacement cannot
+ * be removed by the old command. Migrated legacy commands without a generation
+ * retain the documented status/updated_at guard until they settle.
+ *
+ * <p>Guards run before object I/O and again in the transaction that locks the
+ * pending command, removes its eligible row and emits the completion event.
+ * Storage I/O never holds SQL locks. Missing keys are idempotent success;
+ * partial failures remain durable retry work and never produce successful
+ * synchronous responses. Recovery preserves the original completion mode:
+ * synchronous admissions emit DocumentDeleted, asynchronous admissions emit
+ * DocumentPurged. A failed command cannot mark a newer generation PURGE_FAILED.
+ *
+ * <p>The background drain owns its queue handle, including Kafka consumer
+ * acknowledgements. Synchronous request threads must use a separate JDBC handle.
  */
 public final class S3Purger {
 
@@ -94,7 +74,7 @@ public final class S3Purger {
     }
 
     /** One claimed record's fate after the guard re-read. */
-    private enum Decision { PURGE, VOID, ROW_GONE }
+    private enum Decision { PURGE, VOID, ROW_GONE, SETTLED }
 
     /**
      * Drain one batch: claim up to {@code batchSize} PENDING records and
@@ -127,88 +107,87 @@ public final class S3Purger {
      * transitioned to PURGED.
      */
     private boolean process(BlobStore store, DocumentPurgeRecord record) {
-        DriveRecord drive = drives.findByName(record.accountId, record.driveName)
-                .orElseThrow(() -> new IllegalStateException(
-                        "drive '" + record.driveName + "' not found for account '"
-                                + record.accountId + "' (purge " + record.purgeId + ")"));
-        List<String> keys = record.readObjectKeys();
-
         Decision decision = guardCheck(record);
-        switch (decision) {
-            case VOID -> {
-                // Revived or re-staged after the request: leave objects and
-                // row alone, cancel the purge.
-                if (queue.markVoid(record.purgeId)) {
-                    LOG.info("Purge VOIDED for node_id={} (purge_id={}): row re-staged after {}",
-                            record.nodeId, record.purgeId, record.requestedAt);
-                }
+        if (decision == Decision.SETTLED) {
+            acknowledgeTerminal(record.purgeId);
+            return false;
+        }
+        if (decision == Decision.VOID) {
+            queue.markVoid(record.purgeId);
+            return false;
+        }
+        DriveRecord drive = drives.findByName(record.accountId, record.driveName)
+                .orElseThrow(() -> new IllegalStateException("Document drive is unavailable for purge " + record.purgeId));
+        var keys = record.readObjectKeys();
+        if (!keys.isEmpty() && tx.readOnly(em -> !em.createNativeQuery("""
+                SELECT 1 FROM jsonb_array_elements_text(CAST(:keys AS jsonb)) requested(key)
+                JOIN document_part_attempt_objects admitted ON admitted.key_digest=sha256(convert_to(requested.key,'UTF8'))
+                AND admitted.object_key=requested.key WHERE admitted.storage_namespace=:namespace LIMIT 1
+                """).setParameter("namespace", drive.bucket).setParameter("keys", record.objectKeys).getResultList().isEmpty()))
+            throw new IllegalStateException("Admitted document parts require managed reclamation; legacy purge is refused");
+        deleteObjects(store, drive.bucket, record.readObjectKeys(), record);
+        boolean transitioned = tx.inTransaction(em -> {
+            // A competing drain may already have settled this command. Never
+            // touch a document until the command itself is locked and pending.
+            DocumentPurgeRecord pending = em.find(DocumentPurgeRecord.class, record.purgeId, LockModeType.PESSIMISTIC_WRITE);
+            if (pending == null) throw new IllegalStateException("Purge record disappeared: " + record.purgeId);
+            if (!DocumentPurgeRecord.STATUS_PENDING.equals(pending.status)) return false;
+            DocumentRecord row = em.find(DocumentRecord.class, pending.nodeId, LockModeType.PESSIMISTIC_WRITE);
+            if (row != null && !eligible(row, pending)) {
+                pending.status = DocumentPurgeRecord.STATUS_VOID;
                 return false;
             }
-            case ROW_GONE -> {
-                // The row removal already happened (competing drain or a
-                // synchronous purge): the snapshot objects are orphans now.
-                deleteObjects(store, drive.bucket, keys, record);
-                if (events == null) {
-                    return queue.markPurged(record.purgeId);
-                }
-                // Same conditional PURGED transition as the queue's, plus the
-                // DocumentPurged event in one transaction (checksum unknown:
-                // the row was already gone).
-                return tx.inTransaction(em -> {
-                    int transitioned = em.createQuery(
-                                    "UPDATE DocumentPurgeRecord p SET p.status = :purged"
-                                            + " WHERE p.purgeId = :id AND p.status = :pending")
-                            .setParameter("purged", DocumentPurgeRecord.STATUS_PURGED)
-                            .setParameter("id", record.purgeId)
-                            .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
-                            .executeUpdate();
-                    if (transitioned == 1) {
-                        events.enqueue(em, DocumentEventFactory.purged(record, null, Instant.now()));
-                    }
-                    return transitioned == 1;
-                });
+            if (row != null) em.remove(row);
+            pending.status = DocumentPurgeRecord.STATUS_PURGED;
+            if (events != null) {
+                Instant now = Instant.now();
+                if (DocumentPurgeRecord.MODE_SYNCHRONOUS.equals(pending.completionMode)) {
+                    if (row != null) events.enqueue(em, DocumentEventFactory.deleted(pending, now));
+                } else
+                    events.enqueue(em, DocumentEventFactory.purged(pending,
+                            pending.contentChecksum != null ? pending.contentChecksum : row != null ? row.checksum : null, now));
             }
-            case PURGE -> {
-                deleteObjects(store, drive.bucket, keys, record);
-                // Final guard re-check + row removal + PURGED transition in ONE
-                // transaction: a revive landing after the S3 delete still wins,
-                // because the row lock serializes against its upsert.
-                return tx.inTransaction(em -> {
-                    DocumentRecord row = em.find(DocumentRecord.class, record.nodeId,
-                            LockModeType.PESSIMISTIC_WRITE);
-                    if (row != null && !eligible(row, record)) {
-                        em.createQuery("UPDATE DocumentPurgeRecord p SET p.status = :void"
-                                        + " WHERE p.purgeId = :id AND p.status = :pending")
-                                .setParameter("void", DocumentPurgeRecord.STATUS_VOID)
-                                .setParameter("id", record.purgeId)
-                                .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
-                                .executeUpdate();
-                        LOG.info("Purge VOIDED at finalization for node_id={} (purge_id={}): "
-                                        + "row re-staged after {}", record.nodeId, record.purgeId,
-                                record.requestedAt);
-                        return false;
-                    }
-                    if (row != null) {
-                        em.remove(row);
-                    }
-                    int transitioned = em.createQuery(
-                                    "UPDATE DocumentPurgeRecord p SET p.status = :purged"
-                                            + " WHERE p.purgeId = :id AND p.status = :pending")
-                            .setParameter("purged", DocumentPurgeRecord.STATUS_PURGED)
-                            .setParameter("id", record.purgeId)
-                            .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
-                            .executeUpdate();
-                    if (transitioned == 1 && events != null) {
-                        // DocumentPurged commits with the row removal and the
-                        // PURGED transition: the event stream cannot drift
-                        // from the purge outcome.
-                        events.enqueue(em, DocumentEventFactory.purged(record,
-                                row != null ? row.checksum : null, Instant.now()));
-                    }
-                    return transitioned == 1;
-                });
-            }
-            default -> throw new IllegalStateException("unhandled decision " + decision);
+            return true;
+        });
+        // Kafka queue acknowledgements belong to its owning drain thread. The
+        // synchronous caller constructs this purger with a separate JDBC queue.
+        acknowledgeTerminal(record.purgeId);
+        return transitioned;
+    }
+
+    /**
+     * Process exactly one durable admission, returning its persisted status.
+     * Request threads must use a JDBC queue handle, never the fleet Kafka consumer.
+     * Failures are recorded for recovery and propagated to the request caller.
+     */
+    public String purgeNow(BlobStore store, java.util.UUID purgeId) {
+        DocumentPurgeRecord record = findPurge(purgeId);
+        try {
+            process(store, record);
+        } catch (RuntimeException failure) {
+            try { fail(record, failure); }
+            catch (RuntimeException recordingFailure) { failure.addSuppressed(recordingFailure); }
+            throw failure;
+        }
+        return findPurge(purgeId).status;
+    }
+
+    private DocumentPurgeRecord findPurge(java.util.UUID purgeId) {
+        return tx.readOnly(em -> {
+            DocumentPurgeRecord record = em.find(DocumentPurgeRecord.class, purgeId);
+            if (record == null) throw new IllegalStateException("Purge record is missing: " + purgeId);
+            return record;
+        });
+    }
+
+    private void acknowledgeTerminal(java.util.UUID purgeId) {
+        DocumentPurgeRecord record = findPurge(purgeId);
+        switch (record.status) {
+            case DocumentPurgeRecord.STATUS_PURGED -> queue.markPurged(purgeId);
+            case DocumentPurgeRecord.STATUS_VOID -> queue.markVoid(purgeId);
+            case DocumentPurgeRecord.STATUS_FAILED -> queue.markFailed(record, record.lastError);
+            case DocumentPurgeRecord.STATUS_PENDING -> { }
+            default -> throw new IllegalStateException("Unknown purge status: " + record.status);
         }
     }
 
@@ -219,6 +198,9 @@ public final class S3Purger {
      */
     private Decision guardCheck(DocumentPurgeRecord record) {
         return tx.inTransaction(em -> {
+            DocumentPurgeRecord current = em.find(DocumentPurgeRecord.class, record.purgeId, LockModeType.PESSIMISTIC_WRITE);
+            if (current == null) throw new IllegalStateException("Purge record is missing: " + record.purgeId);
+            if (!DocumentPurgeRecord.STATUS_PENDING.equals(current.status)) return Decision.SETTLED;
             DocumentRecord row = em.find(DocumentRecord.class, record.nodeId,
                     LockModeType.PESSIMISTIC_WRITE);
             if (row == null) {
@@ -236,6 +218,8 @@ public final class S3Purger {
     private static boolean eligible(DocumentRecord row, DocumentPurgeRecord record) {
         boolean tombstoned = DocumentStatus.PENDING_PURGE.equals(row.status)
                 || DocumentStatus.PURGE_FAILED.equals(row.status);
+        if (record.generationId != null) return tombstoned && record.generationId.equals(row.pendingPurgeId);
+        if (row.pendingPurgeId != null) return false; // Legacy work cannot remove a newly admitted generation.
         return tombstoned && row.updatedAt != null && !row.updatedAt.isAfter(record.requestedAt);
     }
 
@@ -245,11 +229,16 @@ public final class S3Purger {
         if (keys.isEmpty()) {
             return;
         }
+        // Validate the entire persisted batch, including commands queued before
+        // this guard existed. Never partly delete a mixed-ownership snapshot.
+        if (keys.stream().anyMatch(key -> ai.protomolt.proto.repo.codec.RepositoryNamespaces.isArchive(key)
+                || ai.protomolt.proto.repo.codec.RepositoryNamespaces.isManagedRaw(key)))
+            throw new IllegalStateException("Document purge contains an archive or managed-raw key; explicit repair is required");
         BlobStore.BatchDeleteResult result = store.deleteAll(bucket, keys);
         if (!result.allSucceeded()) {
-            throw new IllegalStateException("batch delete of purge " + record.purgeId
+            throw new ai.protomolt.proto.repo.blob.spi.BlobStoreException(ai.protomolt.proto.repo.blob.spi.BlobStoreException.Code.UNAVAILABLE, "batch delete of purge " + record.purgeId
                     + " left " + result.failedKeys().size() + " failed keys, e.g. "
-                    + result.failedKeys().entrySet().iterator().next());
+                    + result.failedKeys().entrySet().iterator().next(), null);
         }
     }
 
@@ -261,7 +250,7 @@ public final class S3Purger {
         } catch (RuntimeException markFailure) {
             LOG.error("Failed to mark purge {} failed (original error: {})",
                     record.purgeId, e.getMessage(), markFailure);
-            return;
+            throw markFailure;
         }
         if (updated.isPresent() && DocumentPurgeRecord.STATUS_FAILED.equals(updated.get().status)) {
             LOG.error("Purge FAILED permanently for node_id={} (purge_id={}) after {} attempts: {}",
@@ -269,10 +258,15 @@ public final class S3Purger {
             // DLQ landing for the row too: PURGE_FAILED takes it out of the
             // sweeper's PENDING_PURGE scan — operator territory from here.
             try {
-                documents.markPurgeFailed(record.nodeId);
+                tx.inTransaction(em -> {
+                    DocumentRecord row = em.find(DocumentRecord.class, record.nodeId, LockModeType.PESSIMISTIC_WRITE);
+                    if (row != null && DocumentStatus.PENDING_PURGE.equals(row.status) && eligible(row, record))
+                        row.status = DocumentStatus.PURGE_FAILED;
+                });
             } catch (RuntimeException rowFailure) {
                 LOG.error("Failed to flip row {} to PURGE_FAILED (the FAILED purge record "
                         + "still stands as the DLQ entry)", record.nodeId, rowFailure);
+                throw rowFailure;
             }
         }
     }

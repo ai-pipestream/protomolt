@@ -1,0 +1,678 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
+import ai.protomolt.proto.repo.spi.*;
+import ai.protomolt.proto.repo.v1.*;
+import com.google.protobuf.ByteString;
+import java.nio.file.Path;
+import java.time.*;
+import java.util.*;
+
+/** Real provider reads, production-JAR observation, and SQL CREATE of historical evidence. */
+public final class HistoricalAssessmentCreationProbe {
+    private enum Scenario {
+        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, PUBLIC_RECOVERY, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, INITIAL_OWNER_REJECTIONS, OWNED_SCOPED_COLD, OWNED_SCOPED_COLD_RESTART_WRITER,
+        STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
+        PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
+        SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+        OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP, OWNED_SCOPED_COMMIT_WINS, OWNED_SCOPED_COMMIT_WINS_OLD_FIRST, OWNED_SCOPED_CLAIM_EXPIRES, OWNED_SCOPED_TAKEOVER_FIRST, OWNED_SCOPED_REJECTION
+    }
+    static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, opaqueRevision, database, false);
+    }
+    static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
+            boolean reconciliationOnly) throws Exception {
+        for (var scenario : Scenario.values()) {
+            if (scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.OWNED_SCOPED_REJECTION || scenario == Scenario.OWNED_SCOPED_COLD || scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER) continue;
+            if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION || scenario == Scenario.OWNED_SCOPED_OVERLAP || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST || scenario == Scenario.OWNED_SCOPED_CLAIM_EXPIRES || scenario == Scenario.OWNED_SCOPED_TAKEOVER_FIRST) continue;
+            if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
+            if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
+                    || scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK
+                    || reconciliationOnly) {
+                try (var fault = new HistoricalCreateCommitFault(database, scenario == Scenario.LOST_ACK
+                        || scenario == Scenario.START_LOST_ACK || reconciliationOnly)) {
+                    run(fault.tx(), provider, source, revision, database, scenario, fault, null, tx);
+                }
+            } else if (scenario == Scenario.STAGE_WINS || scenario == Scenario.CREATE_WINS) {
+                var phase = scenario == Scenario.STAGE_WINS ? HistoricalAuthorizationCommitGate.Phase.SCHEMA_STAGE
+                        : HistoricalAuthorizationCommitGate.Phase.ASSESSMENT_CREATE;
+                try (var gate = new HistoricalAuthorizationCommitGate(database, phase)) {
+                    run(gate.tx(), provider, source, revision, database, scenario, null, gate, tx);
+                }
+            } else {
+                // Opacity must originate in an explicit opaque admission, never downgrade a typed revision.
+                var selectedRevision = scenario == Scenario.OPAQUE_PUBLICATION
+                        ? opaqueRevision : revision;
+                run(tx, provider, source, selectedRevision, database, scenario, null, null, tx);
+            }
+        }
+    }
+
+    static void publicCommitWinner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.PUBLIC_COMMIT_WINNER, null, null, tx);
+    }
+
+    static void publicRecovery(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.PUBLIC_RECOVERY, null, null, tx);
+    }
+
+    static void initialOwner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_REJECTION, null, null, tx);
+        run(tx, provider, source, revision, database, Scenario.INITIAL_OWNER, null, null, tx);
+        try (var fault = new HistoricalCreateCommitFault(database, true)) {
+            run(fault.tx(), provider, source, revision, database, Scenario.INITIAL_OWNER, fault, null, tx);
+        }
+    }
+
+    static void initialOwnerRejections(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.INITIAL_OWNER_REJECTIONS, null, null, tx);
+    }
+
+    static void selfSupersession(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_SELF_SUPERSESSION, null, null, tx);
+    }
+
+    static void coldOwner(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_COLD, null, null, tx);
+    }
+
+    static void coldRestartWriter(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_COLD_RESTART_WRITER, null, null, tx);
+        throw new AssertionError("Crash writer returned without terminating");
+    }
+
+    static void overlappingGenerations(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_OVERLAP, null, null, tx);
+    }
+
+    static void takeoverFirst(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_TAKEOVER_FIRST, null, null, tx);
+    }
+
+    static void claimExpires(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.OWNED_SCOPED_CLAIM_EXPIRES, null, null, tx);
+    }
+
+    static void commitWins(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database, boolean oldFirst) throws Exception {
+        run(tx, provider, source, revision, database, oldFirst ? Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST
+                : Scenario.OWNED_SCOPED_COMMIT_WINS, null, null, tx);
+    }
+
+    private static void run(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database, Scenario scenario,
+            HistoricalCreateCommitFault fault, HistoricalAuthorizationCommitGate gate, Tx independent) throws Exception {
+        boolean lostAck = scenario == Scenario.ORDINARY_LOST_ACK;
+        boolean installedOwner = installedOwner(scenario);
+        boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
+        boolean mixed = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
+                || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION
+                || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || installedOwner;
+        boolean scoped = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
+                || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                || installedOwner || gate != null;
+        var credential = new RepositoryCredentialBinding("historical-create",
+                scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER
+                        ? UUID.fromString(System.getenv("PROTOMOLT_TEST_COLD_CREDENTIAL")) : UUID.randomUUID(), 1);
+        var caller = scoped ? new RepositoryCaller("scoped-create", false, java.util.Set.of("account"), java.util.Set.of(), Optional.of(credential))
+                : new RepositoryCaller("principal", true);
+        if (scoped) new RepositoryCredentialAuthorities(tx).register(new RepositoryCaller("operator", true), credential, caller.principalName());
+        var ledger = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER
+                ? HistoricalColdRestartProbe.writerReads(tx) : new DocumentReadLedger(tx, UUID.randomUUID());
+        var history = ledger.captureHistorical(caller, revision.getAddress(), UUID.fromString(revision.getRevisionId()));
+        var budget = new PayloadBudget(128_000_000);
+        try {
+            var current = new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow();
+            var member = source.candidate().toBuilder().clearParts().setDestination(DocumentRevisionCondition.newBuilder()
+                    .setAddress(revision.getAddress()).setExpectedMutationRevision(current.mutationRevision));
+            var fragments = new HashMap<Integer, ByteString>();
+            try (var use = history.use()) {
+                for (var entry : use.plan().entries()) {
+                    var bound = entry.part(); var part = bound.part(); var binding = bound.binding();
+                    var slot = DocumentPublicationSlot.newBuilder().setPart(part.part()).setSubKey(part.subKey()).build();
+                    var object = PublicationObjectIdentity.newBuilder().setObjectId(entry.objectId().toString())
+                            .setBackendGeneration(binding.generation()).setStorageRealm(binding.profile().storageRealm())
+                            .setNamespace(binding.namespace()).setObjectKey(part.key()).setProviderVersion(part.providerVersion())
+                            .setSizeBytes(part.size()).setSha256(part.sha256()).setContentType(part.contentType());
+                    fragments.put(member.getPartsCount(), ByteString.copyFrom(provider.store().getBounded(
+                            binding.namespace(), part.key(), part.providerVersion(), Math.toIntExact(part.size())).data()));
+                    member.addParts(DocumentPublicationPart.newBuilder().setSlot(slot).setHistoricalReuse(
+                            PublicationHistoricalReuse.newBuilder().setSource(revision.getAddress()).setRevisionId(revision.getRevisionId())
+                                    .setRevisionOrdinal(entry.revisionOrdinal()).setSourceSlot(slot).setObject(object)));
+                }
+            }
+            if (mixed) {
+                var parsed = Document.newBuilder().setDocId(revision.getAddress().getDocId()).putParserResults("fresh",
+                        ParserResult.newBuilder().setDocument(ParserDocument.newBuilder().setShape(com.google.protobuf.Any.pack(
+                                com.google.protobuf.StringValue.of("fresh parsed payload"), "type.test"))).build()).build().toByteString();
+                fragments.put(member.getPartsCount(), parsed);
+                member.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                        .setPart(DocumentPart.DOCUMENT_PART_PARSED)).setUpload(PublicationUpload.newBuilder()
+                        .setSizeBytes(parsed.size()).setSha256(ai.protomolt.proto.repo.codec.DocumentPartCodec.sha256Hex(parsed.toByteArray()))
+                        .setContentType("application/protobuf")));
+            }
+            var command = AssessmentMixedReuseProbe.command(member.build());
+            var policy = new DocumentSchemaPolicies(tx).read("account", () -> {});
+            var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")), () -> {});
+            if (claimed) {
+                if (scenario == Scenario.PUBLIC_RECOVERY) {
+                    HistoricalPublicDispatchProbe.runRecovery(tx, provider, caller, command, source.placement(), revision,
+                            fragments, budget, database);
+                } else if (scenario == Scenario.PUBLIC_COMMIT_WINNER) {
+                    HistoricalPublicDispatchProbe.runWinners(tx, provider, caller, command, source.placement(), revision,
+                            fragments, budget, database);
+                } else if ((scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS)) {
+                    HistoricalInitialOwnerProbe.run(tx, provider, caller, command, policy, source.placement(), revision,
+                            fragments, budget, observation, fault, database, scenario == Scenario.INITIAL_OWNER_REJECTIONS
+                                    ? HistoricalInitialOwnerProbe.Part.REJECTIONS : HistoricalInitialOwnerProbe.Part.PUBLIC_DISPATCH);
+                } else if (gate != null) {
+                    HistoricalCreateWinnerProbe.run(tx, independent, gate, scenario == Scenario.CREATE_WINS, caller,
+                            command, policy, source.placement(), history, fragments, budget, observation);
+                } else if (scenario == Scenario.REVOKED_BEFORE_STAGE) {
+                    HistoricalCreateAuthorizationProbe.run(tx, database, caller, command, policy, source.placement(),
+                            history, fragments, budget, observation);
+                } else {
+                    claimed(tx, provider, caller, command, policy, source.placement(), history, fragments, budget, observation,
+                            fault, mixed, scenario == Scenario.MIXED_CONTENTION ? database : null, database, scenario);
+                    System.out.println(scenario == Scenario.MIXED_CONTENTION ? "CLAIMED_HISTORICAL_MIXED_ORIGIN_CONTENTION_OK"
+                            : scenario == Scenario.SUCCESSOR ? "CLAIMED_HISTORICAL_SUCCESSOR_CREATE_OK"
+                            : scenario == Scenario.START_CONCURRENT ? "CLAIMED_HISTORICAL_START_CONCURRENT_CREATE_OK"
+                            : scenario == Scenario.START_ROLLBACK ? "CLAIMED_HISTORICAL_START_ROLLBACK_CREATE_OK"
+                            : scenario == Scenario.START_LOST_ACK ? "CLAIMED_HISTORICAL_START_LOST_ACK_CREATE_OK"
+                            : fault == null ? (mixed ? "CLAIMED_HISTORICAL_ASSESSMENT_MIXED_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_CREATE_OK")
+                            : fault.lostAcknowledgement() ? "CLAIMED_HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "CLAIMED_HISTORICAL_ASSESSMENT_ROLLBACK_OK");
+                }
+                require(budget.reservedBytes() == 0, "claimed historical CREATE releases byte ownership");
+                return;
+            }
+            DocumentOperationUploadAdmission.Prepared borrowedPlan;
+            try (var assessment = DocumentPublicationAssessment.prepareHistorical(command, policy,
+                    Map.of("a", DocumentPublicationCandidate.Mode.TYPED), Map.of("a", fragments), Optional.empty(),
+                    (selected, occurrence) -> { throw new AssertionError("Historical CREATE must not use the registry"); }, budget,
+                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), caller,
+                    List.of(history), RepositoryReadControl.NONE)) {
+                var prepared = assessment.preparePhysical(Map.of(source.placement().drive().id(), source.placement()),
+                        Map.of(), Duration.ofMinutes(5), Map.of(), RepositoryReadControl.NONE);
+                borrowedPlan = prepared;
+                var owner = new RepositoryOperationLedger(tx).admitHistorical(caller,
+                        new RepositoryOperationLedger.Key("account", "principal", command.operationId()), prepared,
+                        UUID.randomUUID(), Duration.ofMinutes(5)).owner().orElseThrow();
+                new DocumentOperationUploadAdmission(tx, new DriveLedger(tx)).admit(caller, owner, prepared);
+                history.close(); require(!history.isDrained(), "assessment retains historical source");
+                var id = UUID.randomUUID(); var deadline = Instant.now().plusSeconds(120).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+                final DocumentAssessmentCreation.Created created;
+                if (lostAck) {
+                    AssessmentStageFaultProbe.loseAcknowledgement(database, faultTx -> {
+                        try {
+                            assessment.create(caller, owner, prepared, Map.of(), observation, new RepositorySchemaArtifacts(tx),
+                                    new DocumentAssessmentCreation(faultTx, new DriveLedger(faultTx)), id, deadline, RepositoryReadControl.NONE);
+                        } catch (com.google.protobuf.InvalidProtocolBufferException invalid) { throw new IllegalStateException(invalid); }
+                    });
+                    var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {}).orElseThrow();
+                    require(discovered.stage().assessment().equals(id) && discovered.stage().retainUntil().equals(deadline),
+                            "lost acknowledgement discovers original identity and deadline");
+                    require(discovered.selections().isEmpty(), "historical-only assessment has no upload selections");
+                    created = new DocumentAssessmentReconciliation(tx).observeRetained(caller, owner, command, discovered.selections(),
+                            id, discovered.stage().manifestSha256(), deadline, budget, () -> {}).orElseThrow();
+                    require(created.equals(discovered.stage()), "historical retained roots and slot snapshot reconcile exactly");
+                } else created = assessment.create(caller, owner, prepared, Map.of(), observation,
+                            new RepositorySchemaArtifacts(tx), new DocumentAssessmentCreation(tx, new DriveLedger(tx)),
+                            id, deadline, RepositoryReadControl.NONE);
+                require(created.assessment().equals(id), "exact historical assessment identity");
+                var slots = tx.readOnly(em -> em.createNativeQuery("""
+                        SELECT declaration,source_revision,source_node FROM document_assessment_slots WHERE assessment_id=:id
+                        """).setParameter("id", id).getResultList());
+                require(slots.size() == member.getPartsCount(), "all historical slots retained");
+                for (var value : slots) {
+                    var row = (Object[]) value;
+                    require(row[0].equals("HISTORICAL_REUSE") && row[1].equals(UUID.fromString(revision.getRevisionId()))
+                            && row[2].equals(source.node()), "exact historical source provenance");
+                }
+                long publications = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                        "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
+                        .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                require(publications == 0, "CREATE is not publication");
+                require(new DocumentLedger(tx).findByNodeId(source.node()).orElseThrow().mutationRevision == current.mutationRevision,
+                        "historical CREATE does not advance destination");
+            }
+            require(budget.reservedBytes() == 0, "historical CREATE releases byte ownership");
+            try {
+                new RepositoryOperationLedger(tx).admitHistorical(caller,
+                        new RepositoryOperationLedger.Key("account", "principal", command.operationId()), borrowedPlan,
+                        UUID.randomUUID(), Duration.ofMinutes(5));
+                throw new AssertionError("Expired borrowed source plan was admitted");
+            } catch (IllegalStateException expected) {
+                require(expected.getMessage().equals("Read plan use has ended"), "expired plan fails on its closed source Use");
+            }
+        } finally {
+            history.close(); require(history.awaitDrained(Duration.ofSeconds(1)), "historical source drains"); history.release();
+            ledger.fence(); ledger.attestLocalQuiescence();
+        }
+        System.out.println(lostAck ? "HISTORICAL_ASSESSMENT_LOST_ACK_OK" : "HISTORICAL_ASSESSMENT_CREATE_OK");
+    }
+    private static void claimed(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
+            DocumentSchemaPolicies.Selection policy, DocumentUploadPlan.Placement originalPlacement,
+            DocumentReadLedger.PinnedHistory history, Map<Integer, ByteString> fragments, PayloadBudget budget,
+            DocumentAssessmentRuntimeObserver.Observation observation, HistoricalCreateCommitFault fault, boolean mixed,
+            javax.sql.DataSource contentionDatabase, javax.sql.DataSource database, Scenario scenario) throws Exception {
+        boolean missingUpload = scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER && ManagedHistoricalUnavailableUploadProbe.enabled();
+        if (missingUpload) {
+            new ManagedBackendLedger(tx).bind(ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile());
+        }
+        var placement = missingUpload ? new DocumentUploadPlan.Placement(originalPlacement.drive(),
+                ManagedHistoricalUnavailableUploadProbe.GENERATION, provider.profile()) : originalPlacement;
+        boolean startFault = scenario == Scenario.START_ROLLBACK || scenario == Scenario.START_LOST_ACK;
+        boolean installedOwner = installedOwner(scenario);
+        boolean createFault = fault != null && !startFault;
+        var retention = scenario == Scenario.PUBLICATION_EXPIRED ? Duration.ofSeconds(20) : Duration.ofMinutes(2);
+        var key = new RepositoryOperationLedger.Key("account", caller.principalName(), command.operationId());
+        var record = new DocumentPublicationPreparationRecord(key, command, DocumentPublicationSeeds.mint(key, command),
+                Map.of(placement.drive().id(), placement),
+                scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || installedOwner ? Duration.ofSeconds(10) : Duration.ofMinutes(5), 0);
+        var scopes = new DocumentPublicationScopeCalls();
+        try (var sources = DocumentHistoricalAssessmentSources.open(command, caller, List.of(history), RepositoryReadControl.NONE)) {
+            var registration = DocumentPublicationRegistration.historical(tx, budget, record, sources, UUID.randomUUID(),
+                    scopes, new DriveLedger(tx), RepositoryReadControl.NONE);
+            var modes = Map.of("a", scenario == Scenario.OPAQUE_PUBLICATION ? DocumentPublicationCandidate.Mode.OPAQUE : DocumentPublicationCandidate.Mode.TYPED);
+            var owner = registration.admitInitial(caller, modes, RepositoryReadControl.NONE).orElseThrow();
+            try (var execution = registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE)) {
+                var admitted = execution.admitUploads(caller, RepositoryReadControl.NONE);
+                if (scenario == Scenario.START_CONCURRENT) {
+                    HistoricalConcurrentStartProbe.run(tx, registration, execution, caller, owner, modes, command,
+                            policy, fragments, observation);
+                    return;
+                }
+                if (startFault) {
+                    fault.armStart(key);
+                    try {
+                        execution.start(caller, retention, RepositoryReadControl.NONE);
+                        throw new AssertionError("Targeted START commit fault returned success");
+                    } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                    long starts = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM repository_publication_assessment_starts WHERE operation_id=:op")
+                            .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                    require(starts == (fault.lostAcknowledgement() ? 1 : 0), "START fault has exact committed row count");
+                }
+                var started = execution.start(caller, retention, RepositoryReadControl.NONE);
+                require(execution.start(caller, retention, RepositoryReadControl.NONE).equals(started),
+                        "repeated start preserves coordinates and acknowledged permission");
+                if (scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER)
+                    HistoricalColdRestartProbe.checkpointAndHalt(tx, command, caller, fragments, budget);
+                if (startFault) require(started.assessment().equals(fault.proposedStart()),
+                        "START retry retains the original private proposal across rollback or lost acknowledgement");
+                if (scenario == Scenario.SUCCESSOR || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
+                        || installedOwner) {
+                    HistoricalSuccessorCreateProbe.run(tx, provider, caller, record, owner, execution, started,
+                            policy, fragments, budget, observation, registration.drainIdentity(),
+                            installedOwner, fault, database, switch (scenario) {
+                                case OWNED_SCOPED_RECONCILE_REVOKED -> HistoricalInstalledOwnerProbe.Check.REVOKED;
+                                case OWNED_SCOPED_RECONCILE_EXPIRED -> HistoricalInstalledOwnerProbe.Check.EXPIRED;
+                                case OWNED_SCOPED_SELF_SUPERSESSION -> HistoricalInstalledOwnerProbe.Check.SELF_SUPERSESSION;
+                                case OWNED_SCOPED_OVERLAP -> HistoricalInstalledOwnerProbe.Check.OVERLAP;
+                                case OWNED_SCOPED_COMMIT_WINS -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS;
+                                case OWNED_SCOPED_COMMIT_WINS_OLD_FIRST -> HistoricalInstalledOwnerProbe.Check.COMMIT_WINS_OLD_FIRST;
+                                case OWNED_SCOPED_CLAIM_EXPIRES -> HistoricalInstalledOwnerProbe.Check.CLAIM_EXPIRES;
+                                case OWNED_SCOPED_TAKEOVER_FIRST -> HistoricalInstalledOwnerProbe.Check.TAKEOVER_FIRST;
+                                case OWNED_SCOPED_REJECTION -> HistoricalInstalledOwnerProbe.Check.REJECTION;
+                                case OWNED_SCOPED_COLD -> HistoricalInstalledOwnerProbe.Check.COLD;
+                                default -> HistoricalInstalledOwnerProbe.Check.ORDINARY;
+                            });
+                    return;
+                }
+                var freshDefinition = ObservedAssessmentProbe.asset(com.google.protobuf.StringValue.getDescriptor());
+                var evaluatedAt = Instant.now();
+                try (var assessment = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
+                        mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
+                        (selected, occurrence) -> { if (!mixed) throw new AssertionError("Claimed historical CREATE must use retained schemas"); return freshDefinition; },
+                        new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), evaluatedAt, RepositoryReadControl.NONE)) {
+                    Map<String, DocumentSelectedAttemptLedger.Selected> selections = Map.of();
+                    if (mixed) {
+                        require(admitted.attempts().size() == 1, "mixed CREATE admits one fresh attempt");
+                        var attempt = admitted.attempts().getFirst();
+                        var selected = new DocumentSelectedAttemptLedger.Selected("a", 1, attempt.id(), attempt.token());
+                        var physical = assessment.preparePhysical(record.placements(), record.seeds().attempts(), record.lease(),
+                                record.seeds().uploadTokens(), RepositoryReadControl.NONE);
+                        var measured = physical.plan().members().getFirst().attempt().orElseThrow().uploads().stream().map(upload -> {
+                            var object = upload.object();
+                            var actual = DocumentPartTransfer.upload(provider.store(), placement.drive().namespace(), object,
+                                    fragments.get(upload.revisionOrdinal()).toByteArray(), Map.of(), () -> {}, () -> {});
+                            require(Arrays.equals(provider.store().getBounded(placement.drive().namespace(), object.objectKey(), actual.version(),
+                                    Math.toIntExact(object.size())).data(), fragments.get(upload.revisionOrdinal()).toByteArray()),
+                                    "fresh provider version contains exact supplied bytes");
+                            return new DocumentSelectedAttemptLedger.Observation(object.objectKey(), object.size(), object.sha256(),
+                                    object.contentType(), actual.version(), actual.etag());
+                        }).toList();
+                        new DocumentSelectedAttemptLedger(tx).verifyBatch(owner, selected, measured);
+                        selections = Map.of("a", selected);
+                    }
+                    if (!createFault) {
+                        try (var foreign = registration.historicalExecution(caller, owner, modes, RepositoryReadControl.NONE)) {
+                            try {
+                                foreign.createAssessment(caller, assessment, selections, observation, new RepositorySchemaArtifacts(tx),
+                                        started, RepositoryReadControl.NONE);
+                                throw new AssertionError("Foreign execution accepted assessment");
+                            } catch (IllegalArgumentException expected) {
+                                require(expected.getMessage().equals("Assessment belongs to another historical execution"), "exact handle identity refused");
+                            }
+                            require(foreign.start(caller, retention, RepositoryReadControl.NONE).equals(started),
+                                    "other handle recovers the same durable start coordinates");
+                            try (var ownAssessment = foreign.prepareAssessment(caller, policy, Map.of("a", fragments),
+                                    mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
+                                    (member, occurrence) -> { if (!mixed) throw new AssertionError("Historical schemas are retained"); return freshDefinition; },
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000), Instant.now(), RepositoryReadControl.NONE)) {
+                                try {
+                                    foreign.createAssessment(caller, ownAssessment, selections, observation, new RepositorySchemaArtifacts(tx),
+                                            started, RepositoryReadControl.NONE);
+                                    throw new AssertionError("Loaded start granted CREATE authority to another handle");
+                                } catch (RepositoryException expected) {
+                                    require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                                    && expected.getMessage().contains("requires reconciliation"),
+                                            "loading start coordinates confers reconciliation-only authority");
+                                }
+                            }
+                        }
+                        long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(claims == 0, "foreign handle staged no schema claims");
+                    }
+                    var authorityBefore = authority(tx, owner.key());
+                    DocumentAssessmentCreation.Created created = null;
+                    if (contentionDatabase != null) {
+                        created = HistoricalMixedOriginContentionProbe.create(tx, contentionDatabase, execution, caller,
+                                command, assessment, selections, observation, started);
+                    } else if (!createFault) {
+                        created = execution.createAssessment(caller, assessment, selections, observation,
+                                new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                    } else {
+                        fault.arm(started.assessment());
+                        try {
+                            execution.createAssessment(caller, assessment, selections, observation,
+                                    new RepositorySchemaArtifacts(tx), started, RepositoryReadControl.NONE);
+                            throw new AssertionError("Targeted commit fault returned success");
+                        } catch (RuntimeException failure) { fault.requireFailure(failure); }
+                    }
+                    var discovered = new DocumentAssessmentDiscovery(tx).discover(caller, owner, command, () -> {});
+                    if (createFault) {
+                        if (fault.lostAcknowledgement()) {
+                            try (var changed = execution.prepareAssessment(caller, policy, Map.of("a", fragments),
+                                    mixed ? Optional.of(ObservedAssessmentProbe.asset(Document.getDescriptor())) : Optional.empty(),
+                                    (member, occurrence) -> { if (!mixed) throw new AssertionError("Historical schemas are retained"); return freshDefinition; },
+                                    new DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000),
+                                    evaluatedAt.plusSeconds(1), RepositoryReadControl.NONE)) {
+                                try {
+                                    execution.reconcileAssessment(caller, changed, selections, observation, RepositoryReadControl.NONE);
+                                    throw new AssertionError("Changed manifest replaced the attempted CREATE evidence");
+                                } catch (IllegalArgumentException refused) {
+                                    require(refused.getMessage().equals("Reconciliation evidence differs from attempted CREATE"),
+                                            "changed manifest must fail the exact original evidence binding");
+                                }
+                            }
+                            System.out.println("HISTORICAL_RECONCILIATION_MANIFEST_REFUSED_OK");
+                        }
+                        var reconciled = execution.reconcileAssessment(caller, assessment, selections, observation, RepositoryReadControl.NONE);
+                        require(reconciled.equals(discovered.map(value -> value.stage())),
+                                "same-handle reconciliation reflects exact committed or rolled-back CREATE");
+                        System.out.println(fault.lostAcknowledgement() ? "HISTORICAL_CREATE_RECONCILED_OK" : "HISTORICAL_CREATE_ROLLBACK_RECONCILED_OK");
+                    }
+                    if (createFault && !fault.lostAcknowledgement()) {
+                        require(discovered.isEmpty(), "rollback has no discoverable assessment");
+                        for (String table : List.of("document_assessment_owners", "document_assessment_objects", "document_assessment_slots",
+                                "document_assessment_roots", "document_assessment_artifacts", "document_assessment_slot_snapshots")) {
+                            long rows = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE assessment_id=:id")
+                                    .setParameter("id", started.assessment()).getSingleResult()).longValue());
+                            require(rows == 0, "rollback leaves no rows in " + table);
+                        }
+                    } else {
+                        require(discovered.orElseThrow().selections().equals(DocumentAssessmentRetainedSlots.uploadSelections(selections)),
+                                "discovered selections match independently supplied selected attempts");
+                        var expectedStage = discovered.orElseThrow().stage();
+                        var retainedSlots = tx.readOnly(em -> em.createNativeQuery("""
+                                SELECT revision_ordinal,declaration FROM document_assessment_slots
+                                WHERE assessment_id=:id ORDER BY revision_ordinal
+                                """).setParameter("id", expectedStage.assessment()).getResultList());
+                        require(retainedSlots.size() == command.intent().getMembers(0).getPartsCount(), "all expected candidate slots retained");
+                        for (Object value : retainedSlots) {
+                            Object[] row = (Object[]) value;
+                            int ordinal = ((Number) row[0]).intValue();
+                            String expected = command.intent().getMembers(0).getParts(ordinal).hasUpload() ? "NEW_CONTENT" : "HISTORICAL_REUSE";
+                            require(expected.equals(row[1]), "retained slot " + ordinal + " declaration: expected "
+                                    + expected + ", found " + row[1]);
+                        }
+                        var stage = discovered.orElseThrow().stage();
+                        require(stage.assessment().equals(started.assessment()) && stage.retainUntil().equals(started.retainUntil()),
+                                "claimed CREATE retains committed start coordinates");
+                        if (created != null) require(stage.equals(created), "successful CREATE matches discovered identity");
+                        var retained = new DocumentAssessmentReconciliation(tx).observeRetained(caller, owner, command,
+                                discovered.orElseThrow().selections(), stage.assessment(), stage.manifestSha256(), stage.retainUntil(), budget, () -> {});
+                        require(retained.orElseThrow().equals(stage), "claimed CREATE retained evidence reconciles");
+                    }
+                    try {
+                        execution.createAssessment(caller, assessment, selections, observation, new RepositorySchemaArtifacts(tx),
+                                started, RepositoryReadControl.NONE);
+                        throw new AssertionError("Second claimed CREATE was allowed");
+                    } catch (RepositoryException expected) {
+                        require(expected.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                && expected.getMessage().contains("requires reconciliation"), "second CREATE requires explicit reconciliation");
+                    }
+                    require(authority(tx, owner.key()).equals(authorityBefore), "CREATE preserves exact owner and claim leases");
+                    long published = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                            "SELECT count(*) FROM document_revision_commits WHERE operation_id=:op")
+                            .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                    require(published == 0, "claimed CREATE does not publish");
+                    if (scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION) {
+                        HistoricalClaimedMixedPublicationProbe.run(tx, provider, caller, command, owner, execution,
+                                assessment, selections, observation, Objects.requireNonNull(created), fragments);
+                    }
+                    if (scenario == Scenario.PUBLICATION_REVOKED) {
+                        var address = command.intent().getMembers(0).getDestination().getAddress();
+                        var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+                        var before = currentProjection(tx, node);
+                        long events = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_events_outbox WHERE kafka_key=:doc")
+                                .setParameter("doc", address.getDocId()).getSingleResult()).longValue());
+                        long claims = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(created != null && claims > 0, "typed CREATE and schema staging precede revocation");
+                        try (var revocation = new HistoricalPublicationRevocationProbe(database, tx, caller)) {
+                            revocation.arm();
+                            try {
+                                execution.publishAssessment(caller, assessment, selections, observation,
+                                        new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(revocation.tx(), new DriveLedger(tx), true, false),
+                                        created, RepositoryReadControl.NONE);
+                                throw new AssertionError("Revoked credential published historical content");
+                            } catch (RepositoryException refused) {
+                                require(refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                        "commit rechecks the revoked scoped credential");
+                            }
+                            revocation.requireFired();
+                        }
+                        var binding = caller.credentialBinding().orElseThrow();
+                        require(Boolean.TRUE.equals(tx.readOnly(em -> em.createNativeQuery("""
+                                SELECT revoked FROM repository_credential_authorities
+                                WHERE issuer=:issuer AND credential_id=:id AND generation=:generation AND principal=:principal
+                                """).setParameter("issuer", binding.issuer()).setParameter("id", binding.credentialId())
+                                .setParameter("generation", binding.generation()).setParameter("principal", caller.principalName()).getSingleResult())),
+                                "exact credential generation is durably revoked");
+                        require(currentProjection(tx, node).equals(before), "revoked publication preserves current head");
+                        for (String table : List.of("repository_operation_success", "document_revision_commits")) {
+                            require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult()).longValue()) == 0,
+                                    "revoked publication leaves no rows in " + table);
+                        }
+                        require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_events_outbox WHERE kafka_key=:doc")
+                                .setParameter("doc", address.getDocId()).getSingleResult()).longValue()) == events,
+                                "revoked publication emits no outbox event");
+                        require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue()) == claims,
+                                "revocation preserves legitimate preexisting staging claims");
+                        try {
+                            new DocumentPublicationReplay(tx).observe(caller, command);
+                            throw new AssertionError("Revoked credential observed its pending publication");
+                        } catch (RepositoryException refused) {
+                            require(refused.code() == RepositoryException.Code.UNAUTHENTICATED,
+                                    "revoked key cannot inspect the pending operation");
+                        }
+                        try {
+                            execution.publishAssessment(caller, assessment, selections, observation,
+                                    new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false),
+                                    created, RepositoryReadControl.NONE);
+                            throw new AssertionError("Revoked publication allowed a second promotion");
+                        } catch (RepositoryException refused) {
+                            require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                    && refused.getMessage().contains("requires reconciliation"), "revoked attempt requires reconciliation");
+                        }
+                        System.out.println("CLAIMED_HISTORICAL_PUBLICATION_REVOKED_OK");
+                    }
+                    if (scenario == Scenario.PUBLICATION_EXPIRED) {
+                        var address = command.intent().getMembers(0).getDestination().getAddress();
+                        var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+                        var before = currentProjection(tx, node);
+                        long events = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_events_outbox WHERE kafka_key=:doc")
+                                .setParameter("doc", address.getDocId()).getSingleResult()).longValue());
+                        var retained = Objects.requireNonNull(created);
+                        var publicationSelections = Map.copyOf(selections);
+                        HistoricalPublicationExpiryProbe.run(database, command, retained, publicationTx ->
+                                execution.publishAssessment(caller, assessment, publicationSelections, observation,
+                                        new RepositorySchemaArtifacts(tx),
+                                        new DocumentPublicationCommit(publicationTx, new DriveLedger(tx), true, false),
+                                        retained, RepositoryReadControl.NONE));
+                        require(currentProjection(tx, node).equals(before), "expired publication preserves exact current revision and mutation");
+                        for (String table : List.of("repository_operation_success", "document_revision_commits")) {
+                            require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                    "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                    .setParameter("op", command.operationId()).getSingleResult()).longValue()) == 0,
+                                    "expired publication leaves no rows in " + table);
+                        }
+                        require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM document_events_outbox WHERE kafka_key=:doc")
+                                .setParameter("doc", address.getDocId()).getSingleResult()).longValue()) == events,
+                                "expired publication emits no outbox event");
+                        require(new DocumentPublicationReplay(tx).observe(caller, command).state() == DocumentPublicationReplay.State.PENDING,
+                                "expired publication has no terminal receipt");
+                        try {
+                            execution.publishAssessment(caller, assessment, selections, observation,
+                                    new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), true, false),
+                                    retained, RepositoryReadControl.NONE);
+                            throw new AssertionError("Expired publication allowed a second promotion");
+                        } catch (RepositoryException refused) {
+                            require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                    && refused.getMessage().contains("requires reconciliation"), "expiry requires reconciliation");
+                        }
+                        System.out.println("CLAIMED_HISTORICAL_PUBLICATION_EXPIRED_OK");
+                    }
+                    if (scenario == Scenario.PUBLICATION_LOST_ACK) {
+                        try (var publicationFault = new HistoricalCreateCommitFault(database, true)) {
+                            publicationFault.armPublication(owner);
+                            var publication = new DocumentPublicationCommit(publicationFault.tx(), new DriveLedger(tx), true, false);
+                            try {
+                                execution.publishAssessment(caller, assessment, selections, observation,
+                                        new RepositorySchemaArtifacts(tx), publication, created, RepositoryReadControl.NONE);
+                                throw new AssertionError("Lost publication acknowledgement returned success");
+                            } catch (RuntimeException failure) { publicationFault.requireFailure(failure); }
+                            var replay = new DocumentPublicationReplay(tx).observe(caller, command);
+                            require(replay.state() == DocumentPublicationReplay.State.COMMITTED,
+                                    "acknowledgement loss leaves a committed result");
+                            var result = replay.result().orElseThrow();
+                            require(result.getMembersCount() == 1 && result.getOwnerGeneration() == owner.generation()
+                                    && result.getCommandSha256().equals(command.sha256()),
+                                    "recovered receipt binds the exact generation and command");
+                            byte[] durableReceipt = tx.readOnly(em -> (byte[]) em.createNativeQuery(
+                                    "SELECT result_bytes FROM repository_operation_success WHERE account_id=:account AND principal=:principal AND operation_id=:op")
+                                    .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                                    .setParameter("op", command.operationId()).getSingleResult());
+                            require(DocumentPublicationResult.parseFrom(durableReceipt).equals(result),
+                                    "authorized replay returns the persisted receipt after lost acknowledgement");
+                            var committed = result.getMembers(0);
+                            require(currentProjection(tx, ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(committed.getAddress()))
+                                            .equals(List.of(committed.getMutationRevision(), UUID.fromString(committed.getRevisionId()))),
+                                    "lost acknowledgement preserves the exact committed current projection");
+                            try {
+                                execution.publishAssessment(caller, assessment, selections, observation,
+                                        new RepositorySchemaArtifacts(tx), publication, created, RepositoryReadControl.NONE);
+                                throw new AssertionError("Lost acknowledgement allowed another publication attempt");
+                            } catch (RepositoryException refused) {
+                                require(refused.code() == RepositoryException.Code.FAILED_PRECONDITION
+                                        && refused.getMessage().contains("requires reconciliation"),
+                                        "lost acknowledgement requires reconciliation before any repromotion");
+                            }
+                            for (String table : List.of("repository_operation_success", "document_revision_commits")) {
+                                require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                        "SELECT count(*) FROM " + table + " WHERE operation_id=:op")
+                                        .setParameter("op", command.operationId()).getSingleResult()).longValue()) == 1,
+                                        "one durable row after lost acknowledgement and refused retry in " + table);
+                            }
+                            require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                                    "receipt replay remains exact after refused retry");
+                            System.out.println("CLAIMED_HISTORICAL_PUBLICATION_LOST_ACK_OK");
+                        }
+                    }
+                    if (scenario == Scenario.OPAQUE_PUBLICATION) {
+                        long artifacts = tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue());
+                        require(artifacts == 0, "opaque CREATE has no schema artifact claims");
+                        var result = execution.publishAssessment(caller, assessment, selections, observation,
+                                new RepositorySchemaArtifacts(tx), new DocumentPublicationCommit(tx, new DriveLedger(tx), false, false),
+                                created, RepositoryReadControl.NONE);
+                        require(result.getMembersCount() == 1 && result.getOwnerGeneration() == owner.generation(),
+                                "opaque publication has one member and exact owner generation");
+                        require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result),
+                                "opaque durable receipt replays exactly");
+                        require(tx.readOnly(em -> ((Number) em.createNativeQuery(
+                                "SELECT count(*) FROM repository_schema_artifact_claims WHERE operation_id=:op")
+                                .setParameter("op", command.operationId()).getSingleResult()).longValue()) == 0,
+                                "opaque publication creates no schema artifact claims");
+                        System.out.println("CLAIMED_HISTORICAL_OPAQUE_PUBLICATION_OK");
+                    }
+
+                }
+            }
+        } finally { scopes.close(); }
+    }
+
+    static List<Object> authority(Tx tx, RepositoryOperationLedger.Key key) {
+        return tx.readOnly(em -> Arrays.asList((Object[]) em.createNativeQuery("""
+                SELECT o.owner_generation,o.owner_token,o.lease_until,c.claim_epoch,c.claim_token,c.lease_until
+                FROM repository_operation_owners o JOIN repository_execution_claims c USING(account_id,principal,operation_id)
+                WHERE o.account_id=:a AND o.principal=:p AND o.operation_id=:op
+                """).setParameter("a", key.account()).setParameter("p", key.principal())
+                .setParameter("op", key.operationId()).getSingleResult()));
+    }
+
+    private static List<Object> currentProjection(Tx tx, UUID node) {
+        return tx.readOnly(em -> Arrays.asList((Object[]) em.createNativeQuery("""
+                SELECT d.mutation_revision,c.revision_id FROM documents d
+                JOIN document_revision_current c ON c.node_id=d.node_id WHERE d.node_id=:node
+                """).setParameter("node", node).getSingleResult()));
+    }
+
+    private static boolean installedOwner(Scenario scenario) {
+        return switch (scenario) {
+            case OWNED_SCOPED_COLD_RESTART_WRITER, OWNED_SCOPED_COLD, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
+                    OWNED_SCOPED_RECONCILE_REVOKED, OWNED_SCOPED_RECONCILE_EXPIRED, OWNED_SCOPED_SELF_SUPERSESSION, OWNED_SCOPED_OVERLAP, OWNED_SCOPED_COMMIT_WINS, OWNED_SCOPED_COMMIT_WINS_OLD_FIRST, OWNED_SCOPED_CLAIM_EXPIRES, OWNED_SCOPED_TAKEOVER_FIRST, OWNED_SCOPED_REJECTION -> true;
+            default -> false;
+        };
+    }
+    private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
+}

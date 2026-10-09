@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" tests="91" skipped="0" failures="0" errors="0" timestamp="2026-10-05T19:25:36.971Z" hostname="krick" time="28.233">
+  <properties/>
+  <testcase name="retryChecksCanonicalCommandBeforeStaging()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.88"/>
+  <testcase name="deniedSourceIsRejectedBeforeWaitingForDriveLock()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.141"/>
+  <testcase name="[1] &quot;destination&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.08"/>
+  <testcase name="[2] &quot;source&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.042"/>
+  <testcase name="initialSelectionCannotBeReplacedByAnotherAdmissionOrMutated()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.328"/>
+  <testcase name="pinnedCaptureRejectsUnknownReaderWithoutPins()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.049"/>
+  <testcase name="scopedCreationRequiresAnExplicitFutureGrantButAdminIsExplicit()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.19"/>
+  <testcase name="reuseOnlyReadPlanDoesNotInventAnUpload()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.164"/>
+  <testcase name="staleRetryCannotReplaceTheWinner()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.418"/>
+  <testcase name="selfCopyStillNeedsReadInAdditionToWrite()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.043"/>
+  <testcase name="capturedPinRecoveryUsesTheDurableQuiescenceGate()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.27"/>
+  <testcase name="changedCanonicalCommandCannotUseAnExistingOwner()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.029"/>
+  <testcase name="processAuthorityCannotAdmitMalformedProposedPublicIdentity()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.044"/>
+  <testcase name="zeroUploadSelectionHasAnExplicitNullPointerAndCannotRetry()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.044"/>
+  <testcase name="processAuthorityCannotConcealMalformedStoredPolicy()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.043"/>
+  <testcase name="deniedDestinationTakesPrecedenceOverAuthorizedButStaleSource()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.044"/>
+  <testcase name="policyRevocationCommittedDuringRowLockWaitPreventsAdmission()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.055"/>
+  <testcase name="consecutiveSqlReplacementsInOneTransactionRetainBothChoices()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.058"/>
+  <testcase name="zeroUploadsStillChecksPlacementAndCreatesNoAttempt()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.049"/>
+  <testcase name="[1] &quot;acl&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.037"/>
+  <testcase name="[2] &quot;datasource&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.047"/>
+  <testcase name="[3] &quot;drive&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.034"/>
+  <testcase name="[4] &quot;deletion&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.052"/>
+  <testcase name="failedCaptureDoesNotLeaveAFalseLocalLifetime()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.025"/>
+  <testcase name="fenceCannotAttestWhileCaptureWaitsForItsOperationLock()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.309"/>
+  <testcase name="retainedReadPlanPreservesFullOrdinalsWithoutStaging()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.048"/>
+  <testcase name="takeoverCannotAdoptThePriorGenerationsSelection()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="2.062"/>
+  <testcase name="[1] false" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="3.057"/>
+  <testcase name="[2] true" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="3.043"/>
+  <testcase name="twoMembersSharingOneObjectRetainEveryClaimButAcquireOnePin()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.038"/>
+  <testcase name="laterMemberDatabaseFailureRollsBackEveryUploadAndReservation()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.157"/>
+  <testcase name="laterMemberConflictRollsBackEarlierReplacement()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.471"/>
+  <testcase name="[1] &quot;owner&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.15"/>
+  <testcase name="[2] &quot;member&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.159"/>
+  <testcase name="[3] &quot;node&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.159"/>
+  <testcase name="[4] &quot;revision&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.045"/>
+  <testcase name="[5] &quot;count&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.043"/>
+  <testcase name="[6] &quot;snapshot&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.034"/>
+  <testcase name="[7] &quot;digest&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.045"/>
+  <testcase name="[8] &quot;namespace&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.041"/>
+  <testcase name="[1] false" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.054"/>
+  <testcase name="[2] true" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.045"/>
+  <testcase name="competingRetriesChooseExactlyOneAttempt()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.156"/>
+  <testcase name="explicitAndReuseDependencyOnSameRevisionShareOneSourceFence()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.028"/>
+  <testcase name="scopedCallerCanStageAgainstCurrentReadAndWriteGrants()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.02"/>
+  <testcase name="explicitDependencyNeedsReadEvenWhenNoPartsAreReused()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.026"/>
+  <testcase name="selectedPlacementDoesNotCopyFreeFormConfigurationOrCredentialReferences()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.179"/>
+  <testcase name="[1] &quot;missing&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.032"/>
+  <testcase name="[2] &quot;malformed&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.024"/>
+  <testcase name="[3] &quot;inherited&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.026"/>
+  <testcase name="[4] &quot;write-only&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.023"/>
+  <testcase name="[5] &quot;purging&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.026"/>
+  <testcase name="[6] &quot;destination-identity&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.023"/>
+  <testcase name="[1] &quot;destination&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.03"/>
+  <testcase name="[2] &quot;source&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.025"/>
+  <testcase name="[1] 1" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.034"/>
+  <testcase name="[2] 513" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.214"/>
+  <testcase name="[1] &quot;drive&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.029"/>
+  <testcase name="[2] &quot;profile&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.022"/>
+  <testcase name="[3] &quot;missing&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.024"/>
+  <testcase name="[4] &quot;owner&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.015"/>
+  <testcase name="separateAdmissionsSharingOneSourceCanBothReachSelection()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.286"/>
+  <testcase name="[1] &quot;missing&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.02"/>
+  <testcase name="[2] &quot;unbound&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.019"/>
+  <testcase name="[3] &quot;other-account&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.016"/>
+  <testcase name="[4] &quot;other-principal&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.014"/>
+  <testcase name="[5] &quot;admin-other-principal&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.016"/>
+  <testcase name="sqlHistoryCannotCommitWithoutItsPointer()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.04"/>
+  <testcase name="documentReadOwnerWaitsForTransferredUsesBeforeQuiescence()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.03"/>
+  <testcase name="earlierAttemptExpiryDuringLaterAdmissionRollsBackWholeBatch()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="1.176"/>
+  <testcase name="cleanupWaitsForSelectionTransactionAndExpiredAttemptCannotBeSelectedAgain()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="3.164"/>
+  <testcase name="[1] &quot;revision&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.263"/>
+  <testcase name="[2] &quot;attempt&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.261"/>
+  <testcase name="[3] &quot;missing&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.145"/>
+  <testcase name="[4] &quot;drive&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.05"/>
+  <testcase name="zeroUploadCommandStillRequiresSourceRead()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.027"/>
+  <testcase name="duplicateAttemptIsNotSilentlyAdopted()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.044"/>
+  <testcase name="failedReleaseRemainsRecoverableAfterLocalDrain()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.142"/>
+  <testcase name="retryRetainsInitialChoiceAndAtomicallySelectsNewAttempt()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.048"/>
+  <testcase name="[1] &quot;uuid&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.025"/>
+  <testcase name="[2] &quot;generation&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.02"/>
+  <testcase name="[3] &quot;realm&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.02"/>
+  <testcase name="[4] &quot;namespace&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.021"/>
+  <testcase name="[5] &quot;key&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.027"/>
+  <testcase name="[6] &quot;version&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.023"/>
+  <testcase name="[7] &quot;missing-version&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.043"/>
+  <testcase name="[8] &quot;size&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.033"/>
+  <testcase name="[9] &quot;sha&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.033"/>
+  <testcase name="[10] &quot;type&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.03"/>
+  <testcase name="[11] &quot;slot&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.034"/>
+  <testcase name="lostReuseCaptureAcknowledgmentRetainsCapacityUntilQuiescedRecovery()" classname="ai.protomolt.proto.repo.container.ledger.DocumentOperationUploadAdmissionIT" time="0.15"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 741f1aead579775c255871292ea1a17b065854b6ed99a4f4191cd9d46e7eef1e
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.521781688S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 6aa6457366882ecb05e6346ad4e54d26a2085ec84409092f3e49cbabe7e0bc36
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.333287918S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49025/test?loggerLevel=OFF)
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@493b01ef
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table "public"."flyway_schema_history" does not exist yet
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 79 migrations (execution time 00:00.040s)
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "public"."flyway_schema_history" ...
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": << Empty Schema >>
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 79 migrations to schema "public", now at version v79 (execution time 00:00.499s)
+Oct 05, 2026 3:25:43 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 3:25:43 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 3:25:43 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 05, 2026 3:25:44 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 05, 2026 3:25:44 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49025/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 3:25:44 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23505
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: duplicate key value violates unique constraint "document_operation_selections_pkey"
+  Detail: Key (account_id, principal, operation_id, owner_generation, member_id)=(account, principal, 95a25442-d343-4f1f-a6b4-ff52c5905f9f, 1, member) already exists.
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Initial document operation selection is immutable
+  Where: PL/pgSQL function guard_document_operation_selection() line 4 at RAISE
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Initial document operation selection is immutable
+  Where: PL/pgSQL function guard_document_operation_selection() line 4 at RAISE
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:46 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Reader incarnation is not ACTIVE
+  Where: PL/pgSQL function require_active_repository_reader(uuid) line 7 at RAISE
+Oct 05, 2026 3:25:47 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:47 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 3:25:47 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:47 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Reader recovery requires proven quiescence
+  Where: PL/pgSQL function recover_quiesced_document_read_pins(uuid,jsonb) line 6 at RAISE
+Oct 05, 2026 3:25:50 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0002
+Oct 05, 2026 3:25:50 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: query returned no rows
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 7 at SQL statement
+Oct 05, 2026 3:25:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:53 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Retry requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 25 at RAISE
+Oct 05, 2026 3:25:56 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:56 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection() line 22 at RAISE
+Oct 05, 2026 3:25:56 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:56 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: injected second member failure
+  Where: PL/pgSQL function fail_bound_admission() line 1 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Repository mutation requires a live owner write fence in this transaction
+  Where: PL/pgSQL function require_repository_operation_write_fence(text,text,uuid,bigint) line 14 at RAISE
+SQL statement "SELECT require_repository_operation_write_fence(NEW.account_id,NEW.principal,NEW.operation_id,NEW.owner_generation)"
+PL/pgSQL function guard_document_operation_selection() line 5 at PERFORM
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection() line 22 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection() line 22 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection() line 22 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection() line 22 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection differs from sampled placement
+  Where: PL/pgSQL function guard_document_operation_selection() line 12 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection differs from sampled placement
+  Where: PL/pgSQL function guard_document_operation_selection() line 12 at RAISE
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:57 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document operation selection differs from sampled placement
+  Where: PL/pgSQL function guard_document_operation_selection() line 12 at RAISE
+Oct 05, 2026 3:25:58 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:25:58 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 3:25:59 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23505
+Oct 05, 2026 3:25:59 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: duplicate key value violates unique constraint "repository_reader_incarnations_pkey"
+  Detail: Key (incarnation)=(433dc315-262e-4567-8bf6-9d2d3dc4612e) already exists.
+Oct 05, 2026 3:26:03 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:26:03 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Retry requires its exact live new-content attempt
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 25 at RAISE
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0002
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: query returned no rows
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 7 at SQL statement
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 23505
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: duplicate key value violates unique constraint "document_part_attempts_pkey"
+  Detail: Key (attempt_id)=(1c7bdd1d-e084-4e9e-a865-ab170e5615d0) already exists.
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 55P03
+Oct 05, 2026 3:26:04 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: canceling statement due to lock timeout
+  Where: while locking tuple (4,20) in relation "repository_object_retention"
+SQL statement "SELECT 1 FROM repository_object_retention r WHERE r.object_id=ANY(objects) ORDER BY r.object_id FOR SHARE OF r"
+PL/pgSQL function release_document_read_pins(uuid,jsonb) line 26 at PERFORM
+Oct 05, 2026 3:26:05 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 3:26:05 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 3:26:05 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49025/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 3:26:05 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+]]></system-err>
+</testsuite>

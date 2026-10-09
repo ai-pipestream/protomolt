@@ -1,0 +1,14 @@
+description = 'Authorized registry schema selection with leased descriptor caching'
+dependencies {
+    api project(':protomolt-repo-admission')
+    api project(':protomolt-registry')
+    testImplementation project(':protomolt-schema-registry-git')
+    testImplementation project(':protomolt-descriptors')
+    testImplementation project(':protomolt-repo-codec')
+}
+ext.forbiddenRuntimeModules = [
+        'protomolt-repo-container', 'protomolt-repo-service', 'protomolt-schema-registry-git',
+        'org.eclipse.jgit', 's3', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql',
+        'flyway-core', 'kafka-clients', 'grpc-netty-shaded'
+]
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

@@ -1,5 +1,10 @@
 # The archive: entries, renditions, and retained versions
 
+The proposed [repository composition and typed admission design](repository-composition.md)
+records the next storage-module boundaries, schema enforcement, ownership checks
+and metadata-versioning work. It distinguishes existing behavior from additions;
+those additions are not yet available APIs.
+
 The archive is the repository family's generic document store: named
 collections of entries, each entry a set of independently addressable
 **renditions** — the raw file, a parsed protobuf, markdown, NDJSON, parquet,
@@ -198,25 +203,34 @@ is deliberately not ledger state; it belongs to the metrics lane, fed by
 events and process metrics, and never blocks or widens a storage
 transaction.
 
-## Deletion and the orphan rule
+## Durable deletion and recovery
 
-The store is intentionally non-ACID across the object store and the ledger,
-under the standing rule: **an object with no live ledger row that owns it
-is an orphan, and orphans are reclaimable.**
+ArchiveMutationService accepts an operation UUID and one delete-entry,
+delete-rendition, or prune-versions command. It commits the logical changes,
+counters, immutable command identity, and exact cleanup targets in one SQL
+transaction. Physical cleanup follows outside that transaction at each object's
+original backend identity. A provider failure records a retryable observation;
+it cannot roll back the logical admission or report physical completion.
 
-`DeleteEntry` deletes objects first (best-effort, from the union of every
-retained manifest's keys — exact keys, never a prefix sweep), then removes
-the rows. A partial failure leaves orphans, which is the named, bounded,
-observed failure mode: the storage reconciler already diffs bucket listings
-against manifest ownership with a min-age guard and dry-run default, and
-the archive's keys participate in the same sweep. `PruneVersions` removes
-old retained versions by the entry-local reference scan described above.
+The receipt separates logical removal from pending and confirmed-absent objects.
+Repeating the same operation and command returns its original logical outcome
+with the current durable observation, even after the entry address is recreated.
+Reusing the UUID for another command conflicts. GetArchiveMutation permits lookup
+after a lost response. COMPLETED describes recorded confirmation, not a fresh
+provider probe; reconciliation handles late writes using retained cleanup state.
 
-Two-phase tombstoned deletion with the async purge queue — the document
-store's `PENDING_PURGE` lifecycle — is a deliberate future extension for
-the archive, not part of the first contract. The synchronous path plus the
-reconciler is honest and complete; the queue is an optimization for bulk
-deletion under load.
+Publication pins and cleanup claims fence each other. An object selected for
+cleanup cannot acquire a new retained reference. Legacy content without verified
+immutable storage bindings is refused, never resolved through today's drive.
+The earlier object-first RPCs and SQL helpers have been removed. Their request
+payload messages remain inputs to the identified mutation contract.
+
+Managed composition and explicit caller authority are required. Scoped ownership
+checks are still pending. Generic blob mutations reserve the exact `archive`
+path segment, protecting both earlier and current archive layouts from overwrite
+or deletion through that API, including drive aliases. Administrative reads
+remain available. Direct provider SPI access stays trusted; the guard is a
+repository API boundary, not a storage-provider permission system.
 
 ## Rules of the house
 

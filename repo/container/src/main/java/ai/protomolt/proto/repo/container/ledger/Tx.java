@@ -37,12 +37,24 @@ import java.util.function.Function;
 public final class Tx implements AutoCloseable {
 
     private final EntityManagerFactory emf;
+    private final SqlTimeouts timeouts;
 
     /**
      * @param emf the entity manager factory to open sessions from
      */
     public Tx(EntityManagerFactory emf) {
         this.emf = emf;
+        this.timeouts = null;
+    }
+
+    private Tx(EntityManagerFactory emf, SqlTimeouts timeouts) {
+        this.emf = emf;
+        this.timeouts = java.util.Objects.requireNonNull(timeouts);
+    }
+
+    /** Borrowed transactional view; it owns no pool and closing it does not close the factory. */
+    public Tx withTimeouts(SqlTimeouts timeouts) {
+        return new Tx(emf, timeouts);
     }
 
     /**
@@ -59,14 +71,20 @@ public final class Tx implements AutoCloseable {
             EntityTransaction tx = em.getTransaction();
             tx.begin();
             try {
+                if (timeouts != null) timeouts.apply(em);
                 T result = work.apply(em);
+                // Some RESOURCE_LOCAL implementations silently roll back on
+                // commit() when marked rollback-only. Never return a successful
+                // result after an internal participant has vetoed the commit.
+                if (tx.getRollbackOnly())
+                    throw new jakarta.persistence.RollbackException("Transaction was marked rollback-only");
                 tx.commit();
                 return result;
-            } catch (RuntimeException e) {
-                rollbackIfActive(tx);
+            } catch (RuntimeException | Error e) {
+                rollbackIfActive(tx, e);
                 throw e;
             } catch (Exception e) {
-                rollbackIfActive(tx);
+                rollbackIfActive(tx, e);
                 throw new LedgerException("transactional work failed", e);
             }
         } finally {
@@ -102,6 +120,8 @@ public final class Tx implements AutoCloseable {
     /**
      * {@link #readOnly(Function)} with EntityManager creation hints (e.g.
      * Hibernate's {@code org.hibernate.readOnly}).
+     * Borrowed timeout views require {@code inTransaction} for reads as well,
+     * because their settings are transaction-local.
      *
      * @param work  the read
      * @param hints hints passed to {@link EntityManagerFactory#createEntityManager(Map)}
@@ -109,6 +129,8 @@ public final class Tx implements AutoCloseable {
      * @return the read's result (any returned entities are detached)
      */
     public <T> T readOnly(Function<EntityManager, T> work, Map<String, Object> hints) {
+        if (timeouts != null)
+            throw new IllegalStateException("Bounded transaction views require inTransaction, including reads");
         EntityManager em = hints == null || hints.isEmpty()
                 ? emf.createEntityManager()
                 : emf.createEntityManager(hints);
@@ -123,14 +145,14 @@ public final class Tx implements AutoCloseable {
         }
     }
 
-    private static void rollbackIfActive(EntityTransaction tx) {
+    private static void rollbackIfActive(EntityTransaction tx, Throwable failure) {
         try {
             if (tx.isActive()) {
                 tx.rollback();
             }
         } catch (RuntimeException rollbackFailure) {
-            // The original failure is the one that matters; a rollback
-            // failure on top of it must not mask it.
+            // Preserve the initiating failure and the recovery evidence.
+            if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
         }
     }
 
@@ -139,9 +161,10 @@ public final class Tx implements AutoCloseable {
      * own the EMF lifecycle in try-with-resources; harmless when the factory
      * is owned elsewhere (e.g. {@link LedgerDatabase}) since
      * {@code EntityManagerFactory.close()} is idempotent.
+     * Borrowed timeout views own no factory lifecycle; their close is a no-op.
      */
     @Override
     public void close() {
-        emf.close();
+        if (timeouts == null) emf.close();
     }
 }

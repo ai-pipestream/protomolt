@@ -17,6 +17,16 @@ configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClassp
         }
 
 dependencies {
+    implementation project(':protomolt-repo-engine')
+    // Public historical composition signatures expose the repository port and
+    // trusted Caller/CallerResolver bindings to embedding hosts.
+    api project(':protomolt-repo-spi')
+    api project(':protomolt-repo-admission')
+    api project(':protomolt-authz')
+    implementation project(':protomolt-repo-blob-s3')
+    implementation project(':protomolt-repo-blob-redis')
+    implementation project(':protomolt-repo-blob-cache')
+    implementation project(':protomolt-repo-blob-grpc')
     implementation project(':protomolt-schema-registry-git')
     api project(':protomolt-composer')
     implementation project(':protomolt-repo-proto')
@@ -34,11 +44,11 @@ dependencies {
     api project(':protomolt-asset-bridge')
     // The catalog projection is exercised against a real archive.
     testImplementation project(':protomolt-asset-catalog')
+    testImplementation project(':protomolt-repo-schema-registry')
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
-    // S3 client construction lives here (UrlConnectionHttpClient is only an
-    // `implementation` dep of repo-container, so it is not exposed).
+    // The service assembly owns S3 client construction.
     implementation libs.awssdk.url.connection.client
     // The HTTP upload route's JSON receipts/errors (Jackson is the repo-wide
     // JSON library; see libs.versions.toml).
@@ -68,8 +78,26 @@ dependencies {
     testImplementation project(':protomolt-grpc-workflow')
     testImplementation libs.confluent.kafka.protobuf.serializer
     testImplementation libs.confluent.kafka.schema.registry.client
+    testImplementation libs.hikari
 }
 
 application {
     mainClass = 'ai.protomolt.proto.repo.service.RepoServiceMain'
+}
+
+tasks.named('test') {
+    // Separate-JVM host tests need the complete test runtime, not Gradle's worker bootstrap classpath.
+    doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
+    def partialBenchmark = providers.environmentVariable('PROTOMOLT_PARTIAL_BENCHMARK').map { it == 'true' }.orElse(false)
+    def replicaBenchmark = providers.environmentVariable('PROTOMOLT_REPLICA_BENCHMARK').map { it == 'true' }.orElse(false)
+    def archiveReadBenchmark = providers.environmentVariable('PROTOMOLT_ARCHIVE_READ_BENCHMARK').map { it == 'true' }.orElse(false)
+    inputs.property('partialBenchmark', partialBenchmark)
+    inputs.property('replicaBenchmark', replicaBenchmark)
+    inputs.property('archiveReadBenchmark', archiveReadBenchmark)
+    doFirst {
+        // Benchmark classes must not compete with each other in separate test forks.
+        if (partialBenchmark.get() || replicaBenchmark.get() || archiveReadBenchmark.get()) maxParallelForks = 1
+    }
+    outputs.upToDateWhen { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
+    outputs.cacheIf { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
 }

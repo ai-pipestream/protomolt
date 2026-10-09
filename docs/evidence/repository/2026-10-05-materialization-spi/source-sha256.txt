@@ -1,0 +1,3 @@
+dd901d0af29efb4705fa2ad99db343205d3286f56f4e4112dfb809f3d89328bb  repo/spi/src/main/java/ai/protomolt/proto/repo/spi/HistoricalMaterializationRepository.java
+dc9bcfc6fb3bde0bc602383b131f872d22b94bc92428332ee469efd4ca854154  repo/engine/src/main/java/ai/protomolt/proto/repo/engine/DocumentHistoricalOperations.java
+dd312e170e8673b5620bc3d7aaf3a2d69b91a0ad714a8068e74be7f452c8be40  repo/container/src/test/resources/runtime-inventory/NativeHistoricalMaterializationProbe.java

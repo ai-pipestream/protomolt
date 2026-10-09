@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-06T01:31:42.560Z" hostname="krick" time="3.376">
+  <properties/>
+  <testcase name="reuseBindsExactObjectVersionSourceAndSlot()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="1.483"/>
+  <testcase name="failsClosedOnNestedUnknownFieldsAndEnumsAndNul()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.015"/>
+  <testcase name="onlyOperationIdAndMemberOrderAreNormalized()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.096"/>
+  <testcase name="aggregateSourceLimitCountsAcrossMembers()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="1.119"/>
+  <testcase name="malformedLegacyOwnershipCannotBypassCommandBoundary()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.008"/>
+  <testcase name="rejectsDuplicateMembersDestinationsAndSlots()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.013"/>
+  <testcase name="rejectsConflictingSourcesIncludingDestinationPrestate()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.024"/>
+  <testcase name="canonicalVersionOneHasPinnedIdentityAndRetainsExecutableIntent()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.021"/>
+  <testcase name="successfulResultMustMatchFullCanonicalCommandAndCommittingOwner()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.067"/>
+  <testcase name="metadataInsertionOrderIsNotSemanticButChunkOrderIs()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.003"/>
+  <testcase name="historicalContractCannotReachUnimplementedExecutionOrLegacyReuse()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.066"/>
+  <testcase name="invalidUtf16CannotCollideAfterProtobufReplacement()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.004"/>
+  <testcase name="semanticChangesChangeIdentity()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.011"/>
+  <testcase name="aggregateByteOverflowAndWireBudgetAreRejectedBeforeAdmission()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.018"/>
+  <testcase name="globalSlotLimitIsIndependentOfPerMemberLimit()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.277"/>
+  <testcase name="resultCodecAcceptsAll64MembersWithinWireBudget()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationCommandTest" time="0.041"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

@@ -365,6 +365,19 @@ project(':protomolt-repo-proto').projectDir = file('repo/proto')
 include 'protomolt-repo-container'
 project(':protomolt-repo-container').projectDir = file('repo/container')
 
+include 'protomolt-repo-codec'
+project(':protomolt-repo-codec').projectDir = file('repo/codec')
+
+include 'protomolt-repo-blob-spi'
+project(':protomolt-repo-blob-spi').projectDir = file('repo/blob/spi')
+
+include 'protomolt-repo-blob-s3'
+project(':protomolt-repo-blob-s3').projectDir = file('repo/blob/s3')
+include 'protomolt-repo-blob-redis'
+project(':protomolt-repo-blob-redis').projectDir = file('repo/blob/redis')
+include 'protomolt-repo-blob-cache'
+project(':protomolt-repo-blob-cache').projectDir = file('repo/blob/cache')
+
 include 'protomolt-repo-service'
 project(':protomolt-repo-service').projectDir = file('repo/service')
 
@@ -552,3 +565,21 @@ project(':protomolt-delegation-repository').projectDir = file('transform/delegat
 
 include 'protomolt-delegation-receipt'
 project(':protomolt-delegation-receipt').projectDir = file('transform/delegation/receipt')
+
+include 'protomolt-repo-blob-grpc'
+project(':protomolt-repo-blob-grpc').projectDir = file('repo/blob/grpc')
+
+include 'protomolt-repo-spi'
+project(':protomolt-repo-spi').projectDir = file('repo/spi')
+
+include 'protomolt-repo-engine'
+project(':protomolt-repo-engine').projectDir = file('repo/engine')
+
+include 'protomolt-repo-admission'
+include 'protomolt-repo-history-grpc'
+project(':protomolt-repo-history-grpc').projectDir = file('repo/history/grpc')
+include 'protomolt-repo-publication-grpc'
+project(':protomolt-repo-publication-grpc').projectDir = file('repo/publication/grpc')
+project(':protomolt-repo-admission').projectDir = file('repo/admission')
+include 'protomolt-repo-schema-registry'
+project(':protomolt-repo-schema-registry').projectDir = file('repo/schema/registry')

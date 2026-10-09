@@ -39,6 +39,22 @@ public final class DocumentLedger {
         this.tx = tx;
     }
 
+    /** Uses the same persistence unit as document publication and its outbox. */
+    public RawObjectLedger rawObjects() { return new RawObjectLedger(tx); }
+
+    /** Reads physical publication bindings in this document ledger's persistence unit. */
+    public DocumentPublicationLedger partPublications() { return new DocumentPublicationLedger(tx); }
+
+    /**
+     * Reserve every legacy PUT/COPY destination before provider I/O. These
+     * reservations survive failed saves and row deletion; they grant no cleanup
+     * authority and cannot be converted into managed attempts.
+     */
+    public void reserveLegacyPartKeys(List<String> keys) {
+        List<String> immutableKeys = List.copyOf(keys);
+        tx.inTransaction(em -> { DocumentKeyReservations.reserve(em, immutableKeys, null); });
+    }
+
     /**
      * Insert-or-update by {@code node_id}. The service pre-populates the
      * record (including the caller-minted nodeId); an existing row with the
@@ -51,10 +67,151 @@ public final class DocumentLedger {
      * @return the stored row (detached)
      */
     public DocumentRecord save(DocumentRecord record) {
-        // Cast disambiguates the Function overload (merge's return value also
-        // matches the Consumer overload's expression-lambda shape).
-        return tx.inTransaction((Function<jakarta.persistence.EntityManager, DocumentRecord>)
-                em -> em.merge(record));
+        return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, record.accountId);
+            var stored = em.merge(record);
+            em.flush();
+            // Mutation revision is assigned by PostgreSQL, including on updates.
+            // Return the stored revision so it can fence the caller's next write.
+            em.refresh(stored);
+            return stored;
+        });
+    }
+
+    /** A candidate was prepared against a different row revision or existence state. */
+    public static final class RevisionConflictException extends RuntimeException {
+        public RevisionConflictException() { super("Document changed while the candidate was being prepared"); }
+    }
+
+    /**
+     * Publishes only against the expected revision (null means absent). The callback
+     * runs after flush/refresh in the same transaction, for the transactional outbox.
+     * No object-store work belongs in this transaction.
+     */
+    public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveIfRevision(candidate, expectedRevision, Map.of(), committed);
+    }
+
+    /**
+     * Also requires every copy source to retain its sampled revision until commit.
+     * Lock ordering is shared with ordinary guarded saves, including missing rows.
+     * Dependencies must exist; they are never updated by this operation.
+     */
+    public DocumentRecord saveIfRevision(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveGuarded(candidate, expectedRevision, sourceRevisions, (em, prior) -> {}, committed);
+    }
+
+    /** Internal until provider writes, reads and recovery use the same attempt boundary. */
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveVerifiedAttempt(candidate, expectedRevision, sourceRevisions, attemptId, token, target, () -> {}, committed);
+    }
+
+    /** Cancellation checks run inside the transaction; no check follows a successful commit. */
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            Runnable check, java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return saveVerifiedAttempt(candidate, expectedRevision, sourceRevisions, attemptId, token, target, List.of(), check, committed);
+    }
+
+    DocumentRecord saveVerifiedAttempt(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions, UUID attemptId, UUID token, DocumentPublicationTarget target,
+            List<DocumentSourceSnapshot> sourceSnapshots, Runnable check,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        return DocumentPublicationBatch.save(tx, List.of(new DocumentPublicationBatch.Publication(
+                candidate, expectedRevision, sourceRevisions, attemptId, token, target,
+                sourceSnapshots, check, committed))).getFirst();
+    }
+
+    /** Whether this document has an active managed part publication. */
+    public boolean hasPartPublication(UUID nodeId) {
+        return tx.readOnly(em -> !em.createNativeQuery("SELECT 1 FROM document_part_publications WHERE node_id=:id")
+                .setParameter("id", nodeId).getResultList().isEmpty());
+    }
+
+    private DocumentRecord saveGuarded(DocumentRecord candidate, Long expectedRevision,
+            Map<UUID, Long> sourceRevisions,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> beforeMerge,
+            java.util.function.BiConsumer<jakarta.persistence.EntityManager, DocumentRecord> committed) {
+        java.util.Objects.requireNonNull(committed, "committed");
+        Map<UUID, Long> sources = Map.copyOf(sourceRevisions);
+        return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, candidate.accountId);
+            var locked = lockRevisions(em, java.util.Set.of(candidate.nodeId), sources);
+            DocumentRecord current = locked.get(candidate.nodeId);
+            requireRevision(current, expectedRevision);
+            beforeMerge.accept(em, current);
+            DocumentRecord merged = em.merge(candidate);
+            em.flush();
+            em.refresh(merged);
+            committed.accept(em, merged);
+            return merged;
+        });
+    }
+
+    /**
+     * Shared ordering for guarded single writes and multi-document publication.
+     * Enter before staging document mutations in this transaction. A cached row
+     * whose revision differs from the locked database tuple is rejected, never
+     * refreshed one row at a time or used for policy decisions.
+     */
+    static Map<UUID, DocumentRecord> lockRevisions(jakarta.persistence.EntityManager em,
+            java.util.Set<UUID> destinations, Map<UUID, Long> sources) {
+        if (!em.getTransaction().isActive())
+            throw new IllegalStateException("Document revision locks require an active transaction");
+        if (destinations.size() > 10064 || sources.size() > 10064)
+            throw new IllegalArgumentException("Document revision locks exceed 10064 identities");
+        var identities = new java.util.TreeSet<>(sources.keySet());
+        identities.addAll(destinations);
+        // The typed command admits at most 10,000 sources and 64 destinations.
+        if (identities.size() > 10064)
+            throw new IllegalArgumentException("Document revision locks exceed 10064 identities");
+        if (identities.isEmpty()) return Map.of();
+        // Missing rows need advisory locks. Sort actual keys, since distinct UUIDs
+        // may alias a key; collisions serialize but never authenticate identity.
+        String keys = identities.stream().mapToLong(id -> id.getMostSignificantBits() ^ id.getLeastSignificantBits())
+                .distinct().sorted().mapToObj(Long::toString).collect(java.util.stream.Collectors.joining(",", "{", "}"));
+        em.createNativeQuery("SELECT lock_document_revision_keys(CAST(:keys AS bigint[]))", Boolean.class)
+                .setParameter("keys", keys).getSingleResult();
+        Map<UUID, DocumentRecord> locked = new HashMap<>();
+        var ordered = List.copyOf(identities);
+        identities.forEach(id -> locked.put(id, null));
+        for (int start = 0; start < ordered.size(); start += 256) {
+            String ids = ordered.subList(start, Math.min(start + 256, ordered.size())).stream()
+                    .map(UUID::toString).collect(java.util.stream.Collectors.joining(",", "{", "}"));
+            // PostgreSQL's UUID comparison differs from Java's signed halves.
+            // Ordinality preserves the old Java order, including across batches.
+            var rows = em.unwrap(org.hibernate.Session.class).createNativeQuery("""
+                    SELECT d.*, d.mutation_revision AS locked_revision
+                    FROM unnest(CAST(:ids AS uuid[])) WITH ORDINALITY AS requested(id, position)
+                    JOIN documents d ON d.node_id=requested.id
+                    ORDER BY requested.position FOR UPDATE OF d
+                    """, Object[].class)
+                    .addEntity("d", DocumentRecord.class).addScalar("locked_revision", Long.class)
+                    .setParameter("ids", ids).getResultList();
+            for (Object[] result : rows) {
+                DocumentRecord row = (DocumentRecord) result[0];
+                if (row.mutationRevision != (Long) result[1]) throw new RevisionConflictException();
+                locked.put(row.nodeId, row);
+            }
+        }
+        for (UUID id : identities) {
+            DocumentRecord row = locked.get(id);
+            Long revision = sources.get(id);
+            if (revision != null && (row == null || row.mutationRevision != revision.longValue()))
+                throw new RevisionConflictException();
+        }
+        return locked;
+    }
+
+    static void requireRevision(DocumentRecord current, Long expectedRevision) {
+        if (expectedRevision == null ? current != null
+                : current == null || current.mutationRevision != expectedRevision.longValue())
+            throw new RevisionConflictException();
     }
 
     /**
@@ -78,7 +235,7 @@ public final class DocumentLedger {
      * @return the row, or empty (detached)
      */
     public Optional<DocumentRecord> findByNodeIdForUpdate(UUID nodeId) {
-        // Cast disambiguates the Function overload (see DocumentLedger.save).
+        // The expression lambda also matches the Consumer overload without a cast.
         return tx.inTransaction((java.util.function.Function<jakarta.persistence.EntityManager, Optional<DocumentRecord>>)
                 em -> Optional.ofNullable(
                         em.find(DocumentRecord.class, nodeId, LockModeType.PESSIMISTIC_WRITE)));
@@ -175,10 +332,17 @@ public final class DocumentLedger {
      */
     public <T> T withLockedReference(NodeAddress address,
             Function<Optional<DocumentRecord>, T> work) {
+        return withLockedReference(address, (em, row) -> work.apply(row));
+    }
+
+    /** Transaction-aware variant for reference bindings and other atomic commit obligations. */
+    public <T> T withLockedReference(NodeAddress address,
+            java.util.function.BiFunction<jakarta.persistence.EntityManager, Optional<DocumentRecord>, T> work) {
         return tx.inTransaction(em -> {
+            DocumentSchemaPolicies.lockAccountWriter(em, address.getAccountId());
             TypedQuery<DocumentRecord> query = referenceQuery(em, address);
             query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
-            return work.apply(query.getResultStream().findFirst());
+            return work.apply(em, query.getResultStream().findFirst());
         });
     }
 
@@ -233,7 +397,22 @@ public final class DocumentLedger {
      * @return one page and the total count across all pages
      */
     public ListDocumentsResult list(ListDocumentsFilter filter) {
-        return tx.readOnly(em -> {
+        return list(filter, null, null);
+    }
+
+    /** Evaluates visibility before count and offset, within one database cursor transaction. */
+    public ListDocumentsResult listVisible(ListDocumentsFilter filter, java.util.Set<String> accountIds,
+            java.util.function.Predicate<DocumentRecord> visible) {
+        var accounts = java.util.Set.copyOf(accountIds);
+        java.util.Objects.requireNonNull(visible, "visible");
+        if (accounts.size() > 1024) throw new IllegalArgumentException("At most 1024 account bindings are supported per listing");
+        if (accounts.isEmpty()) return new ListDocumentsResult(List.of(), 0);
+        return list(filter, accounts, visible);
+    }
+
+    private ListDocumentsResult list(ListDocumentsFilter filter, java.util.Set<String> accountIds,
+            java.util.function.Predicate<DocumentRecord> visible) {
+        Function<jakarta.persistence.EntityManager, ListDocumentsResult> query = em -> {
             // The listing serves "the documents": rows tombstoned for purge
             // (or stuck in PURGE_FAILED) are logically deleted and must not
             // be re-discovered by listers — a replay resubmitting a
@@ -259,6 +438,31 @@ public final class DocumentLedger {
                 params.put("accountId", filter.accountId());
             }
 
+            if (accountIds != null) {
+                where.append(" AND d.accountId IN :permittedAccounts");
+                params.put("permittedAccounts", accountIds);
+                TypedQuery<DocumentRecord> scan = em.createQuery(
+                        "SELECT d FROM DocumentRecord d " + where
+                                + " ORDER BY d.createdAt ASC, d.nodeId ASC", DocumentRecord.class);
+                params.forEach(scan::setParameter);
+                scan.setHint("org.hibernate.fetchSize", 256);
+                scan.setHint("org.hibernate.readOnly", true);
+                var rows = new ArrayList<DocumentRecord>();
+                long total = 0;
+                try (var stream = scan.getResultStream()) {
+                    var iterator = stream.iterator();
+                    while (iterator.hasNext()) {
+                        DocumentRecord row = iterator.next();
+                        boolean allowed = visible.test(row);
+                        em.detach(row);
+                        if (!allowed) continue;
+                        if (total >= filter.offset() && rows.size() < filter.effectiveLimit()) rows.add(row);
+                        total++;
+                    }
+                }
+                return new ListDocumentsResult(List.copyOf(rows), total);
+            }
+
             TypedQuery<Long> count = em.createQuery(
                     "SELECT COUNT(d) FROM DocumentRecord d " + where, Long.class);
             params.forEach(count::setParameter);
@@ -274,7 +478,8 @@ public final class DocumentLedger {
                 page.setFirstResult((int) Math.min(filter.offset(), Integer.MAX_VALUE));
             }
             return new ListDocumentsResult(page.getResultList(), total);
-        });
+        };
+        return accountIds == null ? tx.readOnly(query) : tx.inTransaction(query);
     }
 
     /**

@@ -1,0 +1,12 @@
+description = 'S3 byte storage adapter'
+dependencies {
+    api project(':protomolt-repo-blob-spi')
+    api libs.awssdk.s3
+    testImplementation project(':protomolt-repo-codec')
+    implementation libs.awssdk.url.connection.client
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'jedis', 'hibernate-core', 'HikariCP', 'postgresql', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

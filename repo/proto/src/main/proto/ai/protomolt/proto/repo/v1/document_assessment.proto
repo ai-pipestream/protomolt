@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/schema_asset.proto";
+import "ai/protomolt/proto/repo/v1/schema_asset_reference.proto";
+import "ai/protomolt/proto/repo/v1/schema_occurrence.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Protected operation evidence, not a receipt, authority or mounted service.
+// The future codec must bound bytes before parsing, refuse unknown fields,
+// canonicalize unique member/reference/root lists, and bind the complete command.
+// Retaining this message does not retain its referenced bytes. A terminal handler
+// must verify frozen replay, own every candidate/schema/evidence asset for the
+// declared replay period, and recheck owner, policy and document/source authority.
+message DocumentPublicationAssessmentManifest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "assessment-failure-member"
+    message: "a failure must select a retained root of a typed member"
+    expression: "!has(this.first_failure) || this.members.exists(m, m.member_id == this.first_failure.member_id && has(m.typed) && m.typed.roots.exists(r, r == this.first_failure.root))"
+  };
+  // The only defined encoding version.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Operation key, scoped by account and authenticated principal.
+  string operation_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Exact account scope, not inferred from a storage path.
+  string account_id = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Trusted operation principal, never a credential.
+  string principal = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Generation whose completed assessment is bound to the decision.
+  int64 owner_generation = 5 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // Canonical complete command; it supplies member, slot and fragment identities.
+  string command_sha256 = 6 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Existing command codec.
+  string command_codec = 7 [(ai.protomolt.proto.validate.v1.field).string.const = "document-publication"];
+  // Existing command version.
+  uint32 command_version = 8 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Active account policy generation, independently fenced at decision time.
+  int64 policy_revision = 9 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  // Digest of immutable policy bytes, not an active-pointer substitute.
+  string policy_sha256 = 10 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Exact evaluation instant shared by every member; never rounded to SQL micros.
+  DocumentAssessmentInstant evaluated_at = 11 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Host-observed runtime configuration, never trusted merely because supplied.
+  DocumentAssessmentRuntime runtime = 12 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exactly the command's members in canonical member-ID order; no duplicates.
+  repeated DocumentMemberAssessment members = 13 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64}];
+  // Absent for accepted values; required by a future admission-rejection handler.
+  // This is protected diagnostic identity, not public receipt text.
+  DocumentAssessmentFailure first_failure = 14;
+}
+
+// Exact java.time.Instant-compatible value within protobuf's calendar range.
+message DocumentAssessmentInstant {
+  // Seconds since Unix epoch, including dates before that epoch.
+  int64 epoch_seconds = 1 [(ai.protomolt.proto.validate.v1.field).int64 = {gte: -62135596800, lte: 253402300799}];
+  // Nonnegative fractional nanoseconds, including for negative epoch seconds.
+  uint32 nanos = 2 [(ai.protomolt.proto.validate.v1.field).uint32.lt = 1000000000];
+}
+
+// Identity of the observed runtime, not instructions to load executable code.
+// The handler verifies a complete implementation dependency closure (including
+// validator, both rule sources, CEL engine and protobuf runtime), unique names,
+// actual build versions/digests and JVM identity. A version label alone is not a
+// content identity. Current-runtime replay must not claim historical execution.
+message DocumentAssessmentRuntime {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "assessment-runtime-artifacts"
+    message: "all implementation artifacts require exact content identities"
+    expression: "this.implementation_artifacts.all(a, has(a.artifact_sha256))"
+  };
+  // Pins ProtomoltRuleSource then ProtovalidateRuleSource, and structural ceilings.
+  string validation_profile = 1 [(ai.protomolt.proto.validate.v1.field).string.const = "protomolt-retained-schema-admission/v1"];
+  // Explicit current taxonomy/postal configuration; no external catalog claim.
+  string catalog_configuration = 2 [(ai.protomolt.proto.validate.v1.field).string.const = "empty-taxonomy-and-postal/v1"];
+  // Complete observed code dependency identities, sorted by unique tool name.
+  repeated SchemaToolIdentity implementation_artifacts = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64}];
+  // Observed vendor/runtime name and exact build version. Never inferred from protoc.
+  // Unlike implementation_artifacts, a JVM artifact digest is optional.
+  SchemaToolIdentity jvm = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Every member explicitly selects typed assessment or opaque preservation.
+message DocumentMemberAssessment {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "member-assessment-mode"
+    message: "an explicit typed or opaque mode is required"
+    expression: "has(this.typed) || has(this.opaque)"
+  };
+  // Exact command member ID; equality and completeness are handler checks.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[a-zA-Z0-9_.-]+$"}];
+  // One mode, with no automatic downgrade on typed failure.
+  oneof mode {
+    // Complete typed selection and occurrence evidence.
+    DocumentTypedAssessment typed = 2;
+    // Explicit preservation only; no successful typed validation claim.
+    bool opaque = 3 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+  }
+}
+
+// Referenced bytes are normalized assets, not embedded descriptor copies.
+message DocumentTypedAssessment {
+  // Descriptor/metadata association for the containing Document layout.
+  RepositorySchemaAssetReference container = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unique payload associations; together with container at most 64 per member.
+  // Empty is valid when every payload reuses the containing schema association.
+  // Handler requires all and only the associations consumed by frozen replay.
+  repeated RepositorySchemaAssetReference payload_schemas = 2 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 63];
+  // Complete roots sorted by ordinal then evidence SHA; unique loaded locators.
+  repeated DocumentAssessmentRootReference roots = 3 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 1024}];
+}
+
+// Reference to canonical DocumentRootSchemaEvidence bytes for one member part.
+message DocumentAssessmentRootReference {
+  // Complete member ordinal, including EMPTY slots; EMPTY cannot own a root.
+  uint32 ordinal = 1 [(ai.protomolt.proto.validate.v1.field).uint32.lt = 10000];
+  // Exact canonical root evidence codec.
+  string codec = 2 [(ai.protomolt.proto.validate.v1.field).string.const = "document-root-schema-evidence"];
+  // Only the current root evidence version is supported.
+  uint32 version = 3 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Digest of the complete evidence bytes, including locator and all occurrences.
+  string sha256 = 4 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}
+
+// Protected first-failure identity. Field/rule text and typed map keys may contain
+// user data; never copy this message into a public receipt. No validator message
+// text is retained. Handler verifies this is the first complete value violation
+// under canonical command member order, then part/root traversal order, and the
+// recorded runtime/evaluation instant. Manifest sorting cannot choose a failure.
+message DocumentAssessmentFailure {
+  // Exact typed member whose completed assessment failed.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[a-zA-Z0-9_.-]+$"}];
+  // Identifies one of that member's retained complete root evidence bundles.
+  DocumentAssessmentRootReference root = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete occurrence path, including the boundary of the failing Any payload.
+  // A root-payload failure has one boundary step; verify membership in root evidence.
+  RepositorySchemaOccurrencePath occurrence = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Validator field path; empty is valid for a message-level constraint.
+  string field_path = 4 [(ai.protomolt.proto.validate.v1.field).string.max_len = 16384];
+  // Bounded internal rule identity, not a public message.
+  string rule_id = 5 [(ai.protomolt.proto.validate.v1.field).string.max_len = 16384];
+  // Bounded internal rule path.
+  string rule_path = 6 [(ai.protomolt.proto.validate.v1.field).string.max_len = 16384];
+}

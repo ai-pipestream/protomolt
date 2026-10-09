@@ -1,0 +1,956 @@
+package ai.protomolt.proto.repo.service;
+
+import ai.protomolt.proto.repo.blob.spi.*;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.container.ledger.DocumentPublicationLedger;
+import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
+import ai.protomolt.proto.repo.container.ledger.*;
+import ai.protomolt.proto.repo.engine.DocumentPartReader;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.junit.jupiter.api.*;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.localstack.LocalStackContainer;
+import org.testcontainers.utility.DockerImageName;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
+import static org.assertj.core.api.Assertions.*;
+
+/** Real provider byte reads. Publication/authorization SQL is tested separately. */
+@Testcontainers
+class DocumentPartReaderIT {
+    @Container static final org.testcontainers.postgresql.PostgreSQLContainer POSTGRES =
+            new org.testcontainers.postgresql.PostgreSQLContainer("postgres:18-alpine");
+    @Container static final LocalStackContainer S3 = new LocalStackContainer(
+            DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
+    static OpenedBlobStore opened;
+    static BlobStore store;
+    static S3Client admin;
+    static final String NAMESPACE = "document-read-original";
+    static final String GENERATION = "original-generation";
+    static ManagedBackendLedger.Profile profile;
+    static LedgerDatabase database;
+    static Tx tx;
+    static DocumentLedger documents;
+    static DriveLedger drives;
+
+    @BeforeAll static void open() {
+        opened = BlobStores.discover().open("s3", Map.ofEntries(
+                Map.entry("endpoint", S3.getEndpoint().toString()),
+                Map.entry("region", S3.getRegion()),
+                Map.entry("access-key", S3.getAccessKey()),
+                Map.entry("secret-key", S3.getSecretKey()),
+                Map.entry("path-style", "true"),
+                Map.entry("conditional-writes", "false"),
+                Map.entry("credentials-mode", "static"),
+                Map.entry("api-call-timeout-ms", "300000"),
+                Map.entry("api-attempt-timeout-ms", "60000"),
+                Map.entry("connection-timeout-ms", "10000"),
+                Map.entry("socket-timeout-ms", "60000")));
+        store = opened.store();
+        opened.ensureNamespace(NAMESPACE);
+        admin = S3Client.builder().endpointOverride(S3.getEndpoint()).region(Region.of(S3.getRegion()))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3.getAccessKey(), S3.getSecretKey())))
+                .forcePathStyle(true).build();
+        admin.putBucketVersioning(b -> b.bucket(NAMESPACE).versioningConfiguration(v -> v.status(BucketVersioningStatus.ENABLED)));
+        profile = new ManagedBackendLedger.Profile(new BackendIdentity("s3", "s3/v1", Map.of(
+                "endpoint", S3.getEndpoint().toString(), "region", S3.getRegion(), "path-style", "true")), "original-realm");
+        database = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
+        tx = new Tx(database.entityManagerFactory());
+        documents = new DocumentLedger(tx);
+        drives = new DriveLedger(tx);
+        new ManagedBackendLedger(tx).bind(GENERATION, profile);
+    }
+    @AfterAll static void close() throws Exception {
+        if (admin != null) admin.close();
+        if (opened != null) opened.close();
+        if (database != null) database.close();
+    }
+    private static DocumentPublicationLedger.Publication publish(byte[] bytes) {
+        String key = "documents/read-test/" + UUID.randomUUID() + "/core.pb";
+        var put = store.put(new BlobStore.PutSpec(NAMESPACE, key, "application/protobuf", Map.of(), DocumentPartCodec.sha256Hex(bytes)), bytes);
+        var measured = store.get(NAMESPACE, key, put.versionId());
+        assertThat(measured.data()).isEqualTo(bytes);
+        var part = new DocumentPublicationLedger.Part(DocumentPart.DOCUMENT_PART_CORE, "", key, bytes.length,
+                DocumentPartCodec.sha256Hex(bytes), measured.versionId(), measured.eTag());
+        return new DocumentPublicationLedger.Publication(UUID.randomUUID(), GENERATION, profile, NAMESPACE,
+                DocumentManifest.getDefaultInstance(), List.of(part));
+    }
+    private static DocumentPartReader reader() {
+        return new DocumentPartReader((generation, original) -> {
+            assertThat(generation).isEqualTo(GENERATION);
+            assertThat(original).isEqualTo(profile);
+            return store;
+        });
+    }
+
+    private record Mixed(DocumentPublicationLedger.Publication publication, List<byte[]> bytes) {}
+    /** Real versioned provider objects; this constructs a read snapshot, not a mixed SQL publication. */
+    private static Mixed mixed() {
+        String namespace="mixed-"+UUID.randomUUID();
+        opened.ensureNamespace(namespace);
+        admin.putBucketVersioning(b -> b.bucket(namespace).versioningConfiguration(v -> v.status(BucketVersioningStatus.ENABLED)));
+        String shared="mixed/"+UUID.randomUUID();
+        var bytes=List.of(new byte[]{1,2},new byte[]{3,4,5},new byte[]{6});
+        var bound=new java.util.ArrayList<DocumentPublicationLedger.BoundPart>();
+        for (int i=0;i<3;i++) {
+            String ns=i==1?NAMESPACE:namespace;
+            String generation=i==1?GENERATION:"second-generation";
+            String key=i==2?shared+"-other":shared;
+            byte[] content=bytes.get(i);
+            var put=store.put(new BlobStore.PutSpec(ns,key,"application/protobuf",Map.of(),DocumentPartCodec.sha256Hex(content)),content);
+            var verified=store.get(ns,key,put.versionId());
+            assertThat(verified.data()).isEqualTo(content);
+            var part=new DocumentPublicationLedger.Part(i==1?DocumentPart.DOCUMENT_PART_CORE:DocumentPart.DOCUMENT_PART_CHUNKS,
+                    i==1?"":"chunk-"+i,key,content.length,DocumentPartCodec.sha256Hex(content),verified.versionId(),verified.eTag());
+            bound.add(new DocumentPublicationLedger.BoundPart(part,new DocumentPublicationLedger.Binding(generation,profile,ns)));
+            // A latest-key read would now return different bytes.
+            store.put(new BlobStore.PutSpec(ns,key,"application/protobuf",Map.of(),null),new byte[]{9});
+        }
+        return new Mixed(new DocumentPublicationLedger.Publication(UUID.randomUUID(),DocumentManifest.getDefaultInstance(),bound),bytes);
+    }
+
+    @Test void mixedBindingsPreserveOrderVersionsAndOneAggregateBudget() {
+        var fixture=mixed();
+        var calls=new java.util.HashMap<String,Integer>();
+        var budget=new PayloadBudget(12);
+        try (var reader=new DocumentPartReader((generation,original) -> {
+            assertThat(original).isEqualTo(profile); calls.merge(generation,1,Integer::sum); return store;
+        },2,1024,budget)) {
+            try (var batch=reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(batch.parts()).hasSize(3);
+                for (int i=0;i<3;i++) assertThat(batch.parts().get(i).bytes()).isEqualTo(fixture.bytes.get(i));
+                assertThat(budget.reservedBytes()).isEqualTo(12);
+            }
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(calls).containsExactlyInAnyOrderEntriesOf(Map.of(GENERATION,1,"second-generation",1));
+        }
+    }
+
+    @Test void missingSelectedBackendFailsWithoutAffectingUnselectedBindings() {
+        var fixture=mixed();
+        var calls=new java.util.ArrayList<String>();
+        try (var reader=new DocumentPartReader((generation,original) -> {
+            calls.add(generation); return generation.equals(GENERATION)?store:null;
+        })) {
+            try (var batch=reader.readFragments(fixture.publication,Set.of(DocumentPart.DOCUMENT_PART_CORE),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+                assertThat(batch.parts().getFirst().bytes()).isEqualTo(fixture.bytes.get(1));
+            }
+            assertThat(calls).containsExactly(GENERATION);
+            assertThatThrownBy(() -> reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        }
+    }
+
+    @Test void mixedBindingsCannotReserveSeparatePayloadBudgets() {
+        var fixture=mixed(); var budget=new PayloadBudget(11);
+        var resolutions=new java.util.concurrent.atomic.AtomicInteger();
+        try (var reader=new DocumentPartReader((g,p) -> { resolutions.incrementAndGet(); return store; },2,1024,budget)) {
+            assertThatThrownBy(() -> reader.readFragments(fixture.publication,Set.of(),Set.of(),ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE))
+                    .isInstanceOfSatisfying(RepositoryException.class,e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(resolutions.get()).isZero();
+        }
+    }
+
+    private record Bound(Document expected, DocumentRecord row, DriveRecord drive) {}
+
+    /** Fixture uses guarded SQL publication, not a claim that the public managed writer is enabled. */
+    private static Bound bound() {
+        String docId = "doc-" + UUID.randomUUID();
+        var address = NodeAddress.newBuilder().setAccountId("account").setDocId(docId)
+                .setGraphId("intake:account").setGraphAddressId("source").build();
+        UUID node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+        UUID attemptId = UUID.randomUUID();
+        var doc = Document.newBuilder().setDocId(docId)
+                .setOwnership(OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")).build();
+        byte[] bytes = doc.toByteArray();
+        String prefix = "documents/account/" + node + "/attempts/" + attemptId + "/";
+        String key = prefix + "core.pb";
+        String hash = DocumentPartCodec.sha256Hex(bytes);
+        var attempts = new DocumentPartAttemptLedger(tx);
+        var attempt = attempts.begin(new DocumentPartAttemptLedger.Plan(attemptId,
+                new DocumentPartAttemptLedger.Location(node, "account", GENERATION, NAMESPACE), 0, Map.of(),
+                List.of(new DocumentPartAttemptLedger.PlannedObject(DocumentPart.DOCUMENT_PART_CORE, "", key,
+                        bytes.length, hash, "application/protobuf"))), java.time.Duration.ofMinutes(5));
+        var put = store.put(new BlobStore.PutSpec(NAMESPACE, key, "application/protobuf", Map.of(), hash), bytes);
+        var actual = store.get(NAMESPACE, key, put.versionId());
+        assertThat(actual.data()).isEqualTo(bytes);
+        attempts.verify(attempt.id(), attempt.token(), key, actual.data().length,
+                DocumentPartCodec.sha256Hex(actual.data()), actual.versionId(), actual.eTag());
+        var drive = new DriveRecord();
+        drive.driveId = UUID.randomUUID(); drive.accountId = "account"; drive.name = "read-" + node;
+        drive.driveType = "INTAKE"; drive.bucket = NAMESPACE;
+        drives.insert(drive);
+        var row = new DocumentRecord();
+        row.nodeId = node; row.accountId = "account"; row.docId = doc.getDocId();
+        row.graphId = "intake:account"; row.graphAddressId = "source";
+        row.rowKind = DocumentRowKind.INTAKE; row.datasourceId = "source";
+        row.createdAt = java.time.Instant.now(); row.updatedAt = row.createdAt;
+        row.driveName = drive.name; row.objectKey = prefix; row.versionId = actual.versionId(); row.etag = actual.eTag();
+        row.sizeBytes = (long) bytes.length;
+        var manifest = DocumentManifest.newBuilder().setDocVersion(1)
+                .setAddress(NodeAddress.newBuilder().setAccountId(row.accountId).setDocId(row.docId)
+                        .setGraphId(row.graphId).setGraphAddressId(row.graphAddressId))
+                .addParts(PartManifestEntry.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)
+                        .setState(PartState.PART_STATE_PRESENT).setObjectKey(key).setSizeBytes(bytes.length).setSha256(hash)).build();
+        row.writeManifest(manifest); row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest);
+        var saved = documents.saveIfRevision(row, null, (em, committed) -> {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_publication_history(attempt_id,node_id,publication_revision,body)
+                    SELECT :attempt,node_id,mutation_revision,document_publication_body(documents) FROM documents WHERE node_id=:node
+                    """).setParameter("attempt", attempt.id()).setParameter("node", node).executeUpdate();
+            em.createNativeQuery("INSERT INTO document_part_publications(node_id,attempt_id) VALUES (:node,:attempt)")
+                    .setParameter("node", node).setParameter("attempt", attempt.id()).executeUpdate();
+        });
+        return new Bound(doc, saved, drive);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void sourceBatchSharesBudgetThroughActualWriterPublication(boolean enoughCapacity) throws Exception {
+        var original = bound();
+        var source = DocumentSourceSnapshot.bound(tx, original.row);
+        long bytes = source.manifest().getPartsList().stream().mapToLong(PartManifestEntry::getSizeBytes).sum();
+        var budget = new PayloadBudget(4 * bytes - (enoughCapacity ? 0 : 1));
+        var reader = new DocumentPartReader((generation, retained) -> {
+            assertThat(generation).isEqualTo(GENERATION);
+            assertThat(retained).isEqualTo(profile);
+            return store;
+        }, 2, 256L * 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        UUID attemptId = UUID.randomUUID();
+        String prefix = "documents/account/" + source.nodeId() + "/attempts/" + attemptId + "/";
+        try (var batch = reader.readSource(source, null, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            assertThat(budget.reservedBytes()).isEqualTo(2 * bytes);
+            var planned = batch.parts().stream().map(p -> new DocumentPartAttemptLedger.PlannedObject(
+                    p.part(), p.subKey(), DocumentPartCodec.objectKey(prefix, p.part(), p.subKey()),
+                    p.bytes().length, p.sha256(), "application/protobuf")).toList();
+            var plan = new DocumentPartAttemptLedger.Plan(attemptId,
+                    new DocumentPartAttemptLedger.Location(source.nodeId(), "account", GENERATION, NAMESPACE),
+                    source.revision(), Map.of(source.nodeId(), source.revision()), planned);
+            java.util.concurrent.Callable<DocumentRecord> write = () -> writer.write(plan, source.manifest().getAddress(),
+                    original.drive, batch.parts(), java.time.Duration.ofMinutes(1), Map.of(), List.of(source), parts -> {
+                        assertThat(budget.reservedBytes()).isEqualTo(2 * bytes); // staging workers have drained
+                        var row = original.row;
+                        var core = parts.getFirst();
+                        row.objectKey = prefix; row.versionId = core.providerVersion(); row.etag = core.etag();
+                        var manifest = source.manifest().toBuilder().setDocVersion(2).clearParts();
+                        for (var p : parts) manifest.addParts(PartManifestEntry.newBuilder().setPart(p.part()).setSubKey(p.subKey())
+                                .setObjectKey(p.key()).setSizeBytes(p.size()).setSha256(p.sha256()).setState(PartState.PART_STATE_PRESENT));
+                        row.writeManifest(manifest.build()); row.checksum = DocumentPartCodec.rootChecksumFromManifest(manifest.build());
+                        return row;
+                    }, () -> {}, (em, saved) -> {});
+            if (enoughCapacity) {
+                var saved = write.call();
+                assertThat(saved.mutationRevision).isGreaterThan(source.revision());
+                var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+                assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+                assertThat(store.getBounded(NAMESPACE, publication.parts().getFirst().key(),
+                        publication.parts().getFirst().providerVersion(), (int) bytes).data())
+                        .containsExactly(batch.parts().getFirst().bytes());
+            } else {
+                assertThatThrownBy(write::call).hasRootCauseInstanceOf(PayloadBudget.CapacityExceededException.class);
+                assertThat(new DocumentPartAttemptLedger(tx).find(attemptId)).isEmpty();
+                assertThat(documents.findByNodeId(source.nodeId()).orElseThrow().mutationRevision).isEqualTo(source.revision());
+            }
+            assertThat(budget.reservedBytes()).isEqualTo(2 * bytes);
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void explicitlyComposedEnginePublishesFullSaveThenDeduplicatesWithoutNewAttempt() throws Exception {
+        var original = bound();
+        var budget = new PayloadBudget(1024 * 1024);
+        var reader = new DocumentPartReader((g, p) -> store, 4, 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        var outbox = new ai.protomolt.proto.repo.container.lifecycle.JdbcEventOutbox(tx);
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), outbox, GENERATION, reader, writer);
+        var request = SaveDocumentRequest.newBuilder().setDocument(original.expected).setDrive(original.drive.name)
+                .setGraphId(original.row.graphId).setUseDatasourceId(true).setForceSave(true).build();
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        try {
+            var response = engine.saveDocument(caller, request);
+            assertThat(response.getDeduplicated()).isFalse();
+            var saved = documents.findByNodeId(original.row.nodeId).orElseThrow();
+            var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+            assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+            assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(original.expected);
+            long attempts = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
+                    .setParameter("node", saved.nodeId).getSingleResult()).longValue());
+            var deduped = engine.saveDocument(caller, request.toBuilder().setForceSave(false).build());
+            assertThat(deduped.getDeduplicated()).isTrue();
+            var after = documents.findByNodeId(saved.nodeId).orElseThrow();
+            assertThat(after.reprocessCount).isEqualTo(saved.reprocessCount + 1);
+            assertThat(new DocumentPublicationLedger(tx).findForRead(after).orElseThrow().revisionId()).isEqualTo(publication.revisionId());
+            long afterAttempts = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_part_attempts WHERE node_id=:node")
+                    .setParameter("node", saved.nodeId).getSingleResult()).longValue());
+            long savedEvents = tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM document_events_outbox WHERE kafka_key=:id")
+                    .setParameter("id", saved.docId).getSingleResult()).longValue());
+            assertThat(afterAttempts).isEqualTo(attempts);
+            assertThat(savedEvents).isEqualTo(1);
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void managedPartialSavePreservesSourceOrderAndProvenance(boolean legacySource, boolean rewriteAll) throws Exception {
+        var fixture = bound();
+        var budget = new PayloadBudget(1024 * 1024);
+        var reader = new DocumentPartReader((g, p) -> store, 4, 1024 * 1024, budget);
+        var writer = new DocumentAttemptWriter(tx, drives, GENERATION, profile.identity(), opened, budget);
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, GENERATION, reader, writer);
+        var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("operator", true);
+        var firstWriter = WriteProvenance.newBuilder().setModuleId("first").build();
+        var nextWriter = WriteProvenance.newBuilder().setModuleId("next").build();
+        var original = fixture.expected.toBuilder().setDocId(UUID.randomUUID().toString()).setSearchMetadata(
+                SearchMetadata.newBuilder().addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("b"))
+                        .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("a"))).build();
+        var seed = SaveDocumentRequest.newBuilder().setDocument(original).setDrive(fixture.drive.name)
+                .setGraphId(fixture.row.graphId).setUseDatasourceId(true).setWrittenBy(firstWriter).build();
+        try {
+            var initial = (legacySource ? engine(reader) : engine).saveDocument(caller, seed);
+            var before = documents.findByNodeId(UUID.fromString(initial.getNodeId())).orElseThrow();
+            var oldCore = before.readManifest().getPartsList().stream().filter(p -> p.getPart() == DocumentPart.DOCUMENT_PART_CORE).findFirst().orElseThrow();
+            var oldA = before.readManifest().getPartsList().stream().filter(p -> p.getSubKey().equals("a")).findFirst().orElseThrow();
+            var changed = original.toBuilder().setSearchMetadata(SearchMetadata.newBuilder()
+                    .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("b").setChunkerConfigId("updated"))
+                    .addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("c"))).build();
+            var request = seed.toBuilder().setDocument(changed).setWrittenBy(nextWriter)
+                    .addPartsWritten(DocumentPart.DOCUMENT_PART_CHUNKS).addChunkSetsWritten("b").addChunkSetsWritten("c")
+                    .setCopyUnwrittenPartsFrom(before.readManifest().getAddress()).build();
+            if (rewriteAll) {
+                request = request.toBuilder().addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
+                        .addChunkSetsWritten("a").setDocument(changed.toBuilder().setSearchMetadata(
+                                changed.getSearchMetadata().toBuilder().addSemanticResults(
+                                        original.getSearchMetadata().getSemanticResults(1)))).build();
+            }
+            engine.saveDocument(caller, request);
+            var saved = documents.findByNodeId(before.nodeId).orElseThrow();
+            var publication = new DocumentPublicationLedger(tx).findForRead(saved).orElseThrow();
+            assertThat(publication.manifest().getDocVersion()).isEqualTo(2);
+            var assembled = reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance());
+            assertThat(assembled.getSearchMetadata().getSemanticResultsList()).extracting(SemanticProcessingResult::getResultId)
+                    .containsExactly("b", "a", "c");
+            assertThat(assembled.getSearchMetadata().getSemanticResults(0).getChunkerConfigId()).isEqualTo("updated");
+            for (var old : List.of(oldCore, oldA)) {
+                var current = publication.manifest().getPartsList().stream().filter(p -> p.getPart() == old.getPart()
+                        && p.getSubKey().equals(old.getSubKey())).findFirst().orElseThrow();
+                assertThat(current.getSha256()).isEqualTo(old.getSha256());
+                assertThat(current.getWrittenBy()).isEqualTo(rewriteAll ? nextWriter : firstWriter);
+                if (!rewriteAll) assertThat(current.getUpdatedAt()).isEqualTo(old.getUpdatedAt());
+                assertThat(current.getObjectKey()).isNotEqualTo(old.getObjectKey());
+            }
+            assertThat(publication.manifest().getPartsList().stream().filter(p -> p.getSubKey().equals("b") || p.getSubKey().equals("c")))
+                    .allSatisfy(p -> assertThat(p.getWrittenBy()).isEqualTo(nextWriter));
+        } finally {
+            writer.close(); reader.close();
+            assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();
+        }
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    private static ai.protomolt.proto.repo.engine.DocumentOperations engine(DocumentPartReader reader) {
+        return new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, store,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, null, reader);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"before", "after_put", "deadline"})
+    void controlledSaveDoesNotPublishAfterCancellation(String point) {
+        var seed = bound();
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean(point.equals("before"));
+        var writes = new java.util.concurrent.atomic.AtomicInteger();
+        var control = new ai.protomolt.proto.repo.spi.RepositoryOperationControl() {
+            @Override public boolean isCancelled() { return cancelled.get(); }
+            @Override public long remainingNanos() { return point.equals("deadline") && cancelled.get() ? 0 : Long.MAX_VALUE; }
+        };
+        BlobStore observed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    Object result;
+                    try { result = method.invoke(store, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    if (method.getName().equals("put")) { writes.incrementAndGet(); cancelled.set(true); }
+                    return result;
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, observed,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null);
+        var doc = seed.expected().toBuilder().setDocId("cancel-" + UUID.randomUUID()).build();
+        var request = SaveDocumentRequest.newBuilder().setDocument(doc).setDrive(seed.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").build();
+        assertThatThrownBy(() -> engine.saveDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request, control))
+                .isInstanceOfSatisfying(RepositoryException.class, error -> assertThat(error.code()).isEqualTo(
+                        point.equals("deadline") ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.CANCELLED));
+        var address = seed.row().readManifest().getAddress().toBuilder().setDocId(doc.getDocId()).build();
+        assertThat(documents.findByReference(address)).isEmpty();
+        assertThat(writes.get()).isEqualTo(point.equals("before") ? 0 : 1);
+    }
+
+    @Test void grpcSaveCancellationAfterRealPutPreventsPublication() throws Exception {
+        var seed = bound();
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var serverContext = new java.util.concurrent.atomic.AtomicReference<io.grpc.Context>();
+        BlobStore delayed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        Object result = method.invoke(store, args);
+                        if (method.getName().equals("put")) {
+                            entered.countDown();
+                            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("PUT gate timed out");
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, delayed,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null);
+        var finished = new java.util.concurrent.CountDownLatch(1);
+        var monitored = (ai.protomolt.proto.repo.spi.DocumentRepository) java.lang.reflect.Proxy.newProxyInstance(
+                ai.protomolt.proto.repo.spi.DocumentRepository.class.getClassLoader(),
+                new Class<?>[] {ai.protomolt.proto.repo.spi.DocumentRepository.class}, (proxy, method, args) -> {
+                    try { return method.invoke(engine, args); }
+                    catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    finally { if (method.getName().equals("saveDocument")) finished.countDown(); }
+                });
+        var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        String name = "cancel-save-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
+                .addService(new DocumentGrpcService(monitored, new ai.protomolt.proto.repo.engine.BlobOperations(store, drives), caller -> {
+                    serverContext.set(io.grpc.Context.current());
+                    return new ai.protomolt.proto.repo.spi.RepositoryCaller(caller.name(), caller.unrestricted());
+                })).build().start();
+        var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).directExecutor().build();
+        var context = io.grpc.Context.current().withCancellation();
+        var doc = seed.expected().toBuilder().setDocId("grpc-cancel-" + UUID.randomUUID()).build();
+        var request = SaveDocumentRequest.newBuilder().setDocument(doc).setDrive(seed.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").build();
+        try {
+            var reply = context.call(() -> DocumentServiceGrpc.newFutureStub(channel).saveDocument(request));
+            assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            context.cancel(null);
+            assertThatThrownBy(() -> reply.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(io.grpc.StatusRuntimeException.class);
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+            while (!serverContext.get().isCancelled() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(serverContext.get().isCancelled()).isTrue();
+            release.countDown();
+            assertThat(finished.await(5, java.util.concurrent.TimeUnit.SECONDS)).as("server save returned").isTrue();
+            var address = seed.row().readManifest().getAddress().toBuilder().setDocId(doc.getDocId()).build();
+            assertThat(documents.findByReference(address)).isEmpty();
+        } finally {
+            release.countDown(); context.close(); channel.shutdownNow(); server.shutdownNow();
+            assertThat(channel.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void legacyWriterCannotRewriteOrCopyBoundPublication(boolean copy) {
+        var seeded = bound();
+        var touched = new java.util.concurrent.atomic.AtomicInteger();
+        BlobStore guarded = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    touched.incrementAndGet();
+                    throw new AssertionError("Unqualified legacy writer reached provider " + method.getName());
+                });
+        var engine = new ai.protomolt.proto.repo.engine.DocumentOperations(documents, drives, tx, guarded,
+                new ai.protomolt.proto.repo.container.blob.PartStorage(),
+                new ai.protomolt.proto.repo.container.lifecycle.JdbcPurgeQueue(tx), null, null, reader());
+        var request = SaveDocumentRequest.newBuilder().setDocument(seeded.expected()).setDrive(seeded.drive().name)
+                .setUseDatasourceId(true).setGraphId("intake:account").setForceSave(true);
+        if (copy) request.setDocument(seeded.expected().toBuilder().setDocId("copy-" + UUID.randomUUID()))
+                .addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
+                .setCopyUnwrittenPartsFrom(seeded.row().readManifest().getAddress());
+        assertThatThrownBy(() -> engine.saveDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request.build()))
+                .isInstanceOfSatisfying(RepositoryException.class,
+                        e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+        assertThat(touched.get()).isZero();
+        assertThat(documents.findByNodeId(seeded.row().nodeId).orElseThrow().mutationRevision).isEqualTo(seeded.row().mutationRevision);
+        assertThat(engine.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true),
+                GetDocumentRequest.newBuilder().setNodeId(seeded.row().nodeId.toString()).build()).getDocument()).isEqualTo(seeded.expected());
+    }
+
+    @Test void boundReadUsesOriginalNamespaceLocallyAndOverGrpcAfterDriveChanges() throws Exception {
+        var seeded = bound();
+        assertThat(new DocumentPublicationLedger(tx).findForRead(seeded.row()).orElseThrow().parts())
+                .extracting(DocumentPublicationLedger.Part::contentType).containsExactly("application/protobuf");
+        tx.inTransaction(em -> {
+            em.createNativeQuery("UPDATE drives SET bucket='unrelated-current-bucket' WHERE drive_id=:id")
+                    .setParameter("id", seeded.drive().driveId).executeUpdate();
+        });
+        var engine = engine(reader());
+        String name = "bound-read-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
+                .addService(new DocumentGrpcService(engine, new ai.protomolt.proto.repo.engine.BlobOperations(store, drives))).build().start();
+        var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+        try {
+            var request = GetDocumentRequest.newBuilder().setNodeId(seeded.row().nodeId.toString()).build();
+            assertThat(engine.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request).getDocument())
+                    .isEqualTo(seeded.expected());
+            assertThat(DocumentServiceGrpc.newBlockingStub(channel).getDocument(request).getDocument()).isEqualTo(seeded.expected());
+            assertThat(DocumentServiceGrpc.newBlockingStub(channel).getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                    .setAddress(seeded.row().readManifest().getAddress()).build()).getDocument()).isEqualTo(seeded.expected());
+        } finally {
+            channel.shutdownNow(); server.shutdownNow();
+            assertThat(channel.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing-reader", "missing-backend", "missing-version", "unavailable", "wrong-etag", "wrong-content-type", "missing-content-type"})
+    void boundFailuresHaveTheSameMeaningLocallyAndOverGrpc(String defect) throws Exception {
+        var seeded = bound();
+        var publication = new DocumentPublicationLedger(tx).findForRead(seeded.row()).orElseThrow();
+        var part = publication.parts().getFirst();
+        if (defect.equals("missing-version"))
+            admin.deleteObject(b -> b.bucket(publication.boundParts().getFirst().binding().namespace()).key(part.key()).versionId(part.providerVersion()));
+        BlobStore injected = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("getBounded")) {
+                            if (defect.equals("unavailable"))
+                                throw new BlobStoreException(BlobStoreException.Code.UNAVAILABLE, "Injected provider failure", null);
+                            if (defect.equals("wrong-etag")) {
+                                var actual = (BlobStore.GetResult) result;
+                                return new BlobStore.GetResult(actual.data(), actual.contentType(), "wrong-etag", actual.versionId());
+                            }
+                            if (defect.equals("wrong-content-type") || defect.equals("missing-content-type")) {
+                                var actual = (BlobStore.GetResult) result;
+                                return new BlobStore.GetResult(actual.data(),
+                                        defect.equals("missing-content-type") ? null : "text/plain",
+                                        actual.eTag(), actual.versionId());
+                            }
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var reader = defect.equals("missing-reader") ? null
+                : new DocumentPartReader((g, p) -> defect.equals("missing-backend") ? null : injected);
+        var engine = engine(reader);
+        var expected = switch (defect) {
+            case "missing-reader", "missing-backend" -> RepositoryException.Code.FAILED_PRECONDITION;
+            case "unavailable" -> RepositoryException.Code.UNAVAILABLE;
+            default -> RepositoryException.Code.DATA_LOSS;
+        };
+        String name = "bound-failure-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
+                .addService(new DocumentGrpcService(engine, new ai.protomolt.proto.repo.engine.BlobOperations(store, drives))).build().start();
+        var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+        try {
+            var request = GetDocumentRequest.newBuilder().setNodeId(seeded.row().nodeId.toString()).build();
+            assertThatThrownBy(() -> engine.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request))
+                    .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(expected));
+            assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(channel).getDocument(request))
+                    .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class,
+                            e -> assertThat(e.getStatus().getCode().name()).isEqualTo(expected.name()));
+        } finally {
+            channel.shutdownNow(); server.shutdownNow();
+            assertThat(channel.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void grpcCancellationStopsOutstandingBoundRead(boolean deadline) throws Exception {
+        var seeded = bound();
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var workerCancelled = new java.util.concurrent.CountDownLatch(1);
+        BlobStore delayed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("getBounded")) {
+                            entered.countDown();
+                            try {
+                                if (!release.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                                    throw new AssertionError("Provider fault gate was not released");
+                            } catch (InterruptedException cancelled) {
+                                Thread.currentThread().interrupt();
+                                workerCancelled.countDown();
+                                throw new BlobStoreException(BlobStoreException.Code.CANCELLED, "Injected read cancelled", cancelled);
+                            }
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var engine = engine(new DocumentPartReader((g, p) -> delayed));
+        String name = "cancel-bound-read-" + UUID.randomUUID();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
+                .addService(new DocumentGrpcService(engine, new ai.protomolt.proto.repo.engine.BlobOperations(store, drives))).build().start();
+        var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
+        var context = io.grpc.Context.current().withCancellation();
+        var reply = new java.util.concurrent.CompletableFuture<GetDocumentResponse>();
+        try {
+            var stub = DocumentServiceGrpc.newStub(channel);
+            var timed = deadline ? stub.withDeadlineAfter(10, java.util.concurrent.TimeUnit.SECONDS) : stub;
+            context.run(() -> timed.getDocument(GetDocumentRequest.newBuilder().setNodeId(seeded.row().nodeId.toString()).build(),
+                    new io.grpc.stub.StreamObserver<>() {
+                        @Override public void onNext(GetDocumentResponse value) { reply.complete(value); }
+                        @Override public void onError(Throwable failure) { reply.completeExceptionally(failure); }
+                        @Override public void onCompleted() {}
+                    }));
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            if (!deadline) context.cancel(null);
+            assertThatThrownBy(() -> reply.get(15, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(io.grpc.StatusRuntimeException.class)
+                    .satisfies(e -> assertThat(io.grpc.Status.fromThrowable(e.getCause()).getCode()).isEqualTo(
+                            deadline ? io.grpc.Status.Code.DEADLINE_EXCEEDED : io.grpc.Status.Code.CANCELLED));
+            // Client completion alone would pass even if the server leaked its worker.
+            // The gate follows real GET completion; this does not prove HTTP I/O is interruptible.
+            assertThat(workerCancelled.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    .as("server propagates cancellation to its outstanding provider read").isTrue();
+        } finally {
+            release.countDown(); context.close();
+            channel.shutdownNow(); server.shutdownNow();
+            assertThat(channel.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(server.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+    @Test void carriedFragmentsPreserveWireBytesThatParsingWouldNormalize() throws Exception {
+        var output = new java.io.ByteArrayOutputStream();
+        var coded = com.google.protobuf.CodedOutputStream.newInstance(output);
+        coded.writeString(Document.DOC_ID_FIELD_NUMBER, "earlier");
+        coded.writeString(Document.DOC_ID_FIELD_NUMBER, "final");
+        coded.flush();
+        byte[] bytes = output.toByteArray();
+        assertThat(Document.parseFrom(bytes).getDocId()).isEqualTo("final");
+        assertThat(Document.parseFrom(bytes).toByteArray()).isNotEqualTo(bytes);
+        var publication = publish(bytes);
+        // A replacement at the same key must not change the recorded version being carried.
+        opened.store().put(new ai.protomolt.proto.repo.blob.spi.BlobStore.PutSpec(NAMESPACE,
+                publication.parts().getFirst().key(), "application/protobuf", java.util.Map.of(), null),
+                Document.newBuilder().setDocId("replacement").build().toByteArray());
+        try (var batch = reader().readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+        var fragments = batch.parts();
+        assertThat(fragments).hasSize(1);
+        assertThat(fragments.getFirst().bytes()).containsExactly(bytes);
+        assertThat(fragments.getFirst().sha256()).isEqualTo(publication.parts().getFirst().sha256());
+        assertThat(fragments.getFirst().part()).isEqualTo(DocumentPart.DOCUMENT_PART_CORE);
+        assertThat(fragments.getFirst().subKey()).isEmpty();
+        }
+    }
+
+    @Test void carriedFragmentsOwnTheirBytesIndependentlyOfProviderBuffer() {
+        byte[] expected = Document.newBuilder().setDocId("detached").build().toByteArray();
+        var publication = publish(expected);
+        var providerBuffer = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        BlobStore observed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, arguments) -> {
+                    try {
+                        Object result = method.invoke(store, arguments);
+                        if (method.getName().equals("getBounded")) providerBuffer.set(((BlobStore.GetResult) result).data());
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        try (var batch = new DocumentPartReader((generation, retained) -> observed).readFragments(publication,
+                Set.of(), Set.of(), ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+        var fragments = batch.parts();
+        java.util.Arrays.fill(providerBuffer.get(), (byte) 0);
+        assertThat(fragments.getFirst().bytes()).containsExactly(expected);
+        assertThat(DocumentPartCodec.sha256Hex(fragments.getFirst().bytes())).isEqualTo(fragments.getFirst().sha256());
+        }
+    }
+
+    @Test void readsRecordedVersionAfterLatestBytesAreReplaced() {
+        var expected = Document.newBuilder().setDocId("original").build();
+        var publication = publish(expected.toByteArray());
+        var part = publication.parts().getFirst();
+        assertThat(part.providerVersion()).isNotBlank().isNotEqualTo("null");
+        byte[] replacement = Document.newBuilder().setDocId("replacement").build().toByteArray();
+        store.put(new BlobStore.PutSpec(NAMESPACE, part.key(), "application/protobuf", Map.of(), null), replacement);
+        assertThat(store.get(NAMESPACE, part.key()).data()).isEqualTo(replacement);
+        assertThat(reader().read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+    }
+    @Test void missingRecordedVersionIsDataLossEvenWhenLatestExists() {
+        var publication = publish(Document.newBuilder().setDocId("missing").build().toByteArray());
+        var part = publication.parts().getFirst();
+        store.put(new BlobStore.PutSpec(NAMESPACE, part.key(), "application/protobuf", Map.of(), null), new byte[0]);
+        admin.deleteObject(b -> b.bucket(NAMESPACE).key(part.key()).versionId(part.providerVersion()));
+        assertThat(store.get(NAMESPACE, part.key()).data()).isEmpty();
+        assertThatThrownBy(() -> reader().read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.DATA_LOSS));
+    }
+    @Test void checksumMismatchCannotBecomeSuccessfulDocument() {
+        var publication = publish(Document.newBuilder().setDocId("corrupt").build().toByteArray());
+        var p = publication.parts().getFirst();
+        var bad = new DocumentPublicationLedger.Publication(publication.revisionId(), GENERATION, profile, NAMESPACE,
+                publication.manifest(), List.of(new DocumentPublicationLedger.Part(p.part(), p.subKey(), p.key(), p.size(),
+                        "00".repeat(32), p.providerVersion(), p.etag())));
+        assertThatThrownBy(() -> reader().read(bad, Set.of(), Set.of(), Document.getDefaultInstance()))
+                .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.DATA_LOSS));
+    }
+    @Test void matchingHashDoesNotMakeMalformedProtobufReadable() {
+        var publication = publish(new byte[] {(byte) 0xff});
+        assertThatThrownBy(() -> reader().read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.DATA_LOSS))
+                .hasCauseInstanceOf(com.google.protobuf.InvalidProtocolBufferException.class);
+    }
+    @Test void cancelledCallsRetainCapacityUntilProviderReturns() throws Exception {
+        var expected = Document.newBuilder().setDocId("capacity").build();
+        var publication = publish(expected.toByteArray());
+        var entered = new java.util.concurrent.CountDownLatch(2);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var exited = new java.util.concurrent.CountDownLatch(2);
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        BlobStore delayed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("getBounded")) {
+                            calls.incrementAndGet(); entered.countDown();
+                            boolean interrupted = false;
+                            try {
+                                while (release.getCount() != 0) {
+                                    try { release.await(); }
+                                    catch (InterruptedException injected) { interrupted = true; }
+                                }
+                            } finally {
+                                if (interrupted) Thread.currentThread().interrupt();
+                                exited.countDown();
+                            }
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        long reservation = 2L * expected.toByteArray().length;
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(2 * reservation);
+        var reader = new DocumentPartReader((g, p) -> delayed, 2, 256L * 1024 * 1024, budget);
+        var first = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
+        var second = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
+        var one = Thread.ofVirtual().start(first);
+        var two = Thread.ofVirtual().start(second);
+        try {
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            one.interrupt(); two.interrupt();
+            one.join(2000); two.join(2000);
+            assertThat(one.isAlive()).isFalse(); assertThat(two.isAlive()).isFalse();
+            assertThatThrownBy(() -> first.get()).hasCauseInstanceOf(RepositoryException.class);
+            assertThatThrownBy(() -> second.get()).hasCauseInstanceOf(RepositoryException.class);
+            assertThat(budget.reservedBytes()).isEqualTo(2 * reservation);
+            assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThat(calls.get()).isEqualTo(2);
+        } finally {
+            release.countDown();
+            assertThat(exited.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            one.join(10000); two.join(10000);
+        }
+        // The gate's exit precedes permit release by a few instructions; retry only admission contention.
+        long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (true) {
+            try {
+                assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+                // The other cancelled worker can finish just after the replacement read.
+                break;
+            } catch (RepositoryException contention) {
+                if (contention.code() != RepositoryException.Code.RESOURCE_EXHAUSTED || System.nanoTime() >= until) throw contention;
+                Thread.sleep(10);
+            }
+        }
+        long drained = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (budget.reservedBytes() != 0 && System.nanoTime() < drained) Thread.sleep(10);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void fragmentBatchOwnsSharedReservationUntilClosed() {
+        var expected = Document.newBuilder().setDocId("batch-owner").build();
+        var publication = publish(expected.toByteArray());
+        long reservation = 2L * expected.toByteArray().length;
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(reservation);
+        var reader = new DocumentPartReader((g, p) -> store, 2, 256L * 1024 * 1024, budget);
+        var batch = reader.readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE);
+        try {
+            assertThat(budget.reservedBytes()).isEqualTo(reservation);
+            assertThat(batch.parts().getFirst().bytes()).containsExactly(expected.toByteArray());
+            assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED));
+            assertThatThrownBy(() -> budget.reserve(1))
+                    .isInstanceOf(ai.protomolt.proto.repo.blob.spi.PayloadBudget.CapacityExceededException.class);
+        } finally { batch.close(); }
+        batch.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(batch::parts).isInstanceOf(IllegalStateException.class);
+        assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void smallConcurrencyLimitPreservesMultiPartOrderAndSelection() {
+        var chunks = SearchMetadata.newBuilder();
+        for (int i = 0; i < 8; i++) chunks.addSemanticResults(SemanticProcessingResult.newBuilder().setResultId("set-" + i));
+        var expected = Document.newBuilder().setDocId("ordered").setSearchMetadata(chunks).build();
+        var parts = new java.util.ArrayList<DocumentPublicationLedger.Part>();
+        for (var fragment : DocumentPartCodec.split(expected, ai.protomolt.proto.repo.codec.PartLayouts.document())) {
+            var stored = publish(fragment.bytes()).parts().getFirst();
+            parts.add(new DocumentPublicationLedger.Part(fragment.part(), fragment.subKey(), stored.key(), stored.size(),
+                    stored.sha256(), stored.providerVersion(), stored.etag()));
+        }
+        assertThat(parts.size()).isGreaterThan(2);
+        var publication = new DocumentPublicationLedger.Publication(UUID.randomUUID(), GENERATION, profile, NAMESPACE,
+                DocumentManifest.getDefaultInstance(), parts);
+        var lastChunkRead = new java.util.concurrent.CountDownLatch(1);
+        BlobStore outOfOrder = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("getBounded")) {
+                            if (args[1].equals(parts.getLast().key())) lastChunkRead.countDown();
+                            if (args[1].equals(parts.get(1).key()) && !lastChunkRead.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                                throw new AssertionError("Later chunks did not progress while the first chunk was delayed");
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var reader = new DocumentPartReader((g, p) -> outOfOrder, 2);
+        assertThat(reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance())).isEqualTo(expected);
+        var selected = reader.read(publication, Set.of(DocumentPart.DOCUMENT_PART_CHUNKS), Set.of("set-3"), Document.getDefaultInstance());
+        assertThat(selected.getSearchMetadata().getSemanticResultsList()).extracting(SemanticProcessingResult::getResultId)
+                .containsExactly("set-3");
+    }
+
+    @Test void closeWaitsForEnteredResolverAndDoesNotCloseReturnedBatches() throws Exception {
+        var publication = publish(Document.newBuilder().setDocId("resolver-drain").build().toByteArray());
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var reader = new DocumentPartReader((generation, profile) -> {
+            entered.countDown();
+            try {
+                if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Resolver gate timed out");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+            return store;
+        });
+        var task = new java.util.concurrent.FutureTask<Document>(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()));
+        var caller = Thread.ofVirtual().start(task);
+        try {
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofMillis(20))).isFalse();
+        } finally { release.countDown(); }
+        assertThatThrownBy(() -> task.get(10, java.util.concurrent.TimeUnit.SECONDS)).hasCauseInstanceOf(RepositoryException.class);
+        caller.join(10000);
+        assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(10))).isTrue();
+
+        var independent = reader();
+        try (var batch = independent.readFragments(publication, Set.of(), Set.of(),
+                ai.protomolt.proto.repo.spi.RepositoryReadControl.NONE)) {
+            independent.close();
+            assertThat(independent.awaitIdle(java.time.Duration.ZERO)).isTrue();
+            assertThat(batch.parts()).hasSize(1);
+        }
+    }
+
+    @Test void absentOriginalBackendFailsExplicitly() {
+        var publication = publish(Document.newBuilder().setDocId("unavailable").build().toByteArray());
+        assertThatThrownBy(() -> new DocumentPartReader((generation, original) -> null)
+                .read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"interrupt", "cancel", "deadline", "close"})
+    void cancellationReturnsWithoutWaitingForUncooperativeProvider(String signal) throws Exception {
+        var publication = publish(Document.newBuilder().setDocId("cancel").build().toByteArray());
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var workerExited = new java.util.concurrent.CountDownLatch(1);
+        // Read real bytes, then model a provider that does not respond to interruption.
+        BlobStore delayed = (BlobStore) java.lang.reflect.Proxy.newProxyInstance(BlobStore.class.getClassLoader(),
+                new Class<?>[] {BlobStore.class}, (proxy, method, args) -> {
+                    try {
+                        var result = method.invoke(store, args);
+                        if (method.getName().equals("getBounded")) {
+                            entered.countDown();
+                            boolean interrupted = false;
+                            try {
+                                while (release.getCount() != 0) {
+                                    try { release.await(); }
+                                    catch (InterruptedException expected) { interrupted = true; }
+                                }
+                            } finally {
+                                if (interrupted) Thread.currentThread().interrupt();
+                                workerExited.countDown();
+                            }
+                        }
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var remaining = new java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE);
+        var control = new ai.protomolt.proto.repo.spi.RepositoryReadControl() {
+            @Override public boolean isCancelled() { return cancelled.get(); }
+            @Override public long remainingNanos() { return remaining.get(); }
+        };
+        var reader = new DocumentPartReader((g, p) -> delayed);
+        assertThatThrownBy(() -> reader.awaitIdle(java.time.Duration.ZERO)).isInstanceOf(IllegalStateException.class);
+        var task = new java.util.concurrent.FutureTask<Document>(() -> reader
+                .read(publication, Set.of(), Set.of(), Document.getDefaultInstance(), control));
+        var caller = Thread.ofVirtual().start(task);
+        try {
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            switch (signal) {
+                case "interrupt" -> caller.interrupt();
+                case "cancel" -> cancelled.set(true);
+                case "deadline" -> remaining.set(0);
+                case "close" -> reader.close();
+                default -> throw new AssertionError(signal);
+            }
+            caller.join(2000);
+            assertThat(caller.isAlive()).as("cancelled read must not wait for provider shutdown").isFalse();
+            assertThatThrownBy(() -> task.get(1, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(RepositoryException.class)
+                    .satisfies(e -> assertThat(((RepositoryException) e.getCause()).code()).isEqualTo(
+                            signal.equals("deadline") ? RepositoryException.Code.DEADLINE_EXCEEDED : RepositoryException.Code.CANCELLED));
+            reader.close();
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofMillis(20))).isFalse();
+            assertThatThrownBy(() -> reader.read(publication, Set.of(), Set.of(), Document.getDefaultInstance()))
+                    .isInstanceOfSatisfying(RepositoryException.class,
+                            e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+        } finally {
+            release.countDown();
+            assertThat(workerExited.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            caller.join(10000);
+            reader.close();
+            assertThat(reader.awaitIdle(java.time.Duration.ofSeconds(10))).isTrue();
+        }
+    }
+}

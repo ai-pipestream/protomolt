@@ -7,6 +7,9 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  * no framework configuration binding. Production uses {@link #fromEnvironment()};
  * tests construct it directly against their containers.
  *
+ * @param repoCredential upstream repository API credential, required for TCP repo storage
+ * @param managedStorage explicit managed-byte retention qualification; enabled
+ *        composition requires S3 backing capabilities and enabled lifecycle recovery
  * @param grpcPort the gRPC listen port ({@code DOCUMENT_PLATFORM_GRPC_PORT},
  *        default 9090; 0 = ephemeral port, for tests that read it back from
  *        the started server)
@@ -32,7 +35,7 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_HTTP_PORT}, default 8080; {@code 0} or
  *        {@code "off"} disables the HTTP server — see {@link RepoServiceMain};
  *        tests that want an ephemeral port call
- *        {@code RepoServices.startHttp(0)} directly)
+ *        {@code RepoServices.startHttp(0, token)} directly)
  * @param blobStore which {@code BlobStore} implementation backs the services
  *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
  *        direct object-storage path), {@code "repo"} (delegate bytes to
@@ -46,9 +49,7 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_REPO_TARGET}, {@code host:port} for
  *        {@code "repo"}, an in-process server name for
  *        {@code "repo-inprocess"}); required for both {@code repo} modes
- * @param repoDrive the drive name the repo-backed store addresses on the
- *        remote service ({@code DOCUMENT_PLATFORM_REPO_DRIVE}, default
- *        {@code "default"}) — see {@code RemoteBlobStore}
+ * @param repoDrive legacy constructor field; routing uses repoBucketBindings instead
  * @param redisUri the Redis connection URI
  *        ({@code DOCUMENT_PLATFORM_REDIS_URI}, default
  *        {@code redis://localhost:6379}) — used by the {@code redis} and
@@ -108,6 +109,7 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC}, default
  *        {@code "document-purges"}); used only when {@code purgeQueue} is
  *        {@code "kafka"}
+ * @param repoBucketBindings explicit local bucket to remote drive map for remote modes
  * @param s3ConditionalWrites explicitly enable conditional S3 writes only for a
  *        qualified backing endpoint ({@code DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES},
  *        default false)
@@ -139,7 +141,128 @@ public record RepoServiceConfig(
         String seedAccountId,
         String purgeQueue,
         String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        java.util.Map<String, String> repoBucketBindings,
+        ManagedStoragePolicy managedStorage,
+        RemoteRepositoryCredential repoCredential) {
+
+    /** Configuration without an upstream credential; TCP repository startup requires one. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        java.util.Map<String, String> repoBucketBindings,
+        ManagedStoragePolicy managedStorage) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, managedStorage, null);
+    }
+
+    /** Credential for the upstream repository, independent of this host's inbound token. */
+    public RepoServiceConfig withRepoCredential(RemoteRepositoryCredential credential) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, managedStorage, credential);
+    }
+
+    /** Compatibility constructor: managed ingestion requires separate explicit qualification. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        java.util.Map<String, String> repoBucketBindings) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, ManagedStoragePolicy.disabled());
+    }
+
+    public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, policy, repoCredential);
+    }
+
+
+    /** Compatibility constructor; remote mode requires explicit bindings before startup. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
         boolean s3ConditionalWrites) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, java.util.Map.of());
+    }
+
+    /** Copies this configuration with explicit local-bucket to remote-drive bindings. */
+    public RepoServiceConfig withRepoBucketBindings(java.util.Map<String, String> bindings) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings, managedStorage, repoCredential);
+    }
+
+    public static final String ENV_REPO_API_TOKEN = "DOCUMENT_PLATFORM_REPO_API_TOKEN";
+
+    public static final String ENV_REPO_BUCKET_BINDINGS = "DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS";
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -356,6 +479,14 @@ public record RepoServiceConfig(
     }
 
     public RepoServiceConfig {
+        java.util.Objects.requireNonNull(managedStorage, "managedStorage");
+        repoBucketBindings = java.util.Map.copyOf(repoBucketBindings);
+        var remoteTargets = new java.util.HashSet<String>();
+        for (var binding : repoBucketBindings.entrySet()) {
+            if (binding.getKey().isBlank() || binding.getValue().isBlank()
+                    || !remoteTargets.add(binding.getValue()))
+                throw new IllegalArgumentException("Remote bucket bindings must be nonblank and one-to-one");
+        }
         if (grpcPort < 0) {
             grpcPort = DEFAULT_GRPC_PORT;
         }
@@ -387,20 +518,23 @@ public record RepoServiceConfig(
                 && !blobStore.equals(BLOB_STORE_REDIS)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_BLOB_STORE
-                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache"
-                    + " (got \"" + blobStore + "\")");
+                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache");
         }
         if (s3ConditionalWrites && !blobStore.equals(BLOB_STORE_S3)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_S3_CONDITIONAL_WRITES
                     + " requires s3 or s3-redis-cache backing storage");
         }
+        if (!repoBucketBindings.isEmpty() && !blobStore.equals(BLOB_STORE_REPO)
+                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS))
+            throw new IllegalArgumentException("Remote bucket bindings require a remote storage mode");
         repoTarget = blankToNull(repoTarget);
         if ((blobStore.equals(BLOB_STORE_REPO) || blobStore.equals(BLOB_STORE_REPO_INPROCESS))
                 && repoTarget == null) {
             throw new IllegalArgumentException(ENV_REPO_TARGET + " is required when " + ENV_BLOB_STORE
                     + "=" + blobStore);
         }
+        if (blobStore.equals(BLOB_STORE_REPO)) RemoteRouting.endpoint(repoTarget);
         if (repoDrive == null || repoDrive.isBlank()) {
             repoDrive = DEFAULT_REPO_DRIVE;
         }
@@ -434,7 +568,7 @@ public record RepoServiceConfig(
         purgeQueue = purgeQueue.trim().toLowerCase(java.util.Locale.ROOT);
         if (!purgeQueue.equals(PURGE_QUEUE_JDBC) && !purgeQueue.equals(PURGE_QUEUE_KAFKA)) {
             throw new IllegalArgumentException(ENV_PURGE_QUEUE
-                    + " must be one of jdbc|kafka (got \"" + purgeQueue + "\")");
+                    + " must be one of jdbc|kafka");
         }
         if (purgeQueue.equals(PURGE_QUEUE_KAFKA) && kafkaBootstrapServers == null) {
             throw new IllegalArgumentException(ENV_KAFKA_BOOTSTRAP_SERVERS + " is required when "
@@ -472,83 +606,47 @@ public record RepoServiceConfig(
      * @return the resolved config
      */
     public static RepoServiceConfig fromEnvironment() {
+        return fromEnvironment(System.getenv());
+    }
+
+    /** Parse one environment snapshot, refusing malformed configured limits and flags. */
+    public static RepoServiceConfig fromEnvironment(java.util.Map<String, String> environment) {
+        var env = new RepositoryEnvironment(environment);
         return new RepoServiceConfig(
-                parseIntOrDefault(System.getenv(ENV_GRPC_PORT), DEFAULT_GRPC_PORT),
-                LedgerConfig.fromEnvironment(),
-                System.getenv(ENV_S3_ENDPOINT),
-                envOrDefault(ENV_S3_REGION, DEFAULT_S3_REGION),
-                System.getenv(ENV_S3_ACCESS_KEY),
-                System.getenv(ENV_S3_SECRET_KEY),
-                envOrDefault(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
-                parseHttpPort(System.getenv(ENV_HTTP_PORT)),
-                envOrDefault(ENV_BLOB_STORE, BLOB_STORE_S3),
-                System.getenv(ENV_REPO_TARGET),
-                envOrDefault(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
-                envOrDefault(ENV_REDIS_URI, DEFAULT_REDIS_URI),
-                parseIntOrDefault(System.getenv(ENV_REDIS_TTL_SECONDS), DEFAULT_REDIS_TTL_SECONDS),
-                parseLongOrDefault(System.getenv(ENV_REDIS_MAX_OBJECT_BYTES),
-                        DEFAULT_REDIS_MAX_OBJECT_BYTES),
-                parseBoolOrDefault(System.getenv(ENV_LIFECYCLE_ENABLED), DEFAULT_LIFECYCLE_ENABLED),
-                parseLongOrDefault(System.getenv(ENV_PURGE_INTERVAL_MS), DEFAULT_PURGE_INTERVAL_MS),
-                parseLongOrDefault(System.getenv(ENV_SWEEP_INTERVAL_MS), DEFAULT_SWEEP_INTERVAL_MS),
-                parseBoolOrDefault(System.getenv(ENV_RECONCILE_ENABLED), DEFAULT_RECONCILE_ENABLED),
-                parseBoolOrDefault(System.getenv(ENV_RECONCILE_DRY_RUN), DEFAULT_RECONCILE_DRY_RUN),
-                parseLongOrDefault(System.getenv(ENV_RECONCILE_MIN_AGE_MS),
-                        DEFAULT_RECONCILE_MIN_AGE_MS),
-                System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
-                envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
-                System.getenv(ENV_SCHEMA_REGISTRY_URL),
-                System.getenv(ENV_SEED_ACCOUNT_ID),
-                envOrDefault(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
-                envOrDefault(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
-                parseBoolOrDefault(System.getenv(ENV_S3_CONDITIONAL_WRITES), false));
-    }
-
-    /** HTTP port parse: {@code "off"} (and {@code "0"}) disables the HTTP server. */
-    private static int parseHttpPort(String value) {
-        if (value != null && value.trim().equalsIgnoreCase("off")) {
-            return 0;
-        }
-        return parseIntOrDefault(value, DEFAULT_HTTP_PORT);
-    }
-
-    private static String envOrDefault(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
+                (int) env.number(ENV_GRPC_PORT, DEFAULT_GRPC_PORT, 0, 65535),
+                LedgerConfig.fromEnvironment(environment),
+                environment.get(ENV_S3_ENDPOINT),
+                env.text(ENV_S3_REGION, DEFAULT_S3_REGION),
+                environment.get(ENV_S3_ACCESS_KEY),
+                environment.get(ENV_S3_SECRET_KEY),
+                env.text(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
+                env.httpPort(ENV_HTTP_PORT, DEFAULT_HTTP_PORT),
+                env.text(ENV_BLOB_STORE, BLOB_STORE_S3),
+                environment.get(ENV_REPO_TARGET),
+                env.text(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
+                env.text(ENV_REDIS_URI, DEFAULT_REDIS_URI),
+                (int) env.number(ENV_REDIS_TTL_SECONDS, DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
+                env.number(ENV_REDIS_MAX_OBJECT_BYTES, DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
+                env.flag(ENV_LIFECYCLE_ENABLED, DEFAULT_LIFECYCLE_ENABLED),
+                env.number(ENV_PURGE_INTERVAL_MS, DEFAULT_PURGE_INTERVAL_MS, 1, Long.MAX_VALUE),
+                env.number(ENV_SWEEP_INTERVAL_MS, DEFAULT_SWEEP_INTERVAL_MS, 1, Long.MAX_VALUE),
+                env.flag(ENV_RECONCILE_ENABLED, DEFAULT_RECONCILE_ENABLED),
+                env.flag(ENV_RECONCILE_DRY_RUN, DEFAULT_RECONCILE_DRY_RUN),
+                env.number(ENV_RECONCILE_MIN_AGE_MS, DEFAULT_RECONCILE_MIN_AGE_MS, 0, Long.MAX_VALUE),
+                environment.get(ENV_KAFKA_BOOTSTRAP_SERVERS),
+                env.text(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
+                environment.get(ENV_SCHEMA_REGISTRY_URL),
+                environment.get(ENV_SEED_ACCOUNT_ID),
+                env.text(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
+                env.text(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
+                env.flag(ENV_S3_CONDITIONAL_WRITES, false), RemoteBucketBindings.parse(environment.get(ENV_REPO_BUCKET_BINDINGS)),
+                ManagedStoragePolicy.fromEnvironment(environment),
+                environment.containsKey(ENV_REPO_API_TOKEN)
+                        ? new RemoteRepositoryCredential(environment.get(ENV_REPO_API_TOKEN)) : null);
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    private static long parseLongOrDefault(String value, long fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    /** Boolean parse: {@code "true"/"1"/"yes"/"on"} (case-insensitive) is true, anything else false. */
-    private static boolean parseBoolOrDefault(String value, boolean fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
-        return v.equals("true") || v.equals("1") || v.equals("yes") || v.equals("on");
-    }
 }

@@ -1,0 +1,1 @@
+update archive_stats set current_bytes=$1,entries=$2,retained_bytes=$3,versions=$4 where account_id=$5 and archive=$6

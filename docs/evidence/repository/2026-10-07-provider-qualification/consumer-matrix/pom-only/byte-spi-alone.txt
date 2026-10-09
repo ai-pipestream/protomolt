@@ -1,0 +1,10 @@
+row: byte-spi-alone
+metadata-mode: pom-only
+allowed-provider-families: []
+
+declared:
+ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9
+
+resolved:
+:repository-published-consumer:unspecified
+ai.pipestream:protomolt-repo-blob-spi:0.1.0-provider-qualification-abba0c2b9

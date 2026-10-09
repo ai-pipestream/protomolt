@@ -1,0 +1,3 @@
+c271228293ec30c344e3afa1789809242fbb216790e25e2896da522682665c88  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationAbandonment.java
+35dc1712864ceeed35641b9ec8c5c5fb5c2c3172ac7ecbf9dea941ed731bd6c2  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationAbandonmentIT.java
+28671e7397e69b2ce21a4af59214d7990a43add24217f91a4b20cb36064cb168  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentCaptureAdmissionClosureIT.java

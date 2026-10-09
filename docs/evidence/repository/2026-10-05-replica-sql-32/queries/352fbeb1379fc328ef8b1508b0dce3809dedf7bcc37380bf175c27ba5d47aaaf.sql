@@ -1,0 +1,1 @@
+select aer1_0.entry_uuid,aer1_0.account_id,aer1_0.archive,aer1_0.classification,aer1_0.classification_state,aer1_0.content_type,aer1_0.created_at,aer1_0.current_version,aer1_0.entry_id,aer1_0.filename,aer1_0.metadata,aer1_0.mutation_revision,aer1_0.source_modified_at,aer1_0.source_uri,aer1_0.title,aer1_0.updated_at from archive_entries aer1_0 where aer1_0.entry_uuid=$1

@@ -1,0 +1,1 @@
+select dr1_0.drive_id,dr1_0.account_id,dr1_0.bucket,dr1_0.created_at,dr1_0.credentials_ref,dr1_0.drive_type,dr1_0.metadata,dr1_0.name,dr1_0.prefix,dr1_0.provider,dr1_0.provider_config,dr1_0.region,dr1_0.status from drives dr1_0 where dr1_0.account_id=$1 and dr1_0.name=$2

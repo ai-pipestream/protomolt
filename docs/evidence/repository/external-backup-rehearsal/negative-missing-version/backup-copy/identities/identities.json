@@ -1,0 +1,517 @@
+{
+  "accounts": [
+    "rehearsal-alpha-9d296750",
+    "rehearsal-beta-9d296750"
+  ],
+  "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
+  "realm": "rehearsal-realm",
+  "endpoint": "http://127.0.0.1:46207",
+  "artifacts": {
+    "type.test/protomolt.rehearsal.Record": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+    "type.test/protomolt.rehearsal.Attachment": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412"
+  },
+  "drives": {
+    "rehearsal-alpha-9d296750": {
+      "prefix": "rehearsal-pipeline",
+      "id": "1a5c699c-1fae-3b74-a374-b47adc2b425c",
+      "bucket": "rehearsal-alpha-9d296750"
+    },
+    "rehearsal-beta-9d296750": {
+      "prefix": "rehearsal-pipeline",
+      "id": "893cbb86-9f57-3e0a-a0fd-817accab6fb8",
+      "bucket": "rehearsal-beta-9d296750"
+    }
+  },
+  "policies": {
+    "rehearsal-alpha-9d296750": "0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320",
+    "rehearsal-beta-9d296750": "5dab75e2cc7a09cb2d7930abe7e5106566cd93a287671a5b6625524f03338ee7"
+  },
+  "revisions": [
+    {
+      "tag": "alpha-v1",
+      "account": "rehearsal-alpha-9d296750",
+      "revisionId": "04be464b-9e6e-481c-8a09-466fb07e2913",
+      "mutationRevision": 1.0,
+      "operationId": "a3bc6d11-ef13-4c70-a8b6-3e7211b3f259",
+      "rawFragments": [
+        {
+          "sha256": "dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e",
+          "size": 319.0,
+          "revisionOrdinal": 0.0
+        }
+      ],
+      "commandSha256Sha256": "f3e85ada5ded79e7d3fc5165cedcc2b131921ac7600d8c80331b9efedd8530e2",
+      "policySha256": "0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "05690fc134504caedf4c7ed0f6a5bcd8de0db3bda3b25c7f633edee978b7a8dd",
+      "manifestSha256": "14e005b8cb4c96c42860532317d8c5b4ae26e84b711e0c79b584aace22b9df28",
+      "selections": [
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "2c0531e33e183e3beda4c45d28e1db676d0f7bc4cd6c70c1cd205b0edec57858",
+          "pathSha256": "af64909e33e58e54a1d335707c5a10ba587e65e8fcc9a737e679cdbf4f198a2a",
+          "steps": 1.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "alpha-v1"
+        },
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "2c0531e33e183e3beda4c45d28e1db676d0f7bc4cd6c70c1cd205b0edec57858",
+          "pathSha256": "23fa3d6e397d6dfb83e948707c768efdbdab9fdd925389cbe5a4c40f8da1fc6b",
+          "steps": 3.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-one"
+        }
+      ]
+    },
+    {
+      "tag": "alpha-v2",
+      "account": "rehearsal-alpha-9d296750",
+      "revisionId": "fd033829-9c2f-4754-8484-3c86f101b1f0",
+      "mutationRevision": 2.0,
+      "operationId": "6fc76af7-9bfa-462f-bcd4-48f8cef445ad",
+      "rawFragments": [
+        {
+          "sha256": "fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3",
+          "size": 326.0,
+          "revisionOrdinal": 0.0
+        }
+      ],
+      "commandSha256Sha256": "318e80240b1e751f4995386b4c2503b8e87bc00b2b4dc6b9431d2453f75ff4b9",
+      "policySha256": "0c613931546b48557156b5a9176811f2e236f6246a76d2e0d19c9f2254a05320",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "b8708741001f0c0e7e814d7fd5f720b5a36ace9e701cf8b3750420cd328a781f",
+      "manifestSha256": "4076327be94bb12ee84841b9aa111697bc5cee4d56a628121bf55aa157407004",
+      "selections": [
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "e8178af7c88842948b8dd04765410090edd6e35db8b3e1414d51db197002ce0a",
+          "pathSha256": "c0e6d34c14b329c1a5f92b1db1223b87c74f7dc2f7ba8d195ddcc9d379a0d071",
+          "steps": 1.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "alpha-v2"
+        },
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "e8178af7c88842948b8dd04765410090edd6e35db8b3e1414d51db197002ce0a",
+          "pathSha256": "714622e9f974061189c6c1a033170ee0639b0612d8b19d37fe029a8ac15671b3",
+          "steps": 3.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-two"
+        }
+      ]
+    },
+    {
+      "tag": "beta-v1",
+      "account": "rehearsal-beta-9d296750",
+      "revisionId": "752b475b-101f-4c5d-ac3a-886075094405",
+      "mutationRevision": 3.0,
+      "operationId": "5d791feb-e56e-4e62-bba4-3d35a2af8566",
+      "rawFragments": [
+        {
+          "sha256": "f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e",
+          "size": 291.0,
+          "revisionOrdinal": 0.0
+        }
+      ],
+      "commandSha256Sha256": "b57d7ed0b2306c34d9c4e7ae347a1bf9d597c6f645ce72dbd1d66de59ea57067",
+      "policySha256": "5dab75e2cc7a09cb2d7930abe7e5106566cd93a287671a5b6625524f03338ee7",
+      "validationProfile": "protomolt-retained-schema-admission/v1",
+      "metadataSha256": "932fa4e5e7663a1d201add95162250b6a68f71478a2ed05f3a6fa2e684fd8711",
+      "manifestSha256": "9f5ea7d3e95449e3f9b568993cce2f9c3acf3a27b4746c89521d1c77cfdc572b",
+      "selections": [
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "955f47b5d93e40876c802e4267bbfdbf0c40c019302a592721160685ef2aa74c",
+          "pathSha256": "416cabaea73835d7b8cc5737e91af23af3431ccca667c72fef85f8681b8281a7",
+          "steps": 1.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Record",
+          "artifactSha256": "ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce",
+          "expectedField": "beta-v1"
+        },
+        {
+          "revisionOrdinal": 0.0,
+          "rootSha256": "955f47b5d93e40876c802e4267bbfdbf0c40c019302a592721160685ef2aa74c",
+          "pathSha256": "813716374301bee387d76a32302cc32d288cca8021cb78f92f30b4f879aa3221",
+          "steps": 3.0,
+          "typeUrl": "type.test/protomolt.rehearsal.Attachment",
+          "artifactSha256": "d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412",
+          "expectedField": "attachment-beta"
+        }
+      ]
+    }
+  ],
+  "pending": {
+    "operationId": "1eb43384-4cea-47a5-a809-d9dfd24d4c93",
+    "principal": "operator",
+    "account": "rehearsal-alpha-9d296750",
+    "commandSha256": "c6903d864f2f49df57dffa3826a61797a9969c2a8cb7ab3400a53b231310a55c",
+    "coverage": {
+      "repository_publication_preparations": [
+        0.0,
+        1.0,
+        2.0
+      ],
+      "repository_preparation_coverage_certificates": [
+        0.0
+      ],
+      "repository_preparation_coverage_unresolved": [
+        2.0
+      ],
+      "repository_preparation_coverage_lineage": [
+        1.0
+      ],
+      "repository_successor_installs": [
+        1.0,
+        2.0
+      ],
+      "repository_successor_executions": [],
+      "repository_preparation_history_sets": [
+        0.0
+      ],
+      "repository_operation_success": [],
+      "repository_execution_claims": [
+        3.0
+      ],
+      "lineageRows": [
+        {
+          "generation": 1.0,
+          "anchorGeneration": 0.0,
+          "depth": 1.0,
+          "rootCount": 0.0,
+          "preparationSha256": "d68be969cfc32ff1e26aae70237093dc653e337e84638d0b1ec514055cc54011",
+          "anchorSha256": "f5909b223de5abcf03da7e41d75e89e5b275e5506cce6c985186f8992a0adb77"
+        }
+      ],
+      "certificateRows": [
+        {
+          "generation": 0.0,
+          "proofKind": "LIVE_ROOTS",
+          "rootCount": 0.0,
+          "preparationSha256": "f5909b223de5abcf03da7e41d75e89e5b275e5506cce6c985186f8992a0adb77",
+          "commandSha256": "c6903d864f2f49df57dffa3826a61797a9969c2a8cb7ab3400a53b231310a55c",
+          "rootsSha256": "149e1437ea8ce8988c7120b6e5f61b2bd0d492807721eb068dd0dd962f4ee161"
+        }
+      ],
+      "installRows": [
+        {
+          "generation": 1.0,
+          "successorEpoch": 2.0,
+          "installXid": "1080",
+          "preparationSha256": "d68be969cfc32ff1e26aae70237093dc653e337e84638d0b1ec514055cc54011",
+          "predecessorPreparationSha256": "f5909b223de5abcf03da7e41d75e89e5b275e5506cce6c985186f8992a0adb77"
+        },
+        {
+          "generation": 2.0,
+          "successorEpoch": 3.0,
+          "installXid": "1083",
+          "preparationSha256": "ae5467a2b473125d469b680522d2a6c6a840c83931feedf37a5d1d72eac4edbc",
+          "predecessorPreparationSha256": "d68be969cfc32ff1e26aae70237093dc653e337e84638d0b1ec514055cc54011"
+        }
+      ]
+    }
+  },
+  "documentObjects": [
+    {
+      "revisionId": "04be464b-9e6e-481c-8a09-466fb07e2913",
+      "revisionOrdinal": 0.0,
+      "part": 1.0,
+      "subKey": "",
+      "objectId": "ebd1350a-f41c-4cc9-9c60-57eff20b27a1",
+      "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-alpha-9d296750",
+      "key": "rehearsal-pipeline/documents/rehearsal-alpha-9d296750/57cc91ed-b21e-3e56-a1a4-11390e0c7b85/attempts/90fb7264-7e9b-48a8-bafd-1efd90ef63d8/part-0",
+      "providerVersion": "7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3",
+      "etag": "\"640169e712d979d2f9abd5a57f2391e2\"",
+      "sha256": "dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e",
+      "size": 319.0,
+      "contentType": "application/protobuf",
+      "verified": true
+    },
+    {
+      "revisionId": "fd033829-9c2f-4754-8484-3c86f101b1f0",
+      "revisionOrdinal": 0.0,
+      "part": 1.0,
+      "subKey": "",
+      "objectId": "c460851c-0372-4396-b24a-433b991ce682",
+      "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-alpha-9d296750",
+      "key": "rehearsal-pipeline/documents/rehearsal-alpha-9d296750/57cc91ed-b21e-3e56-a1a4-11390e0c7b85/attempts/dd6ab5ca-d83b-4fb8-9414-1f243b1922d9/part-0",
+      "providerVersion": "7c383373-11f4-445f-bf8b-8a0ab1ac278c",
+      "etag": "\"3f51935d8b1233953cff492679477c67\"",
+      "sha256": "fec94ac7f9c9b913f85f6e430638b00d44f416991dce15afd0ade5adb2472da3",
+      "size": 326.0,
+      "contentType": "application/protobuf",
+      "verified": true
+    },
+    {
+      "revisionId": "752b475b-101f-4c5d-ac3a-886075094405",
+      "revisionOrdinal": 0.0,
+      "part": 1.0,
+      "subKey": "",
+      "objectId": "b11a1156-ee4c-42d8-9d99-143f84ca45e1",
+      "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
+      "realm": "rehearsal-realm",
+      "namespace": "rehearsal-beta-9d296750",
+      "key": "rehearsal-pipeline/documents/rehearsal-beta-9d296750/018cb065-3a53-370e-b15f-2dbea13e2a2b/attempts/9d358102-9bca-4c82-b47d-083c70a7eb3d/part-0",
+      "providerVersion": "ac3e4c93-f025-4ef4-96c6-e2f21986dce7",
+      "etag": "\"5f1b6f4c5e9be87183a94957f0106178\"",
+      "sha256": "f3f8afc5ac9d7c8c194c8368403f05744374c8ac48d18da7ca4e37e907d6a73e",
+      "size": 291.0,
+      "contentType": "application/protobuf",
+      "verified": true
+    }
+  ],
+  "schemaCatalog": {
+    "rehearsal-alpha-9d296750/0addbe700db2330fd2301ba876b9fb010b29016964de23f5f4324a26db606836": 305.0,
+    "rehearsal-alpha-9d296750/12c4bf1b8b8533ca6c8a33c0d6ed58b2f2740bb09f8bc32aebc839f885cf7b17": 297.0,
+    "rehearsal-alpha-9d296750/ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce": 20297.0,
+    "rehearsal-alpha-9d296750/d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412": 114.0,
+    "rehearsal-alpha-9d296750/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319.0,
+    "rehearsal-alpha-9d296750/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482.0,
+    "rehearsal-beta-9d296750/0addbe700db2330fd2301ba876b9fb010b29016964de23f5f4324a26db606836": 305.0,
+    "rehearsal-beta-9d296750/12c4bf1b8b8533ca6c8a33c0d6ed58b2f2740bb09f8bc32aebc839f885cf7b17": 297.0,
+    "rehearsal-beta-9d296750/ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce": 20297.0,
+    "rehearsal-beta-9d296750/d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412": 114.0,
+    "rehearsal-beta-9d296750/db8aea4fcd84ae465e0cce71e782532c429d9b8649c39b3ad619d7bddf03225b": 319.0,
+    "rehearsal-beta-9d296750/f8a213d1ec37991fc6736651cada4b85b505105ba4da5da27526301b6e8da704": 21482.0
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 0.0,
+    "document_mutation_revision_seq": 3.0
+  },
+  "rowCounts": {
+    "archive_entries": 0.0,
+    "archive_mutation_observations": 0.0,
+    "archive_mutation_targets": 0.0,
+    "archive_mutations": 0.0,
+    "archive_object_bindings": 0.0,
+    "archive_object_uploads": 0.0,
+    "archive_read_pins": 0.0,
+    "archive_rendition_stats": 0.0,
+    "archive_stats": 0.0,
+    "archive_version_object_refs": 0.0,
+    "archive_versions": 0.0,
+    "archives": 0.0,
+    "document_assessment_artifacts": 0.0,
+    "document_assessment_objects": 0.0,
+    "document_assessment_owners": 0.0,
+    "document_assessment_read_identities": 0.0,
+    "document_assessment_read_sessions": 0.0,
+    "document_assessment_roots": 0.0,
+    "document_assessment_slot_snapshots": 0.0,
+    "document_assessment_slots": 0.0,
+    "document_events_outbox": 3.0,
+    "document_operation_selection_attempts": 3.0,
+    "document_operation_selection_current": 3.0,
+    "document_operation_selections": 3.0,
+    "document_part_attempt_cleanup": 0.0,
+    "document_part_attempt_objects": 3.0,
+    "document_part_attempt_sources": 0.0,
+    "document_part_attempts": 3.0,
+    "document_part_key_reservations": 3.0,
+    "document_part_publication_history": 0.0,
+    "document_part_publications": 0.0,
+    "document_purges": 0.0,
+    "document_raw_refs": 0.0,
+    "document_read_pins": 6.0,
+    "document_revision_commits": 3.0,
+    "document_revision_current": 2.0,
+    "document_revision_parts": 3.0,
+    "document_revision_publications": 3.0,
+    "document_revision_schema_admissions": 3.0,
+    "document_revision_schema_artifacts": 18.0,
+    "document_revision_schema_assets": 9.0,
+    "document_revision_schema_evidence": 3.0,
+    "document_schema_policies": 2.0,
+    "document_schema_policy_current": 2.0,
+    "documents": 2.0,
+    "drives": 2.0,
+    "flyway_schema_history": 119.0,
+    "managed_backend_profiles": 1.0,
+    "raw_objects": 0.0,
+    "repository_coordinator_bindings": 4.0,
+    "repository_coordinator_drains": 1.0,
+    "repository_coordinator_expirations": 0.0,
+    "repository_coordinator_handoffs": 1.0,
+    "repository_coordinator_local_drains": 1.0,
+    "repository_coordinator_reservations": 2.0,
+    "repository_coordinator_supersessions": 1.0,
+    "repository_creation_grants": 0.0,
+    "repository_credential_authorities": 0.0,
+    "repository_execution_claims": 4.0,
+    "repository_execution_scopes": 4.0,
+    "repository_historical_activations": 0.0,
+    "repository_object_keys": 3.0,
+    "repository_object_references": 11.0,
+    "repository_object_retention": 3.0,
+    "repository_operation_owners": 4.0,
+    "repository_operation_rejection": 0.0,
+    "repository_operation_success": 3.0,
+    "repository_operations": 4.0,
+    "repository_physical_locations": 3.0,
+    "repository_preparation_capture_drains": 0.0,
+    "repository_preparation_coverage_certificates": 4.0,
+    "repository_preparation_coverage_lineage": 1.0,
+    "repository_preparation_coverage_unresolved": 1.0,
+    "repository_preparation_history_roots": 0.0,
+    "repository_preparation_history_sets": 4.0,
+    "repository_preparation_pin_batches": 0.0,
+    "repository_preparation_pin_owners": 0.0,
+    "repository_preparation_root_releases": 0.0,
+    "repository_preparation_source_pins": 0.0,
+    "repository_publication_abandonments": 0.0,
+    "repository_publication_assessment_starts": 0.0,
+    "repository_publication_modes": 6.0,
+    "repository_publication_preparations": 6.0,
+    "repository_reader_external_quiescence": 0.0,
+    "repository_reader_host_executions": 0.0,
+    "repository_reader_host_terminations": 0.0,
+    "repository_reader_incarnations": 2.0,
+    "repository_recovery_limit_decisions": 0.0,
+    "repository_schema_artifact_claims": 18.0,
+    "repository_schema_artifacts": 12.0,
+    "repository_successor_executions": 0.0,
+    "repository_successor_installs": 2.0
+  },
+  "migrationLevel": 119.0,
+  "backendProfile": "{\"region\": null, \"endpoint\": null, \"provider\": \"s3\", \"created_at\": \"2026-10-08T08:22:26.944157-04:00\", \"generation\": \"rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344\", \"path_style\": null, \"identity_json\": {\"region\": \"us-east-1\", \"endpoint\": \"http://127.0.0.1:46207\", \"path-style\": \"true\"}, \"storage_realm\": \"rehearsal-realm\", \"identity_schema\": \"s3/v1\"}",
+  "registryOpensBeforeHistoricalReads": 3.0,
+  "accessMatrix": {
+    "member.alpha-v1": "OK",
+    "stranger.alpha-v1": "NOT_FOUND",
+    "outsider.alpha-v1": "NOT_FOUND",
+    "cross-account-member.alpha-v1": "NOT_FOUND",
+    "member.alpha-v2": "OK",
+    "stranger.alpha-v2": "NOT_FOUND",
+    "outsider.alpha-v2": "NOT_FOUND",
+    "cross-account-member.alpha-v2": "NOT_FOUND",
+    "member.beta-v1": "OK",
+    "stranger.beta-v1": "NOT_FOUND",
+    "outsider.beta-v1": "NOT_FOUND",
+    "cross-account-member.beta-v1": "NOT_FOUND"
+  },
+  "readerIncarnations": {
+    "ACTIVE": 0.0,
+    "FENCED": 0.0,
+    "UNKNOWN": 0.0,
+    "QUIESCED": 2.0
+  },
+  "rowCountsAfterClose": {
+    "archive_entries": 0.0,
+    "archive_mutation_observations": 0.0,
+    "archive_mutation_targets": 0.0,
+    "archive_mutations": 0.0,
+    "archive_object_bindings": 0.0,
+    "archive_object_uploads": 0.0,
+    "archive_read_pins": 0.0,
+    "archive_rendition_stats": 0.0,
+    "archive_stats": 0.0,
+    "archive_version_object_refs": 0.0,
+    "archive_versions": 0.0,
+    "archives": 0.0,
+    "document_assessment_artifacts": 0.0,
+    "document_assessment_objects": 0.0,
+    "document_assessment_owners": 0.0,
+    "document_assessment_read_identities": 0.0,
+    "document_assessment_read_sessions": 0.0,
+    "document_assessment_roots": 0.0,
+    "document_assessment_slot_snapshots": 0.0,
+    "document_assessment_slots": 0.0,
+    "document_events_outbox": 3.0,
+    "document_operation_selection_attempts": 3.0,
+    "document_operation_selection_current": 3.0,
+    "document_operation_selections": 3.0,
+    "document_part_attempt_cleanup": 0.0,
+    "document_part_attempt_objects": 3.0,
+    "document_part_attempt_sources": 0.0,
+    "document_part_attempts": 3.0,
+    "document_part_key_reservations": 3.0,
+    "document_part_publication_history": 0.0,
+    "document_part_publications": 0.0,
+    "document_purges": 0.0,
+    "document_raw_refs": 0.0,
+    "document_read_pins": 0.0,
+    "document_revision_commits": 3.0,
+    "document_revision_current": 2.0,
+    "document_revision_parts": 3.0,
+    "document_revision_publications": 3.0,
+    "document_revision_schema_admissions": 3.0,
+    "document_revision_schema_artifacts": 18.0,
+    "document_revision_schema_assets": 9.0,
+    "document_revision_schema_evidence": 3.0,
+    "document_schema_policies": 2.0,
+    "document_schema_policy_current": 2.0,
+    "documents": 2.0,
+    "drives": 2.0,
+    "flyway_schema_history": 119.0,
+    "managed_backend_profiles": 1.0,
+    "raw_objects": 0.0,
+    "repository_coordinator_bindings": 4.0,
+    "repository_coordinator_drains": 1.0,
+    "repository_coordinator_expirations": 0.0,
+    "repository_coordinator_handoffs": 1.0,
+    "repository_coordinator_local_drains": 1.0,
+    "repository_coordinator_reservations": 2.0,
+    "repository_coordinator_supersessions": 1.0,
+    "repository_creation_grants": 0.0,
+    "repository_credential_authorities": 0.0,
+    "repository_execution_claims": 4.0,
+    "repository_execution_scopes": 4.0,
+    "repository_historical_activations": 0.0,
+    "repository_object_keys": 3.0,
+    "repository_object_references": 5.0,
+    "repository_object_retention": 3.0,
+    "repository_operation_owners": 4.0,
+    "repository_operation_rejection": 0.0,
+    "repository_operation_success": 3.0,
+    "repository_operations": 4.0,
+    "repository_physical_locations": 3.0,
+    "repository_preparation_capture_drains": 0.0,
+    "repository_preparation_coverage_certificates": 4.0,
+    "repository_preparation_coverage_lineage": 1.0,
+    "repository_preparation_coverage_unresolved": 1.0,
+    "repository_preparation_history_roots": 0.0,
+    "repository_preparation_history_sets": 4.0,
+    "repository_preparation_pin_batches": 0.0,
+    "repository_preparation_pin_owners": 0.0,
+    "repository_preparation_root_releases": 0.0,
+    "repository_preparation_source_pins": 0.0,
+    "repository_publication_abandonments": 0.0,
+    "repository_publication_assessment_starts": 0.0,
+    "repository_publication_modes": 6.0,
+    "repository_publication_preparations": 6.0,
+    "repository_reader_external_quiescence": 0.0,
+    "repository_reader_host_executions": 0.0,
+    "repository_reader_host_terminations": 0.0,
+    "repository_reader_incarnations": 2.0,
+    "repository_recovery_limit_decisions": 0.0,
+    "repository_schema_artifact_claims": 18.0,
+    "repository_schema_artifacts": 12.0,
+    "repository_successor_executions": 0.0,
+    "repository_successor_installs": 2.0
+  },
+  "injectedMissingVersion": {
+    "revisionId": "04be464b-9e6e-481c-8a09-466fb07e2913",
+    "revisionOrdinal": 0.0,
+    "part": 1.0,
+    "subKey": "",
+    "objectId": "ebd1350a-f41c-4cc9-9c60-57eff20b27a1",
+    "generation": "rehearsal-gen-bd663377-293b-4067-bf26-9a8458f18344",
+    "realm": "rehearsal-realm",
+    "namespace": "rehearsal-alpha-9d296750",
+    "key": "rehearsal-pipeline/documents/rehearsal-alpha-9d296750/57cc91ed-b21e-3e56-a1a4-11390e0c7b85/attempts/90fb7264-7e9b-48a8-bafd-1efd90ef63d8/part-0",
+    "providerVersion": "7f3e47fd-cdec-457b-8c3a-a5115b2aa5f3",
+    "etag": "\"640169e712d979d2f9abd5a57f2391e2\"",
+    "sha256": "dfe1b194f91f6ac2e628146d50a3140bbd782805f9df8badce720011d84ee56e",
+    "size": 319.0,
+    "contentType": "application/protobuf",
+    "verified": true
+  }
+}

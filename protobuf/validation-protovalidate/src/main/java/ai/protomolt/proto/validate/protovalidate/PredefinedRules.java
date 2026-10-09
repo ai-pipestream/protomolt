@@ -117,19 +117,15 @@ final class PredefinedRules {
 
     /** Reads the {@code (buf.validate.predefined).cel} rules off an extension's options. */
     private static List<Rule> predefinedRules(FieldDescriptor ext) {
-        DescriptorProtos.FieldOptions options = ext.getOptions();
+        DescriptorProtos.FieldOptions options = OptionReparse.recover(ext.getOptions(),
+                ValidateProto.predefined.getNumber(), DescriptorProtos.FieldOptions::parseFrom,
+                "(buf.validate.predefined)");
         if (!options.hasExtension(ValidateProto.predefined)) {
-            if (!options.getUnknownFields().hasField(ValidateProto.predefined.getNumber())) {
-                return List.of();
-            }
-            // Custom options on a dynamically linked descriptor may survive only as unknown fields.
-            options = OptionReparse.reparse(options, DescriptorProtos.FieldOptions::parseFrom,
-                    "(buf.validate.predefined)");
-            if (!options.hasExtension(ValidateProto.predefined)) {
-                return List.of();
-            }
+            return List.of();
         }
-        return options.getExtension(ValidateProto.predefined).getCelList();
+        var rules = options.getExtension(ValidateProto.predefined);
+        RulePayloads.requireSupported(rules, PredefinedIndex.EMPTY);
+        return rules.getCelList();
     }
 
     /**
@@ -216,6 +212,10 @@ final class PredefinedRules {
             }
             DynamicMessage parsed = DynamicMessage.parseFrom(
                     ext.getContainingType(), subRules.toByteString(), registry);
+            if (parsed.getUnknownFields().hasField(ext.getNumber())
+                    || (!ext.isRepeated() && !parsed.hasField(ext))) {
+                throw new RuleCompilationException("invalid wire encoding for predefined rule " + ext.getFullName());
+            }
             return celValue(ext, parsed.getField(ext));
         } catch (RuntimeException | InvalidProtocolBufferException e) {
             throw new RuleCompilationException(

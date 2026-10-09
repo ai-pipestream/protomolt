@@ -14,6 +14,133 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class RepoServiceConfigTest {
 
+    @Test
+    void upstreamCredentialIsExplicitRedactedAndPreservedByCopies() {
+        assertThat(RepoServiceConfig.fromEnvironment(java.util.Map.of()).repoCredential()).isNull();
+        for (String blank : java.util.List.of("", " ")) {
+            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_REPO_API_TOKEN, blank)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(RepoServiceConfig.ENV_REPO_API_TOKEN).hasNoCause();
+        }
+        String secret = "synthetic-upstream-secret";
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_BLOB_STORE, "repo",
+                RepoServiceConfig.ENV_REPO_TARGET, "localhost:9090",
+                RepoServiceConfig.ENV_REPO_API_TOKEN, secret,
+                "PROTOMOLT_API_TOKEN", "synthetic-inbound-secret"));
+        var copied = config.withManagedStorage(ManagedStoragePolicy.disabled())
+                .withRepoBucketBindings(java.util.Map.of("local", "upstream"));
+        assertThat(copied.repoCredential()).isSameAs(config.repoCredential());
+        assertThat(copied.toString()).doesNotContain(secret, "synthetic-inbound-secret");
+        assertThat(RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                "PROTOMOLT_API_TOKEN", "synthetic-inbound-secret")).repoCredential()).isNull();
+    }
+
+    @Test void explicitBlankStorageAndDefaultedTextSettingsCannotSelectAnotherConfiguration() {
+        for (var name : java.util.List.of(RepoServiceConfig.ENV_BLOB_STORE, RepoServiceConfig.ENV_REDIS_URI,
+                RepoServiceConfig.ENV_REPO_DRIVE, RepoServiceConfig.ENV_DEFAULT_BUCKET_BASE,
+                RepoServiceConfig.ENV_S3_REGION, RepoServiceConfig.ENV_KAFKA_TOPIC,
+                RepoServiceConfig.ENV_PURGE_QUEUE, RepoServiceConfig.ENV_KAFKA_PURGE_TOPIC)) {
+            for (var blank : java.util.List.of("", " ")) {
+                assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(name, blank)))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(name);
+            }
+        }
+        for (var name : java.util.List.of(RepoServiceConfig.ENV_BLOB_STORE, RepoServiceConfig.ENV_PURGE_QUEUE)) {
+            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(name, "private-value")))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(name)
+                    .hasMessageNotContaining("private-value").hasNoCause();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("invalidEnvironmentLimits")
+    void refusesConfiguredLimitsInsteadOfReplacingThemWithDefaults(String name, String value) {
+        assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(name, value)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(name)
+                .hasMessageNotContaining("private-value").hasNoCause();
+    }
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> invalidEnvironmentLimits() {
+        var names = java.util.List.of(RepoServiceConfig.ENV_GRPC_PORT, RepoServiceConfig.ENV_HTTP_PORT,
+                RepoServiceConfig.ENV_REDIS_TTL_SECONDS, RepoServiceConfig.ENV_REDIS_MAX_OBJECT_BYTES,
+                RepoServiceConfig.ENV_PURGE_INTERVAL_MS, RepoServiceConfig.ENV_SWEEP_INTERVAL_MS,
+                RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, LedgerConfig.ENV_POOL_SIZE);
+        var malformed = names.stream().flatMap(name -> java.util.stream.Stream.of("private-value", "", " ",
+                "1.5", "999999999999999999999999", "-1")
+                .map(value -> org.junit.jupiter.params.provider.Arguments.of(name, value)));
+        return java.util.stream.Stream.concat(malformed, java.util.stream.Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_GRPC_PORT, "65536"),
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_HTTP_PORT, "65536"),
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_REDIS_TTL_SECONDS, "2147483648"),
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_PURGE_INTERVAL_MS, "0"),
+                org.junit.jupiter.params.provider.Arguments.of(RepoServiceConfig.ENV_SWEEP_INTERVAL_MS, "0"),
+                org.junit.jupiter.params.provider.Arguments.of(LedgerConfig.ENV_POOL_SIZE, "0")));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"truee", "private-value", "", " ", "2"})
+    void refusesMisspelledConfiguredFlags(String value) {
+        for (var name : java.util.List.of(RepoServiceConfig.ENV_LIFECYCLE_ENABLED,
+                RepoServiceConfig.ENV_RECONCILE_ENABLED, RepoServiceConfig.ENV_RECONCILE_DRY_RUN,
+                RepoServiceConfig.ENV_S3_CONDITIONAL_WRITES)) {
+            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(name, value)))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(name)
+                    .hasMessageNotContaining("private-value").hasNoCause();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"true,false", "1,0", "YES,NO", "on,off"})
+    void retainsSupportedBooleanSpellings(String enabled, String disabled) {
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_LIFECYCLE_ENABLED, " " + enabled + " ",
+                RepoServiceConfig.ENV_RECONCILE_ENABLED, disabled,
+                RepoServiceConfig.ENV_RECONCILE_DRY_RUN, enabled,
+                RepoServiceConfig.ENV_S3_CONDITIONAL_WRITES, enabled));
+        assertThat(config.lifecycleEnabled()).isTrue();
+        assertThat(config.reconcileEnabled()).isFalse();
+        assertThat(config.reconcileDryRun()).isTrue();
+        assertThat(config.s3ConditionalWrites()).isTrue();
+    }
+
+    @Test void configuredZeroAndOffKeepTheirDocumentedMeanings() {
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                RepoServiceConfig.ENV_GRPC_PORT, "0", RepoServiceConfig.ENV_HTTP_PORT, " OFF ",
+                RepoServiceConfig.ENV_REDIS_TTL_SECONDS, "0", RepoServiceConfig.ENV_REDIS_MAX_OBJECT_BYTES, "0",
+                RepoServiceConfig.ENV_RECONCILE_MIN_AGE_MS, "0", LedgerConfig.ENV_POOL_SIZE, " 3 "));
+        assertThat(config.grpcPort()).isZero();
+        assertThat(config.httpPort()).isZero();
+        assertThat(config.redisTtlSeconds()).isZero();
+        assertThat(config.redisMaxObjectBytes()).isZero();
+        assertThat(config.reconcileMinAgeMs()).isZero();
+        assertThat(config.ledger().maxPoolSize()).isEqualTo(3);
+    }
+
+    @Test void omittedEnvironmentUsesDocumentedDefaults() {
+        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of());
+        assertThat(config.grpcPort()).isEqualTo(RepoServiceConfig.DEFAULT_GRPC_PORT);
+        assertThat(config.httpPort()).isEqualTo(8080);
+        assertThat(config.lifecycleEnabled()).isTrue();
+        assertThat(config.ledger().maxPoolSize()).isEqualTo(LedgerConfig.DEFAULT_POOL_SIZE);
+    }
+
+    @Test void managedQualificationSurvivesConfigurationCopies() {
+        var policy = new ManagedStoragePolicy("nas-v1", "account-a", true);
+        var configured = config(0, "s3", null, null).withManagedStorage(policy);
+        assertThat(configured.withRepoBucketBindings(java.util.Map.of()).managedStorage()).isEqualTo(policy);
+        assertThat(config(0, "s3", null, null).managedStorage()).isEqualTo(ManagedStoragePolicy.disabled());
+    }
+
+    @Test void unsupportedManagedCompositionFailsBeforeOpeningExternalResources() {
+        var configured = config(0, "redis", null, null)
+                .withManagedStorage(new ManagedStoragePolicy("nas-v1", "account-a", true));
+        assertThatThrownBy(() -> RepoServices.build(configured))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Managed storage requires an S3 backing store and enabled lifecycle recovery");
+    }
+
     private static final LedgerConfig LEDGER =
             new LedgerConfig("jdbc:postgresql://localhost:5432/x", "u", "p");
 

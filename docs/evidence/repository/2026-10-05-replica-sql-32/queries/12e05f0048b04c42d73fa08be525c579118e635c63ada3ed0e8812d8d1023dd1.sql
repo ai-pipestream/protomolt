@@ -1,0 +1,1 @@
+SELECT * FROM document_purges WHERE status = $2 ORDER BY requested_at ASC, purge_id ASC LIMIT $1 FOR UPDATE SKIP LOCKED

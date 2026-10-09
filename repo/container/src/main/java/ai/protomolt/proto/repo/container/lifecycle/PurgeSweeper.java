@@ -28,10 +28,10 @@ import java.util.UUID;
  * automatically would defeat the attempts ceiling, so recovery there is
  * operator territory (re-tombstone or enqueue by hand).
  * <p>
- * A record enqueued by the sweeper stamps {@code requested_at = sweep time}:
- * a revive that landed before the sweep moved {@code updated_at} past any
- * earlier request, and the purger's staleness guard then correctly voids the
- * swept purge instead of deleting the fresh body.
+ * Legacy tombstones receive a generation under the same row lock as enqueue.
+ * The sampled revision must still match. Existing admissions retain their own
+ * retry state and completion mode; the sweeper never substitutes a broader
+ * cleanup command for them.
  */
 public final class PurgeSweeper {
 
@@ -60,50 +60,73 @@ public final class PurgeSweeper {
 
     /**
      * One sweep: enqueue a purge record for every PENDING_PURGE row that has
-     * no PENDING purge record, up to {@link #SWEEP_LIMIT}. One bad row never
-     * kills the sweep.
+     * no PENDING purge record, up to {@link #SWEEP_LIMIT}. All sampled rows are
+     * attempted; enqueue failures are aggregated and propagated after the pass.
      *
      * @return how many purge records were enqueued
      */
     public int sweepOnce() {
         List<DocumentRecord> stuck = tx.readOnly(em -> em.createQuery(
-                        "SELECT d FROM DocumentRecord d WHERE d.status = :status AND NOT EXISTS ("
+                        "SELECT d FROM DocumentRecord d WHERE d.status = :status AND d.pendingPurgeId IS NULL AND NOT EXISTS ("
                                 + "SELECT p FROM DocumentPurgeRecord p WHERE p.nodeId = d.nodeId"
-                                + " AND p.status = :pending)"
+                                + " AND p.status IN (:pending, :failed))"
                                 + " ORDER BY d.createdAt ASC, d.nodeId ASC",
                         DocumentRecord.class)
                 .setParameter("status", DocumentStatus.PENDING_PURGE)
                 .setParameter("pending", DocumentPurgeRecord.STATUS_PENDING)
+                .setParameter("failed", DocumentPurgeRecord.STATUS_FAILED)
                 .setMaxResults(SWEEP_LIMIT)
                 .getResultList());
-        if (stuck.isEmpty()) {
+        List<UUID> missingAdmissions = tx.readOnly(em -> em.createQuery(
+                        "SELECT d.nodeId FROM DocumentRecord d WHERE d.status = :status AND d.pendingPurgeId IS NOT NULL"
+                                + " AND NOT EXISTS (SELECT p FROM DocumentPurgeRecord p WHERE p.nodeId = d.nodeId"
+                                + " AND p.generationId = d.pendingPurgeId)", UUID.class)
+                .setParameter("status", DocumentStatus.PENDING_PURGE).setMaxResults(SWEEP_LIMIT).getResultList());
+        if (stuck.isEmpty() && missingAdmissions.isEmpty()) {
             return 0;
         }
         LOG.info("Purge sweeper found {} tombstoned row(s) with no pending purge record", stuck.size());
 
         int enqueued = 0;
+        IllegalStateException failures = missingAdmissions.isEmpty() ? null
+                : new IllegalStateException("Tombstone generations have no durable purge admission: " + missingAdmissions);
         for (DocumentRecord row : stuck) {
             try {
-                enqueue(row);
-                enqueued++;
+                if (enqueue(row)) enqueued++;
             } catch (RuntimeException e) {
-                // Most likely a concurrent sweeper enqueued first — the drain
-                // is idempotent either way, so log and move on.
                 LOG.warn("Sweeper failed to enqueue purge for node_id={}: {}", row.nodeId, e.getMessage());
+                if (failures == null) failures = new IllegalStateException("Purge recovery failed for one or more documents");
+                failures.addSuppressed(e);
             }
         }
+        if (failures != null) throw failures;
         return enqueued;
     }
 
     /** Build and enqueue one row's purge record, in its own transaction. */
-    private void enqueue(DocumentRecord row) {
-        String drivePrefix = drives.findByName(row.accountId, row.driveName)
+    boolean enqueue(DocumentRecord sampled) {
+        String drivePrefix = drives.findByName(sampled.accountId, sampled.driveName)
                 .map((DriveRecord d) -> d.prefix)
-                .orElse(null);
+                .orElseThrow(() -> new IllegalStateException("Document drive is unavailable for purge recovery"));
         Instant requestedAt = Instant.now();
-        tx.inTransaction(em -> {
+        boolean enqueued = tx.inTransaction(em -> {
+            DocumentRecord row = em.find(DocumentRecord.class, sampled.nodeId, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+            if (row == null || !DocumentStatus.PENDING_PURGE.equals(row.status)
+                    || row.mutationRevision != sampled.mutationRevision) return false;
+            if (row.pendingPurgeId != null) {
+                long admissions = em.createQuery("SELECT count(p) FROM DocumentPurgeRecord p WHERE p.nodeId = :node AND p.generationId = :generation", Long.class)
+                        .setParameter("node", row.nodeId).setParameter("generation", row.pendingPurgeId).getSingleResult();
+                if (admissions > 0) return false; // Existing admissions own retries and completion mode.
+                throw new IllegalStateException("Admitted tombstone has no durable purge record: " + row.nodeId);
+            }
+            long pending = em.createQuery("SELECT count(p) FROM DocumentPurgeRecord p WHERE p.nodeId = :node AND p.status IN ('PENDING', 'FAILED')", Long.class)
+                    .setParameter("node", row.nodeId).getSingleResult();
+            if (pending > 0) return false;
             DocumentPurgeRecord record = new DocumentPurgeRecord();
             record.purgeId = UUID.randomUUID();
+            record.generationId = record.purgeId;
+            record.contentChecksum = row.checksum;
+            row.pendingPurgeId = record.generationId;
             record.nodeId = row.nodeId;
             record.docId = row.docId;
             record.graphAddressId = row.graphAddressId;
@@ -113,9 +136,10 @@ public final class PurgeSweeper {
             record.writeObjectKeys(PurgeSnapshots.objectKeysOf(row, drivePrefix));
             record.requestedAt = requestedAt;
             queue.enqueue(em, record);
-            return null;
+            return true;
         });
-        LOG.info("Sweeper enqueued purge for node_id={} (doc_id={}, requested_at={})",
-                row.nodeId, row.docId, requestedAt);
+        if (enqueued) LOG.info("Sweeper enqueued purge for node_id={} (doc_id={}, requested_at={})",
+                sampled.nodeId, sampled.docId, requestedAt);
+        return enqueued;
     }
 }

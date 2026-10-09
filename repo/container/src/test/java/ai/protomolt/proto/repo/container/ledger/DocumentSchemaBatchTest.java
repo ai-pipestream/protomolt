@@ -1,0 +1,362 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.descriptors.DescriptorFingerprints;
+import ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy;
+import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.PartLayouts;
+import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
+import ai.protomolt.proto.repo.v1.*;
+import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.StringValue;
+import java.security.MessageDigest;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.*;
+
+class DocumentSchemaBatchTest {
+    static final ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits OPAQUE_LIMITS =
+            new ai.protomolt.proto.repo.codec.DocumentRevisionAssembly.Limits(4_000_000, 32, 64, 10000, 1_000_000);
+
+    @Test void candidateOwnsTypedAndExplicitOpaqueMembersTogether() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var supplied = fragments(f);
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        var resolved = new java.util.ArrayList<String>();
+        var candidate = DocumentPublicationCandidate.prepare(f.command, selection(policy("account", true, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.OPAQUE),
+                supplied, Optional.of(f.assets.container.definition()), (member, occurrence) -> {
+                    resolved.add(member.getMemberId());
+                    return f.assets.payload.definition();
+                }, budget, OPAQUE_LIMITS, () -> {});
+        try {
+            assertThat(resolved).containsExactly("member-a");
+            assertThat(candidate.schemas().proofs()).containsOnlyKeys("member-a");
+            assertThat(candidate.opaque()).containsOnlyKeys("member-b");
+            var proof = candidate.schemas().proofs().get("member-a");
+            long retained = fragmentBytes(f) + proof.artifacts().values().stream().mapToLong(ByteString::size).sum()
+                    + proof.roots().stream().mapToLong(root -> root.encoded().bytes().size()).sum();
+            assertThat(budget.reservedBytes()).isEqualTo(retained);
+            supplied.clear();
+            assertThat(proof.document().getDocId()).isEqualTo("doc-a");
+            assertThat(candidate.opaque().get("member-b").assembly().document().getDocId()).isEqualTo("doc-b");
+        } finally { candidate.close(); }
+        candidate.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(candidate::schemas).hasMessageContaining("closed");
+        assertThatThrownBy(candidate::opaque).hasMessageContaining("closed");
+    }
+
+    @Test void candidateRejectsMissingModesAndForbiddenOpaqueBeforeResolving() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        DocumentPublicationCandidate.Resolver unused = (member, occurrence) -> { throw new AssertionError("unexpected schema lookup"); };
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", false, 20)),
+                Map.of(), fragments(f), Optional.empty(), unused, budget, OPAQUE_LIMITS, () -> {}))
+                .hasMessageContaining("modes differ");
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", false, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.OPAQUE), fragments(f), Optional.empty(), unused,
+                budget, OPAQUE_LIMITS, () -> {})).hasMessageContaining("requires typed");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void failedLaterTypedMemberClosesEarlierProofAndNeverFallsBackToOpaque() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(16_000_000);
+        var calls = new java.util.ArrayList<String>();
+        var outage = new IllegalStateException("second member registry unavailable");
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, selection(policy("account", true, 20)),
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED, "member-b", DocumentPublicationCandidate.Mode.TYPED),
+                fragments(f), Optional.of(f.assets.container.definition()), (member, occurrence) -> {
+                    calls.add(member.getMemberId());
+                    if (member.getMemberId().equals("member-b")) {
+                        assertThat(budget.reservedBytes()).isGreaterThan(fragmentBytes(f));
+                        throw outage;
+                    }
+                    return f.assets.payload.definition();
+                }, budget, OPAQUE_LIMITS, () -> {})).isSameAs(outage);
+        assertThat(calls).containsExactly("member-a", "member-b");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void opaqueNeedsNoSchemaAndTypedCapacityFailureReleasesTheFragmentSnapshot() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(fragmentBytes(f));
+        var policy = selection(policy("account", true, 20));
+        try (var candidate = DocumentPublicationCandidate.prepare(f.command, policy,
+                Map.of("member-a", DocumentPublicationCandidate.Mode.OPAQUE), fragments(f), Optional.empty(),
+                (member, occurrence) -> { throw new AssertionError("opaque mode resolved a schema"); }, budget, OPAQUE_LIMITS, () -> {})) {
+            assertThat(candidate.schemas().proofs()).isEmpty();
+            assertThat(candidate.schemas().artifacts()).isEmpty();
+            assertThat(candidate.opaque()).containsOnlyKeys("member-a");
+            assertThat(budget.reservedBytes()).isEqualTo(fragmentBytes(f));
+        }
+        assertThatThrownBy(() -> DocumentPublicationCandidate.prepare(f.command, policy,
+                Map.of("member-a", DocumentPublicationCandidate.Mode.TYPED), fragments(f), Optional.of(f.assets.container.definition()),
+                (member, occurrence) -> f.assets.payload.definition(), budget, OPAQUE_LIMITS, () -> {}))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    static Map<String, Map<Integer, ByteString>> fragments(CommandData f) {
+        var result = new HashMap<String, Map<Integer, ByteString>>();
+        f.data.forEach((id, value) -> result.put(id, value.fragments));
+        return result;
+    }
+
+    static long fragmentBytes(CommandData f) {
+        return f.data.values().stream().flatMap(member -> member.fragments.values().stream()).mapToLong(ByteString::size).sum();
+    }
+
+    @Test void ownsBudgetedFragmentCopiesThroughRealPolicyValidation() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var supplied = new HashMap<String, Map<Integer, ByteString>>();
+        var borrowedArrays = new java.util.ArrayList<byte[]>();
+        f.data.forEach((id, value) -> {
+            var parts = new HashMap<Integer, ByteString>();
+            value.fragments.forEach((ordinal, bytes) -> {
+                var array = bytes.toByteArray(); borrowedArrays.add(array);
+                parts.put(ordinal, com.google.protobuf.UnsafeByteOperations.unsafeWrap(array));
+            });
+            supplied.put(id, parts);
+        });
+        long size = supplied.values().stream().flatMap(parts -> parts.values().stream()).mapToLong(ByteString::size).sum();
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(size);
+        var snapshot = DocumentPublicationFragments.capture(f.command, supplied, budget, () -> {});
+        try {
+            assertThat(budget.reservedBytes()).isEqualTo(size);
+            assertThat(snapshot.command()).isSameAs(f.command);
+            // Model a borrowed staging buffer being overwritten after the capture boundary.
+            borrowedArrays.forEach(array -> java.util.Arrays.fill(array, (byte) 0));
+            var policy = policy("account", false, 20);
+            var proofs = new HashMap<String, DocumentSchemaAdmission.Proof>();
+            for (var entry : f.data.entrySet()) {
+                var copied = snapshot.fragments().get(entry.getKey());
+                for (var part : copied.entrySet())
+                    assertThat(part.getValue()).isEqualTo(entry.getValue().fragments.get(part.getKey()))
+                            .isNotSameAs(entry.getValue().fragments.get(part.getKey()));
+                supplied.get(entry.getKey()).clear();
+                proofs.put(entry.getKey(), proof(f.command, new MemberData(entry.getValue().member, copied), policy, f.assets));
+            }
+            supplied.clear();
+            assertThat(DocumentSchemaBatch.prepare(f.command, selection(policy), proofs, () -> {}).proofs()).hasSize(2);
+            assertThatThrownBy(() -> snapshot.fragments().clear()).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> snapshot.fragments().get("member-a").clear()).isInstanceOf(UnsupportedOperationException.class);
+        } finally { snapshot.close(); }
+        snapshot.close();
+        assertThat(budget.reservedBytes()).isZero();
+        assertThatThrownBy(snapshot::fragments).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void rejectsIncompleteFragmentSetsBeforeReservingOrResolvingSchemas() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1_000_000);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of(), budget, () -> {}))
+                .hasMessageContaining("members differ");
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of("member-a", Map.of()), budget, () -> {}))
+                .hasMessageContaining("ordinal differs");
+        var wrong = new HashMap<>(f.data.get("member-a").fragments);
+        wrong.put(0, ByteString.EMPTY);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, Map.of("member-a", wrong), budget, () -> {}))
+                .hasMessageContaining("size or ordinal");
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void releasesFragmentReservationOnCancellationAndRefusesCapacityWithoutWaiting() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var supplied = Map.of("member-a", f.data.get("member-a").fragments);
+        var tiny = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1);
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, supplied, tiny, () -> {}))
+                .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED));
+        assertThat(tiny.reservedBytes()).isZero();
+        var budget = new ai.protomolt.proto.repo.blob.spi.PayloadBudget(1_000_000);
+        var cancelled = new java.util.concurrent.CancellationException("cancel after reservation");
+        var copyChecks = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentPublicationFragments.capture(f.command, supplied, budget, () -> {
+            if (budget.reservedBytes() > 0 && copyChecks.incrementAndGet() == 2) throw cancelled;
+        })).isSameAs(cancelled);
+        assertThat(copyChecks.get()).isEqualTo(2);
+        assertThat(budget.reservedBytes()).isZero();
+    }
+
+    @Test void requiresProofsForTypedMembersAndRejectsNullOrUnknownProofEntries() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var policy = policy("account", false, 20);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(policy), Map.of(), () -> {}))
+                .hasMessageContaining("Required member schema proof is absent");
+
+        var proof = proof(f.command, f.data.get("member-a"), policy, f.assets);
+        var permissive = policy("account", true, 20);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(permissive), Map.of("unknown", proof), () -> {}))
+                .hasMessageContaining("Schema proof names an unknown command member");
+        var nullProof = new HashMap<String, DocumentSchemaAdmission.Proof>();
+        nullProof.put("member-a", null);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(permissive), nullProof, () -> {}))
+                .hasMessageContaining("Required member schema proof is absent");
+    }
+
+    @Test void rejectsCommandMemberAndPolicyMismatches() throws Exception {
+        var base = command("account", List.of(member("member-a", "doc-a")));
+        var policy = policy("account", false, 20);
+        var proof = proof(base.command, base.data.get("member-a"), policy, base.assets);
+
+        // The proof's member remains byte-for-byte equal, while the complete canonical command gains a member.
+        var larger = command("account", List.of(base.data.get("member-a").member, member("member-b", "doc-b")), base.assets);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(larger.command, selection(policy), Map.of("member-a", proof), () -> {}))
+                .hasMessageContaining("Schema proof differs from canonical command member");
+
+        var changedMember = base.data.get("member-a").member.toBuilder().putMetadata("changed", "yes").build();
+        var changed = command("account", List.of(changedMember), base.assets);
+        var wrongMember = proof(changed.command, base.data.get("member-a"), policy, base.assets);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(changed.command, selection(policy), Map.of("member-a", wrongMember), () -> {}))
+                .hasMessageContaining("Schema proof differs from canonical command member");
+
+        var otherPolicy = policy("account", false, 21);
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(base.command, selection(otherPolicy), Map.of("member-a", proof), () -> {}))
+                .hasMessageContaining("admission proof differs from policy snapshot");
+    }
+
+    @Test void permitsProofOmissionOnlyForAnExplicitOpaquePolicy() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var policy = policy("account", true, 20);
+        var batch = DocumentSchemaBatch.prepare(f.command, selection(policy), Map.of(), () -> {});
+        assertThat(batch.proofs()).isEmpty();
+        assertThat(batch.artifacts()).isEmpty();
+        assertThat(batch.command()).isEqualTo(f.command);
+        assertThat(batch.policy()).isEqualTo(selection(policy));
+    }
+
+    @Test void usesTheProofMapSnapshotEvenWhenTheCallerChangesItsMapDuringChecking() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        var supplied = new HashMap<String, DocumentSchemaAdmission.Proof>();
+        supplied.put("member-a", null);
+        var visits = new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(policy("account", true, 20)), supplied, () -> {
+            if (visits.incrementAndGet() == 2) supplied.clear();
+        })).hasMessageContaining("Required member schema proof is absent");
+        assertThat(supplied).isEmpty();
+    }
+
+    @Test void rejectsOtherAccountPolicyAndPropagatesCancellation() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a")));
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(policy("other", true, 20)), Map.of(), () -> {}))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Policy account differs");
+        var cancelled = new java.util.concurrent.CancellationException("cancel preparation");
+        assertThatThrownBy(() -> DocumentSchemaBatch.prepare(f.command, selection(policy("account", true, 20)), Map.of(), () -> {
+            throw cancelled;
+        })).isSameAs(cancelled);
+    }
+
+    @Test void realMemberProofsShareTheCompleteArtifactUnionWithoutLosingProofs() throws Exception {
+        var f = command("account", List.of(member("member-a", "doc-a"), member("member-b", "doc-b")));
+        var policy = policy("account", false, 20);
+        var first = proof(f.command, f.data.get("member-a"), policy, f.assets);
+        var second = proof(f.command, f.data.get("member-b"), policy, f.assets);
+        assertThat(first.artifacts()).isEqualTo(second.artifacts());
+        var batch = DocumentSchemaBatch.prepare(f.command, selection(policy),
+                Map.of("member-a", first, "member-b", second), () -> {});
+        assertThat(batch.proofs()).containsOnlyKeys("member-a", "member-b");
+        assertThat(batch.proofs()).containsEntry("member-a", first).containsEntry("member-b", second);
+        assertThat(batch.artifacts()).isEqualTo(first.artifacts());
+        assertThat(batch.artifacts()).hasSize(4); // one Document and one payload descriptor/metadata pair, shared by both proofs
+        assertThat(batch.artifacts().keySet()).containsAll(first.artifacts().keySet());
+    }
+
+    private static DocumentSchemaAdmission.Proof proof(DocumentPublicationCommand command, MemberData member,
+            DocumentAdmissionPolicy policy, Assets assets) throws Exception {
+        return policy.prepareAndCheck(ByteString.copyFrom(HexFormat.of().parseHex(command.sha256())), member.member,
+                member.fragments, assets.container.definition(), selection -> assets.payload.definition(), () -> {});
+    }
+
+    static DocumentSchemaPolicies.Selection selection(DocumentAdmissionPolicy policy) {
+        return new DocumentSchemaPolicies.Selection(policy.definition().getAccountId(), 1, policy);
+    }
+
+    static DocumentAdmissionPolicy policy(String account, boolean opaque, int maxFragments) {
+        var mode = opaque ? DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_OPAQUE_ALLOWED
+                : DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED;
+        return DocumentAdmissionPolicy.of(DocumentSchemaPolicy.newBuilder().setEncodingVersion(1).setAccountId(account)
+                .setValidationProfile("protomolt-retained-schema-admission/v1").setMode(mode)
+                .setAnyResolvedSchema(true).setLimits(DocumentSchemaPolicyLimits.newBuilder()
+                        .setMaxFragments(maxFragments).setMaxFragmentBytes(4_000_000).setMaxRoots(100)
+                        .setMaxEvidenceBytes(4_000_000).setMaxBindings(20).setMaxRetainedBytes(16_000_000)
+                        .setMaxDecodedBytes(1_000_000)).build(), () -> {});
+    }
+
+    static CommandData command(String account, List<DocumentPublicationMember> members) throws Exception {
+        return command(account, members, assets());
+    }
+
+    static CommandData command(String account, List<DocumentPublicationMember> members, Assets assets) throws Exception {
+        var data = new HashMap<String, MemberData>();
+        for (var member : members) data.put(member.getMemberId(), memberData(member));
+        var intent = DocumentPublicationIntent.newBuilder().setOperationId(UUID.randomUUID().toString())
+                .setEncodingVersion(1).setAccountId(account).addAllMembers(members).build();
+        return new CommandData(new DocumentPublicationCommand(intent), Map.copyOf(data), assets);
+    }
+
+    static DocumentPublicationMember member(String memberId, String docId) {
+        var ownership = OwnershipContext.newBuilder().setAccountId("account").setDatasourceId("source")
+                .setSecurity(DocumentSecurity.getDefaultInstance()).build();
+        var document = Document.newBuilder().setDocId(docId).setOwnership(ownership)
+                .setStructuredData(Any.pack(StringValue.of("payload"), "type.test")).build();
+        var member = DocumentPublicationMember.newBuilder().setMemberId(memberId)
+                .setDriveId(UUID.randomUUID().toString()).setOwnership(ownership)
+                .setRowKind(DocumentPublicationRowKind.DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE)
+                .setDestination(DocumentRevisionCondition.newBuilder().setIfAbsent(true).setAddress(NodeAddress.newBuilder()
+                        .setAccountId("account").setDocId(docId).setGraphId("graph").setGraphAddressId("node")));
+        for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
+            var bytes = ByteString.copyFrom(part.bytes());
+            member.addParts(DocumentPublicationPart.newBuilder().setSlot(DocumentPublicationSlot.newBuilder()
+                    .setPart(part.part()).setSubKey(part.subKey())).setUpload(PublicationUpload.newBuilder()
+                    .setSizeBytes(bytes.size()).setSha256(sha(bytes)).setContentType("application/protobuf")));
+        }
+        return member.build();
+    }
+
+    private static MemberData memberData(DocumentPublicationMember member) throws Exception {
+        var ownership = member.getOwnership();
+        var docId = member.getDestination().getAddress().getDocId();
+        var document = Document.newBuilder().setDocId(docId).setOwnership(ownership)
+                .setStructuredData(Any.pack(StringValue.of("payload"), "type.test")).build();
+        var parts = DocumentPartCodec.split(document, PartLayouts.document());
+        var fragments = new HashMap<Integer, ByteString>();
+        for (int i = 0; i < parts.size(); i++) fragments.put(i, ByteString.copyFrom(parts.get(i).bytes()));
+        return new MemberData(member, Map.copyOf(fragments));
+    }
+
+    private static Assets assets() throws Exception {
+        return new Assets(asset(Document.getDescriptor()), asset(StringValue.getDescriptor()));
+    }
+
+    static Asset asset(com.google.protobuf.Descriptors.Descriptor type) throws Exception {
+        var closure = DescriptorFingerprints.closure(type); var descriptors = closure.toByteString(); var descriptorHash = sha(descriptors);
+        var schema = PublicationSchemaCondition.newBuilder().setTypeName(type.getFullName())
+                .setDescriptorFingerprint(DescriptorFingerprints.fingerprint(closure)).build();
+        var metadata = RepositorySchemaAsset.newBuilder().setSchema(schema).setArtifactSha256(descriptorHash)
+                .setTypeUrl("type.test/" + type.getFullName()).setCompilation(SchemaCompilationProvenance.newBuilder()
+                        .setOrigin(SchemaCompilationOrigin.SCHEMA_COMPILATION_ORIGIN_IMPORTED_DESCRIPTOR)
+                        .setEvidence(SchemaCompilerEvidence.SCHEMA_COMPILER_EVIDENCE_UNKNOWN)
+                        .setUnknownCompilerReason("synthetic test descriptor; compiler identity unknown")
+                        .setAdmissionRuntime(SchemaToolIdentity.newBuilder().setName("test-runtime").setVersion("1"))).build();
+        return new Asset(new DocumentSchemaAdmission.Definition(metadata, descriptors, Optional.empty()));
+    }
+
+    private static String sha(ByteString bytes) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray())); }
+        catch (Exception impossible) { throw new AssertionError(impossible); }
+    }
+
+    record Asset(DocumentSchemaAdmission.Definition definition) {}
+    record Assets(Asset container, Asset payload) {}
+    record MemberData(DocumentPublicationMember member, Map<Integer, ByteString> fragments) {}
+    record CommandData(DocumentPublicationCommand command, Map<String, MemberData> data, Assets assets) {}
+}

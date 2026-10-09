@@ -1,0 +1,18 @@
+metadata-mode: gradle-module
+candidate: 0.1.0-provider-qualification-abba0c2b9
+
+byte-spi-alone -> 2 resolved modules
+repository-spi-alone -> 37 resolved modules
+codec-alone -> 37 resolved modules
+repository-spi-plus-codec -> 38 resolved modules
+s3-provider-alone -> 50 resolved modules
+redis-provider-alone -> 10 resolved modules
+cache-alone -> 4 resolved modules
+cache-with-selected-redis-provider -> 11 resolved modules
+blob-grpc-client-alone -> 39 resolved modules
+publication-grpc-client-alone -> 39 resolved modules
+composite-consumer-main -> 39 resolved modules
+blob-grpc-consumer-sourceset -> 39 resolved modules
+provider-discovery-probe -> 57 resolved modules
+redis-published-consumer-probe -> 10 resolved modules
+broken-discovery-probe -> 2 resolved modules

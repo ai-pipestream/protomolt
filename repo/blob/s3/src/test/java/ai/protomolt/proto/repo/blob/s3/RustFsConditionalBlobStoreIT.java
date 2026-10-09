@@ -1,0 +1,169 @@
+package ai.protomolt.proto.repo.blob.s3;
+
+import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
+
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.containers.wait.strategy.Wait;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/** Actual conditional-write qualification against the deployment-pinned RustFS image. */
+@Testcontainers
+class RustFsConditionalBlobStoreIT {
+    private static final String BUCKET = "conditional-it";
+
+    @Container
+    static final GenericContainer<?> RUSTFS = new GenericContainer<>(
+            DockerImageName.parse("rustfs/rustfs:1.0.0-beta.11-preview.1"))
+            .withCommand("/data")
+            .withEnv("RUSTFS_VOLUMES", "/data")
+            .withEnv("RUSTFS_ADDRESS", ":9000")
+            .withEnv("RUSTFS_CONSOLE_ENABLE", "false")
+            .withEnv("RUSTFS_ACCESS_KEY", "conditional-test")
+            .withEnv("RUSTFS_SECRET_KEY", "conditional-test-secret")
+            .withExposedPorts(9000)
+            .waitingFor(Wait.forHttp("/health").forPort(9000));
+
+    static S3BlobStore store;
+    static S3Client client;
+    static ai.protomolt.proto.repo.blob.spi.OpenedBlobStore handle;
+
+    @BeforeAll
+    static void setup() {
+        client = S3Client.builder()
+                .endpointOverride(java.net.URI.create("http://" + RUSTFS.getHost() + ":"
+                        + RUSTFS.getMappedPort(9000)))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials
+                        .create("conditional-test", "conditional-test-secret")))
+                .region(Region.US_EAST_1)
+                .httpClient(UrlConnectionHttpClient.create())
+                .forcePathStyle(true).build();
+        client.createBucket(builder -> builder.bucket(BUCKET));
+        handle = ai.protomolt.proto.repo.blob.spi.BlobStores.discover().open("s3", java.util.Map.ofEntries(
+                java.util.Map.entry("endpoint", "http://" + RUSTFS.getHost() + ":" + RUSTFS.getMappedPort(9000)),
+                java.util.Map.entry("region", "us-east-1"),
+                java.util.Map.entry("access-key", "conditional-test"),
+                java.util.Map.entry("secret-key", "conditional-test-secret"),
+                java.util.Map.entry("path-style", "true"),
+                java.util.Map.entry("conditional-writes", "true"),
+                java.util.Map.entry("credentials-mode", "static"),
+                java.util.Map.entry("api-call-timeout-ms", "300000"),
+                java.util.Map.entry("api-attempt-timeout-ms", "60000"),
+                java.util.Map.entry("connection-timeout-ms", "10000"),
+                java.util.Map.entry("socket-timeout-ms", "60000")));
+        store = (S3BlobStore) handle.store();
+    }
+
+    @AfterAll
+    static void closeClient() throws Exception {
+        try { if (handle != null) handle.close(); }
+        finally { if (client != null) client.close(); }
+    }
+
+    @Test
+    void versionedReadsReturnOriginalBytesAfterSameKeyReplacement() {
+        String bucket = "historical-version-it";
+        client.createBucket(b -> b.bucket(bucket));
+        client.putBucketVersioning(b -> b.bucket(bucket).versioningConfiguration(v -> v.status(
+                software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED)));
+        assertThat(client.getBucketVersioning(b -> b.bucket(bucket)).status()).isEqualTo(
+                software.amazon.awssdk.services.s3.model.BucketVersioningStatus.ENABLED);
+        var spec = new BlobStore.PutSpec(bucket, "same-key", "application/octet-stream", null, null);
+        byte[] originalBytes = bytes("original archive");
+        byte[] newBytes = bytes("replacement archive with different content");
+        var original = store.put(spec, originalBytes);
+        var replacement = store.put(spec, newBytes);
+        assertThat(original.versionId()).isNotBlank().isNotEqualTo("null");
+        assertThat(replacement.versionId()).isNotBlank().isNotEqualTo("null").isNotEqualTo(original.versionId());
+        var historical = store.getBounded(bucket, spec.key(), original.versionId(), originalBytes.length);
+        assertThat(historical.data()).isEqualTo(originalBytes);
+        assertThat(historical.versionId()).isEqualTo(original.versionId());
+        assertThat(historical.eTag()).isEqualTo(original.eTag());
+        assertThat(historical.contentType()).isEqualTo(spec.contentType());
+        assertThat(store.getBounded(bucket, spec.key(), replacement.versionId(), newBytes.length).data()).isEqualTo(newBytes);
+        assertThat(store.getBounded(bucket, spec.key(), null, newBytes.length).data()).isEqualTo(newBytes);
+        assertThatThrownBy(() -> store.getBounded(bucket, spec.key(), null, originalBytes.length))
+                .isInstanceOf(BlobStore.BlobReadLimitException.class);
+        client.deleteObject(b -> b.bucket(bucket).key(spec.key()).versionId(replacement.versionId()));
+        assertThat(store.getBounded(bucket, spec.key(), original.versionId(), originalBytes.length).data()).isEqualTo(originalBytes);
+    }
+
+    @Test
+    void absentAndMatchingWritesFenceStaleSnapshots() {
+        var spec = spec("fencing");
+        assertThatThrownBy(() -> store.getForUpdate(BUCKET, "no-such-transcript"))
+                .isInstanceOf(BlobStore.BlobNotFoundException.class);
+        byte[] first = bytes("encrypted-snapshot-one");
+        var created = store.conditionalPut(spec, first, BlobStore.WriteCondition.absent());
+        var read = store.getForUpdate(BUCKET, spec.key());
+        assertThat(read.data()).isEqualTo(first);
+        assertThat(read.eTag()).isEqualTo(created.eTag());
+        assertThatThrownBy(() -> store.conditionalPut(spec, bytes("other"),
+                BlobStore.WriteCondition.absent()))
+                .isInstanceOf(BlobStore.BlobConflictException.class);
+        var replaced = store.conditionalPut(spec, bytes("encrypted-snapshot-two"),
+                BlobStore.WriteCondition.matching(read.eTag()));
+        assertThat(replaced.eTag()).isNotEqualTo(read.eTag());
+        assertThatThrownBy(() -> store.conditionalPut(spec, bytes("delayed-old"),
+                BlobStore.WriteCondition.matching(read.eTag())))
+                .isInstanceOf(BlobStore.BlobConflictException.class);
+        assertThat(store.getForUpdate(BUCKET, spec.key()).data())
+                .isEqualTo(bytes("encrypted-snapshot-two"));
+    }
+
+    @Test
+    void twoConcurrentCreatesAndTwoMatchingReplacementsHaveOneWinner() throws Exception {
+        var spec = spec("race");
+        race(spec, BlobStore.WriteCondition.absent(), "create");
+        var read = store.getForUpdate(BUCKET, spec.key());
+        race(spec, BlobStore.WriteCondition.matching(read.eTag()), "replace");
+        var after = store.getForUpdate(BUCKET, spec.key());
+        assertThat(new String(after.data(), StandardCharsets.UTF_8)).startsWith("replace-");
+        assertThat(after.eTag()).isNotEqualTo(read.eTag());
+    }
+
+    private static void race(BlobStore.PutSpec spec, BlobStore.WriteCondition condition,
+            String prefix) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var first = workers.submit(() -> attempt(spec, condition, bytes(prefix + "-one"), start));
+            var second = workers.submit(() -> attempt(spec, condition, bytes(prefix + "-two"), start));
+            start.countDown();
+            assertThat(first.get(30, TimeUnit.SECONDS) + second.get(30, TimeUnit.SECONDS)).isEqualTo(1);
+        }
+    }
+
+    private static int attempt(BlobStore.PutSpec spec, BlobStore.WriteCondition condition,
+            byte[] bytes, CountDownLatch start) throws Exception {
+        start.await();
+        try {
+            store.conditionalPut(spec, bytes, condition);
+            return 1;
+        } catch (BlobStore.BlobConflictException conflict) {
+            return 0;
+        }
+    }
+
+    private static BlobStore.PutSpec spec(String key) {
+        return new BlobStore.PutSpec(BUCKET, key, "application/octet-stream", null, null);
+    }
+
+    private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
+}

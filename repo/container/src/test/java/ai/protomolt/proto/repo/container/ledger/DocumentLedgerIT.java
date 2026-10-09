@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.v1.PartManifestEntry;
 import ai.protomolt.proto.repo.v1.PartState;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import jakarta.persistence.PersistenceException;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -35,16 +36,17 @@ class DocumentLedgerIT {
     private static final String ACCOUNT = "acct-1";
 
     private static DocumentLedger ledger;
+    private static LedgerDatabase database;
 
     @BeforeAll
     static void boot() {
         LedgerConfig config = new LedgerConfig(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
-        LedgerDatabase database = new LedgerDatabase(config);
+        database = new LedgerDatabase(config);
         ledger = new DocumentLedger(new Tx(database.entityManagerFactory()));
-        // Deliberately never closed: the container dies with the JVM and the
-        // shared pool/EMF serve every test in the class.
     }
+
+    @AfterAll static void close() { if (database != null) database.close(); }
 
     private static DocumentRecord intakeRow(UUID nodeId, String docId, String datasourceId) {
         DocumentRecord record = new DocumentRecord();
@@ -94,6 +96,23 @@ class DocumentLedgerIT {
     }
 
     @Test
+    void saveReturnsDatabaseRevisionForInsertAndUpdate() {
+        var input = intakeRow(UUID.randomUUID(), "returned-revision", "ds-revision");
+        var inserted = ledger.save(input);
+        assertThat(inserted.mutationRevision).isPositive()
+                .isEqualTo(ledger.findByNodeId(input.nodeId).orElseThrow().mutationRevision);
+        long insertedRevision = inserted.mutationRevision;
+        inserted.filename = "updated.pdf";
+        var updated = ledger.save(inserted);
+        assertThat(updated.mutationRevision).isGreaterThan(insertedRevision)
+                .isEqualTo(ledger.findByNodeId(input.nodeId).orElseThrow().mutationRevision);
+        updated.filename = "guarded.pdf";
+        var guarded = ledger.saveIfRevision(updated, updated.mutationRevision, (em, row) -> {});
+        assertThat(guarded.filename).isEqualTo("guarded.pdf");
+        assertThat(guarded.mutationRevision).isGreaterThan(updated.mutationRevision);
+    }
+
+    @Test
     void saveAndFindRoundTripWithManifest() {
         DocumentRecord record = intakeRow(UUID.randomUUID(), "doc-roundtrip", "ds-1");
         DocumentManifest manifest = manifestFor(record);
@@ -120,6 +139,151 @@ class DocumentLedgerIT {
         Optional<DocumentRecord> locked = ledger.findByReferenceForUpdate(addressOf(record));
         assertThat(locked).isPresent();
         assertThat(locked.get().checksum).isEqualTo(record.checksum);
+    }
+
+    @Test
+    void visiblePaginationScansBeyondOneFetchBatchWithoutCountingHiddenRows() {
+        String drive = "visible-scan-" + UUID.randomUUID();
+        Instant start = Instant.parse("2020-01-01T00:00:00Z");
+        for (int i = 0; i < 300; i++) {
+            var row = intakeRow(UUID.randomUUID(), drive + "-" + i, "visible-source");
+            row.driveName = drive;
+            row.createdAt = start.plusSeconds(i);
+            row.filename = Integer.toString(i);
+            ledger.save(row);
+        }
+        var visited = new java.util.concurrent.atomic.AtomicInteger();
+        var result = ledger.listVisible(new ListDocumentsFilter(drive, null, null, null, 3, 147),
+                java.util.Set.of(ACCOUNT), row -> {
+                    visited.incrementAndGet();
+                    return Integer.parseInt(row.filename) % 2 == 1;
+                });
+        assertThat(visited.get()).isEqualTo(300);
+        assertThat(result.totalCount()).isEqualTo(150);
+        assertThat(result.rows()).extracting(row -> row.filename).containsExactly("295", "297", "299");
+        assertThat(ledger.listVisible(new ListDocumentsFilter(drive, null, null, null, 3, 0),
+                java.util.Set.of("different-account"), row -> {
+                    throw new AssertionError("Unbound account reached the visibility predicate");
+                }).totalCount()).isZero();
+    }
+
+    @Test
+    void guardedSaveRejectsStalePolicyAndReturnsPersistedRevision() {
+        var candidate = intakeRow(UUID.randomUUID(), "guarded-policy", "guarded-source");
+        var initial = ledger.saveIfRevision(candidate, null, (em, row) -> {});
+        assertThat(initial.mutationRevision).isPositive();
+        assertThat(initial.mutationRevision).isEqualTo(ledger.findByNodeId(candidate.nodeId).orElseThrow().mutationRevision);
+        var changed = ledger.findByNodeId(candidate.nodeId).orElseThrow();
+        changed.security = "{}";
+        ledger.save(changed);
+        var persisted = ledger.findByNodeId(candidate.nodeId).orElseThrow();
+        assertThat(persisted.mutationRevision).isGreaterThan(initial.mutationRevision);
+        assertThat(persisted.updatedAt).isEqualTo(initial.updatedAt);
+        initial.filename = "stale-candidate";
+        assertThatThrownBy(() -> ledger.saveIfRevision(initial, initial.mutationRevision, (em, row) -> {
+            throw new AssertionError("Stale candidate reached commit callback");
+        })).isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(ledger.findByNodeId(candidate.nodeId).orElseThrow().security).isEqualTo("{}");
+        assertThatThrownBy(() -> ledger.saveIfRevision(persisted, null, (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        persisted.filename = "next-candidate";
+        var next = ledger.saveIfRevision(persisted, persisted.mutationRevision, (em, row) -> {});
+        assertThat(next.mutationRevision).isGreaterThan(persisted.mutationRevision);
+        assertThat(next.mutationRevision).isEqualTo(ledger.findByNodeId(candidate.nodeId).orElseThrow().mutationRevision);
+    }
+
+    @Test
+    void guardedCallbackFailureRollsBackAndDeleteReinsertCannotReuseRevision() {
+        var row = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "guarded-rollback", "guarded-source"),
+                null, (em, committed) -> {});
+        long revision = row.mutationRevision;
+        String filename = row.filename;
+        row.filename = "uncommitted";
+        assertThatThrownBy(() -> ledger.saveIfRevision(row, revision, (em, committed) -> {
+            throw new IllegalStateException("injected commit callback failure");
+        })).isInstanceOf(IllegalStateException.class).hasMessageContaining("injected");
+        var unchanged = ledger.findByNodeId(row.nodeId).orElseThrow();
+        assertThat(unchanged.mutationRevision).isEqualTo(revision);
+        assertThat(unchanged.filename).isEqualTo(filename);
+        ledger.deleteByReference(addressOf(row));
+        var replacement = ledger.saveIfRevision(row, null, (em, committed) -> {});
+        assertThat(replacement.mutationRevision).isGreaterThan(revision);
+        assertThatThrownBy(() -> ledger.saveIfRevision(row, revision, (em, committed) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+    }
+
+    @Test
+    void twoGuardedFirstWritesHaveExactlyOneWinner() throws Exception {
+        UUID id = UUID.randomUUID();
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (int i = 0; i < 2; i++) futures.add(executor.submit(() -> {
+                start.await();
+                try {
+                    ledger.saveIfRevision(intakeRow(id, "guarded-concurrent", "guarded-source"), null, (em, row) -> {});
+                    return true;
+                } catch (DocumentLedger.RevisionConflictException expected) {
+                    return false;
+                }
+            }));
+            start.countDown();
+            int winners = 0;
+            for (var future : futures) if (future.get(10, java.util.concurrent.TimeUnit.SECONDS)) winners++;
+            assertThat(winners).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void guardedCopyRequiresEverySourceAndConsistentSameNodeRevision() {
+        var source = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-source", "ds"), null, (em, row) -> {});
+        var dest = intakeRow(UUID.randomUUID(), "copy-destination", "ds");
+        var dependencies = java.util.Map.of(source.nodeId, source.mutationRevision);
+        var saved = ledger.saveIfRevision(dest, null, dependencies, (em, row) -> {});
+        assertThat(ledger.findByNodeId(source.nodeId).orElseThrow().mutationRevision).isEqualTo(source.mutationRevision);
+        assertThatThrownBy(() -> ledger.saveIfRevision(saved, saved.mutationRevision,
+                java.util.Map.of(saved.nodeId, saved.mutationRevision + 1), (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        saved.filename = "self-copy";
+        var self = ledger.saveIfRevision(saved, saved.mutationRevision,
+                java.util.Map.of(saved.nodeId, saved.mutationRevision), (em, row) -> {});
+        assertThat(self.mutationRevision).isGreaterThan(saved.mutationRevision);
+        ledger.deleteByReference(addressOf(source));
+        assertThatThrownBy(() -> ledger.saveIfRevision(self, self.mutationRevision, dependencies, (em, row) -> {}))
+                .isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        ledger.saveIfRevision(source, null, (em, row) -> {});
+        assertThatThrownBy(() -> ledger.saveIfRevision(self, self.mutationRevision, dependencies, (em, row) -> {
+            throw new AssertionError("Replaced source reached publication");
+        })).isInstanceOf(DocumentLedger.RevisionConflictException.class);
+        assertThat(ledger.findByNodeId(self.nodeId).orElseThrow().mutationRevision).isEqualTo(self.mutationRevision);
+    }
+
+    @Test
+    void opposingGuardedCopiesSerializeWithoutDeadlock() throws Exception {
+        var first = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-first", "ds"), null, (em, row) -> {});
+        var second = ledger.saveIfRevision(intakeRow(UUID.randomUUID(), "copy-second", "ds"), null, (em, row) -> {});
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (var destination : List.of(first, second)) {
+                var source = destination == first ? second : first;
+                destination.filename = "copied-from-" + source.nodeId;
+                futures.add(executor.submit(() -> {
+                    start.await();
+                    try {
+                        ledger.saveIfRevision(destination, destination.mutationRevision,
+                                java.util.Map.of(source.nodeId, source.mutationRevision), (em, row) -> {});
+                        return true;
+                    } catch (DocumentLedger.RevisionConflictException expected) {
+                        return false;
+                    }
+                }));
+            }
+            start.countDown();
+            int winners = 0;
+            for (var future : futures) if (future.get(10, java.util.concurrent.TimeUnit.SECONDS)) winners++;
+            assertThat(winners).isEqualTo(1);
+        }
     }
 
     @Test

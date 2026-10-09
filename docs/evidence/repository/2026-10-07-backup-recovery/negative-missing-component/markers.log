@@ -1,0 +1,2 @@
+CHECK_OK missing-component.refused_before_resources :: refused: Required component is missing from the backup set: provider/rustfs-data.tar; resources created=0
+CHECK_OK missing-component.original_backup_untouched :: original backup set unchanged

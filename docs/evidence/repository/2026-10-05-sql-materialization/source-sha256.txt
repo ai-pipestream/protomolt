@@ -1,0 +1,6 @@
+a0191b0e807492be120cdbf5f5d896bb750a43e1634a9bdcd804c963f56c9587  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalMaterializer.java
+9e3d99134c9b9262102a0279475989da26dc8d482e0bdf9e042b151971b55677  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalMaterialization.java
+fbba2051c5a77740c14116beaebdc3acdd634103f1cdab3df00dc4a2c3487b3c  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentReadLedger.java
+a471f2542da69759a4e15f3a142029c5598a5443822530e11e3467275388a98a  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentSchemaMaterialization.java
+9fe6c5209ba8c354a804897a6ed70bf98b12723f5ea840944531ed789e7ffa64  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalMaterializationIT.java
+9f3aa477206dd3a5c93386b3d3a4a90b0685622ef390c838c8a5385323d75ef7  repo/admission/src/test/java/ai/protomolt/proto/repo/admission/DocumentSchemaMaterializationTest.java

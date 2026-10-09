@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-06T00:59:51.850Z" hostname="krick" time="0.173">
+  <properties/>
+  <testcase name="discoveryDoesNotOpenAnEndpointAndRequiresExplicitSelection()" classname="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" time="0.047"/>
+  <testcase name="nonExpiringCapabilityDependsOnConfiguredTtl()" classname="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" time="0.103"/>
+  <testcase name="incompatibleCapabilityReleasesTheSelectedHandle()" classname="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" time="0.001"/>
+  <testcase name="invalidConfigurationIsRejectedBeforeOpening()" classname="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" time="0.002"/>
+  <testcase name="handleOwnsThePoolAndRefusesAccessAfterClose()" classname="ai.protomolt.proto.repo.blob.redis.RedisProviderTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

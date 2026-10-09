@@ -2,6 +2,7 @@ package ai.protomolt.proto.authz.grpc;
 
 import ai.protomolt.proto.actions.Caller;
 import ai.protomolt.proto.authz.CallerResolver;
+import ai.protomolt.proto.authz.AuthenticatedCaller;
 import io.grpc.Context;
 import io.grpc.Contexts;
 import io.grpc.Metadata;
@@ -57,20 +58,21 @@ public final class ApiTokenServerInterceptor implements ServerInterceptor {
                     new Metadata());
             return new ServerCall.Listener<>() { };
         }
-        Caller caller;
+        AuthenticatedCaller authentication;
         if (MessageDigest.isEqual(expected, presented.getBytes(StandardCharsets.UTF_8))) {
-            caller = Caller.operator();
+            authentication = AuthenticatedCaller.unbound(Caller.operator());
         } else if (resolver != null) {
-            caller = resolver.resolve(presented).orElse(null);
+            authentication = resolver.resolveAuthenticated(presented).orElse(null);
         } else {
-            caller = null;
+            authentication = null;
         }
-        if (caller == null) {
+        if (authentication == null) {
             // The refusal carries nothing an attacker could use to recover a credential.
             call.close(Status.UNAUTHENTICATED.withDescription("Invalid API token"), new Metadata());
             return new ServerCall.Listener<>() { };
         }
-        return Contexts.interceptCall(Context.current().withValue(CallerContexts.CALLER, caller),
+        return Contexts.interceptCall(Context.current().withValues(CallerContexts.CALLER, authentication.caller(),
+                        CallerContexts.AUTHENTICATED_CALLER, authentication),
                 call, headers, next);
     }
 }

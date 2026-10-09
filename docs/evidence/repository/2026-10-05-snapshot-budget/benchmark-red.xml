@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-05T23:44:25.080Z" hostname="krick" time="74.103">
+  <properties/>
+  <testcase name="nativeWorkersPublishAndReadAcrossProcesses()" classname="ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest" time="74.093">
+    <failure message="java.lang.AssertionError: SLF4J(W): No SLF4J providers were found.&#10;SLF4J(W): Defaulting to no-operation (NOP) logger implementation&#10;SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.&#10;Oct 05, 2026 7:45:33 PM org.flywaydb.core.FlywayExecutor init&#10;INFO: Database: jdbc:postgresql:******** (PostgreSQL 18.6)&#10;Oct 05, 2026 7:45:33 PM org.flywaydb.core.internal.util.DeprecationUtils printDeprecationNotice&#10;WARNING: initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead&#10;Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbValidate validate&#10;INFO: Successfully validated 84 migrations (execution time 00:00.044s)&#10;Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.util.DeprecationUtils printDeprecationNotice&#10;WARNING: initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead&#10;Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbMigrate migrateGroup&#10;INFO: Current version of schema &quot;public&quot;: 84&#10;Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbMigrate logSummary&#10;INFO: Schema &quot;public&quot; is up to date. No migration necessary.&#10;Oct 05, 2026 7:45:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation&#10;INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]&#10;Oct 05, 2026 7:45:34 PM org.hibernate.Version logVersion&#10;INFO: HHH000001: Hibernate ORM core version 7.4.10.Final&#10;Oct 05, 2026 7:45:34 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect&#10;WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)&#10;Oct 05, 2026 7:45:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo&#10;INFO: HHH10001005: Database info:&#10;&#9;Database JDBC URL [jdbc:postgresql://localhost:49297/test?loggerLevel=OFF]&#10;&#9;Database driver: PostgreSQL JDBC Driver&#10;&#9;Database dialect: PostgreSQLDialect&#10;&#9;Database version: 18.6&#10;&#9;Default catalog/schema: test/public&#10;&#9;Autocommit mode: undefined/unknown&#10;&#9;Isolation level: READ_COMMITTED [default READ_COMMITTED]&#10;&#9;JDBC fetch size: none&#10;&#9;Pool: DataSourceConnectionProvider&#10;&#9;Minimum pool size: undefined/unknown&#10;&#9;Maximum pool size: undefined/unknown&#10;Oct 05, 2026 7:45:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService&#10;INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)&#10;Exception in thread &quot;main&quot; java.util.concurrent.ExecutionException: ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted&#10;&#9;at java.base/java.util.concurrent.FutureTask.report(FutureTask.java:124)&#10;&#9;at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:207)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.NativeMixedTrafficProbe.run(NativeMixedTrafficProbe.java:115)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.NativeReplicaProbe.main(NativeReplicaProbe.java:36)&#10;Caused by: ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted&#10;&#9;at ai.protomolt.proto.repo.blob.spi.PayloadBudget.reserve(PayloadBudget.java:23)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentRetainedSlots.verify(DocumentAssessmentRetainedSlots.java:160)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.lambda$observeRetained$4(DocumentAssessmentReconciliation.java:107)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.Tx.inTransaction(Tx.java:75)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:78)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.captureRetained(DocumentAssessmentReconciliation.java:51)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.captureAssessment(DocumentReadLedger.java:126)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationAssessmentExecution.resume(DocumentPublicationAssessmentExecution.java:88)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationAssessmentExecution.resume(DocumentPublicationAssessmentExecution.java:68)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.executeAssessed(DocumentPublicationExecution.java:180)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.executeNew(DocumentPublicationExecution.java:142)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.execute(DocumentPublicationExecution.java:96)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationSessions.executeOpen(DocumentPublicationSessions.java:95)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationSessions.execute(DocumentPublicationSessions.java:69)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.execute(DocumentPublicationRuntime.java:162)&#10;&#9;at ai.protomolt.proto.repo.container.ledger.NativeMixedTrafficProbe.lambda$run$2(NativeMixedTrafficProbe.java:89)&#10;&#9;at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:328)&#10;&#9;at java.base/java.util.concurrent.ThreadPerTaskExecutor$ThreadBoundFuture.run(ThreadPerTaskExecutor.java:323)&#10;&#9;at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)&#10;" type="java.lang.AssertionError">java.lang.AssertionError: SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+Oct 05, 2026 7:45:33 PM org.flywaydb.core.FlywayExecutor init
+INFO: Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+Oct 05, 2026 7:45:33 PM org.flywaydb.core.internal.util.DeprecationUtils printDeprecationNotice
+WARNING: initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbValidate validate
+INFO: Successfully validated 84 migrations (execution time 00:00.044s)
+Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.util.DeprecationUtils printDeprecationNotice
+WARNING: initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbMigrate migrateGroup
+INFO: Current version of schema &quot;public&quot;: 84
+Oct 05, 2026 7:45:34 PM org.flywaydb.core.internal.command.DbMigrate logSummary
+INFO: Schema &quot;public&quot; is up to date. No migration necessary.
+Oct 05, 2026 7:45:34 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:45:34 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 05, 2026 7:45:34 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 05, 2026 7:45:34 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49297/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:45:34 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Exception in thread &quot;main&quot; java.util.concurrent.ExecutionException: ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted
+	at java.base/java.util.concurrent.FutureTask.report(FutureTask.java:124)
+	at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:207)
+	at ai.protomolt.proto.repo.container.ledger.NativeMixedTrafficProbe.run(NativeMixedTrafficProbe.java:115)
+	at ai.protomolt.proto.repo.container.ledger.NativeReplicaProbe.main(NativeReplicaProbe.java:36)
+Caused by: ai.protomolt.proto.repo.blob.spi.PayloadBudget$CapacityExceededException: Payload byte capacity exhausted
+	at ai.protomolt.proto.repo.blob.spi.PayloadBudget.reserve(PayloadBudget.java:23)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentRetainedSlots.verify(DocumentAssessmentRetainedSlots.java:160)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.lambda$observeRetained$4(DocumentAssessmentReconciliation.java:107)
+	at ai.protomolt.proto.repo.container.ledger.Tx.inTransaction(Tx.java:75)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.observeRetained(DocumentAssessmentReconciliation.java:78)
+	at ai.protomolt.proto.repo.container.ledger.DocumentAssessmentReconciliation.captureRetained(DocumentAssessmentReconciliation.java:51)
+	at ai.protomolt.proto.repo.container.ledger.DocumentReadLedger.captureAssessment(DocumentReadLedger.java:126)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationAssessmentExecution.resume(DocumentPublicationAssessmentExecution.java:88)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationAssessmentExecution.resume(DocumentPublicationAssessmentExecution.java:68)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.executeAssessed(DocumentPublicationExecution.java:180)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.executeNew(DocumentPublicationExecution.java:142)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationExecution.execute(DocumentPublicationExecution.java:96)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationSessions.executeOpen(DocumentPublicationSessions.java:95)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationSessions.execute(DocumentPublicationSessions.java:69)
+	at ai.protomolt.proto.repo.container.ledger.DocumentPublicationRuntime.execute(DocumentPublicationRuntime.java:162)
+	at ai.protomolt.proto.repo.container.ledger.NativeMixedTrafficProbe.lambda$run$2(NativeMixedTrafficProbe.java:89)
+	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:328)
+	at java.base/java.util.concurrent.ThreadPerTaskExecutor$ThreadBoundFuture.run(ThreadPerTaskExecutor.java:323)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+
+	at ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest.benchmark(NativeReplicaRuntimeTest.java:148)
+	at ai.protomolt.proto.repo.container.ledger.NativeReplicaRuntimeTest.nativeWorkersPublishAndReadAcrossProcesses(NativeReplicaRuntimeTest.java:114)
+</failure>
+  </testcase>
+  <system-out><![CDATA[NATIVE_STORAGE_BACKEND=rustfs image=rustfs/rustfs:1.0.0-beta.11-preview.1 image_id=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: edbf3938243b674309720df8911894f18f0a327b39349816ff5a4224f1a6ac32
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.345748826S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 867c7361704103250155236c86f5304b0047b3b074235e7274d5162c951b16f4
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.128056415S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49297/test?loggerLevel=OFF)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 0bbee8e5e99cfb29ba0e61c450327b56e813aa1be618884a684aba050eec8988
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /boring_kirch: Waiting for 60 seconds for URL: http://localhost:49298/health (where port 49298 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.25451688S
+]]></system-err>
+</testsuite>

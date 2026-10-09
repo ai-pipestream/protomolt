@@ -1,0 +1,10 @@
+java.version=25.0.3
+java.vm.name=OpenJDK 64-Bit Server VM
+os=Linux 7.0.0-34-generic amd64
+docker.server=29.8.1
+postgres.image=postgres:18-alpine sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+rustfs.image=rustfs/rustfs:1.0.0-beta.11-preview.1 sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+git.head=0f7d77efec962b3d8cfd77fa7e0d94be9a4606af
+git.status=D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalChecks.java;D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalDigests.java;D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalFailure.java;D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalHostFixture.java;D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalHostLedger.java;D  src/test/resources/backup-recovery/driver/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalJson.java;?? ../../INSTRUCTIONS.md
+load.average=9.39 9.75 10.22 4/17513 4047144
+bundle=/work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/admission-transport-runtime

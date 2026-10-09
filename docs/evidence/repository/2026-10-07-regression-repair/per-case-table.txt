@@ -1,0 +1,53 @@
+# case | 01-base-focused (ad28648c untouched) | 02-focused-repaired (ad28648c + this branch)
+ArchiveDeletionFailureIT [1] false | PASS | PASS
+ArchiveDeletionFailureIT [2] true | PASS | PASS
+ArchiveDeletionFailureIT boundReadsUseOriginalBackendIdentityAndNeverTheCurrentDrive() | FAIL: org.hibernate.exception.ConstraintViolationException: could not execute statement [ERROR: Archive metadata snapshot must identify its containing version   Where: PL/pgSQL | PASS
+DocumentOperationCommandsIT [1] "malformed" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [2] "member-order" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [3] "unknown-field" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [4] "operation-id" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [5] "wrong-account" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [6] "invalid-intent" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentOperationCommandsIT [7] "codec" | PASS | PASS
+DocumentOperationCommandsIT [8] "version" | FAIL: java.lang.IllegalArgumentException: Publication codec requires typed command admission 	at ai.protomolt.proto.repo.container.ledger.RepositoryOperationLedger.admit(Reposi | PASS
+DocumentRevisionSchemaArtifactsIT wrongAccountPrincipalOrGenerationCannotBorrowTheWriteFence() | FAIL: java.lang.AssertionError:  Expecting actual: | PASS
+DocumentRevisionSchemaAssetsIT wrongScopeAndGenerationCannotUseCurrentOwnerFence() | FAIL: java.lang.AssertionError:  Expecting actual: | PASS
+DocumentRevisionSchemaEvidenceIT rawFragmentHashSizeOrdinalAndSupportedPartAreChecked() | FAIL: java.lang.AssertionError:  Expecting actual: | PASS
+RepositoryCoordinatorHandoffIT [1] false | PASS | PASS
+RepositoryCoordinatorHandoffIT [2] true | FAIL: org.hibernate.exception.SQLGrammarException: JDBC exception executing SQL [ERROR: relation "repository_preparation_history_sets" does not exist   Position: 13] [INSERT IN | PASS
+RepositoryCoordinatorSupersessionIT [1] "false", "false" | PASS | PASS
+RepositoryCoordinatorSupersessionIT [1] false | PASS | PASS
+RepositoryCoordinatorSupersessionIT [2] "false", "true" | PASS | PASS
+RepositoryCoordinatorSupersessionIT [2] true | PASS | PASS
+RepositoryCoordinatorSupersessionIT [3] "true", "false" | PASS | PASS
+RepositoryCoordinatorSupersessionIT [4] "true", "true" | PASS | PASS
+RepositorySuccessorActivationIT [1] 0 | PASS | PASS
+RepositorySuccessorActivationIT [1] 11 | PASS | PASS
+RepositorySuccessorActivationIT [1] false | PASS | PASS
+RepositorySuccessorActivationIT [2] 12 | PASS | PASS
+RepositorySuccessorActivationIT [2] 95 | PASS | PASS
+RepositorySuccessorActivationIT [2] true | PASS | PASS
+RepositorySuccessorActivationIT [3] 96 | PASS | PASS
+RepositorySuccessorInstallIT [1] false | PASS | PASS
+RepositorySuccessorInstallIT [2] true | PASS | PASS
+
+run1 ArchiveDeletionFailureIT: tests=9 failures=1 errors=0 skipped=0
+run1 DocumentOperationCommandsIT: tests=11 failures=7 errors=0 skipped=0
+run1 DocumentRevisionSchemaArtifactsIT: tests=8 failures=1 errors=0 skipped=0
+run1 DocumentRevisionSchemaAssetsIT: tests=10 failures=1 errors=0 skipped=0
+run1 DocumentRevisionSchemaEvidenceIT: tests=9 failures=1 errors=0 skipped=0
+run1 RepositoryCoordinatorHandoffIT: tests=9 failures=1 errors=0 skipped=0
+run1 RepositoryCoordinatorSupersessionIT: tests=18 failures=0 errors=0 skipped=0
+run1 RepositorySuccessorActivationIT: tests=13 failures=0 errors=0 skipped=0
+run1 RepositorySuccessorInstallIT: tests=11 failures=0 errors=0 skipped=0
+run1 TOTAL tests=98 failures=12 errors=0 skipped=0
+run2 ArchiveDeletionFailureIT: tests=9 failures=0 errors=0 skipped=0
+run2 DocumentOperationCommandsIT: tests=11 failures=0 errors=0 skipped=0
+run2 DocumentRevisionSchemaArtifactsIT: tests=8 failures=0 errors=0 skipped=0
+run2 DocumentRevisionSchemaAssetsIT: tests=10 failures=0 errors=0 skipped=0
+run2 DocumentRevisionSchemaEvidenceIT: tests=9 failures=0 errors=0 skipped=0
+run2 RepositoryCoordinatorHandoffIT: tests=9 failures=0 errors=0 skipped=0
+run2 RepositoryCoordinatorSupersessionIT: tests=18 failures=0 errors=0 skipped=0
+run2 RepositorySuccessorActivationIT: tests=13 failures=0 errors=0 skipped=0
+run2 RepositorySuccessorInstallIT: tests=11 failures=0 errors=0 skipped=0
+run2 TOTAL tests=98 failures=0 errors=0 skipped=0

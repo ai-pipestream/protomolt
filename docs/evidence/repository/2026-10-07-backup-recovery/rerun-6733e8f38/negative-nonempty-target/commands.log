@@ -1,0 +1,23 @@
+2026-10-08T15:37:27.755831459Z exit=0 $ id -u
+  stdout: 1000
+2026-10-08T15:37:27.758926141Z exit=0 $ id -g
+  stdout: 1000
+2026-10-08T15:37:27.781164622Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-08T15:37:27.808594610Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-08T15:37:27.833001441Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-08T15:37:27.859674277Z exit=0 $ docker image inspect alpine:3.20 --format {{.Id}}
+  stdout: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+2026-10-08T15:37:27.914152380Z exit=0 $ docker network create protomolt-recovery-77adb4b3d-be6bd95f-net
+  stdout: 12f7cf9885783593762631eee385d99f31eb30c41095cd54cee7f9b9882716b7
+2026-10-08T15:37:27.931077444Z exit=0 $ docker volume create protomolt-recovery-77adb4b3d-be6bd95f-occupied
+  stdout: protomolt-recovery-77adb4b3d-be6bd95f-occupied
+2026-10-08T15:37:28.769198398Z exit=0 $ docker run --rm -v protomolt-recovery-77adb4b3d-be6bd95f-occupied:/data alpine:3.20 sh -c echo occupied > /data/marker
+2026-10-08T15:37:29.218653839Z exit=0 $ docker run --rm -v protomolt-recovery-77adb4b3d-be6bd95f-occupied:/data:ro alpine:3.20 sh -c find /data -mindepth 1 | head -1
+  stdout: /data/marker
+2026-10-08T15:37:29.242974517Z exit=0 $ docker volume rm -f protomolt-recovery-77adb4b3d-be6bd95f-occupied
+  stdout: protomolt-recovery-77adb4b3d-be6bd95f-occupied
+2026-10-08T15:37:29.393919451Z exit=0 $ docker network rm protomolt-recovery-77adb4b3d-be6bd95f-net
+  stdout: protomolt-recovery-77adb4b3d-be6bd95f-net

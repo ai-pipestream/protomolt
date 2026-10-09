@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT" tests="4" skipped="0" failures="4" errors="0" timestamp="2026-10-06T00:56:36.592Z" hostname="krick" time="1.985">
+  <properties/>
+  <testcase name="absentRetryConflictsAndMatchingRetryCannotOverwriteNewerBytes()" classname="ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT" time="0.088">
+    <failure message="java.lang.UnsupportedOperationException: conditional write is unsupported" type="java.lang.UnsupportedOperationException">java.lang.UnsupportedOperationException: conditional write is unsupported
+	at ai.protomolt.proto.repo.blob.spi.BlobStore.conditionalPut(BlobStore.java:131)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.absentRetryConflictsAndMatchingRetryCannotOverwriteNewerBytes(RedisConditionalWriteIT.java:29)
+</failure>
+  </testcase>
+  <testcase name="matchingMissingObjectConflictsWithoutCreatingIt()" classname="ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT" time="0.022">
+    <failure message="java.lang.AssertionError: &#10;Expecting actual throwable to be an instance of:&#10;  ai.protomolt.proto.repo.blob.spi.BlobStore.BlobConflictException&#10;but was:&#10;  java.lang.UnsupportedOperationException: conditional write is unsupported&#10;&#9;at ai.protomolt.proto.repo.blob.spi.BlobStore.conditionalPut(BlobStore.java:131)&#10;&#9;at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.lambda$matchingMissingObjectConflictsWithoutCreatingIt$0(RedisConditionalWriteIT.java:88)&#10;&#9;at org.assertj.core.api.ThrowableAssert.catchThrowable(ThrowableAssert.java:66)&#10;&#9;...(95 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)" type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting actual throwable to be an instance of:
+  ai.protomolt.proto.repo.blob.spi.BlobStore.BlobConflictException
+but was:
+  java.lang.UnsupportedOperationException: conditional write is unsupported
+	at ai.protomolt.proto.repo.blob.spi.BlobStore.conditionalPut(BlobStore.java:131)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.lambda$matchingMissingObjectConflictsWithoutCreatingIt$0(RedisConditionalWriteIT.java:88)
+	at org.assertj.core.api.ThrowableAssert.catchThrowable(ThrowableAssert.java:66)
+	...(95 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.matchingMissingObjectConflictsWithoutCreatingIt(RedisConditionalWriteIT.java:89)
+</failure>
+  </testcase>
+  <testcase name="conditionalBoundaryUsesExistingSpiLimitAndDoesNotMutateOnRefusal()" classname="ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT" time="0.002">
+    <failure message="java.lang.UnsupportedOperationException: conditional write is unsupported" type="java.lang.UnsupportedOperationException">java.lang.UnsupportedOperationException: conditional write is unsupported
+	at ai.protomolt.proto.repo.blob.spi.BlobStore.conditionalPut(BlobStore.java:131)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.conditionalBoundaryUsesExistingSpiLimitAndDoesNotMutateOnRefusal(RedisConditionalWriteIT.java:76)
+</failure>
+  </testcase>
+  <testcase name="simultaneousCreatesAndReplacementsHaveOneWinner()" classname="ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT" time="0.004">
+    <failure message="java.util.concurrent.ExecutionException: java.lang.UnsupportedOperationException: conditional write is unsupported" type="java.util.concurrent.ExecutionException">java.util.concurrent.ExecutionException: java.lang.UnsupportedOperationException: conditional write is unsupported
+	at java.base/java.util.concurrent.FutureTask.report(FutureTask.java:124)
+	at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:207)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.simultaneousCreatesAndReplacementsHaveOneWinner(RedisConditionalWriteIT.java:56)
+Caused by: java.lang.UnsupportedOperationException: conditional write is unsupported
+	at ai.protomolt.proto.repo.blob.spi.BlobStore.conditionalPut(BlobStore.java:131)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.compete(RedisConditionalWriteIT.java:69)
+	at ai.protomolt.proto.repo.blob.redis.RedisConditionalWriteIT.lambda$simultaneousCreatesAndReplacementsHaveOneWinner$0(RedisConditionalWriteIT.java:52)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 0234957b3f5f726929a713804338cf807ab88df44d4b85d17d4b324e69a48ccd
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.341049835S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: 685be6fa2fea2a742566afba5b0241fe553aa78f5d8b9f48794fbd1faa0e5a48
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.304104282S
+]]></system-err>
+</testsuite>

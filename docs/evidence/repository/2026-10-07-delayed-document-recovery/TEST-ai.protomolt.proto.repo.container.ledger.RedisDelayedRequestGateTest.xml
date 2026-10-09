@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.RedisDelayedRequestGateTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-07T02:30:26.754Z" hostname="krick" time="5.775">
+  <properties/>
+  <testcase name="originalRequestCanArriveAfterCallerFailureAndConfirmedAbsence()" classname="ai.protomolt.proto.repo.container.ledger.RedisDelayedRequestGateTest" time="4.512"/>
+  <testcase name="resetDuringPartialRequestRemainsAFailure()" classname="ai.protomolt.proto.repo.container.ledger.RedisDelayedRequestGateTest" time="0.63"/>
+  <testcase name="idleClientResetIsCountedAfterARealResponse()" classname="ai.protomolt.proto.repo.container.ledger.RedisDelayedRequestGateTest" time="0.609"/>
+  <system-out><![CDATA[REDIS_PROXY_IDLE_CLIENT_DISCONNECTS=1
+REDIS_PROXY_IDLE_CLIENT_DISCONNECTS=1
+]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker:
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 16a43bdd011ceeec3cd174781ba402ffdcfb9e91e41a5a92bfe98084918a2cff
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.344546817S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: 57bf77ae1e896d5c0b615101c76074d43d1e90ec0478882b1edf8f38663ae7de
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.293138402S
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: a06e3cfaa5b18d222408a46d085574b759cb28667390af6b643a562170ea89d9
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.274592151S
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: 0f310b4531334994acdedf5eb98b71bd42326da24cd7cf2254006489d299667e
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.272445894S
+]]></system-err>
+</testsuite>

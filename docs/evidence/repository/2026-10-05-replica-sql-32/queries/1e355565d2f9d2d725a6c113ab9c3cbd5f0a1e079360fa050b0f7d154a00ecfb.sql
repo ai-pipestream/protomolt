@@ -1,0 +1,1 @@
+select ar1_0.archive_id,ar1_0.account_id,ar1_0.created_at,ar1_0.description,ar1_0.drive_name,ar1_0.metadata,ar1_0.name,ar1_0.versioning from archives ar1_0 where ar1_0.archive_id=$1

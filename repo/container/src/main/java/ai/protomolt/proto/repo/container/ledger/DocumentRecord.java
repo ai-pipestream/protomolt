@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.repo.v1.DocumentManifest;
 import ai.protomolt.proto.repo.v1.DocumentSecurity;
-import ai.protomolt.proto.repo.container.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import jakarta.persistence.Column;
@@ -72,6 +72,14 @@ public class DocumentRecord {
     @Column(name = "node_id", nullable = false)
     public UUID nodeId;
 
+    /** Database-managed revision of any row mutation, including policy-only changes. */
+    @Column(name = "mutation_revision", nullable = false, insertable = false, updatable = false)
+    public long mutationRevision;
+
+    /** Admitted deletion generation; a body rewrite clears it. */
+    @Column(name = "pending_purge_id")
+    public UUID pendingPurgeId;
+
     /**
      * Logical document identifier, stable across all pipeline states.
      * Multiple rows can share a doc_id (one per storage address).
@@ -138,12 +146,12 @@ public class DocumentRecord {
     @Column(name = "checksum", nullable = false)
     public String checksum;
 
-    /** Name of the drive whose bucket holds the part objects. */
+    /** Selected logical drive. Native parts retain their own physical backend bindings. */
     @Column(name = "drive_name", nullable = false)
     public String driveName;
 
-    /** Storage prefix of the part objects (their keys share this root). */
-    @Column(name = "object_key", nullable = false, length = 1024)
+    /** Legacy shared physical prefix; null for native revisions with per-part locations. */
+    @Column(name = "object_key", length = 1024)
     public String objectKey;
 
     /** Object version identifier of the stored CORE part (nullable). */
@@ -281,12 +289,16 @@ public class DocumentRecord {
      * @return the parsed security, or null
      */
     public DocumentSecurity readSecurity() {
+        return parseSecurity(security,nodeId);
+    }
+
+    static DocumentSecurity parseSecurity(String security,UUID nodeId) {
         if (security == null) {
             return null;
         }
         DocumentSecurity.Builder builder = DocumentSecurity.newBuilder();
         try {
-            JsonFormat.parser().ignoringUnknownFields().merge(security, builder);
+            JsonFormat.parser().merge(security, builder);
         } catch (InvalidProtocolBufferException e) {
             throw new LedgerException("unparseable security JSON on document row " + nodeId, e);
         }

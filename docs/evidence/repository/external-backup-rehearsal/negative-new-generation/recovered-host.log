@@ -1,0 +1,137 @@
+CHECK_OK new-generation.distinct :: generation=rehearsal-other-1ed6a5e0-02bc-45e2-9757-58df201548ce
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@36fc695d
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.053s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 08, 2026 8:24:10 AM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 08, 2026 8:24:10 AM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 08, 2026 8:24:11 AM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 08, 2026 8:24:11 AM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33034/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 08, 2026 8:24:11 AM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+CHECK_OK new-generation.host_started :: a new generation binds freely at the recorded endpoint
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 5000 ms, sweep interval 60000 ms, reconcile disabled)
+CHECK_OK new-generation.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
+CHECK_OK new-generation.history_refused.alpha-v2 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
+CHECK_OK new-generation.history_refused.beta-v1 :: readRaw -> FAILED_PRECONDITION (original generation not configured on this host)
+[repo-purge-sweeper] WARN com.zaxxer.hikari.pool.ProxyConnection - document-ledger - Connection org.postgresql.jdbc.PgConnection@36fc695d marked as broken because of SQLSTATE(08006), ErrorCode(0)
+org.postgresql.util.PSQLException: An I/O error occurred while sending to the backend.
+	at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:474)
+	at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:533)
+	at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:449)
+	at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:197)
+	at org.postgresql.jdbc.PgPreparedStatement.executeQuery(PgPreparedStatement.java:140)
+	at com.zaxxer.hikari.pool.ProxyPreparedStatement.executeQuery(ProxyPreparedStatement.java:52)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.executeQuery(HikariProxyPreparedStatement.java)
+	at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:269)
+	at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.getResultSet(DeferredResultSetAccess.java:188)
+	at org.hibernate.sql.results.jdbc.internal.JdbcValuesResultSetImpl.<init>(JdbcValuesResultSetImpl.java:71)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValues(JdbcSelectExecutorStandardImpl.java:422)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValuesSource(JdbcSelectExecutorStandardImpl.java:349)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.doExecuteQuery(JdbcSelectExecutorStandardImpl.java:143)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.executeQuery(JdbcSelectExecutorStandardImpl.java:100)
+	at org.hibernate.sql.exec.spi.JdbcSelectExecutor.executeQuery(JdbcSelectExecutor.java:63)
+	at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:137)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.lambda$new$1(ConcreteSqmSelectQueryPlan.java:136)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.withCacheableSqmInterpretation(ConcreteSqmSelectQueryPlan.java:484)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.performList(ConcreteSqmSelectQueryPlan.java:411)
+	at org.hibernate.query.sqm.internal.SqmQueryImpl.doList(SqmQueryImpl.java:379)
+	at org.hibernate.query.spi.AbstractSelectionQuery.list(AbstractSelectionQuery.java:153)
+	at org.hibernate.query.Query.getResultList(Query.java:121)
+	at ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper.lambda$sweepOnce$0(PurgeSweeper.java:79)
+	at ai.protomolt.proto.repo.container.ledger.Tx.readOnly(Tx.java:138)
+	at ai.protomolt.proto.repo.container.ledger.Tx.readOnly(Tx.java:117)
+	at ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper.sweepOnce(PurgeSweeper.java:69)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$6(RepoServices.java:871)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: java.net.SocketException: Closed by interrupt
+	at java.base/java.net.Socket$SocketInputStream.implRead(Socket.java:981)
+	at java.base/java.net.Socket$SocketInputStream.read(Socket.java:964)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:192)
+	at org.postgresql.core.VisibleBufferedInputStream.ensureBytes(VisibleBufferedInputStream.java:159)
+	at org.postgresql.core.VisibleBufferedInputStream.ensureBytes(VisibleBufferedInputStream.java:144)
+	at org.postgresql.core.VisibleBufferedInputStream.read(VisibleBufferedInputStream.java:76)
+	at org.postgresql.core.PGStream.receiveChar(PGStream.java:480)
+	at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2383)
+	at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:446)
+	... 28 more
+Oct 08, 2026 8:24:12 AM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 08006
+Oct 08, 2026 8:24:12 AM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: An I/O error occurred while sending to the backend.
+[repo-purge-sweeper] WARN ai.protomolt.proto.repo.service.RepoServices - repo-purge-sweeper iteration failed (loop continues): JDBC exception executing SQL [An I/O error occurred while sending to the backend.] [select dr1_0.node_id,dr1_0.account_id,dr1_0.checksum,dr1_0.cluster_id,dr1_0.connector_id,dr1_0.content_type,dr1_0.crawl_id,dr1_0.created_at,dr1_0.datasource_id,dr1_0.delete_source_blobs_on_settle,dr1_0.doc_id,dr1_0.drive_name,dr1_0.etag,dr1_0.filename,dr1_0.graph_address_id,dr1_0.graph_id,dr1_0.last_reprocessed_at,dr1_0.mutation_revision,dr1_0.object_key,dr1_0.part_manifest,dr1_0.pending_purge_id,dr1_0.reprocess_count,dr1_0.row_kind,dr1_0.security,dr1_0.size_bytes,dr1_0.source_blob_delete_reason,dr1_0.status,dr1_0.updated_at,dr1_0.version_id from documents dr1_0 where dr1_0.status=? and dr1_0.pending_purge_id is null and not exists(select dpr1_0.purge_id from document_purges dpr1_0 where dpr1_0.node_id=dr1_0.node_id and dpr1_0.status in (?,?)) order by dr1_0.created_at,dr1_0.node_id fetch first ? rows only]
+org.hibernate.exception.JDBCConnectionException: JDBC exception executing SQL [An I/O error occurred while sending to the backend.] [select dr1_0.node_id,dr1_0.account_id,dr1_0.checksum,dr1_0.cluster_id,dr1_0.connector_id,dr1_0.content_type,dr1_0.crawl_id,dr1_0.created_at,dr1_0.datasource_id,dr1_0.delete_source_blobs_on_settle,dr1_0.doc_id,dr1_0.drive_name,dr1_0.etag,dr1_0.filename,dr1_0.graph_address_id,dr1_0.graph_id,dr1_0.last_reprocessed_at,dr1_0.mutation_revision,dr1_0.object_key,dr1_0.part_manifest,dr1_0.pending_purge_id,dr1_0.reprocess_count,dr1_0.row_kind,dr1_0.security,dr1_0.size_bytes,dr1_0.source_blob_delete_reason,dr1_0.status,dr1_0.updated_at,dr1_0.version_id from documents dr1_0 where dr1_0.status=? and dr1_0.pending_purge_id is null and not exists(select dpr1_0.purge_id from document_purges dpr1_0 where dpr1_0.node_id=dr1_0.node_id and dpr1_0.status in (?,?)) order by dr1_0.created_at,dr1_0.node_id fetch first ? rows only]
+	at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:80)
+	at org.hibernate.exception.internal.StandardSQLExceptionConverter.convert(StandardSQLExceptionConverter.java:34)
+	at org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(SqlExceptionHelper.java:115)
+	at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:292)
+	at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.getResultSet(DeferredResultSetAccess.java:188)
+	at org.hibernate.sql.results.jdbc.internal.JdbcValuesResultSetImpl.<init>(JdbcValuesResultSetImpl.java:71)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValues(JdbcSelectExecutorStandardImpl.java:422)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.resolveJdbcValuesSource(JdbcSelectExecutorStandardImpl.java:349)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.doExecuteQuery(JdbcSelectExecutorStandardImpl.java:143)
+	at org.hibernate.sql.exec.internal.JdbcSelectExecutorStandardImpl.executeQuery(JdbcSelectExecutorStandardImpl.java:100)
+	at org.hibernate.sql.exec.spi.JdbcSelectExecutor.executeQuery(JdbcSelectExecutor.java:63)
+	at org.hibernate.sql.exec.spi.JdbcSelectExecutor.list(JdbcSelectExecutor.java:137)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.lambda$new$1(ConcreteSqmSelectQueryPlan.java:136)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.withCacheableSqmInterpretation(ConcreteSqmSelectQueryPlan.java:484)
+	at org.hibernate.query.sqm.internal.ConcreteSqmSelectQueryPlan.performList(ConcreteSqmSelectQueryPlan.java:411)
+	at org.hibernate.query.sqm.internal.SqmQueryImpl.doList(SqmQueryImpl.java:379)
+	at org.hibernate.query.spi.AbstractSelectionQuery.list(AbstractSelectionQuery.java:153)
+	at org.hibernate.query.Query.getResultList(Query.java:121)
+	at ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper.lambda$sweepOnce$0(PurgeSweeper.java:79)
+	at ai.protomolt.proto.repo.container.ledger.Tx.readOnly(Tx.java:138)
+	at ai.protomolt.proto.repo.container.ledger.Tx.readOnly(Tx.java:117)
+	at ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper.sweepOnce(PurgeSweeper.java:69)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$6(RepoServices.java:871)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: org.postgresql.util.PSQLException: An I/O error occurred while sending to the backend.
+	at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:474)
+	at org.postgresql.jdbc.PgStatement.executeInternal(PgStatement.java:533)
+	at org.postgresql.jdbc.PgStatement.execute(PgStatement.java:449)
+	at org.postgresql.jdbc.PgPreparedStatement.executeWithFlags(PgPreparedStatement.java:197)
+	at org.postgresql.jdbc.PgPreparedStatement.executeQuery(PgPreparedStatement.java:140)
+	at com.zaxxer.hikari.pool.ProxyPreparedStatement.executeQuery(ProxyPreparedStatement.java:52)
+	at com.zaxxer.hikari.pool.HikariProxyPreparedStatement.executeQuery(HikariProxyPreparedStatement.java)
+	at org.hibernate.sql.results.jdbc.internal.DeferredResultSetAccess.executeQuery(DeferredResultSetAccess.java:269)
+	... 21 more
+Caused by: java.net.SocketException: Closed by interrupt
+	at java.base/java.net.Socket$SocketInputStream.implRead(Socket.java:981)
+	at java.base/java.net.Socket$SocketInputStream.read(Socket.java:964)
+	at org.postgresql.core.VisibleBufferedInputStream.readMore(VisibleBufferedInputStream.java:192)
+	at org.postgresql.core.VisibleBufferedInputStream.ensureBytes(VisibleBufferedInputStream.java:159)
+	at org.postgresql.core.VisibleBufferedInputStream.ensureBytes(VisibleBufferedInputStream.java:144)
+	at org.postgresql.core.VisibleBufferedInputStream.read(VisibleBufferedInputStream.java:76)
+	at org.postgresql.core.PGStream.receiveChar(PGStream.java:480)
+	at org.postgresql.core.v3.QueryExecutorImpl.processResults(QueryExecutorImpl.java:2383)
+	at org.postgresql.core.v3.QueryExecutorImpl.execute(QueryExecutorImpl.java:446)
+	... 28 more
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK new-generation.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK new-generation.not_ready :: READY is only written by a fully verified host
+REPOSITORY_BACKUP_REHEARSAL_RECOVERED_NEW_GENERATION_OK

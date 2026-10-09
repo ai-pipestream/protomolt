@@ -1,0 +1,1 @@
+select dr1_0.node_id from documents dr1_0 where dr1_0.status=$1 and dr1_0.pending_purge_id is not null and not exists(select dpr1_0.purge_id from document_purges dpr1_0 where dpr1_0.node_id=dr1_0.node_id and dpr1_0.generation_id=dr1_0.pending_purge_id) fetch first $2 rows only

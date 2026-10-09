@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * built through {@link RepoServiceConfig} + {@link RepoServices} and the
  * seeder invoked by hand — exactly the opt-in contract embedded hosts get.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class SeedAccountDrivesIT {
 
     @Container
@@ -65,8 +65,8 @@ class SeedAccountDrivesIT {
             assertThat(pipeline.prefix).isEqualTo("pipeline");
 
             // The buckets actually exist in LocalStack.
-            services.s3Client().headBucket(b -> b.bucket(intake.bucket));
-            services.s3Client().headBucket(b -> b.bucket(pipeline.bucket));
+            services.blobStore().headBucket(intake.bucket);
+            services.blobStore().headBucket(pipeline.bucket);
 
             // A second run (the reboot case) finds both drives: same
             // deterministic ids, still exactly two rows for the account.

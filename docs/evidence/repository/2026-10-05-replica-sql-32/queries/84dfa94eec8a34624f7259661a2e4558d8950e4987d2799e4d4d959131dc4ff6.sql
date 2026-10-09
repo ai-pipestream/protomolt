@@ -1,0 +1,1 @@
+update archive_entries set account_id=$1,archive=$2,classification=$3,classification_state=$4,content_type=$5,created_at=$6,current_version=$7,entry_id=$8,filename=$9,metadata=$10,source_modified_at=$11,source_uri=$12,title=$13,updated_at=$14 where entry_uuid=$15

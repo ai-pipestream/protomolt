@@ -1,0 +1,1 @@
+SELECT 1 FROM ONLY "public"."repository_physical_locations" x WHERE "object_id" OPERATOR(pg_catalog.=) $1 FOR KEY SHARE OF x

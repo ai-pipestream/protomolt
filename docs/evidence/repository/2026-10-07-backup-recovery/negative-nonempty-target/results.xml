@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="negative-nonempty-target" tests="4" failures="0" errors="0" skipped="0">
+  <testcase classname="negative-nonempty-target" name="nonempty-target.directory_refused" timestamp="2026-10-07T12:03:16.342975157Z"><system-out>refused: Restore target is not empty: /tmp/claude-1000/-work-worktrees/4656909e-8def-50fe-9c8a-c35357051628/scratchpad/head/evidence/negative-nonempty-target/restore; resources created=0</system-out></testcase>
+  <testcase classname="negative-nonempty-target" name="nonempty-target.target_untouched" timestamp="2026-10-07T12:03:16.343492595Z"><system-out>existing file intact</system-out></testcase>
+  <testcase classname="negative-nonempty-target" name="nonempty-target.volume_refused" timestamp="2026-10-07T12:03:17.643603796Z"><system-out>a nonempty volume is reported occupied and never extracted into</system-out></testcase>
+  <testcase classname="negative-nonempty-target" name="nonempty-target.original_backup_untouched" timestamp="2026-10-07T12:03:17.645108992Z"><system-out>original backup set unchanged</system-out></testcase>
+</testsuite>

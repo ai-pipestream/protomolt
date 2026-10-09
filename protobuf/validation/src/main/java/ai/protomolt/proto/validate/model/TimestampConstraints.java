@@ -8,8 +8,8 @@ import java.util.Optional;
 /**
  * Neutral constraints for {@code google.protobuf.Timestamp} fields, expressed in
  * {@code java.time}. Violation rule ids are the fixed {@code timestamp.*} ids.
- * {@code ltNow}/{@code gtNow}/{@code within} compare against the clock at
- * validation time.
+ * {@code ltNow}/{@code gtNow}/{@code within} compare against the single evaluation
+ * instant supplied to, or sampled by, the validator for that check.
  */
 public record TimestampConstraints(
         Optional<Instant> constant,

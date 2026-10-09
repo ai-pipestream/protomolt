@@ -44,3 +44,21 @@ protobuf {
         }
     }
 }
+
+// Producer identity travels with the generated descriptors, independent of the
+// protobuf runtime selected by a consuming application.
+def descriptorCompilerVersion = libs.versions.protobuf.asProvider()
+def compilerIdentityDirectory = layout.buildDirectory.dir('generated/compiler-identity')
+def generateCompilerIdentity = tasks.register('generateCompilerIdentity') {
+    inputs.property('compilerVersion', descriptorCompilerVersion)
+    outputs.dir(compilerIdentityDirectory)
+    doLast {
+        def target = compilerIdentityDirectory.get().file('META-INF/protomolt/repo-proto/compiler.properties').asFile
+        target.parentFile.mkdirs()
+        target.text = "compiler.name=com.google.protobuf:protoc\ncompiler.version=${descriptorCompilerVersion.get()}\n"
+    }
+}
+tasks.named('processResources') {
+    from(compilerIdentityDirectory)
+    dependsOn(generateCompilerIdentity)
+}

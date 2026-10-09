@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="rehearsal" tests="19" failures="0" errors="0" skipped="0">
+  <testcase classname="rehearsal" name="source.started" timestamp="2026-10-08T17:04:59.872247149Z"><system-out>postgres postgres:18-alpine image=sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873; rustfs rustfs/rustfs:1.0.0-beta.11-preview.1 image=sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b endpoint=http://127.0.0.1:39165</system-out></testcase>
+  <testcase classname="rehearsal" name="source.xid_burn" timestamp="2026-10-08T17:05:00.160970061Z"><system-out>consumed 8192 transaction ids before seeding: 755 -&gt; 8948</system-out></testcase>
+  <testcase classname="rehearsal" name="seed.exit" timestamp="2026-10-08T17:05:07.035649616Z"><system-out>seed host exit=0</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.quiescent" timestamp="2026-10-08T17:05:07.042631703Z"><system-out>client backends other than the capture connection: []</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.pg_dump" timestamp="2026-10-08T17:05:07.727933296Z"><system-out>exit=0 stderr=</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.stopped" timestamp="2026-10-08T17:05:08.359046396Z"><system-out>postgres {exitCode=0, status=exited, finishedAt=2026-10-08T17:05:07.872488884Z}; rustfs {exitCode=0, status=exited, finishedAt=2026-10-08T17:05:08.14262318Z}</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.provider_archive" timestamp="2026-10-08T17:05:08.845920146Z"><system-out>exit=0 stderr=</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.sealed" timestamp="2026-10-08T17:05:08.963738147Z"><system-out>components=16 manifest sha256=bd99e952a93f2fbc41c3e92cf87ed8a9c7761f2126c24d61f5e5ae2dc03d5f45</system-out></testcase>
+  <testcase classname="rehearsal" name="capture.preflight" timestamp="2026-10-08T17:05:08.965456474Z"><system-out>sealed set verifies</system-out></testcase>
+  <testcase classname="rehearsal" name="source.unreachable" timestamp="2026-10-08T17:05:09.357571710Z"><system-out>source containers removed; database refuses connections; provider port 39165 free</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.provider_identity" timestamp="2026-10-08T17:05:11.680510014Z"><system-out>restored provider at recorded endpoint http://127.0.0.1:39165</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.pg_restore" timestamp="2026-10-08T17:05:15.179764077Z"><system-out>exit=0 into new database protomolt-recovery-de482c0b4-14c241e4-rst-pg</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.xid_epoch" timestamp="2026-10-08T17:05:16.947410872Z"><system-out>next xid 9208 &gt; max stored xid8 9206 (advanced with pg_resetwal)</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.sequences" timestamp="2026-10-08T17:05:16.948138307Z"><system-out>sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.migration_level" timestamp="2026-10-08T17:05:16.949145421Z"><system-out>V111</system-out></testcase>
+  <testcase classname="rehearsal" name="restore.xid_branch" timestamp="2026-10-08T17:05:16.949365667Z"><system-out>seeded xid8 values exceeded the fresh cluster; pg_resetwal advancement branch executed</system-out></testcase>
+  <testcase classname="rehearsal" name="recovered.exit" timestamp="2026-10-08T17:05:22.237366298Z"><system-out>recovered host exit=0 READY=true</system-out></testcase>
+  <testcase classname="rehearsal" name="source.volume_untouched" timestamp="2026-10-08T17:05:22.727081679Z"><system-out>source provider volume digest unchanged 3fe3fe82be69bf02b19c1525580ca75d3374a8eb3264b1e42e6090c6fe3043b7</system-out></testcase>
+  <testcase classname="rehearsal" name="backup.untouched" timestamp="2026-10-08T17:05:22.729283050Z"><system-out>backup components unchanged after restore and verification</system-out></testcase>
+</testsuite>

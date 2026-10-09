@@ -1,0 +1,128 @@
+package ai.protomolt.proto.repo.blob.s3;
+
+import ai.protomolt.proto.repo.blob.spi.BlobCapability;
+import ai.protomolt.proto.repo.blob.spi.BlobStoreProvider;
+import ai.protomolt.proto.repo.blob.spi.OpenedBlobStore;
+import java.net.URI;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+
+/**
+ * S3 factory with explicitly selected static credentials or the AWS default chain.
+ * Every option is required; nothing is defaulted.
+ */
+public final class S3BlobStoreProvider implements BlobStoreProvider {
+    private static final Set<String> TIMEOUTS = Set.of(
+            "api-call-timeout-ms", "api-attempt-timeout-ms", "connection-timeout-ms", "socket-timeout-ms");
+    @Override public String id() { return "s3"; }
+
+    @Override public ai.protomolt.proto.repo.blob.spi.BackendIdentity managedIdentity(Map<String, String> options) {
+        String endpoint = options.get("endpoint");
+        if (endpoint == null) throw new IllegalArgumentException("Missing S3 identity endpoint");
+        if (options.get("region") == null || options.get("region").isBlank())
+            throw new IllegalArgumentException("Missing S3 identity region");
+        return S3BackendIdentity.of(endpoint.isEmpty() ? S3BackendIdentity.SDK_DEFAULT : endpoint,
+                options.get("region"), bool(options, "path-style"));
+    }
+
+    @Override public OpenedBlobStore open(Map<String, String> options) {
+        String mode = options.get("credentials-mode");
+        if (mode == null) throw new IllegalArgumentException("Missing S3 option: credentials-mode");
+        if (!Set.of("static", "default-chain").contains(mode)) {
+            throw new IllegalArgumentException("S3 credentials-mode must be static or default-chain");
+        }
+        var keys = new HashSet<>(Set.of("endpoint", "region", "path-style", "conditional-writes", "credentials-mode"));
+        keys.addAll(TIMEOUTS);
+        if (mode.equals("static")) keys.addAll(Set.of("access-key", "secret-key"));
+        for (String key : keys) {
+            if (!options.containsKey(key)) throw new IllegalArgumentException("Missing S3 option: " + key);
+        }
+        if (!options.keySet().equals(keys)) throw new IllegalArgumentException("Invalid S3 option set");
+        for (String key : keys) {
+            if (options.get(key) == null || (!key.equals("endpoint") && options.get(key).isBlank())) {
+                throw new IllegalArgumentException("Missing S3 option: " + key);
+            }
+        }
+        URI endpoint = null;
+        if (!options.get("endpoint").isEmpty()) {
+            try { endpoint = URI.create(options.get("endpoint")); }
+            catch (IllegalArgumentException e) { throw new IllegalArgumentException("Invalid S3 endpoint URI"); }
+            if (!("http".equals(endpoint.getScheme()) || "https".equals(endpoint.getScheme()))
+                    || endpoint.getHost() == null || endpoint.getUserInfo() != null
+                    || endpoint.getQuery() != null || endpoint.getFragment() != null) {
+                throw new IllegalArgumentException("S3 endpoint requires http/https and a host without user info, query or fragment");
+            }
+        }
+        boolean pathStyle = bool(options, "path-style");
+        boolean conditional = bool(options, "conditional-writes");
+        var callTimeout = timeout(options, "api-call-timeout-ms");
+        var attemptTimeout = timeout(options, "api-attempt-timeout-ms");
+        var connectionTimeout = timeout(options, "connection-timeout-ms");
+        var socketTimeout = timeout(options, "socket-timeout-ms");
+        if (attemptTimeout.compareTo(callTimeout) > 0 || connectionTimeout.compareTo(attemptTimeout) > 0
+                || socketTimeout.compareTo(attemptTimeout) > 0)
+            throw new IllegalArgumentException("S3 timeouts must satisfy connection/socket <= API attempt <= API call");
+        Region region = Region.of(options.get("region"));
+        AwsCredentialsProvider credentials = mode.equals("static")
+                ? StaticCredentialsProvider.create(AwsBasicCredentials.create(options.get("access-key"), options.get("secret-key")))
+                : DefaultCredentialsProvider.builder().build();
+        S3Client acquired = null;
+        try {
+            var builder = S3Client.builder().region(region).credentialsProvider(credentials)
+                    .forcePathStyle(pathStyle).httpClientBuilder(UrlConnectionHttpClient.builder()
+                            .connectionTimeout(connectionTimeout).socketTimeout(socketTimeout))
+                    .overrideConfiguration(config -> config.apiCallTimeout(callTimeout).apiCallAttemptTimeout(attemptTimeout));
+            if (endpoint != null) builder.endpointOverride(endpoint);
+            acquired = builder.build();
+            S3Client client = acquired;
+            var capabilities = EnumSet.of(BlobCapability.BOUNDED_READ, BlobCapability.LIST, BlobCapability.SERVER_SIDE_COPY,
+                    BlobCapability.STREAMING_WRITE, BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION);
+            if (conditional) capabilities.addAll(Set.of(BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
+                    BlobCapability.ATOMIC_CONDITIONAL_WRITE));
+            return new OpenedBlobStore(new S3BlobStore(client, conditional),
+                    () -> close(client, credentials), capabilities, new S3NamespaceProvisioner(client), new S3ObjectReclaimer(client));
+        } catch (RuntimeException | Error failure) {
+            try { close(acquired, credentials); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
+    private static java.time.Duration timeout(Map<String, String> options, String key) {
+        long millis;
+        try { millis = Long.parseLong(options.get(key)); }
+        catch (NumberFormatException invalid) { throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds"); }
+        if (millis <= 0 || millis > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("S3 " + key + " must be positive milliseconds no greater than 2147483647");
+        return java.time.Duration.ofMillis(millis);
+    }
+
+    /** Owned cleanup path: client first, credentials second, failures retained with suppression. */
+    static void close(S3Client client, AwsCredentialsProvider credentials) throws Exception {
+        Exception failure = null;
+        try { if (client != null) client.close(); } catch (Exception e) { failure = e; }
+        try { if (credentials instanceof AutoCloseable closeable) closeable.close(); }
+        catch (Exception e) {
+            if (failure == null) failure = e;
+            else if (failure != e) failure.addSuppressed(e);
+        }
+        if (failure != null) throw failure;
+    }
+
+    private static boolean bool(Map<String, String> options, String key) {
+        return switch (options.get(key)) {
+            case "true" -> true;
+            case "false" -> false;
+            case null -> throw new IllegalArgumentException("Missing S3 option: " + key);
+            default -> throw new IllegalArgumentException(key + " must be true or false");
+        };
+    }
+}

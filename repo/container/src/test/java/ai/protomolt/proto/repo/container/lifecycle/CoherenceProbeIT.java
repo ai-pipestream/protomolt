@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.container.lifecycle;
 
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
 import ai.protomolt.proto.repo.container.blob.PartStorage;
-import ai.protomolt.proto.repo.container.codec.PartLayouts;
+import ai.protomolt.proto.repo.codec.PartLayouts;
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRowKind;
 import ai.protomolt.proto.repo.container.ledger.DocumentStatus;
@@ -34,8 +34,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  * read assembles honestly from the remaining parts. Part objects are written
  * by the real {@link PartStorage}, so assembly sees real fragments.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class CoherenceProbeIT extends AbstractLifecycleIT {
+
+    @Test void missingManagedPartIsReportedWithoutRewritingItsPublication() {
+        var drive = createDrive("managed-probe", "managed-probe", "managed-probe", "");
+        var row = managedDocument(drive);
+        var core = row.readManifest().getParts(0);
+        assertThat(store.delete(drive.bucket,core.getObjectKey())).isTrue();
+        var report = probe.probe(store,1000);
+        assertThat(report.totalMissing()).isPositive();
+        assertThat(report.repairsSkipped()).isPositive();
+        var retained = documents.findByNodeId(row.nodeId).orElseThrow();
+        assertThat(retained.readManifest()).isEqualTo(row.readManifest());
+        assertThat(retained.mutationRevision).isEqualTo(row.mutationRevision);
+        assertThat(documents.hasPartPublication(row.nodeId)).isTrue();
+        documents.deleteByNodeId(row.nodeId);
+    }
 
     @Test
     void missingPartObjectIsTombstonedInTheManifestAndReadsStayHonest() {

@@ -1,0 +1,434 @@
+# Bounded archive ingestion
+
+## Next slice: aggregate archive read responses
+
+Design reviewed; library construction, managed-host activation and GetEntry
+transport response reservations are implemented. The current
+`ArchiveObjectReader` checks each object's published size before its bounded
+provider read. `ArchiveOperations.getEntryImpl` can nevertheless combine multiple
+allowed objects into one response, copying each payload into a protobuf ByteString.
+The bounded archive profile now activates the read gate alongside write admission.
+
+Add an engine-owned `ArchiveGetAdmission` shared by local and transport calls.
+After authorization and exact version selection, freeze the selected PRESENT
+renditions once. Preflight that selection before any provider GET: rendition count,
+each declared size, overflow-safe aggregate bytes, and the serialized response's
+manifest, entry info and rendition framing must fit explicit limits. A selection
+that exceeds capacity is RESOURCE_EXHAUSTED; it must not trigger partial reads.
+Use the same frozen selection to assemble the response. Negative or inconsistent
+stored sizes remain integrity failures, not unsigned sizes or zero-cost reads.
+
+Reserve the full selected payload plus the transient provider/copy allowance from
+the host's shared payload budget before reading. Hold the lease through checksum
+verification and response construction, including delayed provider completion after
+cancellation. Admission close stops new work; timeout does not release accepted
+work's budget or authorize closing its provider. The plain protobuf return value
+does not offer an ownership callback, so this library guarantee ends at method
+return. Retained caller objects require a future separately owned read API.
+
+For the dedicated Netty listener, extend header-time admission for GetEntry with
+a fixed maximum response allowance in addition to its request allowance. Hold it
+until the serialized listener's terminal callback, retaining it while a synchronous
+handler is still using provider resources after cancellation. Check actual serialized
+response size before emitting a message. This transport reservation and the engine
+construction lease cover different lifetimes; budget configuration must permit both
+for one maximum GET, as well as the existing maximum PUT. Keep existing embedding
+constructors usable with explicit documented defaults if new options are added.
+
+Acceptance uses real SQL and Redis, with local and authenticated Netty calls:
+
+- Two individually allowed renditions exceed the aggregate cap: refusal occurs
+  before provider reads and all capacity is reusable afterward.
+- A selected subset fits while the complete selection does not; current and exact
+  historical versions return the same bytes locally and remotely.
+- Payload bytes fit but manifest/info/framing exceed the serialized cap: no
+  oversized message is emitted.
+- Delayed provider completion, cancellation and shutdown retain the read pin and
+  appropriate leases until the owning work is done; retry succeeds after release.
+- Concurrent GET and PUT calls share capacity and report explicit exhaustion;
+  checksum/provider failures release only their own reservations.
+
+This is bounded in-flight payload construction and response accounting, not a total
+heap or network-buffer limit. Follow-up checkpoints below add manifest JSON input
+and read-only transport response bounds. Other metadata construction and
+caller-retained results remain explicit follow-up work. No schema, wire tags,
+provider identity or JCR semantics change in this slice.
+
+### Library read-construction checkpoint
+
+`ArchiveGetAdmission` is now an optional `ArchiveOperations` constructor dependency.
+It computes complete serialized response size from the metadata envelope and frozen
+selection without allocating payload placeholders. It reserves that size plus two
+payload allowances through construction and verifies the result's actual serialized
+size. Closure rejects new work while accepted scopes retain their reservations.
+The optional gate requires the managed reader. All selected legacy renditions
+without storage identities are refused before provider I/O, because their old path
+uses an unbounded GET. Existing constructors retain that legacy behavior.
+
+Real PostgreSQL/Redis tests cover local/in-process aggregate refusal with zero GETs,
+selected historical success, and delayed real GET completion retaining both budget
+and SQL pin until success or checksum failure. The library itself does not establish
+scoped-user authorization or retain transport responses past its return.
+
+### Managed read-response checkpoint
+
+The bounded `RepoServices` profile now shares its payload budget with read
+construction and a fixed response reservation for all seven read-only RPCs at headers. The transport
+lease ends only at the serialized terminal listener callback, after synchronous
+provider work returns even when the client cancels. Oversized protobuf responses
+are refused before transmission. Close stops all gates; drain waits for RPC, write
+and read-construction lifetimes before provider release.
+
+`BoundedArchiveOptions` adds `maxResponseBytes`; the existing five-argument
+constructor defaults it to the request cap. The launcher exposes
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_RESPONSE_BYTES` with the same default. Public options
+require a budget covering both seven request allowances and two request plus four
+response allowances plus the manifest allowance described below. Metadata/list
+construction, local caller retention and
+network-buffer accounting remain outside this guarantee. Process-level transport
+authentication is unchanged; no scoped-user claim is added.
+
+### Manifest JSON input checkpoint
+
+`maxManifestBytes` bounds aggregate UTF-8 JSON input per manifest-bearing read; old
+option constructors and the launcher default it to the request cap. The optional
+`DOCUMENT_PLATFORM_ARCHIVE_MAX_MANIFEST_BYTES` overrides it. Reserve that allowance
+before SQL and retain it through parsing, provider work and response assembly.
+The shared read gate includes these scopes in shutdown/drain.
+
+`ArchiveLedger.findManifest` reads size and JSON in one statement; oversized JSON
+is replaced by NULL in SQL and reported as RESOURCE_EXHAUSTED, not an absent row.
+`listManifests` applies that gate to the aggregate selected page before JDBC receives
+any JSON. Entry listings retain their per-entry exact-version queries and decrement
+one call-wide allowance, so earlier manifests can be parsed before a later one
+causes refusal. Neither path follows a size query with an unbounded entity fetch.
+
+GetEntry, GetEntryManifest, ListVersions and manifest-bearing ListEntries use these
+projections in bounded composition. Mutation paths retain their existing APIs.
+This limits JSON transferred to JDBC; PostgreSQL still materializes its selected
+JSON text. It does not measure decoded parser heap or bound unrelated entry/archive
+metadata loaded through other queries. See the
+[qualification](../evidence/repository/2026-10-06-manifest-json-bound/README.md).
+
+Status: library admission, explicit public Java embedding options and a dedicated
+authenticated archive-only Netty mount and standalone environment entry point are
+implemented. Delayed-provider process shutdown, HTTP admission and broader repository
+transport parity remain unfinished.
+
+The repository must support a provider that accepts bounded byte arrays without
+claiming streaming support. Keep the existing streaming profile and raw-ingestion
+requirements. A bounded profile must use the same selected backing identity,
+generation, storage realm and reclamation implementation as its readers and cleanup.
+It must not replace an unavailable provider or silently buffer a streaming request.
+
+## Shared library admission
+
+`ArchivePutAdmission` accepts a host-owned `PayloadBudget`, per-object and complete
+serialized-request limits, rendition count and maximum active calls. The optional
+`ArchiveOperations` constructor shares this gate across callers. Every rendition
+is checked before entering the SQL/storage path, including later renditions in a
+batch. A scope covers the complete unary save, including metadata-only requests,
+provider calls and publication retries. Failure releases the reservation when the
+synchronous call returns; that does not prove remote write rollback.
+
+The reservation is the serialized request size plus four times inline payload
+bytes, allowing for the current engine copies and a provider copy. It is admission
+accounting, not a measurement of heap. The request has already been parsed. SDK
+buffers, parsed-object overhead, retained manifests, history reads and transport
+queues need their own bounds. Do not describe this gate as complete host memory
+qualification. Provider limits remain independently enforced.
+
+In this composition, stream uploads and bridge generation report UNSUPPORTED before
+reading input or producing bytes. The existing constructors keep their behavior.
+Raw ingestion is a separate operation and is not enabled by this gate. Reads,
+classification and metadata operations retain their existing implementation; this
+change is not a new memory guarantee for them.
+
+The host closes admission first, waits for accepted calls to return, then closes
+readers and providers under their existing lifetime rules. A failed drain leaves
+resources open for a later attempt. Closing the gate does not release active scopes
+or cancel provider work. Use one shared gate, not a new budget per request.
+
+## Managed-host activation requirements
+
+1. Add an explicit bounded profile, leaving streaming qualification unchanged.
+   Require non-expiring writes and physical reclamation. For Redis select its
+   create-only policy, zero TTL and disjoint managed identity; enforce its configured
+   object maximum and unchanged 9 MiB create-only ceiling. Deployment persistence
+   and eviction settings remain separately qualified.
+2. Share ingress slots and byte allowances across local and transport entry points.
+   The current 10 MiB gRPC message cap bounds one call, not all concurrent parsing.
+   Qualify admission at the transport boundary before claiming aggregate ingress
+   allocation is bounded. HTTP and gRPC streaming must refuse at the header before
+   allocating workers or queueing chunks; the library refusal alone is insufficient.
+3. Mount only supported writes. Do not make `RawIngestionOperations` accept a provider
+   without STREAMING_WRITE, and do not enable bridge-generated bytes until their
+   allocation and staging path has an equivalent bound.
+4. Compose gate close/drain with `RepoServices` shutdown and provider ownership.
+   Test a delayed real Redis PUT while closing the host, plus restart/cleanup under
+   the required persistence policy. Do not close a provider while accepted work owns it.
+5. Run local/remote conformance, historical reads, capacity/oversize refusal before
+   writes, no-S3-client startup and provider identity mismatch tests through the
+   actual host. Existing library composition does not satisfy this host gate.
+
+This changes ingress admission, not the archive transaction boundary or JCR
+capabilities. Existing manifest publication and physical retention remain responsible
+for atomic visibility and recovery.
+
+## Reviewed implementation order
+
+Start with an explicit archive-only bounded managed profile in `RepoServices`.
+Use the selected provider's existing identity, handle and reclaimer. For Redis,
+require create-only writes, zero TTL and a finite object limit within 9 MiB.
+Construct `ManagedArchiveServices` and one shared `ArchivePutAdmission`; pass that
+gate to `ArchiveOperations`. Keep raw ingestion and managed document execution
+disabled in this profile. Preserve the existing streaming profile's requirements.
+
+The first acceptance test uses the actual `RepoServices.archiveRepository()`
+composition with PostgreSQL and Redis. It must establish startup without an S3
+client, immutable provider identity, save/read/history behavior, size and capacity
+rejection before writes, and shutdown during a delayed write. Close admission
+before draining accepted calls; close provider and database resources only after
+the drain succeeds. A timeout must retain those resources for another close attempt.
+Apply the same ownership order on constructor failure, preserving cleanup failures
+as suppressed exceptions. Redis persistence and eviction configuration require
+separate deployment checks; provider capabilities cannot establish those settings.
+Reuse the real fixtures in `RedisArchiveLifecycleIT`, `RedisServiceCompositionIT`
+and `ManagedArchiveHostIT`.
+
+That local composition does not authorize remote activation. Follow it with
+aggregate admission before unary decoding, explicit rejection of unsupported
+streaming at the transport boundary, and the same repository cases over gRPC.
+The current message-size cap and post-decode library gate cannot establish the
+aggregate transport allocation bound. Sol reviewed this separation.
+
+The internal `BoundedArchiveProfile` composition now passes PostgreSQL/Redis host
+tests for saved bytes, retained versions, restart reads, retry identity, size and
+concurrency limits, and shutdown with a real write held after Redis receives it.
+Shutdown timeout preserves the provider and byte reservation; new puts fail and a
+later close succeeds after the accepted write returns. S3 provider selection is
+guarded by an assertion in the fixture. Default managed Redis still fails startup;
+the new profile requires explicit internal selection. Document operations, HTTP,
+general gRPC startup and external service registration are disabled for this profile.
+A separate internal archive-only Netty mount is described below.
+
+See [local host evidence](../evidence/repository/2026-10-06-bounded-archive-host/README.md).
+This does not establish aggregate transport bounds, Redis deployment durability or
+full repository parity. Keep those acceptance requirements open.
+
+## Pre-protobuf admission prerequisite
+
+The internal `UnaryRequestAdmission` interceptor reserves a request slot and a fixed
+serialized-byte allowance before invoking the service handler or request parser.
+Its explicit method set must contain only synchronous unary handlers. Streaming
+and unlisted methods fail at headers without constructing a stream observer.
+The server message cap also applies to decompressed bytes. Reserve two maximum
+requests per call because gRPC's unary handler requests two messages to detect an
+invalid extra request. This is accounting for serialized input, not a decoded-heap
+or Netty-buffer bound.
+
+Release occurs in serialized terminal listener callbacks, after any synchronous
+handler has returned. Neither client cancellation nor `ServerCall.close` alone
+releases capacity. The scope is unsuitable for detached request-consuming work.
+Actual Netty tests cover cancellation during a blocked handler, malformed protobuf,
+oversized compressed input, early cancellation, shutdown, duplicate unary messages
+and header-time stream rejection. Test handlers use synthetic protobuf echo data;
+they do not establish repository/provider behavior.
+
+`RepoServices.startBoundedArchiveNetty` now mounts only the archive service with
+an explicit list of ten reviewed synchronous unary methods. An API token is
+mandatory; authentication runs before admission. Bridge and streaming methods fail
+at headers. All listeners on one host share the same ingress gate, and ingress
+shares the profile's budget with `ArchivePutAdmission`. Ordinary host startup is
+unchanged. `buildBoundedArchive(config, options)` selects this profile explicitly
+for Java embedding; the default entry point does not activate it from environment
+settings alone. See the [embedding guide](../apps/bounded-archive.md).
+Keep HTTP disabled until its own admission boundary exists.
+In gRPC 1.84, compressed size failure during parsing reports UNKNOWN; uncompressed
+oversize reports RESOURCE_EXHAUSTED. Both stop before handler execution and release
+reservations. Do not describe the error statuses as identical.
+
+`BoundedArchiveOptions` exposes plain limit values, not engine or budget types.
+The factory owns one shared budget. Before external resource acquisition, options
+require capacity for one maximum transport put: seven times the request limit.
+The configured concurrency does not guarantee that many maximum-sized requests
+fit at once; excess work fails with RESOURCE_EXHAUSTED. This minimum is admission
+accounting, not a JVM memory or read-response bound. The public factory and listener
+are tested from outside the service package against PostgreSQL and Redis.
+
+## Next standalone slice: explicit archive bootstrap
+
+The archive-only listener cannot create drives. A standalone launcher must therefore
+require an explicit bootstrap account and drive name and provision that drive through
+the existing local repository port before listening. Reuse its idempotent provisioning
+and provider-identity checks; an existing incompatible drive must fail startup. Do not
+call the document intake/pipeline seeder or temporarily mount the general DriveService.
+After bootstrap, authenticated clients can create archives using that drive.
+
+Keep this a separate entry point from `RepoServiceMain`. Validate its token, limits,
+bootstrap settings and environment before acquiring resources. Invalid configured
+numbers and flags must not become defaults. Start only the dedicated archive listener
+and its existing lifecycle; leave HTTP, documents, reflection, health, bridge generation
+and streaming unavailable. Startup failure must close acquired resources, and shutdown
+must retain admitted writes until provider completion or report failure to drain.
+
+Acceptance needs a real PostgreSQL/Redis child-process launch, authenticated archive
+write/read and retry, restart with the same drive, incompatible existing-drive refusal,
+missing-token and invalid-limit failures before resource acquisition, unmounted RPC
+checks, and shutdown during a delayed real write. The embedding and Netty tests above
+do not replace the process-level cases. `RepoBoundedArchiveMain` now implements this
+separate entry point; its process qualification is recorded below.
+
+### Bootstrap identity and process lifetime review
+
+Use a separate `RepoBoundedArchiveMain`; leave `RepoServiceMain` and its document
+seeding behavior unchanged. Parse one environment snapshot through
+`RepoServiceConfig.fromEnvironment(Map)` and the strict environment parser before
+building the host. Require the operator token, bootstrap account and drive name,
+and validate all five `BoundedArchiveOptions` limits before opening resources.
+Then call the local `driveRepository().createDrive` with the process bootstrap
+caller, followed by `startBoundedArchiveNetty`. Do not expose drive provisioning
+as a public RPC in this profile.
+
+The bootstrap account and name identify the drive; an existing drive's stored
+namespace and prefix remain authoritative. Host defaults apply only when creating
+a new drive. Restart must not relocate a drive because defaults changed. Require
+the existing drive to be active and bound to the selected backend identity. If the
+launcher later accepts explicit expected location settings, mismatches must fail;
+do not interpret them as relocation instructions. `DriveProvisioner.ensureDrive`
+already uses a deterministic ID and checks selected provider compatibility, but
+its existing-row return does not itself establish active status or equality with
+requested location settings. Cover existing rows and concurrent provisioning
+winners in the bootstrap acceptance tests.
+
+Emit readiness only after bootstrap and listener startup, including the actual
+bound port. Child-process tests should use port zero and this reported port rather
+than reserving a free port and racing the operating system. The existing replica
+process fixture supplies process/log handling, but qualification must launch the
+production entry point, not a test host.
+
+Sol's lifecycle review identified a separate process boundary: `RepoServices.close`
+retains resources after a drain timeout so an embedded host can retry. A JVM
+shutdown hook that merely logs the failure and returns cannot preserve that
+guarantee, because the JVM then exits. The standalone launcher must keep its
+shutdown hook alive and retry draining admitted work; an operator's forced kill
+remains a crash and needs recovery qualification. Test a real delayed Redis write
+that exceeds the first drain deadline, then completes, before claiming graceful
+shutdown. Keep startup failure cleanup separate, preserve suppressed failures,
+and do not force-close a provider still owned by an accepted operation.
+
+### Bounded transport drain prerequisite
+
+The bounded host now closes admission and waits for archive RPCs, puts and reads
+before shutting down its transport. A drain timeout retains the transport,
+executor and provider for a later close attempt. It checks idle state again after
+transport shutdown before releasing storage. The full repository profile keeps
+its existing transport-first ordering.
+
+This closes a gap in the launcher plan: previously, transport shutdown could force
+cancel an accepted RPC after ten seconds before the archive drain check ran. A
+shutdown-hook retry alone could not preserve that call. The regression uses real
+PostgreSQL, Redis and authenticated Netty, holding the return from an actual Redis
+write beyond that interval. It checks that timed drain refuses new calls, preserves
+reservations, and allows the accepted RPC to return success after release.
+
+The original host test pauses after Redis completes its command, not during a
+network write. Production child-process qualification now blocks an accepted write
+at its actual PostgreSQL commit lock, sends SIGTERM, and requires the process and
+RPC to survive the first ten-second drain timeout. Releasing the lock permits the
+write to return success, orderly process exit, and a restart read of the new version.
+Delayed Redis I/O remains a separate provider boundary to qualify; neither case
+establishes crash or power-loss durability.
+
+### Distinguishing a retryable drain timeout
+
+`RepositoryDrainTimeoutException` now identifies a timed wait that expired in the
+lifecycle-worker, archive-RPC, archive-put or archive-read phase. It is package-private
+and remains an `IllegalStateException` for existing embedding callers. Interruption
+retains its interrupt flag and separate exception; resource-release failures propagate
+unchanged. The launcher must catch only the direct timeout type from its shutdown
+close attempt after successful startup, never classify message text or suppressed
+startup failures. This type does not imply that all transports are still open:
+the second idle check follows transport shutdown. Shared storage remains retained
+until the relevant drain succeeds.
+
+### Standalone process qualification
+
+`BoundedArchiveProcessIT` launches the production main with real PostgreSQL and
+Redis. It covers authenticated put/get/retry, missing credentials, an unmounted
+DriveService RPC, restart with changed host defaults while retaining the drive's
+stored location, suspended and incompatible drive refusal, and malformed limits
+or missing token before connecting to an unavailable database. The SIGTERM case
+above checks Linux exit status and absence of uncaught shutdown exceptions.
+
+After listener activation, exceptional cleanup also retries direct drain timeouts.
+A preexisting thread interrupt is temporarily cleared for cleanup and restored
+before propagating the original error. A new interruption during cleanup remains
+a separate failure; arbitrary repeated interruption is not an unconditional graceful
+shutdown guarantee. Non-timeout cleanup errors are attached to the original error.
+Startup failures before listener activation retain the separate cleanup path.
+
+Concurrent drive bootstrap now has a real SQL barrier test: two production
+processes with different namespace defaults both wait inside their competing
+drive INSERTs before release. They must converge on one stored drive location,
+then share archive writes, reads and deduplicated retry through separate listeners.
+The losing bootstrap uses the winner's stored location rather than its own default.
+
+The reply-boundary tests below qualify short delayed provider acknowledgments.
+Follow-up qualification still includes exhaustive unmounted RPC checks. Public deployment,
+minimal packaged dependencies and full repository parity remain separate gates.
+
+For delayed Redis replies, keep the production timeout unchanged. The selected
+Jedis 8.0.1 `JedisPool(URI)` constructor supplies a two-second timeout. A reply held
+beyond the launcher's ten-second drain deadline cannot be used as a successful
+late-completion test. Qualify successful provider I/O delay below that client timeout
+with a shorter embedded drain deadline and a controllable real TCP reply gate.
+Longer delays require separate failure/uncertain-acknowledgment reconciliation tests.
+The existing process SIGTERM test continues to cover delayed SQL commit.
+
+### Real Redis acknowledgment boundary
+
+`BoundedArchiveRedisReplyIT` now places a test-only RESP2 TCP pass-through between
+the production Redis adapter and real Redis. It identifies the conditional-write
+EVAL and holds the actual integer success reply after the server executes it.
+While the acknowledgment is held, the SQL upload must remain STAGING and a separate
+direct Redis read must return the exact payload. A 100 ms embedded host close must
+report an archive-RPC drain timeout, retain byte reservations and the pending call,
+and refuse new calls. Releasing the response below the client's two-second timeout
+must finish the original RPC successfully with that exact physical object identity.
+The upload then becomes LIVE and a later close drains all reservations.
+
+This is real delayed provider I/O with a shorter embedded deadline, not a ten-second
+process-provider stall. The proxy never generates a success reply. Forwarding errors
+fail the test, and teardown closes sockets and joins workers. Only an explicitly
+expected pool shutdown may reset an idle client connection between complete frames.
+Lost acknowledgment after completed provider execution now has a separate real
+TCP fault test: the proxy drops the actual success reply and closes its connection.
+The RPC fails, no archive version is visible, and a retry publishes with a different
+physical object. The original object stays STAGING throughout its real five-minute
+lease, never gains a version reference, and is eventually reclaimed by the normal
+host loop. Direct Redis absence plus retained retry readability and exact deduplication
+verify that cleanup removed only the abandoned object. This does not establish
+behavior for an indefinitely running remote write. Process crash recovery has the
+separate qualification below.
+
+### Process death before publication
+
+The bounded standalone process suite now holds a real PostgreSQL entry-publication
+lock after a Redis write has completed and its upload is VERIFIED. It confirms the
+exact candidate bytes through an independent Redis read, then sends SIGKILL to the
+service JVM and requires Linux exit 137 and an unavailable pending RPC. PostgreSQL
+and Redis remain running; this is not provider-crash durability qualification.
+
+Restart must still read the previously committed value. Retrying the interrupted
+candidate publishes version 2 with a fresh physical identity. A stale expected
+version remains ABORTED; equal content with the current expected version deduplicates.
+The abandoned upload must stay unreferenced throughout its unchanged five-minute
+lease, then the normal restarted-host recovery loop must reclaim it. The fixture
+shortens only polling/minimum-age configuration and does not rewrite SQL lease
+timestamps. Direct provider absence and continued current and retained-version reads distinguish
+cleanup of abandoned bytes from deletion of committed content.
+
+See [process-crash evidence](../evidence/repository/2026-10-06-bounded-archive-sigkill/README.md).
+This does not enable document publication claim transfer or establish behavior for
+remote provider writes still running after the client process dies.

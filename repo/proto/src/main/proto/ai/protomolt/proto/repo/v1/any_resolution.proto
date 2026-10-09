@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Reference to shared descriptor bytes; this does not copy the artifact or prove retention.
+message RepositoryResolvedSchema {
+  // Canonical closure and selected message identity.
+  PublicationSchemaCondition schema = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exact descriptor artifact digest within the enclosing authorized account.
+  string artifact_sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}
+
+// Why an attempted resolution did not return a pinned definition.
+enum RepositorySchemaResolutionFailure {
+  // Invalid as a recorded outcome.
+  REPOSITORY_SCHEMA_RESOLUTION_FAILURE_UNSPECIFIED = 0;
+  // An authoritative lookup established no definition for the requested identity.
+  REPOSITORY_SCHEMA_RESOLUTION_FAILURE_DEFINITION_UNAVAILABLE = 1;
+  // Lookup failed; no conclusion about definition existence is established.
+  REPOSITORY_SCHEMA_RESOLUTION_FAILURE_LOOKUP_FAILED = 2;
+  // The caller was not allowed to resolve the definition. Do not reveal existence.
+  REPOSITORY_SCHEMA_RESOLUTION_FAILURE_ACCESS_DENIED = 3;
+}
+
+// Resolution observation for exact Any value bytes. It is not a validation verdict,
+// receipt, authorization or publication. The enclosing evidence must bind account,
+// operation/attempt, immutable revision and occurrence. Handlers verify byte digest,
+// actual lookup outcome, pinned schema identity and retention before using the record.
+// A resolved reference must match the retained asset metadata's exact type URL and
+// PublicationSchemaCondition, not just the message name or descriptor byte hash.
+// No RPC or persistence path is introduced by this definition.
+message RepositoryAnyResolution {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "any-resolution-outcome"
+    message: "one explicit resolution outcome is required"
+    expression: "has(this.not_attempted) || has(this.resolved) || has(this.failure)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "any-resolution-type"
+    message: "resolved schema must identify the exact type URL suffix"
+    expression: "!has(this.resolved) || (this.type_url.endsWith('/' + this.resolved.schema.type_name) && size(this.type_url) > size(this.resolved.schema.type_name) + 1)"
+  };
+  // Exact original type URL. Opaque preservation does not certify URL syntax.
+  string type_url = 1 [(ai.protomolt.proto.validate.v1.field).string.max_len = 4096];
+  // SHA-256 of Any.value bytes, not a decoded or reserialized message.
+  string value_sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Exact Any.value byte count; the host enforces its configured payload bound.
+  uint64 value_size_bytes = 3;
+  // Resolution and validation are separate; even resolved bytes may be invalid.
+  oneof outcome {
+    // Lookup was deliberately skipped. It does not mean the definition is missing.
+    bool not_attempted = 4 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Shared pinned schema reference, not proof of successful payload validation.
+    RepositoryResolvedSchema resolved = 5;
+    // Attempted lookup outcome; unsupported or unknown enum values are rejected.
+    RepositorySchemaResolutionFailure failure = 6 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  }
+}

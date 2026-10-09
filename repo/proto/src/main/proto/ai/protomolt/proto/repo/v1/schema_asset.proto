@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/document_publication.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Schema asset metadata for future archival admission. This definition does not
+// mount an RPC, prove validation, authorize access, or create revision retention.
+// The handler verifies both descriptor hashes and the selected message type,
+// rejects unknown evidence fields, and verifies local tool identities from the build.
+message RepositorySchemaAsset {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-asset-type-url"
+    message: "the exact type URL must identify the selected message"
+    expression: "this.type_url.endsWith('/' + this.schema.type_name) && size(this.type_url) > size(this.schema.type_name) + 1"
+  };
+  // Existing canonical descriptor-closure identity; semantics remain unchanged.
+  PublicationSchemaCondition schema = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // SHA-256 of the retained artifact bytes, distinct from canonical identity.
+  string artifact_sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Preserve the admitted prefix; an exact URL policy is a handler obligation.
+  string type_url = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 4096}];
+  // Compiler provenance and the local admission runtime.
+  SchemaCompilationProvenance compilation = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Identity observed or reported for a tool, not executable configuration.
+message SchemaToolIdentity {
+  // Tool implementation name, such as protoc or Wire.
+  string name = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Actual observed or reported release/build version.
+  string version = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Optional digest of the compiler/runtime artifact.
+  optional string artifact_sha256 = 3 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}
+
+// A compiler that produced descriptor definitions, not a downstream code generator.
+message SchemaCompilerDetails {
+  // Compiler identity under the evidence classification below.
+  SchemaToolIdentity tool = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Descriptive metadata only. Readers must not execute these options.
+  map<string, string> options = 2 [(ai.protomolt.proto.validate.v1.field).map = {
+    max_pairs: 64,
+    keys: {string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}},
+    values: {string: {max_len: 4096}}
+  }];
+}
+
+// How this descriptor artifact entered admission.
+enum SchemaCompilationOrigin {
+  // Invalid for admitted provenance.
+  SCHEMA_COMPILATION_ORIGIN_UNSPECIFIED = 0;
+  // This host compiled retained source definitions.
+  SCHEMA_COMPILATION_ORIGIN_LOCAL_SOURCE = 1;
+  // Descriptor bytes were imported, including reflection.
+  SCHEMA_COMPILATION_ORIGIN_IMPORTED_DESCRIPTOR = 2;
+}
+
+// A classification stamped by trusted admission, not proof supplied by a caller.
+enum SchemaCompilerEvidence {
+  // Invalid for admitted provenance.
+  SCHEMA_COMPILER_EVIDENCE_UNSPECIFIED = 0;
+  // The admitting host observed the compiler it used.
+  SCHEMA_COMPILER_EVIDENCE_LOCAL_OBSERVED = 1;
+  // An external producer supplied this compiler identity.
+  SCHEMA_COMPILER_EVIDENCE_PRODUCER_REPORTED = 2;
+  // No compiler identity is available; the reason is retained.
+  SCHEMA_COMPILER_EVIDENCE_UNKNOWN = 3;
+}
+
+// Preserve the actual compiler or explicitly state that the remote producer did
+// not identify it. Imported descriptors do not imply a local compiler version.
+message SchemaCompilationProvenance {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "schema-compiler-evidence"
+    message: "compiler details, origin and evidence must agree"
+    expression: "this.origin == 1 ? (has(this.known_compiler) && this.evidence == 1 && has(this.source_artifact_sha256)) : ((has(this.known_compiler) && this.evidence == 2) || (has(this.unknown_compiler_reason) && this.evidence == 3))"
+  };
+  // Source compilation or import of an existing descriptor artifact.
+  SchemaCompilationOrigin origin = 1 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // How the compiler identity was established.
+  SchemaCompilerEvidence evidence = 2 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Exactly one known identity or explicit unknown reason.
+  oneof compiler {
+    // Compiler identity and inert configuration metadata.
+    SchemaCompilerDetails known_compiler = 3;
+    // Why imported descriptor compiler information is unavailable.
+    string unknown_compiler_reason = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+  }
+  // Actual runtime used to decode at admission, populated by the local host.
+  SchemaToolIdentity admission_runtime = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Digest of an independently retained source bundle, required for local compilation.
+  // Not the FDS hash. The handler verifies the source asset exists and matches.
+  optional string source_artifact_sha256 = 6 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}

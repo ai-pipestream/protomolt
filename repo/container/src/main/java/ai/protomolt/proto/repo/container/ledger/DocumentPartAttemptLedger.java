@@ -1,0 +1,320 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.codec.RepositoryNamespaces;
+import ai.protomolt.proto.repo.v1.DocumentPart;
+import jakarta.persistence.EntityManager;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * Internal document-part admission. No provider I/O, publication, or reclamation.
+ * The trusted writer must measure/verify bytes before reporting them here.
+ */
+public final class DocumentPartAttemptLedger {
+    private final Tx tx;
+    public DocumentPartAttemptLedger(Tx tx) { this.tx = Objects.requireNonNull(tx); }
+
+    /** Namespace is the exact physical bucket/container, never a drive alias. */
+    public record Location(UUID nodeId, String accountId, String backendGeneration, String namespace) {
+        public Location {
+            Objects.requireNonNull(nodeId, "nodeId");
+            text(accountId, 200, "accountId");
+            if (accountId.contains("/")) throw new IllegalArgumentException("Account must be one key segment");
+            text(backendGeneration, 128, "backendGeneration");
+            text(namespace, 1024, "namespace");
+        }
+    }
+
+    public record PlannedObject(DocumentPart part, String subKey, String objectKey,
+            long size, String sha256, String contentType) {
+        public PlannedObject {
+            Objects.requireNonNull(part, "part");
+            Objects.requireNonNull(subKey, "subKey");
+            if (part == DocumentPart.UNRECOGNIZED || part == DocumentPart.DOCUMENT_PART_UNSPECIFIED
+                    || subKey.length() > 1024 || (part == DocumentPart.DOCUMENT_PART_CHUNKS ? subKey.isBlank() : !subKey.isEmpty()))
+                throw new IllegalArgumentException("Invalid document part slot");
+            text(objectKey, 2048, "objectKey");
+            if (!RepositoryNamespaces.isDocumentPart(objectKey) || RepositoryNamespaces.isArchive(objectKey)
+                    || RepositoryNamespaces.isManagedRaw(objectKey))
+                throw new IllegalArgumentException("Document part key must use the documents namespace");
+            if (size < 0) throw new IllegalArgumentException("Negative part size");
+            digest(sha256);
+            text(contentType, 1024, "contentType");
+        }
+    }
+
+    /**
+     * The trusted writer mints a fresh UUID before planning keys; this is not an
+     * adoption API for existing bytes. Sampled revision zero means the destination
+     * was absent. Object order is retained for chunk reconstruction.
+     */
+    public record Plan(UUID attemptId, Location location, long sampledRevision, Map<UUID, Long> sources, List<PlannedObject> objects) {
+        public Plan {
+            Objects.requireNonNull(attemptId, "attemptId");
+            Objects.requireNonNull(location, "location");
+            sources = Map.copyOf(sources);
+            objects = List.copyOf(objects);
+            if (sampledRevision < 0 || objects.isEmpty() || objects.size() > 10000 || sources.size() > 10000)
+                throw new IllegalArgumentException("Invalid document part plan size or revision");
+            if (sources.values().stream().anyMatch(revision -> revision <= 0))
+                throw new IllegalArgumentException("Source revisions must be positive");
+            if (sources.containsKey(location.nodeId()) && sources.get(location.nodeId()) != sampledRevision)
+                throw new IllegalArgumentException("Same-node source revision differs from destination");
+            var keys = new HashSet<String>();
+            var slots = new HashSet<Map.Entry<DocumentPart, String>>();
+            int cores = 0;
+            String scope = "/documents/" + location.accountId() + "/" + location.nodeId() + "/attempts/" + attemptId + "/";
+            for (var object : objects) {
+                if (!("/" + object.objectKey()).contains(scope) || object.objectKey().endsWith("/"))
+                    throw new IllegalArgumentException("Object key is outside its document attempt");
+                if (!keys.add(object.objectKey()) || !slots.add(Map.entry(object.part(), object.subKey())))
+                    throw new IllegalArgumentException("Duplicate document part key or slot");
+                if (object.part() == DocumentPart.DOCUMENT_PART_CORE) cores++;
+            }
+            if (cores != 1) throw new IllegalArgumentException("Document part plan requires exactly one CORE");
+        }
+    }
+
+    public record Attempt(UUID id, Location location, String storageRealm, long sampledRevision,
+            UUID token, Instant leaseUntil, String state, int plannedCount, String planKind) {}
+
+    public static final class FenceException extends RuntimeException {
+        public FenceException(String message) { super(message); }
+        public FenceException(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /** Reserve the complete immutable plan in one transaction before any PUT/COPY. */
+    public Attempt begin(Plan plan, Duration lease) {
+        var prepared = prepareAdmission(plan, lease);
+        return tx.inTransaction(em -> { return beginInTransaction(em, prepared); });
+    }
+
+    /** Encoded inputs cannot be paired with a different plan after preparation. */
+    static final class PreparedAdmission {
+        private final Plan plan;
+        private final Duration lease;
+        private final DocumentAttemptPlanEncoding encoded;
+
+        private PreparedAdmission(Plan plan, Duration lease) {
+            this.plan = plan;
+            this.lease = lease;
+            this.encoded = DocumentAttemptPlanEncoding.prepare(plan);
+        }
+    }
+
+    /** Prepare all JSON before taking coordinator or domain locks. */
+    static PreparedAdmission prepareAdmission(Plan plan, Duration lease) {
+        Objects.requireNonNull(plan, "plan");
+        requireLease(lease);
+        return new PreparedAdmission(plan, lease);
+    }
+
+    /**
+     * Participate in the caller's transaction without committing. The result is
+     * provisional until that transaction commits; provider I/O must wait for it.
+     * This preserves FULL_REVISION semantics and does not bind an operation owner.
+     */
+    static Attempt beginInTransaction(EntityManager em, PreparedAdmission prepared) {
+        Objects.requireNonNull(em, "em");
+        if (!em.getTransaction().isActive() || em.getTransaction().getRollbackOnly())
+            throw new IllegalStateException("Admission requires an active writable transaction");
+        try {
+            Objects.requireNonNull(prepared, "prepared");
+            var plan = prepared.plan;
+            var lease = prepared.lease;
+            var encoded = prepared.encoded;
+            var location = plan.location();
+            List<?> realms = em.createNativeQuery("SELECT storage_realm FROM managed_backend_profiles WHERE generation=:generation")
+                    .setParameter("generation", location.backendGeneration()).getResultList();
+            if (realms.isEmpty()) throw new IllegalArgumentException("Original backend generation is not registered");
+            String realm = (String) realms.getFirst();
+            UUID id = plan.attemptId();
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempts(attempt_id,node_id,account_id,sampled_revision,backend_generation,
+                        storage_realm,storage_namespace,planned_count,source_count,lease_token,lease_until,state)
+                    VALUES (:id,:node,:account,:revision,:generation,:realm,:namespace,:count,:sources,:token,
+                        clock_timestamp()+(:millis * interval '1 millisecond'),'PLANNING')
+                    """).setParameter("id", id).setParameter("node", location.nodeId()).setParameter("account", location.accountId())
+                    .setParameter("revision", plan.sampledRevision()).setParameter("generation", location.backendGeneration())
+                    .setParameter("realm", realm).setParameter("namespace", location.namespace()).setParameter("count", plan.objects().size())
+                    .setParameter("sources", plan.sources().size()).setParameter("token", UUID.randomUUID())
+                    .setParameter("millis", lease.toMillis()).executeUpdate();
+            insertEncodedRows(em, encoded, id, realm, location.namespace());
+            em.createNativeQuery("UPDATE document_part_attempts SET state='STAGING' WHERE attempt_id=:id").setParameter("id", id).executeUpdate();
+            return read(em, id, true).orElseThrow();
+        } catch (RuntimeException | Error failure) {
+            try { em.getTransaction().setRollbackOnly(); }
+            catch (RuntimeException markingFailure) {
+                if (markingFailure != failure) failure.addSuppressed(markingFailure);
+            }
+            throw failure;
+        }
+    }
+
+    /** Shared storage representation for full revisions and operation-bound new bytes. */
+    static void insertEncodedRows(EntityManager em, DocumentAttemptPlanEncoding encoded, UUID id, String realm, String namespace) {
+        DocumentKeyReservations.reserveEncoded(em, encoded.keys(), id);
+        for (String batch : encoded.objects()) {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempt_objects(attempt_id,ordinal,revision_ordinal,part,sub_key,storage_realm,storage_namespace,
+                        object_key,expected_size,expected_sha256,content_type)
+                    SELECT :id,p.ordinal,p.revision_ordinal,p.part,p.sub_key,:realm,:namespace,p.object_key,p.expected_size,p.expected_sha256,p.content_type
+                    FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS p(ordinal integer,revision_ordinal integer,part integer,sub_key text,
+                        object_key text,expected_size bigint,expected_sha256 text,content_type text)
+                    ORDER BY p.ordinal
+                    """).setParameter("id", id).setParameter("realm", realm).setParameter("namespace", namespace)
+                    .setParameter("batch", batch).executeUpdate();
+        }
+        for (String batch : encoded.sources()) {
+            em.createNativeQuery("""
+                    INSERT INTO document_part_attempt_sources(attempt_id,source_node_id,revision)
+                    SELECT :id,s.source_node_id,s.revision
+                    FROM jsonb_to_recordset(CAST(:batch AS jsonb)) AS s(source_node_id uuid,revision bigint)
+                    ORDER BY s.source_node_id
+                    """).setParameter("id", id).setParameter("batch", batch).executeUpdate();
+        }
+    }
+
+    public Optional<Attempt> find(UUID id) {
+        Objects.requireNonNull(id, "id");
+        return tx.readOnly(em -> read(em, id, false));
+    }
+
+    /**
+     * Internal precondition for atomic publication; it does not create a binding.
+     * The caller must already hold the destination/source revision locks through
+     * DocumentLedger's guarded save transaction, and keep this transaction open
+     * until the manifest, binding, raw references and outbox have committed.
+     */
+    static Attempt requirePublishable(EntityManager em, UUID id, UUID token, DocumentRecord candidate,
+            Long expectedRevision, Map<UUID, Long> sourceRevisions) {
+        var attempt = requireOwner(em, id, token);
+        if (!attempt.state().equals("VERIFIED")) throw new FenceException("Document part attempt is not fully verified");
+        if (!attempt.location().nodeId().equals(candidate.nodeId)
+                || !attempt.location().accountId().equals(candidate.accountId)
+                || attempt.sampledRevision() != (expectedRevision == null ? 0 : expectedRevision))
+            throw new FenceException("Document publication identity or sampled revision differs from admission");
+        var admittedSources = new java.util.HashMap<UUID, Long>();
+        for (Object result : em.createNativeQuery("SELECT source_node_id,revision FROM document_part_attempt_sources WHERE attempt_id=:id")
+                .setParameter("id", id).getResultList()) {
+            Object[] row = (Object[]) result;
+            admittedSources.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+        if (!admittedSources.equals(sourceRevisions)) throw new FenceException("Document publication source revisions differ from admission");
+        var verified = new java.util.ArrayList<DocumentPartPublication.VerifiedPart>();
+        for (Object result : em.createNativeQuery("""
+                SELECT ordinal,part,sub_key,object_key,expected_size,expected_sha256,provider_version,etag
+                FROM document_part_attempt_objects WHERE attempt_id=:id AND verified ORDER BY ordinal
+                """).setParameter("id", id).getResultList()) {
+            Object[] row = (Object[]) result;
+            verified.add(new DocumentPartPublication.VerifiedPart(((Number) row[0]).intValue(),
+                    DocumentPart.forNumber(((Number) row[1]).intValue()), (String) row[2], (String) row[3],
+                    ((Number) row[4]).longValue(), (String) row[5], (String) row[6], (String) row[7]));
+        }
+        if (verified.size() != attempt.plannedCount()) throw new FenceException("Document part verification is incomplete");
+        DocumentPartPublication.validate(candidate, verified);
+        return attempt;
+    }
+
+    public Attempt renew(UUID id, UUID token, Duration lease) {
+        requireLease(lease);
+        return tx.inTransaction(em -> {
+            requireOwner(em, id, token);
+            em.createNativeQuery("""
+                    UPDATE document_part_attempts SET lease_until=GREATEST(lease_until,clock_timestamp()+(:millis * interval '1 millisecond'))
+                    WHERE attempt_id=:id
+                    """).setParameter("id", id).setParameter("millis", lease.toMillis()).executeUpdate();
+            return read(em, id, true).orElseThrow();
+        });
+    }
+
+    /** Record trusted measured bytes; VERIFIED means complete byte verification, not document validity. */
+    public Attempt verify(UUID id, UUID token, String key, long size, String sha256, String version, String etag) {
+        text(key, 2048, "key");
+        digest(sha256);
+        return tx.inTransaction(em -> {
+            var attempt = requireOwner(em, id, token);
+            List<?> rows = em.createNativeQuery("""
+                    SELECT expected_size,expected_sha256,verified,provider_version,etag
+                    FROM document_part_attempt_objects WHERE attempt_id=:id AND object_key=:key
+                    """).setParameter("id", id).setParameter("key", key).getResultList();
+            if (rows.isEmpty()) throw new FenceException("Object is not in the admitted plan");
+            Object[] row = (Object[]) rows.getFirst();
+            if (((Number) row[0]).longValue() != size || !sha256.equals(row[1]))
+                throw new FenceException("Observed document part differs from admitted identity");
+            if ((Boolean) row[2]) {
+                if (!Objects.equals(version, row[3]) || !Objects.equals(etag, row[4]))
+                    throw new FenceException("Verified document part provider identity differs");
+                return attempt;
+            }
+            em.createNativeQuery("""
+                    UPDATE document_part_attempt_objects SET verified=true,provider_version=:version,etag=:etag
+                    WHERE attempt_id=:id AND object_key=:key
+                    """).setParameter("version", version).setParameter("etag", etag).setParameter("id", id).setParameter("key", key).executeUpdate();
+            em.createNativeQuery("""
+                    UPDATE document_part_attempts SET state='VERIFIED' WHERE attempt_id=:id
+                    AND NOT EXISTS (SELECT 1 FROM document_part_attempt_objects WHERE attempt_id=:id AND NOT verified)
+                    """).setParameter("id", id).executeUpdate();
+            return read(em, id, true).orElseThrow();
+        });
+    }
+
+    private static Attempt requireOwner(EntityManager em, UUID id, UUID token) {
+        Objects.requireNonNull(id, "id");
+        var attempt = read(em, id, true).orElseThrow(() -> new FenceException("Document part attempt is missing"));
+        if (!attempt.planKind().equals("FULL_REVISION"))
+            throw new FenceException("NEW_CONTENT requires an operation-bound entry point");
+        Instant now = em.unwrap(org.hibernate.Session.class).createNativeQuery("SELECT clock_timestamp()", Instant.class).getSingleResult();
+        if (!attempt.token().equals(token) || !attempt.leaseUntil().isAfter(now)
+                || !(attempt.state().equals("STAGING") || attempt.state().equals("VERIFIED")))
+            throw new FenceException("Document part attempt lease expired or belongs to another writer");
+        return attempt;
+    }
+
+    static Optional<Attempt> read(EntityManager em, UUID id, boolean lock) {
+        List<?> rows = em.createNativeQuery("""
+                SELECT attempt_id,node_id,account_id,backend_generation,storage_namespace,storage_realm,
+                       sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count,plan_kind
+                FROM document_part_attempts WHERE attempt_id=:id
+                """ + (lock ? " FOR UPDATE" : "")).setParameter("id", id).getResultList();
+        if (rows.isEmpty()) return Optional.empty();
+        return Optional.of(decode((Object[]) rows.getFirst()));
+    }
+
+    /** Bounded operation-wide locking, in PostgreSQL UUID order. */
+    static List<Attempt> lockAll(EntityManager em, List<UUID> ids) {
+        if (ids.isEmpty() || ids.size() > 64) throw new IllegalArgumentException("Attempt lock batch requires one to 64 IDs");
+        List<?> rows = em.createNativeQuery("""
+                SELECT attempt_id,node_id,account_id,backend_generation,storage_namespace,storage_realm,
+                       sampled_revision,lease_token,EXTRACT(EPOCH FROM lease_until),state,planned_count,plan_kind
+                FROM document_part_attempts WHERE attempt_id IN (:ids) ORDER BY attempt_id FOR UPDATE
+                """).setParameter("ids", ids).getResultList();
+        return rows.stream().map(row -> decode((Object[]) row)).toList();
+    }
+
+    private static Attempt decode(Object[] r) {
+        var epoch = (java.math.BigDecimal) r[8];
+        long seconds = epoch.longValue();
+        Instant until = Instant.ofEpochSecond(seconds, epoch.subtract(java.math.BigDecimal.valueOf(seconds)).movePointRight(9).intValueExact());
+        return new Attempt((UUID) r[0], new Location((UUID) r[1], (String) r[2], (String) r[3], (String) r[4]),
+                (String) r[5], ((Number) r[6]).longValue(), (UUID) r[7], until, (String) r[9], ((Number) r[10]).intValue(), (String) r[11]);
+    }
+
+    private static void requireLease(Duration lease) {
+        Objects.requireNonNull(lease, "lease");
+        if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
+            throw new IllegalArgumentException("Lease must be between one second and one day");
+    }
+    private static void text(String value, int max, String name) {
+        if (value == null || value.isBlank() || value.length() > max) throw new IllegalArgumentException("Invalid " + name);
+    }
+    private static void digest(String value) {
+        if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid SHA-256");
+    }
+}

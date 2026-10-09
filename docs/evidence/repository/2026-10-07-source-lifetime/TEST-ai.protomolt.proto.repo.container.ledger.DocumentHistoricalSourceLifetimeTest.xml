@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-07T05:49:39.647Z" hostname="krick" time="0.054">
+  <properties/>
+  <testcase name="failingComponentCleanupStillAttemptsAllClosersBeforeEndingWork()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.034"/>
+  <testcase name="cleanupFailureCannotBecomeDrainProofAndCloseCanRetry()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.006"/>
+  <testcase name="admissionMustCloseBeforeDrainCanBeObserved()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.001"/>
+  <testcase name="closeRefusesNewWorkAndWaitsForActualWorkerExitDespiteFutureCancellation()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalSourceLifetimeTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

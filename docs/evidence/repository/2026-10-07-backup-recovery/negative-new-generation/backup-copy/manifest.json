@@ -1,0 +1,146 @@
+{
+  "format": "protomolt-repository-recovery-backup/v1",
+  "createdAt": "2026-10-07T12:02:38.385572432Z",
+  "required": ["sql/ledger.dump", "provider/rustfs-data.tar", "schema/catalog.tsv", "identities/identities.json"],
+  "components": {
+    "identities/archive-entry-v1.pb": {
+      "sha256": "267ebee780ed269722398ead62879b9acb3654513cc4d10339cb11494eadbf81",
+      "size": 1743.0
+    },
+    "identities/archive-entry-v2.pb": {
+      "sha256": "bd1405b67121f50322bde03b064e6e7f297bad1d629b2fbe20ffc7e9b8b84450",
+      "size": 1755.0
+    },
+    "identities/archive-manifest-v1.pb": {
+      "sha256": "bbfe252f8a8d0ef45a277787169b0497e034d69f5048df5bde076edc65693f23",
+      "size": 1289.0
+    },
+    "identities/archive-manifest-v2.pb": {
+      "sha256": "3032bd4b894a3a6b10fe14cdfdf91a62fd93f9f091a2e922e28b45323842af44",
+      "size": 1292.0
+    },
+    "identities/document-v1.pb": {
+      "sha256": "27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb",
+      "size": 239.0
+    },
+    "identities/document-v2.pb": {
+      "sha256": "b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76",
+      "size": 246.0
+    },
+    "identities/identities.json": {
+      "sha256": "39bd916e210e6b32624215ac1785c8d65daa614297365267d60bf3bb807e72ab",
+      "size": 10028.0
+    },
+    "identities/markers.log": {
+      "sha256": "2a28d74eef8afbd29a3e1d3e82838235207504c622ee90df99bd4b25fc8566d9",
+      "size": 7413.0
+    },
+    "identities/receipt-v1.pb": {
+      "sha256": "21d74d4411518534f3bbdbe75b09bf32be2a259d1fcf0a375b3579986ffbc51e",
+      "size": 327.0
+    },
+    "identities/receipt-v2.pb": {
+      "sha256": "e730d5e6841a5f68a803d5d59019f83f9787afc8f9a099052fc8a7e0a22f1860",
+      "size": 327.0
+    },
+    "identities/request-v1.pb": {
+      "sha256": "1bde3ddc01b9f64b9d428bca9721c8ae063a5d20455f72e2386c1dbff5e1dcba",
+      "size": 744.0
+    },
+    "identities/request-v2.pb": {
+      "sha256": "470673f8560ad070b6c7f6a594e814782d3b05fd82328fa034d052054b2c654f",
+      "size": 731.0
+    },
+    "identities/seed-results.xml": {
+      "sha256": "810c26a18c8123779fe72d87a7c0894522ca1a739e797a51dc6fab2737cce96a",
+      "size": 13264.0
+    },
+    "provider/rustfs-data.tar": {
+      "sha256": "9cffc9e046864829187f2a4c8d91401059599d3b8a252ddf903ce54ed26202f8",
+      "size": 182784.0
+    },
+    "schema/catalog.tsv": {
+      "sha256": "57e587335294f17698b5fb8be0db25480040a5b33cf6587de1dc1e5dee160609",
+      "size": 516.0
+    },
+    "sql/ledger.dump": {
+      "sha256": "2b8789368e19cd6044f364b5c877d029c5bf6b01f9f848d20c5a6e9594bcfb55",
+      "size": 739035.0
+    }
+  },
+  "images": {
+    "postgres": {
+      "id": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "tag": "postgres:18-alpine"
+    },
+    "helper": {
+      "id": "sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc",
+      "tag": "alpine:3.20"
+    },
+    "rustfs": {
+      "id": "sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b",
+      "tag": "rustfs/rustfs:1.0.0-beta.11-preview.1"
+    }
+  },
+  "backend": {
+    "pathStyle": true,
+    "endpoint": "http://127.0.0.1:42129",
+    "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+    "providerPort": 42129.0,
+    "region": "us-east-1",
+    "realm": "recovery-realm",
+    "profile": {
+      "generation": "recovery-gen-26ff582e-2ca6-45d7-a919-c10d0a87c09c",
+      "provider": "s3",
+      "realm": "recovery-realm",
+      "identitySchema": "s3/v1",
+      "identityJson": "{\"region\": \"us-east-1\", \"endpoint\": \"http://127.0.0.1:42129\", \"path-style\": \"true\"}"
+    }
+  },
+  "database": {
+    "migrationLevel": 111.0,
+    "name": "repo",
+    "user": "repo"
+  },
+  "sequences": {
+    "archive_mutation_revision_seq": 8.0,
+    "document_mutation_revision_seq": 2.0
+  },
+  "rowCounts": {
+    "archive_entries": 1.0,
+    "archive_object_bindings": 3.0,
+    "archive_object_uploads": 3.0,
+    "archive_version_object_refs": 4.0,
+    "archive_versions": 2.0,
+    "archives": 1.0,
+    "document_part_attempt_cleanup": 0.0,
+    "document_part_attempts": 2.0,
+    "document_revision_commits": 2.0,
+    "document_revision_parts": 2.0,
+    "document_revision_publications": 2.0,
+    "document_revision_schema_artifacts": 8.0,
+    "document_revision_schema_assets": 4.0,
+    "document_revision_schema_evidence": 2.0,
+    "documents": 1.0,
+    "flyway_schema_history": 111.0,
+    "managed_backend_profiles": 1.0,
+    "repository_execution_claims": 2.0,
+    "repository_operation_success": 2.0,
+    "repository_operations": 2.0,
+    "repository_physical_locations": 5.0,
+    "repository_reader_incarnations": 2.0,
+    "repository_schema_artifacts": 4.0
+  },
+  "stopped": {
+    "postgres": {
+      "status": "exited",
+      "exitCode": "0",
+      "finishedAt": "2026-10-07T12:02:37.384873261Z"
+    },
+    "rustfs": {
+      "status": "exited",
+      "exitCode": "0",
+      "finishedAt": "2026-10-07T12:02:37.628815019Z"
+    }
+  }
+}

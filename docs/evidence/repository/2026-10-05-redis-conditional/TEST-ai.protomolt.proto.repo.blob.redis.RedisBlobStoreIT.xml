@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-06T00:59:55.778Z" hostname="krick" time="2.373">
+  <properties/>
+  <testcase name="deleteReportsWhetherTheObjectExisted()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.094"/>
+  <testcase name="deleteAllChunksBeyond1000KeysAndToleratesAbsentKeys()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.217"/>
+  <testcase name="headObjectAndGetOfAbsentKeyRaiseNotFound()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.002"/>
+  <testcase name="copyDuplicatesTheObjectWithinRedis()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.005"/>
+  <testcase name="ttlExpiresTheObject()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="1.507"/>
+  <testcase name="listStaysWithinTheBucketNamespaceAcrossTwoBuckets()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.004"/>
+  <testcase name="nonExpiringWritesClearPriorMetadataExpiryForPutAndCopy()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.007"/>
+  <testcase name="verifiedPutWithMatchingChecksumSucceedsAndMismatchIsRejected()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.003"/>
+  <testcase name="putThenGetRoundTripsBytesAndContentType()" classname="ai.protomolt.proto.repo.blob.redis.RedisBlobStoreIT" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: d6c99422938865b305c0a327d83d8698571c483a32207e6b90b48527cdf0d86d
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.417662528S
+]]></system-err>
+</testsuite>

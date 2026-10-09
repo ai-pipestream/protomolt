@@ -1,7 +1,18 @@
 package ai.protomolt.proto.repo.container.lifecycle;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
-import ai.protomolt.proto.repo.container.blob.S3BlobStore;
+import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.container.blob.DocumentIds;
+import ai.protomolt.proto.repo.container.blob.PartStorage;
+import ai.protomolt.proto.repo.blob.s3.S3BackendIdentity;
+import ai.protomolt.proto.repo.container.ledger.ManagedBackendLedger;
+import ai.protomolt.proto.repo.container.ledger.DocumentPartAttemptLedger;
+import ai.protomolt.proto.repo.container.ledger.DocumentPublicationTestAccess;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
+import ai.protomolt.proto.repo.codec.PartLayouts;
+import java.time.Duration;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.blob.s3.S3BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
 import ai.protomolt.proto.repo.container.ledger.DocumentPurgeRecord;
 import ai.protomolt.proto.repo.container.ledger.DocumentRecord;
@@ -105,6 +116,41 @@ abstract class AbstractLifecycleIT {
         drives.insert(drive);
         client.createBucket(b -> b.bucket(bucket));
         return drive;
+    }
+
+    /** Admit, write, read back and publish a real CORE fragment for lifecycle tests. */
+    static DocumentRecord managedDocument(DriveRecord drive) {
+        var doc = Document.newBuilder().setDocId("managed-" + UUID.randomUUID())
+                .setOwnership(OwnershipContext.newBuilder()
+                        .setAccountId(drive.accountId).setDatasourceId("source")).build();
+        var address = NodeAddress.newBuilder().setDocId(doc.getDocId()).setAccountId(drive.accountId)
+                .setGraphId("intake:" + drive.accountId).setGraphAddressId("source").build();
+        UUID node = DocumentIds.nodeId(address);
+        UUID id = UUID.randomUUID();
+        String generation = "lifecycle-" + UUID.randomUUID();
+        var backend = S3BackendIdentity.of(LOCALSTACK.getEndpoint().toString(), LOCALSTACK.getRegion(), true);
+        new ManagedBackendLedger(tx).bind(generation,
+                new ManagedBackendLedger.Profile(backend,generation));
+        String prefix = "documents/" + drive.accountId + "/" + node + "/attempts/" + id;
+        var parts = DocumentPartCodec.split(doc, PartLayouts.document());
+        var planned = parts.stream().map(part -> new DocumentPartAttemptLedger.PlannedObject(
+                part.part(),part.subKey(),DocumentPartCodec.objectKey(prefix,part.part(),part.subKey()),
+                part.bytes().length,part.sha256(),"application/protobuf")).toList();
+        var attempts = new DocumentPartAttemptLedger(tx);
+        var attempt = attempts.begin(new DocumentPartAttemptLedger.Plan(id,
+                new DocumentPartAttemptLedger.Location(node,drive.accountId,generation,drive.bucket),
+                0,Map.of(),planned),Duration.ofMinutes(5));
+        var written = new PartStorage().writePartObjects(store,drive.bucket,prefix,parts,
+                address,null,"application/protobuf",null,true,1);
+        for (var part : planned) {
+            var actual = store.get(drive.bucket,part.objectKey(),null);
+            attempts.verify(id,attempt.token(),part.objectKey(),actual.data().length,
+                    DocumentPartCodec.sha256Hex(actual.data()),actual.versionId(),actual.eTag());
+        }
+        var row = intakeRow(node,drive.accountId,doc.getDocId(),"source",drive.name,List.of());
+        row.objectKey=prefix; row.checksum=written.rootChecksum(); row.sizeBytes=written.totalSizeBytes();
+        row.etag=written.coreEtag(); row.versionId=written.coreVersionId(); row.writeManifest(written.manifest());
+        return DocumentPublicationTestAccess.publish(tx,row,attempt,drive,backend);
     }
 
     /** An INTAKE document row (unsaved) with a two-entry manifest. */

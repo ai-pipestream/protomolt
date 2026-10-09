@@ -126,6 +126,11 @@ message RenditionDescriptor {
 // One rendition object in a version's manifest: what it is, what state it
 // is in, and exactly where and what its bytes are.
 message RenditionManifestEntry {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive-storage-binding-state"
+    message: "a storage binding requires PRESENT content or DELETED provenance"
+    expression: "this.storage_object_id == '' || this.state == 1 || this.state == 3"
+  };
   // What the object is.
   RenditionDescriptor rendition = 1 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
@@ -141,8 +146,8 @@ message RenditionManifestEntry {
       ignore_if_zero: true
     }
   ];
-  // Repository-internal storage object key. Content-derived and
-  // entry-local: unchanged bytes across versions share one object.
+  // Repository-internal storage object key. New writes use unique physical
+  // identities; unchanged bytes share retained manifest references.
   string object_key = 5 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {max_len: 1024}
@@ -165,12 +170,28 @@ message RenditionManifestEntry {
   // What this rendition's content is, when a profile was measured
   // (typically on derived renditions; OCR text always carries one).
   ai.protomolt.proto.asset.v1.ContentProfile content_profile = 9;
+  // Durable original storage binding. Absent on legacy/unmanaged manifests;
+  // absence must not be interpreted as a verified binding to the current drive.
+  // PRESENT publication verifies ownership, key and byte identity against this
+  // binding. EMPTY has no physical binding; DELETED may retain it as provenance.
+  // This identifier is not an authorization grant or proof of schema validity.
+  string storage_object_id = 10 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {uuid: true}
+      ignore_if_zero: true
+    }
+  ];
 }
 
 // The machine-readable map of one immutable stored state: which renditions
 // a version contains, where they live, what they hash to, and what
 // happened to them.
 message VersionManifest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "archive.snapshot_identity"
+    message: "Version metadata must identify the containing entry and version"
+    expression: "!has(this.metadata_snapshot) || (this.version > 0 && this.metadata_snapshot.current_version == this.version && this.metadata_snapshot.address == this.address && this.metadata_snapshot.entry_uuid != '')"
+  };
   // The entry this version belongs to.
   EntryAddress address = 1 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
@@ -192,6 +213,11 @@ message VersionManifest {
   google.protobuf.Timestamp created_at = 5;
   // One entry per rendition object, in stable (name, sub_key) order.
   repeated RenditionManifestEntry renditions = 6;
+  // Descriptive metadata captured atomically when this content version committed.
+  // Absent means legacy metadata was not recorded; never fill it from current info.
+  // current_version is frozen at capture and equals this manifest's version.
+  // This is provenance, not current authority or a schema/admission attestation.
+  EntryInfo metadata_snapshot = 7;
 }
 
 // Entry-level metadata: the typed first-class fields plus the extension
@@ -209,7 +235,8 @@ message EntryInfo {
       ignore_if_zero: true
     }
   ];
-  // The entry's current (latest) version number.
+  // The entry's current (latest) version number. Within a VersionManifest
+  // metadata_snapshot, this is frozen at capture and equals that manifest's version.
   int64 current_version = 3;
   // Display title.
   string title = 4 [

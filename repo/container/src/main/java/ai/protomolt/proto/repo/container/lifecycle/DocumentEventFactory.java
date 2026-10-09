@@ -58,6 +58,17 @@ public final class DocumentEventFactory {
     }
 
     /**
+     * A saved event retained in the caller's transaction without broker delivery.
+     * This prepares a record only; the caller must persist it atomically with the
+     * actual publication. It is never automatically queued when Kafka is enabled.
+     */
+    public static DocumentEventRecord savedWithoutDelivery(DocumentRecord row, Instant when) {
+        var record = saved(row, when);
+        record.status = DocumentEventRecord.STATUS_RECORDED;
+        return record;
+    }
+
+    /**
      * The hard-delete commit point's event (purge_storage=true: the row is
      * removed in this transaction).
      *
@@ -73,6 +84,18 @@ public final class DocumentEventFactory {
                 .setDeletedAt(timestamp(when))
                 .build());
         return record(eventId, DocumentEventRecord.TYPE_DELETED, row.docId, event, when);
+    }
+
+    /** Synchronous purge completion uses its admitted identity, including after recovery. */
+    public static DocumentEventRecord deleted(DocumentPurgeRecord purge, Instant when) {
+        UUID eventId = UUID.randomUUID();
+        DocumentEvent event = envelope(eventId, DocumentDeleted.newBuilder()
+                .setAddress(NodeAddress.newBuilder().setDocId(purge.docId)
+                        .setAccountId(purge.accountId).setGraphId(purge.graphId)
+                        .setGraphAddressId(purge.graphAddressId))
+                .setChecksum(purge.contentChecksum == null ? "" : purge.contentChecksum)
+                .setDeletedAt(timestamp(when)).build());
+        return record(eventId, DocumentEventRecord.TYPE_DELETED, purge.docId, event, when);
     }
 
     /**

@@ -1,0 +1,1 @@
+SELECT quarantine_archive_location_keys(NEW.entry_uuid,NEW.version,NEW.manifest)

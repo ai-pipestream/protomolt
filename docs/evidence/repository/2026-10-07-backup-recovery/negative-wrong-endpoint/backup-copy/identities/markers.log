@@ -1,0 +1,55 @@
+CHECK_OK seed.drive :: drive=405b3b8b-9774-3dfc-9989-78df10862a92 bucket=recovery-pipeline-89370bb6
+CHECK_OK seed.publish.v1 :: committed revision bec724dc-b29b-4269-b51f-8d1e1f1b1fdc
+CHECK_OK seed.replay.v1.live :: receipt replay while live
+CHECK_OK seed.publish.v2 :: committed revision 114c1b01-3539-47b2-8c03-81c84cf598ac
+CHECK_OK seed.publish.v2.identity :: same address, new revision, mutation 1 -> 2
+CHECK_OK seed.publish.distinct_data :: revision payloads differ
+CHECK_OK seed.schema.live_resolution_used :: registry resolutions=2
+CHECK_OK seed.archive.versions :: versions 1 and 2 committed
+CHECK_OK seed.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b
+CHECK_OK seed.archive.dedup :: identical content did not create a version
+CHECK_OK seed.ledger.provider_versions :: document objects=2 archive objects=4
+CHECK_OK seed.ledger.archive_sharing :: three physical objects across four version references
+CHECK_OK seed.ledger.catalog :: catalog holds the retained descriptor artifact; entries=4
+CHECK_OK seed.ledger.evidence_artifact :: evidence references the retained artifact
+CHECK_OK seed.schema.resolver_drained :: live resolver closed before historical verification
+CHECK_OK seed.raw.v1.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.v1.fragment0 :: ordinal=0 sha256=27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb size=239
+CHECK_OK seed.raw.v1.publication_revision :: publicationRevision=1
+CHECK_OK seed.validated.v1.document :: document bytes equal recorded, sha256=27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb
+CHECK_OK seed.validated.v1.bindings :: policy=ce28f87a893f6698b6291bb8b969d62c64f7fd215190b7cb33c12ff13b0c8885 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.v1.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.raw.v2.fragment_count :: fragments=1 expected=1
+CHECK_OK seed.raw.v2.fragment0 :: ordinal=0 sha256=b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76 size=246
+CHECK_OK seed.raw.v2.publication_revision :: publicationRevision=2
+CHECK_OK seed.validated.v2.document :: document bytes equal recorded, sha256=b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76
+CHECK_OK seed.validated.v2.bindings :: policy=ce28f87a893f6698b6291bb8b969d62c64f7fd215190b7cb33c12ff13b0c8885 profile=protomolt-retained-schema-admission/v1
+CHECK_OK seed.validated.v2.metadata :: recorded metadata and manifest snapshot
+CHECK_OK seed.materialized.descriptor_identity :: retained descriptor artifact sha256=40c626818e37d61acd667c0dd3a9155eb070f64a5698fa42e57a484455944588
+CHECK_OK seed.materialized.tool_identity :: admission runtime repository-recovery-rehearsal/1
+CHECK_OK seed.materialized.offline_decode :: label=rehearsal-v1 files=5 imports retained
+CHECK_OK seed.materialized.selection_identity :: ordinal=0
+CHECK_OK seed.archive.v1.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK seed.archive.v1.manifest :: frozen metadata snapshot title=Quarterly report
+CHECK_OK seed.archive.v2.bytes :: renditions=2 byte-equal to recorded
+CHECK_OK seed.archive.v2.manifest :: frozen metadata snapshot title=Revised report
+CHECK_OK seed.archive.versions :: versions=[2, 1]
+CHECK_OK seed.archive.shared_object :: shared key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b
+CHECK_OK seed.archive.stats :: entries=1 versions=2 retainedBytes=92
+CHECK_OK seed.replay.v1 :: receipt byte-equal, revision=bec724dc-b29b-4269-b51f-8d1e1f1b1fdc
+CHECK_OK seed.replay.v2 :: receipt byte-equal, revision=114c1b01-3539-47b2-8c03-81c84cf598ac
+CHECK_OK seed.replay.archive_dedup :: deduplicated=true version=2
+CHECK_OK seed.access.member :: member reads both revisions
+CHECK_OK seed.access.revoked_public :: public grant revoked by revision 2 applies to revision 1: NOT_FOUND
+CHECK_OK seed.access.outsider :: foreign account denied
+CHECK_OK seed.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK seed.transport.validated :: authenticated validated read equals recorded document
+CHECK_OK seed.provider.56063c944bb1 :: bucket=recovery-pipeline-89370bb6 key=recovery-pipeline/documents/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/55fa3588-0106-35e1-aff4-3904d8b534ba/attempts/95771f96-ba33-4265-9694-47096c4c8478/part-0 version=6b2e4c03-b564-4ab9-b105-de1741b5dcdb sha256=27db1e6f41dfd12ac00417eae8c853d753724d0c0d515a134c24d8133add60bb etag="d96e7e2bd7596b5a156f01e0457af6e8"
+CHECK_OK seed.provider.7f0018c7da78 :: bucket=recovery-pipeline-89370bb6 key=recovery-pipeline/documents/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/55fa3588-0106-35e1-aff4-3904d8b534ba/attempts/f7397fbd-9299-41bc-a335-79c76b448b6c/part-0 version=b8faa762-20a6-4933-aa6f-5e2a1583b0ac sha256=b5ee4ab0abed3fb709d76acaee7ef17db4ba17c5b5172e947a5e9cc720fa6e76 etag="4663f00c19e0a64ecc108c72a96df5da"
+CHECK_OK seed.provider.84bfb8d65c36 :: bucket=recovery-archive-89370bb6 key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/markdown/writes/3d08b60c-f21a-4321-8326-beea8201b41b/04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d version=75650f86-7c91-470c-923c-5d3a460b5c22 sha256=04e1d1467e73933d8841c0c22eca9710ee72d020f5d494b091d68d4d2efea89d etag="a4d1c5ae1e2b525dc20dc6cafe2055fa"
+CHECK_OK seed.provider.c6a700aab276 :: bucket=recovery-archive-89370bb6 key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b version=f88e7128-5b24-4bc4-b44f-f144bdd794f1 sha256=a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b etag="bb8adef937e8093035bb4b63e8325299"
+CHECK_OK seed.provider.c3ef7ba49857 :: bucket=recovery-archive-89370bb6 key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/markdown/writes/59b3f4d5-f12e-41eb-aab5-1854614f8a50/0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc version=0258cd31-e61a-49db-b5be-3393c337f49e sha256=0e0f52ab217372a6f6698af3b0a1dc35c51c5293abf5ad23887f7898a79347fc etag="ab8d98c564c09941a815b7e52495cf77"
+CHECK_OK seed.provider.c6a700aab276 :: bucket=recovery-archive-89370bb6 key=recovery-archive/archive/recovery-account-57892363-c10c-4292-82fa-847c89370bb6/recovery-docs/c6e050d0-3122-3d94-bfd8-f0878c45e70a/original/writes/24380084-febd-4c29-a627-6c152ed0c445/a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b version=f88e7128-5b24-4bc4-b44f-f144bdd794f1 sha256=a9133154f010e6d4befb8ab7018f8fe15cd65a04cd302a2b4f02a812b34e7c9b etag="bb8adef937e8093035bb4b63e8325299"
+CHECK_OK seed.provider.count :: objects=6
+CHECK_OK seed.schema.no_live_lookup_for_history :: registry resolutions unchanged at 2
+CHECK_OK seed.registry_deleted :: git schema registry directory removed: /tmp/recovery-seed-registry-9242782380171505652

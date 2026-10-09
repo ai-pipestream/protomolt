@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-05T20:13:09.444Z" hostname="krick" time="0.695">
+  <properties/>
+  <testcase name="requestRequiresExplicitSelectionLimitsAndExactRevision()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.271"/>
+  <testcase name="workLimitsRejectUnsetAndOverflowingValues()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.005"/>
+  <testcase name="responseBindsFinalBoundaryAndRequiresCompleteEnvelope()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.169"/>
+  <testcase name="definitionBindsTheFinalNestedBoundaryRatherThanTheRoot()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.01"/>
+  <testcase name="artifactBoundsDoNotPretendToVerifyTheirContents()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.016"/>
+  <testcase name="schemaProjectionRecordsRuntimeOnlyRules()" classname="ai.protomolt.proto.repo.proto.HistoricalOccurrenceContractTest" time="0.105"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

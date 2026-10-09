@@ -11,6 +11,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class LedgerConfigTest {
 
+    @Test void blankConfiguredDatabaseCannotSelectTheDefaultDatabase() {
+        for (var name : java.util.List.of(LedgerConfig.ENV_JDBC_URL, LedgerConfig.ENV_USERNAME)) {
+            for (var blank : java.util.List.of("", " ")) {
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> LedgerConfig.fromEnvironment(java.util.Map.of(name, blank)))
+                        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(name);
+            }
+        }
+        assertThat(LedgerConfig.fromEnvironment(java.util.Map.of(LedgerConfig.ENV_PASSWORD, "")).password()).isEmpty();
+    }
+
     @Test
     void blankComponentsFallBackToTheDevelopmentDefaults() {
         LedgerConfig config = new LedgerConfig(null, null, null, 0, null);
@@ -62,34 +72,25 @@ class LedgerConfigTest {
     }
 
     @Test
-    void fromEnvironmentResolvesEachVariableOrItsDefault() {
-        // Env-aware: whatever the build machine exports, the result must be
-        // the env value when set (and parseable) and the default otherwise.
-        LedgerConfig config = LedgerConfig.fromEnvironment();
-
-        assertThat(config.jdbcUrl()).isEqualTo(envOrDefault(LedgerConfig.ENV_JDBC_URL,
-                LedgerConfig.DEFAULT_JDBC_URL));
-        assertThat(config.username()).isEqualTo(envOrDefault(LedgerConfig.ENV_USERNAME,
-                LedgerConfig.DEFAULT_USERNAME));
-        assertThat(config.password()).isEqualTo(envOrDefault(LedgerConfig.ENV_PASSWORD,
-                LedgerConfig.DEFAULT_PASSWORD));
+    void fromEnvironmentResolvesSuppliedSnapshotWithoutUsingProcessSettings() {
+        LedgerConfig config = LedgerConfig.fromEnvironment(java.util.Map.of(
+                LedgerConfig.ENV_JDBC_URL, "jdbc:postgresql://configured/database",
+                LedgerConfig.ENV_USERNAME, "configured-user", LedgerConfig.ENV_PASSWORD, "configured-password",
+                LedgerConfig.ENV_POOL_SIZE, " 7 "));
+        assertThat(config.jdbcUrl()).isEqualTo("jdbc:postgresql://configured/database");
+        assertThat(config.username()).isEqualTo("configured-user");
+        assertThat(config.password()).isEqualTo("configured-password");
         assertThat(config.migrationLocation()).isEqualTo(LedgerConfig.DEFAULT_MIGRATION_LOCATION);
-
-        String poolEnv = System.getenv(LedgerConfig.ENV_POOL_SIZE);
-        int expectedPool = LedgerConfig.DEFAULT_POOL_SIZE;
-        if (poolEnv != null && !poolEnv.isBlank()) {
-            try {
-                int parsed = Integer.parseInt(poolEnv.trim());
-                expectedPool = parsed > 0 ? parsed : LedgerConfig.DEFAULT_POOL_SIZE;
-            } catch (NumberFormatException ignored) {
-                // unparsable env -> default
-            }
-        }
-        assertThat(config.maxPoolSize()).isEqualTo(expectedPool);
+        assertThat(config.maxPoolSize()).isEqualTo(7);
+        assertThat(LedgerConfig.fromEnvironment(java.util.Map.of()).maxPoolSize()).isEqualTo(LedgerConfig.DEFAULT_POOL_SIZE);
     }
 
-    private static String envOrDefault(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", " ", "-1", "0", "1.5", "2147483648", "private-value"})
+    void configuredPoolMustBeAPositiveInteger(String value) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> LedgerConfig.fromEnvironment(
+                java.util.Map.of(LedgerConfig.ENV_POOL_SIZE, value)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(LedgerConfig.ENV_POOL_SIZE)
+                .hasMessageNotContaining("private-value").hasNoCause();
     }
 }

@@ -1,0 +1,1 @@
+SELECT object_key FROM archive_object_bindings WHERE entry_uuid=$1

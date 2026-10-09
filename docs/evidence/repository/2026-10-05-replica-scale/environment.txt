@@ -1,0 +1,11 @@
+java=25.0.3+9-jvmci-25.1-b19
+os=Linux
+processors=32
+workers=8
+payload_bytes=4096
+heap_per_child=256MiB
+load_average_begin=17.251953125
+Fixed mode fixes aggregate SQL connections only; CPU and heap are not capped in aggregate.
+Configurations run in fixed order; retained history grows across windows. Warmup sample is -1.
+Memory files are Linux post-window snapshots, not measured per-window peaks.
+Provider timing, SQL acquisition wait and lock-wait duration are not instrumented.

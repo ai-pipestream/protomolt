@@ -50,8 +50,14 @@ around that rule.
 | Module | Gradle project | Role |
 |--------|----------------|------|
 | `repo/proto` | `:protomolt-repo-proto` | The wire contract: `Document`, manifest, `DocumentService`, `DriveService` |
-| `repo/container` | `:protomolt-repo-container` | The storage engine: part codec, `BlobStore` port + `S3BlobStore`/`RedisBlobStore`/`CachingBlobStore`, part fan-out IO, the Postgres ledger (Hibernate + HikariCP + Flyway) |
-| `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring, the dogfood `RemoteBlobStore` |
+| `repo/codec` | `:protomolt-repo-codec` | Document part layouts, splitting and typed assembly |
+| `repo/blob/spi` | `:protomolt-repo-blob-spi` | JDK-only byte storage contracts and provider discovery |
+| `repo/blob/s3`, `repo/blob/redis`, `repo/blob/cache` | `:protomolt-repo-blob-s3`, `:protomolt-repo-blob-redis`, `:protomolt-repo-blob-cache` | Object storage providers and cache decorator |
+| `repo/blob/grpc` | `:protomolt-repo-blob-grpc` | Remote byte storage client using a borrowed gRPC stub |
+| `repo/spi` | `:protomolt-repo-spi` | Shared document, archive, drive and raw-blob invocation contracts, caller identity and domain errors |
+| `repo/engine` | `:protomolt-repo-engine` | Shared document, archive, drive and raw-blob operations over ledgers and selected byte storage |
+| `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
+| `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
 
 ## Storage model
 
@@ -309,7 +315,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
 | `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `repo` (delegate bytes to another repo-service over gRPC), `repo-inprocess` (same, in-process transport), `redis` (objects live in Redis), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache) |
 | `DOCUMENT_PLATFORM_REPO_TARGET` | _(none)_ | Required for the `repo` modes: `host:port` for `repo`, an in-process server name for `repo-inprocess` |
-| `DOCUMENT_PLATFORM_REPO_DRIVE` | `default` | The drive the repo-backed store addresses on the remote service |
+| `DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS` | required for remote modes | JSON object mapping local ledger bucket names to distinct remote drive names; preserves object keys |
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
@@ -364,6 +370,18 @@ under the old id. Pick it once and keep it.
 - `DeleteBlob` — delete by `FileStorageReference`; idempotent
   (`deleted=false` when absent).
 
+Generic blob PUT, conditional PUT and DELETE reject keys containing the exact
+path segment `archive`, `documents` or `.protomolt-managed`, including keys generated from a
+drive prefix. These namespaces belong to repository publication and cleanup.
+The reservation protects historical archive keys and applies through drive
+aliases as well. Administrative reads remain available. Keys are opaque:
+`archive-backup` is not reserved, and percent-encoded text is not decoded.
+This intentionally makes any pre-release loose blob under those exact reserved
+segments read-only through the generic API; existing bytes are not rewritten.
+The general orphan sweep also excludes these namespaces. Archive and managed-raw
+recovery use their own ledgers; abandoned document-part cleanup is awaiting its
+write-attempt ledger. Explicit document purge still processes admitted snapshots.
+
 ### gRPC `ArchiveService` (`repo/proto`, `archive/v1`)
 
 The generic document archive on the same engine: account-scoped archives
@@ -386,10 +404,15 @@ The design of record is [docs/design/archive.md](../docs/design/archive.md).
   any retained version; stored bytes are digest-checked against the
   manifest, and a missing body fails `FAILED_PRECONDITION` by name.
 - `ListEntries` / `ListVersions` — paginated listings.
-- `DeleteEntry` — every version, every object (exact manifest keys).
-- `DeleteRendition` — bytes gone from every retained version, tombstones
-  (size, hash, named reason) kept as provenance.
-- `PruneVersions` — keep the newest N; only unshared objects delete.
+- `ArchiveMutation` on `ArchiveMutationService` — an operation UUID plus one
+  delete-entry, delete-rendition, or prune-versions command. The transaction removes
+  logical references and records exact cleanup targets. Rendition removal leaves
+  tombstones with size, hash, and reason. Pruning keeps the newest N versions.
+- `GetArchiveMutation` — inspect the durable receipt: logical counts, pending
+  objects, confirmed absence, and retry state. Retry the same command with the
+  same UUID; a different command under that UUID conflicts. These operations
+  require explicit authenticated authority and a qualified managed-storage host.
+  Legacy unbound content requires verified identity migration before deletion.
 - `GetArchiveStats` — exact ledger-maintained counters (entries, versions,
   retained/current bytes, per-rendition breakdown), adjusted in the same
   transaction as the mutations they describe, plus exact per-state
@@ -492,7 +515,7 @@ Errors: 400 (names the offending parameter, or a checksum mismatch), 404
 
 ## The dogfood blob store
 
-`RemoteBlobStore` (`repo/service/.../client`) implements the
+`RemoteBlobStore` (`ai.protomolt.proto.repo.blob.grpc`, artifact `protomolt-repo-blob-grpc`) implements the
 `BlobStore` port over a `DocumentService` gRPC stub: any protomolt consumer
 that speaks the port can use a repo-service as its byte store instead of
 carrying an S3 SDK. `put`→`PutBlob`, `get`→`GetBlob` (NOT_FOUND maps to
@@ -500,7 +523,7 @@ carrying an S3 SDK. `put`→`PutBlob`, `get`→`GetBlob` (NOT_FOUND maps to
 `headObject` is a full fetch whose bytes are discarded (the v1 API has no
 cheaper probe), `copy` is a client-side get+put (no server-side copy across
 the API yet), and `list`/`deleteAll`/`headBucket` throw
-`UnsupportedOperationException`. Unary gRPC means the payload is in memory on
+`UnsupportedOperationException`. Uploads are limited to 9 MiB of data and a 10 MiB serialized request. Stream\nuploads verify the declared length and optional checksum before RPC. Unary gRPC\nmeans the payload is in memory on
 both ends — huge payloads belong on the HTTP upload route.
 
 `DOCUMENT_PLATFORM_BLOB_STORE` picks the deployment shape:

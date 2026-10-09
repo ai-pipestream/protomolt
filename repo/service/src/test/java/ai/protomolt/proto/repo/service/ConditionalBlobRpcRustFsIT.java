@@ -1,8 +1,8 @@
 package ai.protomolt.proto.repo.service;
 
-import ai.protomolt.proto.repo.container.blob.BlobStore;
+import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.service.client.RemoteBlobStore;
+import ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore;
 import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
 import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Proves conditional RPC status and adapter behavior against the pinned deployment store. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ConditionalBlobRpcRustFsIT {
     @Container static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer("postgres:18-alpine");
@@ -72,12 +72,12 @@ class ConditionalBlobRpcRustFsIT {
                                 assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
 
                 var remote = new RemoteBlobStore(documents, "state");
-                var spec = new BlobStore.PutSpec("ignored", key.getObjectKey(),
+                var spec = new BlobStore.PutSpec("state", key.getObjectKey(),
                         "application/octet-stream", null, null);
                 assertThatThrownBy(() -> remote.conditionalPut(spec, "late".getBytes(),
                         BlobStore.WriteCondition.matching(first.getVersion().getEtag())))
                         .isInstanceOf(BlobStore.BlobConflictException.class);
-                assertThat(remote.getForUpdate("ignored", key.getObjectKey()).data())
+                assertThat(remote.getForUpdate("state", key.getObjectKey()).data())
                         .isEqualTo("two".getBytes());
 
                 var largeKey = ConditionalBlobKey.newBuilder().setDriveName("state")

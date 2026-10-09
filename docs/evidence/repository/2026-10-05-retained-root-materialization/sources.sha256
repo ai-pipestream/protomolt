@@ -1,0 +1,3 @@
+8331dd35b8398632fecbd70ee8a3409d87303252c6f0f2de352fa892241a68ab  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentAnyMaterialization.java
+5ebaeeeb26915a317e04c2d368e3a3a27030f380cfa69ef147b8c774ee39caaa  repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentRetainedRootMaterialization.java
+c87477c66f569f485ebea18b8d54460a4fedf899e2372c37a12b69bfd8b3bd2b  repo/admission/src/test/java/ai/protomolt/proto/repo/admission/DocumentRetainedRootMaterializationTest.java

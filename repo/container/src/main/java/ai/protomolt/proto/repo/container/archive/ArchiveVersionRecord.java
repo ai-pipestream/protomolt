@@ -66,6 +66,10 @@ public class ArchiveVersionRecord {
     @Column(name = "version", nullable = false)
     public long version;
 
+    /** Database-assigned revision of the retained manifest, separate from its version number. */
+    @Column(name = "mutation_revision", nullable = false, insertable = false, updatable = false)
+    public long mutationRevision;
+
     /** protobuf-JSON of the {@code VersionManifest}. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "manifest", nullable = false)

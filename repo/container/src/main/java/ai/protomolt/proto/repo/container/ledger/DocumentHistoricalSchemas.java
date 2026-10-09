@@ -1,0 +1,105 @@
+package ai.protomolt.proto.repo.container.ledger;
+
+import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.spi.RepositoryException;
+import ai.protomolt.proto.repo.v1.NodeAddress;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
+
+/** Internal historical schema replay; provider reads and their pin lifetimes belong to the host. */
+final class DocumentHistoricalSchemas {
+    private final Tx tx;
+    DocumentHistoricalSchemas(Tx tx) { this.tx = Objects.requireNonNull(tx); }
+
+    /**
+     * Rechecks supplied exact fragment bytes using retained definitions and the current runtime.
+     * No registry or historical executable code is consulted. This does not establish provider
+     * availability. The host must protect provider reads with historical pins and bound concurrent
+     * invocations, including JDBC/protobuf copies of up to 64 MiB artifacts and 16 MiB evidence.
+     * The full command and policy are internal: permission for one member never exposes siblings.
+     */
+    DocumentSchemaAdmission.Proof check(RepositoryCaller caller, NodeAddress address, UUID revision,
+            Map<Integer, ByteString> fragments, Runnable control) {
+        return check(caller, address, revision, fragments, control, ignored -> {});
+    }
+
+    DocumentSchemaAdmission.Proof check(RepositoryCaller caller, NodeAddress address, UUID revision,
+            Map<Integer, ByteString> fragments, Runnable control, java.util.function.LongConsumer reserve) {
+        Objects.requireNonNull(address); Objects.requireNonNull(revision); Objects.requireNonNull(fragments);
+        Objects.requireNonNull(control);
+        Runnable active = () -> {
+            if (Thread.currentThread().isInterrupted()) throw new CancellationException("Historical schema read interrupted");
+            control.run();
+        };
+        final DocumentSchemaAdmission.Proof proof;
+        try {
+            active.run();
+            var snapshot = tx.inTransaction(em -> {
+                DocumentAdmissionAuthorization.authorizeHistory(em, caller, address);
+                return DocumentHistoricalSchemaRows.capture(em, address, revision, active, reserve);
+            });
+            proof = replay(address, snapshot, fragments, active);
+            active.run();
+        } catch (CancellationException failure) {
+            throw failure;
+        } catch (InvalidProtocolBufferException | IllegalArgumentException | DocumentSchemaAdmission.DataLoss failure) {
+            authorize(caller, address);
+            throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                    "Historical content or retained schema failed validation", failure);
+        } catch (RuntimeException failure) {
+            if (failure instanceof RepositoryException repository
+                    && (repository.code() == RepositoryException.Code.CANCELLED
+                        || repository.code() == RepositoryException.Code.DEADLINE_EXCEEDED)) throw failure;
+            // Revocation during replay suppresses detailed content/storage failures as well as results.
+            authorize(caller, address);
+            throw failure;
+        }
+        authorize(caller, address);
+        return proof;
+    }
+
+    private void authorize(RepositoryCaller caller, NodeAddress address) {
+        tx.inTransaction(em -> { DocumentAdmissionAuthorization.authorizeHistory(em, caller, address); });
+    }
+
+    private static DocumentSchemaAdmission.Proof replay(NodeAddress address, DocumentHistoricalSchemaRows.Snapshot snapshot,
+            Map<Integer, ByteString> fragments, Runnable control) throws InvalidProtocolBufferException {
+        var binding = DocumentHistoricalSchemaBinding.read(address, snapshot, control);
+        var member = binding.member();
+        var policy = binding.policy();
+        var request = binding.validationRequest(fragments, snapshot.roots());
+        var proof = DocumentSchemaAdmission.check(request, sha -> Optional.ofNullable(snapshot.artifacts().get(sha)), policy.limits(), control);
+        policy.verifyProof(proof, control);
+        if (!proof.artifacts().equals(snapshot.artifacts()))
+            throw DocumentHistoricalSchemaRows.invalid("Historical artifact set differs from replayed schema closure");
+        if (proof.roots().size() != snapshot.roots().size())
+            throw DocumentHistoricalSchemaRows.invalid("Historical root set differs from replayed evidence");
+        record RootKey(int ordinal, String locator) {}
+        var roots = new HashMap<RootKey, DocumentSchemaAdmission.RootEvidence>();
+        for (var root : proof.roots()) roots.put(new RootKey(root.ordinal(), root.locatorSha256()), root);
+        for (var retained : snapshot.roots()) {
+            control.run();
+            var actual = roots.remove(new RootKey(retained.ordinal(), retained.locatorSha()));
+            var fragment = proof.fragments().get(retained.ordinal());
+            // check() already verified every fragment against the canonical part hash.
+            // Compare the retained row to that identity without hashing a large fragment once per root.
+            var part = retained.ordinal() >= 0 && retained.ordinal() < member.getPartsCount()
+                    ? member.getParts(retained.ordinal()) : null;
+            String fragmentSha = part == null ? null : part.hasUpload() ? part.getUpload().getSha256()
+                    : part.hasReuse() ? part.getReuse().getObject().getSha256()
+                    : part.hasHistoricalReuse() ? part.getHistoricalReuse().getObject().getSha256() : null;
+            if (actual == null || !actual.encoded().equals(retained.evidence()) || fragment == null
+                    || fragment.size() != retained.fragmentSize()
+                    || !retained.fragmentSha().equals(fragmentSha))
+                throw DocumentHistoricalSchemaRows.invalid("Historical root or fragment identity differs");
+        }
+        return proof;
+    }
+}

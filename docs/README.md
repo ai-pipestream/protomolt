@@ -76,6 +76,8 @@ built-in action exposed by the standalone and full catalogs.
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
+- [Repository backup and recovery](operations/repository-backup-recovery.md): offline backup of the ledger and pinned RustFS, restore into new resources, rehearsal harness
+- [Repository backup rehearsal suite](operations/repository-backup-rehearsal.md): JUnit clean-room backup and restore through V119 with negative cases (`RepositoryBackupRehearsalIT`)
 
 ## Tutorials
 

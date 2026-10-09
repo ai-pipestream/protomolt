@@ -1,0 +1,1 @@
+update archive_rendition_stats set object_count=$1,total_bytes=$2 where account_id=$3 and archive=$4 and rendition_name=$5

@@ -140,6 +140,50 @@ public final class ArchiveLedger {
                         new ArchiveVersionRecord.Key(entryUuid, version))));
     }
 
+    /** Detached bounded projection; size and bytes come from the same SQL snapshot. */
+    public record ManifestJson(long version, String json, long utf8Bytes) {}
+
+    public Optional<ManifestJson> findManifest(UUID entryUuid, long version, int maxBytes) {
+        return boundedManifests(entryUuid, version, 1, 0, maxBytes).stream().findFirst();
+    }
+
+    /** Refuses the entire page before any JSON crosses JDBC when its sum exceeds maxBytes. */
+    public List<ManifestJson> listManifests(UUID entryUuid, int limit, long offset, int maxBytes) {
+        if (limit < 1 || limit > 1000 || offset < 0)
+            throw new IllegalArgumentException("Invalid bounded manifest page");
+        return boundedManifests(entryUuid, null, limit, offset, maxBytes);
+    }
+
+    private List<ManifestJson> boundedManifests(UUID entryUuid, Long version, int limit, long offset, int maxBytes) {
+        if (maxBytes < 0) throw new IllegalArgumentException("Negative manifest byte allowance");
+        return tx.readOnly(em -> {
+            var query = em.createNativeQuery("""
+                    WITH page AS MATERIALIZED (
+                        SELECT version, manifest::text AS body FROM archive_versions
+                        WHERE entry_uuid=:entry
+                    """ + (version == null ? "" : " AND version=:version ") + """
+                        ORDER BY version DESC LIMIT :limit OFFSET :offset
+                    ), sized AS (
+                        SELECT version, body, octet_length(convert_to(body,'UTF8')) AS bytes,
+                               sum(octet_length(convert_to(body,'UTF8'))::bigint) OVER () AS total FROM page
+                    )
+                    SELECT version, bytes, CASE WHEN total <= :maxBytes THEN body END
+                    FROM sized ORDER BY version DESC
+                    """).setParameter("entry", entryUuid).setParameter("limit", limit)
+                    .setParameter("offset", offset).setParameter("maxBytes", maxBytes);
+            if (version != null) query.setParameter("version", version);
+            var result = new java.util.ArrayList<ManifestJson>();
+            for (var raw : query.getResultList()) {
+                var row = (Object[]) raw;
+                if (row[2] == null) throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                        "Stored archive manifests exceed the JSON byte allowance");
+                result.add(new ManifestJson(((Number) row[0]).longValue(), (String) row[2], ((Number) row[1]).longValue()));
+            }
+            return List.copyOf(result);
+        });
+    }
+
     /**
      * Every retained version of one entry, oldest first — the ownership
      * walk deletes and prunes derive from.
@@ -300,9 +344,18 @@ public final class ArchiveLedger {
     public void commitSave(ArchiveEntryRecord entry, long baseVersion,
                            ArchiveVersionRecord version, long dropVersion,
                            StatsDelta delta) {
+        commitSave(entry, baseVersion, version, dropVersion, delta, Map.of());
+    }
+
+    /** Upload tokens authorize first publication only; retained references carry later versions. */
+    public void commitSave(ArchiveEntryRecord entry, long baseVersion,
+                           ArchiveVersionRecord version, long dropVersion,
+                           StatsDelta delta, Map<UUID, UUID> uploadTokens) {
+        var tokens = Map.copyOf(uploadTokens);
         tx.inTransaction(em -> {
             ArchiveEntryRecord existing = em.find(ArchiveEntryRecord.class,
                     entry.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            ArchiveEntryRecord managed;
             if (existing == null) {
                 if (baseVersion != 0) {
                     throw new VersionConflictException("entry '" + entry.entryId
@@ -310,15 +363,19 @@ public final class ArchiveLedger {
                             + baseVersion + ")");
                 }
                 em.persist(entry);
+                managed = entry;
             } else {
-                if (existing.currentVersion != baseVersion) {
+                if (existing.currentVersion != baseVersion || existing.mutationRevision != entry.mutationRevision) {
                     throw new VersionConflictException("entry '" + entry.entryId
-                            + "' moved to version " + existing.currentVersion
-                            + " under a save computed against " + baseVersion);
+                            + "' changed during save preparation (expected version " + baseVersion
+                            + ", revision " + entry.mutationRevision + "; found version "
+                            + existing.currentVersion + ", revision " + existing.mutationRevision + ")");
                 }
-                em.merge(entry);
+                managed = em.merge(entry);
             }
             em.persist(version);
+            em.flush();
+            ArchiveVersionBindings.publish(em, managed, version, tokens);
             if (dropVersion != 0) {
                 ArchiveVersionRecord dropped = em.find(ArchiveVersionRecord.class,
                         new ArchiveVersionRecord.Key(entry.entryUuid, dropVersion));
@@ -326,74 +383,14 @@ public final class ArchiveLedger {
                     em.remove(dropped);
                 }
             }
+            // Publication/removal triggers revise the entry. Finish their flush and
+            // refresh before locking the archive-wide counters shared by other entries.
+            em.flush();
+            em.refresh(managed);
+            em.refresh(version);
             applyDelta(em, entry.accountId, entry.archive, delta);
-        });
-    }
-
-    /**
-     * Removes one entry atomically: the entry row (versions cascade) plus
-     * the stats deltas.
-     *
-     * @param entryUuid the entry to remove
-     * @param delta the exact counter adjustments
-     * @return false when the entry did not exist (nothing changed)
-     */
-    public boolean commitDeleteEntry(UUID entryUuid, StatsDelta delta) {
-        return tx.inTransaction(em -> {
-            ArchiveEntryRecord entry = em.find(ArchiveEntryRecord.class, entryUuid,
-                    LockModeType.PESSIMISTIC_WRITE);
-            if (entry == null) {
-                return false;
-            }
-            em.createQuery("DELETE FROM ArchiveVersionRecord v WHERE v.entryUuid = :entry")
-                    .setParameter("entry", entryUuid)
-                    .executeUpdate();
-            em.remove(entry);
-            applyDelta(em, entry.accountId, entry.archive, delta);
-            return true;
-        });
-    }
-
-    /**
-     * Removes old versions atomically, with the stats deltas.
-     *
-     * @param entryUuid the entry
-     * @param versions the version numbers to remove
-     * @param accountId owning account (for the counters)
-     * @param archive the archive (for the counters)
-     * @param delta the exact counter adjustments
-     */
-    public void commitPrune(UUID entryUuid, List<Long> versions,
-                            String accountId, String archive, StatsDelta delta) {
-        tx.inTransaction(em -> {
-            for (long version : versions) {
-                ArchiveVersionRecord row = em.find(ArchiveVersionRecord.class,
-                        new ArchiveVersionRecord.Key(entryUuid, version));
-                if (row != null) {
-                    em.remove(row);
-                }
-            }
-            applyDelta(em, accountId, archive, delta);
-        });
-    }
-
-    /**
-     * Rewrites version manifests atomically (the tombstone path), with the
-     * stats deltas.
-     *
-     * @param rows the version rows with rewritten manifests
-     * @param accountId owning account (for the counters)
-     * @param archive the archive (for the counters)
-     * @param delta the exact counter adjustments
-     */
-    public void commitManifestRewrite(List<ArchiveVersionRecord> rows,
-                                      String accountId, String archive,
-                                      StatsDelta delta) {
-        tx.inTransaction(em -> {
-            for (ArchiveVersionRecord row : rows) {
-                em.merge(row);
-            }
-            applyDelta(em, accountId, archive, delta);
+            em.flush();
+            entry.mutationRevision = managed.mutationRevision;
         });
     }
 
@@ -405,46 +402,38 @@ public final class ArchiveLedger {
      */
     public void mergeEntry(ArchiveEntryRecord entry) {
         tx.inTransaction(em -> {
-            em.merge(entry);
+            var existing = em.find(ArchiveEntryRecord.class, entry.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            if (existing == null || existing.mutationRevision != entry.mutationRevision)
+                throw new VersionConflictException("Archive entry changed during metadata preparation");
+            var managed = em.merge(entry);
+            em.flush();
+            em.refresh(managed);
+            entry.mutationRevision = managed.mutationRevision;
         });
     }
 
-    private static void applyDelta(EntityManager em, String accountId, String archive,
+    /** Linearization point for a no-op result derived from a sampled version. */
+    public void confirmRetainedVersion(ArchiveEntryRecord sampled) {
+        tx.inTransaction(em -> {
+            var entry = em.find(ArchiveEntryRecord.class, sampled.entryUuid, LockModeType.PESSIMISTIC_WRITE);
+            if (entry == null || entry.mutationRevision != sampled.mutationRevision || entry.currentVersion != sampled.currentVersion)
+                throw new VersionConflictException("Archive entry changed before confirming unchanged content");
+            var version = em.find(ArchiveVersionRecord.class, new ArchiveVersionRecord.Key(entry.entryUuid, entry.currentVersion));
+            if (version == null) throw new VersionConflictException("Archive version is no longer retained");
+            var ids = ArchiveManifests.fromJson(version.manifest).getRenditionsList().stream()
+                    .filter(item -> item.getState() == ai.protomolt.proto.repo.archive.v1.RenditionState.RENDITION_STATE_PRESENT)
+                    .map(ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry::getStorageObjectId)
+                    .filter(id -> !id.isEmpty()).map(UUID::fromString).collect(java.util.stream.Collectors.toSet());
+            var pins = new java.util.HashSet<>(em.unwrap(org.hibernate.Session.class).createNativeQuery("""
+                    SELECT r.object_id FROM archive_version_object_refs r JOIN archive_object_uploads u USING(object_id)
+                    WHERE r.entry_uuid=:entry AND r.version=:version AND u.state='LIVE'
+                    """, UUID.class).setParameter("entry", entry.entryUuid).setParameter("version", entry.currentVersion).getResultList());
+            if (!ids.equals(pins)) throw new IllegalStateException("Archive version references do not match its retained manifest");
+        });
+    }
+
+    static void applyDelta(EntityManager em, String accountId, String archive,
                                    StatsDelta delta) {
-        if (delta.entries() == 0 && delta.versions() == 0
-                && delta.retainedBytes() == 0 && delta.currentBytes() == 0
-                && delta.renditionObjects().isEmpty()) {
-            return;
-        }
-        ArchiveStatsRecord stats = em.find(ArchiveStatsRecord.class,
-                new ArchiveStatsRecord.Key(accountId, archive),
-                LockModeType.PESSIMISTIC_WRITE);
-        if (stats == null) {
-            stats = new ArchiveStatsRecord();
-            stats.accountId = accountId;
-            stats.archive = archive;
-            em.persist(stats);
-        }
-        stats.entries += delta.entries();
-        stats.versions += delta.versions();
-        stats.retainedBytes += delta.retainedBytes();
-        stats.currentBytes += delta.currentBytes();
-        for (Map.Entry<String, Long> adjustment : delta.renditionObjects().entrySet()) {
-            String name = adjustment.getKey();
-            long objects = adjustment.getValue();
-            long bytes = delta.renditionBytes().getOrDefault(name, 0L);
-            ArchiveRenditionStatsRecord row = em.find(ArchiveRenditionStatsRecord.class,
-                    new ArchiveRenditionStatsRecord.Key(accountId, archive, name),
-                    LockModeType.PESSIMISTIC_WRITE);
-            if (row == null) {
-                row = new ArchiveRenditionStatsRecord();
-                row.accountId = accountId;
-                row.archive = archive;
-                row.renditionName = name;
-                em.persist(row);
-            }
-            row.objectCount += objects;
-            row.totalBytes += bytes;
-        }
+        ArchiveStatistics.apply(em, accountId, archive, delta);
     }
 }

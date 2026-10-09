@@ -226,20 +226,107 @@ public final class ProtoValidator {
         return create(sources);
     }
 
+    /**
+     * Compiles rules for every message type reachable through ordinary message fields,
+     * including map entries, regardless of candidate presence or ignore settings.
+     * Bounds the graph before rule compilation. Control checks are cooperative between
+     * graph/compilation steps; this is not a deadline for a single CEL compilation.
+     * Any payload types and protobuf extensions require separate preparation by the host.
+     * Unreferenced declarations are excluded; compiled rules are not pinned in cache.
+     * Success is not an admission receipt and does not validate a candidate's values.
+     */
+    public void prepareSchema(Descriptor root, int maxMessageTypes, int maxFields, Runnable control) {
+        Objects.requireNonNull(root, "root");
+        Objects.requireNonNull(control, "control");
+        if (maxMessageTypes < 1 || maxFields < 1) {
+            throw new IllegalArgumentException("schema limits must be positive");
+        }
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Descriptor, Boolean>());
+        var types = new ArrayList<Descriptor>();
+        seen.add(root);
+        types.add(root);
+        long fields = 0;
+        for (int i = 0; i < types.size(); i++) {
+            control.run();
+            Descriptor type = types.get(i);
+            fields += type.getFields().size();
+            if (fields > maxFields) {
+                throw new IllegalArgumentException("schema field count exceeds limit");
+            }
+            for (FieldDescriptor field : type.getFields()) {
+                control.run();
+                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+                Descriptor child = field.getMessageType();
+                if (!seen.contains(child)) {
+                    if (types.size() == maxMessageTypes) {
+                        throw new IllegalArgumentException("schema message count exceeds limit");
+                    }
+                    seen.add(child);
+                    types.add(child);
+                }
+            }
+        }
+        for (Descriptor type : types) {
+            control.run();
+            rulesFor(type);
+        }
+        control.run();
+    }
+
     public ValidationResult validate(Message message) {
-        Objects.requireNonNull(message, "message");
+        return validate(message, java.time.Instant.now());
+    }
+
+    /**
+     * Uses one explicit instant for CEL now and relative timestamp rules throughout
+     * the message. A host can retain this instant for reproducible checks; it must
+     * also pin schemas, rule implementations and any external catalogs. This does
+     * not resolve Any payloads or create admission evidence.
+     */
+    public ValidationResult validate(Message message, java.time.Instant evaluatedAt) {
         List<ValidationResult.Violation> violations = new ArrayList<>();
+        validateInto(message, evaluatedAt, violations);
+        return violations.isEmpty() ? ValidationResult.ok() : ValidationResult.failed(violations);
+    }
+
+    /**
+     * Evaluates all applicable rules but retains at most one violation. Later rule
+     * compilation or evaluation errors still propagate; this is not fail-fast
+     * validation. Useful when a caller needs a bounded verdict rather than every
+     * diagnostic. Rule execution and an individual diagnostic still need budgets.
+     */
+    public java.util.Optional<ValidationResult.Violation> firstViolation(Message message, java.time.Instant evaluatedAt) {
+        var violations = new FirstViolation();
+        validateInto(message, evaluatedAt, violations);
+        return java.util.Optional.ofNullable(violations.first);
+    }
+
+    private static final class FirstViolation extends java.util.AbstractList<ValidationResult.Violation> {
+        private ValidationResult.Violation first;
+        @Override public boolean add(ValidationResult.Violation value) {
+            Objects.requireNonNull(value);
+            if (first != null) return false;
+            first = value;
+            return true;
+        }
+        @Override public int size() { return first == null ? 0 : 1; }
+        @Override public ValidationResult.Violation get(int index) {
+            Objects.checkIndex(index, size());
+            return first;
+        }
+    }
+
+    private void validateInto(Message message, java.time.Instant evaluatedAt, List<ValidationResult.Violation> violations) {
+        Objects.requireNonNull(evaluatedAt, "evaluatedAt");
+        Objects.requireNonNull(message, "message");
         Descriptor descriptor = message.getDescriptorForType();
         CompiledRules rules = rulesFor(descriptor);
         if (!skipFieldRules(message, descriptor, rules)) {
             for (FieldDescriptor field : descriptor.getFields()) {
-                validateField(message, rules, field, field.getName(), 0, violations);
+                validateField(message, rules, field, field.getName(), 0, violations, evaluatedAt);
             }
         }
-        validateMessageRules(message, descriptor, rules, "", violations);
-        return violations.isEmpty()
-                ? ValidationResult.ok()
-                : ValidationResult.failed(violations);
+        validateMessageRules(message, descriptor, rules, "", violations, evaluatedAt);
     }
 
     /**
@@ -441,7 +528,7 @@ public final class ProtoValidator {
             FieldDescriptor field,
             String path,
             int depth,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         List<FieldConstraints> constraints = rules.fields().get(field);
         IgnoreMode ignore = effectiveIgnore(constraints);
         if (ignore == IgnoreMode.ALWAYS) {
@@ -465,35 +552,35 @@ public final class ProtoValidator {
         }
 
         if (field.isMapField()) {
-            validateMap(message, field, constraints, path, depth, violations);
+            validateMap(message, field, constraints, path, depth, violations, evaluatedAt);
             // A field-level CEL rule on a map binds `this` to the whole map, evaluated once.
             Object celMap = celMapValue(message, field);
             for (FieldConstraints c : constraints) {
-                runFieldCel(c, celMap, path, violations);
+                runFieldCel(c, celMap, path, violations, evaluatedAt);
             }
             return;
         }
         if (field.isRepeated()) {
-            validateRepeated(message, field, constraints, path, depth, violations);
+            validateRepeated(message, field, constraints, path, depth, violations, evaluatedAt);
             // A field-level CEL rule on a repeated field binds `this` to the whole list.
             Object celList = celListValue(message, field);
             for (FieldConstraints c : constraints) {
-                runFieldCel(c, celList, path, violations);
+                runFieldCel(c, celList, path, violations, evaluatedAt);
             }
             return;
         }
 
         Object value = message.getField(field);
         for (FieldConstraints c : constraints) {
-            applyFieldConstraints(field, c, value, path, violations);
+            applyFieldConstraints(field, c, value, path, violations, evaluatedAt);
             applyTaxonomy(c, value, path, violations);
-            runFieldCel(c, celScalar(field, value), path, violations);
+            runFieldCel(c, celScalar(field, value), path, violations, evaluatedAt);
         }
         // A field declared inspect-only carries a document the receiver examines rather than
         // a value it consumes, so the walk stops at it. Its own rules have already run: it can
         // still be required, and it still had to parse as its declared type.
         if (value instanceof Message nested && !inspectOnly(constraints)) {
-            validateChildren(nested, path, depth, violations);
+            validateChildren(nested, path, depth, violations, evaluatedAt);
         }
     }
 
@@ -503,7 +590,7 @@ public final class ProtoValidator {
     }
 
     private void validateChildren(
-            Message nested, String path, int depth, List<ValidationResult.Violation> violations) {
+            Message nested, String path, int depth, List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         if (depth >= MAX_NESTING_DEPTH) {
             throw new RuleEvaluationException(
                     "message nesting exceeds " + MAX_NESTING_DEPTH + " levels at " + path);
@@ -512,10 +599,10 @@ public final class ProtoValidator {
         CompiledRules rules = rulesFor(descriptor);
         if (!skipFieldRules(nested, descriptor, rules)) {
             for (FieldDescriptor child : descriptor.getFields()) {
-                validateField(nested, rules, child, path + "." + child.getName(), depth + 1, violations);
+                validateField(nested, rules, child, path + "." + child.getName(), depth + 1, violations, evaluatedAt);
             }
         }
-        validateMessageRules(nested, descriptor, rules, path, violations);
+        validateMessageRules(nested, descriptor, rules, path, violations, evaluatedAt);
     }
 
     private void validateRepeated(
@@ -524,7 +611,7 @@ public final class ProtoValidator {
             List<FieldConstraints> constraints,
             String path,
             int depth,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         int count = message.getRepeatedFieldCount(field);
         for (FieldConstraints c : constraints) {
             RepeatedConstraints r = c.repeated().orElse(null);
@@ -566,8 +653,8 @@ public final class ProtoValidator {
                     skipElement = true;
                     continue;
                 }
-                applyFieldConstraints(field, items, element, elementPath, violations);
-                runFieldCel(items, celScalar(field, element), elementPath, violations);
+                applyFieldConstraints(field, items, element, elementPath, violations, evaluatedAt);
+                runFieldCel(items, celScalar(field, element), elementPath, violations, evaluatedAt);
             }
             if (!skipElement) {
                 for (FieldConstraints c : constraints) {
@@ -575,7 +662,7 @@ public final class ProtoValidator {
                     applyTaxonomy(c, element, elementPath, violations);
                 }
                 if (element instanceof Message nested && !inspectOnly(constraints)) {
-                    validateChildren(nested, elementPath, depth, violations);
+                    validateChildren(nested, elementPath, depth, violations, evaluatedAt);
                 }
             }
         }
@@ -636,7 +723,7 @@ public final class ProtoValidator {
             List<FieldConstraints> constraints,
             String path,
             int depth,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         int count = message.getRepeatedFieldCount(field);
         for (FieldConstraints c : constraints) {
             MapConstraints m = c.map().orElse(null);
@@ -669,8 +756,8 @@ public final class ProtoValidator {
                 }
                 FieldConstraints keyRules = m.keys().orElse(null);
                 if (keyRules != null && !skipValue(keyRules, key, keyField)) {
-                    applyFieldConstraints(keyField, keyRules, key, keyPath, violations);
-                    runFieldCel(keyRules, celScalar(keyField, key), keyPath, violations);
+                    applyFieldConstraints(keyField, keyRules, key, keyPath, violations, evaluatedAt);
+                    runFieldCel(keyRules, celScalar(keyField, key), keyPath, violations, evaluatedAt);
                 }
                 FieldConstraints valueRules = m.values().orElse(null);
                 if (valueRules == null) {
@@ -681,11 +768,11 @@ public final class ProtoValidator {
                     skipEntryValue = true;
                     continue;
                 }
-                applyFieldConstraints(valueField, valueRules, value, entryPath, violations);
-                runFieldCel(valueRules, celScalar(valueField, value), entryPath, violations);
+                applyFieldConstraints(valueField, valueRules, value, entryPath, violations, evaluatedAt);
+                runFieldCel(valueRules, celScalar(valueField, value), entryPath, violations, evaluatedAt);
             }
             if (!skipEntryValue && value instanceof Message nested && !inspectOnly(constraints)) {
-                validateChildren(nested, entryPath, depth, violations);
+                validateChildren(nested, entryPath, depth, violations, evaluatedAt);
             }
         }
     }
@@ -701,7 +788,7 @@ public final class ProtoValidator {
     /** Runs a field's CEL rules against an already CEL-converted {@code this} value. */
     private void runFieldCel(
             FieldConstraints constraints, Object celValue, String path,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         if (constraints.cel().isEmpty()) {
             return;
         }
@@ -714,7 +801,7 @@ public final class ProtoValidator {
                 int i = next.merge(rule.celField(), 1, Integer::sum) - 1;
                 rulePath = rule.celField() + "[" + i + "]";
             }
-            evalCel(fieldCel.evaluator(), rule, celValue, path, rulePath, violations);
+            evalCel(fieldCel.evaluator(), rule, celValue, path, rulePath, violations, evaluatedAt);
         }
     }
 
@@ -723,14 +810,14 @@ public final class ProtoValidator {
             Descriptor descriptor,
             CompiledRules rules,
             String path,
-            List<ValidationResult.Violation> violations) {
+            List<ValidationResult.Violation> violations, java.time.Instant evaluatedAt) {
         for (MessageConstraints constraints : rules.messages()) {
             // Message-level CEL rules report no FieldRules rule path (they are not on any field),
             // and top-level violations carry an empty field path: the rule targets the message
             // itself, not any named field.
             CelEvaluator evaluator = messageCelFor(descriptor).evaluator();
             for (CelConstraint rule : constraints.cel()) {
-                evalCel(evaluator, rule, message, path, "", violations);
+                evalCel(evaluator, rule, message, path, "", violations, evaluatedAt);
             }
             for (MessageConstraints.Oneof oneof : constraints.oneofs()) {
                 validateMessageOneof(message, descriptor, oneof, path, violations);

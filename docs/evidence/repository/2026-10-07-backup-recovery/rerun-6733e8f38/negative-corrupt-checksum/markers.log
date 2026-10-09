@@ -1,0 +1,2 @@
+CHECK_OK corrupt-checksum.refused_before_resources :: refused: Component checksum differs from the manifest: sql/ledger.dump actual=acfb4705baf4b6c83be4fab6d3d8ce722ecb8d1a26315597bfebb14d25af5aad; resources created=0
+CHECK_OK corrupt-checksum.original_backup_untouched :: original backup set unchanged

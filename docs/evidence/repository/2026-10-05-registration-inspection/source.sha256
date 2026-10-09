@@ -1,0 +1,2 @@
+e406c0770f5beb4f701d95715e3e7d587a97246bd3f0ded740df78b84f589ecd  repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistrationInspection.java
+f1fb019b8cf11667e530fd5015f1bdee4f44d8b3540dc880e6a08736b02eac2a  repo/container/src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentPublicationRegistrationInspectionIT.java

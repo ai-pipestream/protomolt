@@ -1,0 +1,9 @@
+CHECK_OK restore.provider_identity :: restored provider at recorded endpoint http://127.0.0.1:39835
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-recovery-c597411fe-03bb0a91-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1580 > max stored xid8 1012 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=8, document_mutation_revision_seq=2}
+CHECK_OK restore.migration_level :: V111
+CHECK_OK missing-version.injected :: deleted recorded version e08bed67-2c9b-491d-bf11-396290b0cd28 of recovery-pipeline/documents/recovery-account-7ae36775-dcc7-4194-9079-0ef017e0f907/a275cb55-f625-3149-8df6-628f85e512d8/attempts/3a69d61a-11f1-4be7-a4fa-844e66d6d6da/part-0 on the disposable restored provider
+CHECK_OK missing-version.observed :: recovered host exit=0 marker=RECOVERED_HOST_MISSING_VERSION_OK
+CHECK_OK missing-version.not_ready :: no READY advertised
+CHECK_OK missing-version.original_backup_untouched :: original backup set unchanged

@@ -1,0 +1,2 @@
+SELECT object_id,entry_uuid,account_id,archive,backend_generation,bucket,object_key,storage_realm
+FROM archive_object_bindings WHERE object_id=$1

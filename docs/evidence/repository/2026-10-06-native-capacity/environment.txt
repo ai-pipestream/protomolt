@@ -1,0 +1,11 @@
+java=25.0.3
+os=Linux amd64
+loadavg=8.54 7.43 7.25 12/18741 3776952
+clients=16
+total_read_slots=16
+total_read_handles=64
+zero_read_handles_means=32 per worker
+zero_read_slots_means=8 per worker
+worker_heap_limit=512MiB
+payload=small typed StringValue
+No host isolation or container CPU/memory limits; trusted internal Java path.

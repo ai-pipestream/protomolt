@@ -1,0 +1,250 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v1;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v1";
+
+// Proposed complete document revisions, not payload bytes or a mounted RPC.
+// Admission/execution is not implemented by these standalone definitions.
+// An immutable validated command must be the sole source for both execution
+// and canonical identity. A trusted caller supplies the principal separately.
+message DocumentPublicationIntent {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-account"
+    message: "all destinations and sources must belong to the command account"
+    expression: "this.members.all(m, m.destination.address.account_id == this.account_id && m.ownership.account_id == this.account_id && m.sources.all(s, s.address.account_id == this.account_id) && m.parts.all(p, (!has(p.reuse) || p.reuse.source.address.account_id == this.account_id) && (!has(p.historical_reuse) || p.historical_reuse.source.account_id == this.account_id)))"
+  };
+  // Version 1 canonicalization is immutable once used for durable admission.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Tenant root; no account inference or normalization.
+  string account_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Scoped with account and trusted principal. Excluded from canonical bytes.
+  string operation_id = 3 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true}];
+  // Member IDs and destinations must be unique (linear-time command check).
+  // Canonicalize by member ID; part ordering within each member is semantic.
+  repeated DocumentPublicationMember members = 4 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 64}];
+}
+
+// Existing address vocabulary plus an explicit optimistic concurrency condition.
+// This is a document mutation revision, not a manifest version or JCR version.
+message DocumentRevisionCondition {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-revision-condition"
+    message: "an explicit absence or positive mutation revision is required"
+    expression: "has(this.if_absent) || has(this.expected_mutation_revision)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-address"
+    message: "all four address coordinates must be nonblank"
+    expression: "this.address.doc_id.matches('.*\\\\S.*') && this.address.graph_address_id.matches('.*\\\\S.*') && this.address.account_id.matches('.*\\\\S.*') && this.address.graph_id.matches('.*\\\\S.*')"
+  };
+  // Exact existing document address. The node UUID is derived, not supplied.
+  NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Checked against pre-change state for every member before any publication.
+  oneof condition {
+    // Must be true; false does not mean unconditional replacement.
+    bool if_absent = 2 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Current database mutation revision expected by the caller.
+    int64 expected_mutation_revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  }
+}
+
+// One complete replacement revision. Omitted parts are not implicitly copied.
+// Partial hydration, deletion and JCR graph changes need their own operations.
+message DocumentPublicationMember {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-core"
+    message: "exactly one nonempty CORE declaration is required"
+    expression: "size(this.parts.filter(p, p.slot.part == 1)) == 1 && this.parts.all(p, p.slot.part != 1 || !has(p.empty))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-ownership"
+    message: "ownership requires a datasource and explicit security"
+    expression: "this.ownership.datasource_id.matches('.*\\\\S.*') && has(this.ownership.security)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-source-revisions"
+    message: "source dependencies require existing revisions"
+    expression: "this.sources.all(s, has(s.expected_mutation_revision))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-row-kind"
+    message: "intake coordinates and pipeline routing must match the explicit row kind"
+    expression: "this.row_kind == 1 ? (this.destination.address.graph_id == 'intake:' + this.destination.address.account_id && this.destination.address.graph_address_id == this.ownership.datasource_id && !has(this.cluster_id)) : (!this.destination.address.graph_id.startsWith('intake:') && !this.delete_source_blobs_on_settle && !has(this.source_blob_delete_reason))"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-blob-deletion-policy"
+    message: "source-blob deletion requires an explicit reason; retained blobs have none"
+    expression: "this.delete_source_blobs_on_settle == has(this.source_blob_delete_reason)"
+  };
+  // Stable within this operation; neither a document nor physical object ID.
+  string member_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 128, pattern: "^[a-zA-Z0-9_.-]+$"}];
+  // Full destination identity and condition.
+  DocumentRevisionCondition destination = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Stable logical drive UUID. Resolve and fence the selected configuration.
+  string drive_id = 3 [(ai.protomolt.proto.validate.v1.field).string.uuid = true];
+  // Requested ownership, not proof of permission. Must match decoded CORE.
+  OwnershipContext ownership = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Complete ordered slots; require uniqueness by (part, sub_key).
+  // Command validation also caps aggregate slots across all members at 10,000.
+  repeated DocumentPublicationPart parts = 5 [(ai.protomolt.proto.validate.v1.field).repeated = {min_items: 1, max_items: 10000}];
+  // Additional dependencies used to produce new bytes. Reuse has its own source.
+  // Deduplicate and reject contradictory conditions in the command boundary.
+  repeated DocumentRevisionCondition sources = 6 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 10000];
+  // Exact schema required for structured_data, when explicitly requested.
+  // Registry acquisition and retained descriptor evidence are separate concerns.
+  optional PublicationSchemaCondition structured_schema = 7;
+  // Caller metadata. No generated storage coordinates or authorization tokens.
+  map<string, string> metadata = 8 [(ai.protomolt.proto.validate.v1.field).map = {
+    max_pairs: 128,
+    keys: {string: {min_len: 1, max_len: 200}},
+    values: {string: {max_len: 4096}}
+  }];
+  // Explicit document-domain kind. Not a generic repository or JCR node type.
+  DocumentPublicationRowKind row_kind = 9 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Pipeline routing hint only. Absent means no cluster, not preserve old value.
+  optional string cluster_id = 10 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Caller crawl association. Absent means none, not preserve old value.
+  optional string crawl_id = 11 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Intake-only source-blob lifecycle policy, enforced by a later settle handler.
+  bool delete_source_blobs_on_settle = 12;
+  // Required exactly when source-blob deletion is requested.
+  optional string source_blob_delete_reason = 13 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+}
+
+// Mirrors the existing document-domain row kinds without importing SQL types.
+enum DocumentPublicationRowKind {
+  // Omission is invalid; do not infer row kind from a partially supplied address.
+  DOCUMENT_PUBLICATION_ROW_KIND_UNSPECIFIED = 0;
+  // Datasource intake state under intake:<account_id>.
+  DOCUMENT_PUBLICATION_ROW_KIND_INTAKE = 1;
+  // Pipeline state in an explicit graph, optionally associated with a cluster.
+  DOCUMENT_PUBLICATION_ROW_KIND_PIPELINE = 2;
+}
+
+// Slot identity reused for destination and retained-source selection.
+message DocumentPublicationSlot {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-slot"
+    message: "CHUNKS requires a nonblank sub-key; other parts require an empty one"
+    expression: "this.part == 3 ? this.sub_key.matches('.*\\\\S.*') : this.sub_key == ''"
+  };
+  // Existing four-part vocabulary; unknown enum numbers are unsupported.
+  DocumentPart part = 1 [(ai.protomolt.proto.validate.v1.field).enum = {defined_only: true, not_in: 0}];
+  // Chunk-set identity, preserving exact spelling.
+  string sub_key = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1024];
+}
+
+// A slot declares bytes to verify, an exact retained reference, or no content.
+message DocumentPublicationPart {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-content"
+    message: "one content declaration is required"
+    expression: "has(this.upload) || has(this.reuse) || has(this.empty) || has(this.historical_reuse)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-historical-slot"
+    message: "historical reuse must preserve the source slot"
+    expression: "!has(this.historical_reuse) || this.slot == this.historical_reuse.source_slot"
+  };
+  // Position in the repeated list remains semantic for chunk assembly.
+  DocumentPublicationSlot slot = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // No fallback from failed reuse or verification to a different content source.
+  oneof content {
+    // New bytes have no caller-selected physical key, UUID or provider version.
+    PublicationUpload upload = 2;
+    // Requires authorized source revision and native/common retention proof.
+    PublicationReuse reuse = 3;
+    // True means an explicit EMPTY slot, not pending hydration or a tombstone.
+    bool empty = 4 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // Reserved execution path: command admission refuses this until restore is wired.
+    // Exact history selection is independent of the destination's current revision.
+    PublicationHistoricalReuse historical_reuse = 5;
+  }
+}
+
+// Exact retained revision selection, not a current-source revision dependency.
+// Shape validity does not establish membership, READ permission or retention.
+message PublicationHistoricalReuse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-historical-address"
+    message: "all four historical address coordinates must be nonblank"
+    expression: "this.source.doc_id.matches('.*\\\\S.*') && this.source.graph_address_id.matches('.*\\\\S.*') && this.source.account_id.matches('.*\\\\S.*') && this.source.graph_id.matches('.*\\\\S.*')"
+  };
+  // Current source READ is checked independently of historical ownership.
+  NodeAddress source = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Immutable revision UUID, never a current mutation revision or provider version.
+  string revision_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {uuid: true, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}];
+  // Full manifest ordinal, including positions occupied by empty/deleted slots.
+  int32 revision_ordinal = 3 [(ai.protomolt.proto.validate.v1.field).int32 = {gte: 0, lt: 10000}];
+  // Must match the selected manifest position and the destination slot.
+  DocumentPublicationSlot source_slot = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Handler verifies all coordinates against the original retained object binding.
+  PublicationObjectIdentity object = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Claims about new bytes, checked against provider verification before commit.
+message PublicationUpload {
+  // Zero-byte objects are valid; aggregate size overflow is rejected separately.
+  int64 size_bytes = 1 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Lowercase SHA-256; digest identity alone does not establish admission.
+  string sha256 = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Stored representation's MIME type, not the protobuf schema identity.
+  string content_type = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+  // Caller provenance is semantic. Absence means unknown, never fabricated.
+  optional WriteProvenance written_by = 4;
+}
+
+// Explicit historical object selection, not arbitrary-key adoption.
+message PublicationReuse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "publication-reuse-revision"
+    message: "reuse requires an existing source revision"
+    expression: "has(this.source.expected_mutation_revision)"
+  };
+  // Currently a pre-change revision dependency; not an unfenced historical read.
+  DocumentRevisionCondition source = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The exact source slot. Its retained provenance carries forward unchanged.
+  DocumentPublicationSlot source_slot = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Full original immutable identity; handlers verify the source owns this ref.
+  PublicationObjectIdentity object = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// Wire shape of repo/spi PhysicalObjectIdentity. No credentials or current-drive
+// resolution. Absence of provider_version requires qualified immutable keys.
+message PublicationObjectIdentity {
+  // Stable catalog identity; possession does not grant permission or retention.
+  string object_id = 1 [(ai.protomolt.proto.validate.v1.field).string.uuid = true];
+  // Original immutable backend profile generation.
+  string backend_generation = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Original storage realm, independent of provider-specific vocabulary.
+  string storage_realm = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+  // Original provider namespace.
+  string namespace = 4 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+  // Exact original key; never remapped through current configuration.
+  string object_key = 5 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 4096, pattern: ".*\\S.*"}];
+  // Qualified exact provider object version, when the provider supplies one.
+  optional string provider_version = 6 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+  // Previously verified immutable object's size.
+  int64 size_bytes = 7 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Previously verified lowercase SHA-256.
+  string sha256 = 8 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Previously verified stored representation type.
+  string content_type = 9 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024, pattern: ".*\\S.*"}];
+}
+
+// Immutable schema identity, without pulling mesh/workflow into base storage.
+// Uses the same identity semantics as mesh SchemaReference; not its registry
+// acquisition envelope. Existing mesh names, fields and import paths stay intact.
+message PublicationSchemaCondition {
+  // Fully qualified message name, without a type URL prefix or leading dot.
+  string type_name = 1 [(ai.protomolt.proto.validate.v1.field).string = {max_len: 1024, pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"}];
+  // SHA-256 of the canonical complete descriptor closure, including imports.
+  string descriptor_fingerprint = 2 [(ai.protomolt.proto.validate.v1.field).string.pattern = "^[0-9a-f]{64}$"];
+}

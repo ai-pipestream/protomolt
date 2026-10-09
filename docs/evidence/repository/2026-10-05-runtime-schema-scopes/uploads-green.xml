@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" tests="36" skipped="0" failures="0" errors="0" timestamp="2026-10-05T23:30:01.096Z" hostname="krick" time="34.966">
+  <properties/>
+  <testcase name="admissionLockTimeoutReturnsWhileBlockerStillOwnsRow()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="2.365"/>
+  <testcase name="stages257RealObjectsAndDrainsTailWithoutPublishing()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.971"/>
+  <testcase name="preparationRefusesASelectionReplacedDuringItsCallback()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.104"/>
+  <testcase name="flusherLockTimeoutReturnsFailureAfterRealUploadWithoutFalseVerification()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="2.076"/>
+  <testcase name="unsupportedBackendFailsBeforeAdmissionAndReleasesPayloadReservation()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.008"/>
+  <testcase name="retainedCoreIsReusedWhileOnlyChangedChunksAreUploaded()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.48"/>
+  <testcase name="explicitRetryBindsNewAttemptAndRejectsWrongExpectedSelectionBeforePut()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.081"/>
+  <testcase name="exactVerifiedInitialRetryDoesNotWriteProviderAgain()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.046"/>
+  <testcase name="finiteAgeFlushesOneObservationWhileAnotherPutWaitsAndHeartbeatKeepsLeaseLive()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="1.706"/>
+  <testcase name="[1] &quot;callback&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.049"/>
+  <testcase name="[2] &quot;cancel&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.068"/>
+  <testcase name="[3] &quot;owner&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.04"/>
+  <testcase name="[1] &quot;read&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.335"/>
+  <testcase name="[2] &quot;cancel&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.343"/>
+  <testcase name="[3] &quot;inputs&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.293"/>
+  <testcase name="[4] &quot;invalid-inputs&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.294"/>
+  <testcase name="[5] &quot;wrong-operation&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.281"/>
+  <testcase name="[6] &quot;wrong-owner&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.074"/>
+  <testcase name="[7] &quot;lifecycle&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.061"/>
+  <testcase name="[8] &quot;lifecycle-cancel&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.109"/>
+  <testcase name="sixtyFourMembersShareOneQueueAndResolveTheirBackendOnce()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.896"/>
+  <testcase name="callerInterruptionPreventsVerificationAndRetainsBytesUntilRealPutDrains()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.076"/>
+  <testcase name="[1] &quot;success&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.067"/>
+  <testcase name="[2] &quot;cancel&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.06"/>
+  <testcase name="[3] &quot;owner&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.027"/>
+  <testcase name="[4] &quot;cleanup&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.053"/>
+  <testcase name="[1] false" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="1.28"/>
+  <testcase name="[2] true" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="1.027"/>
+  <testcase name="lostAcknowledgmentRemainsFailureWithoutAutomaticPutRetry()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.068"/>
+  <testcase name="[1] &quot;staging&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.015"/>
+  <testcase name="[2] &quot;token&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.052"/>
+  <testcase name="[3] &quot;expired&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="3.09"/>
+  <testcase name="[4] &quot;displaced&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.061"/>
+  <testcase name="[5] &quot;command&quot;" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.05"/>
+  <testcase name="oneOperationStagesAcrossS3AndRedisWithExactBackendBindings()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="0.159"/>
+  <testcase name="sqlFailureReleasesAProducerWaitingOnAFullObservationQueue()" classname="ai.protomolt.proto.repo.container.ledger.DocumentUploadCoordinatorIT" time="6.131"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: d5f13d26e46100b1dfee5a3e4d6a0e5c5301a8f2cb1e1d1c511409b3213e40ab
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.45718394S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: c9e67645547c532c8e39b1ffefab313f86528130685b2eb37ff8947ae3c1372a
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.801006392S
+[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: c9922be5619330946123eecd5191374f693db68714af5b3e98b2b8a0ff315680
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.372297045S
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: 8b4f7b265c2c68166f6a7b9d0ab87da13abdd6a62b6213be105317d95d094bca
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT1.049356076S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:49283/test?loggerLevel=OFF)
+[Test worker] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[Test worker] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@46039a21
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[Test worker] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Schema history table "public"."flyway_schema_history" does not exist yet
+[Test worker] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 84 migrations (execution time 00:00.034s)
+[Test worker] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory - Creating Schema History table "public"."flyway_schema_history" ...
+[Test worker] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": << Empty Schema >>
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "1 - initial schema"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "2 - drive provider config"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "3 - document purges"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "4 - document events outbox"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "5 - document purges relayed at"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "6 - archive"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "7 - archive classification"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "8 - document mutation revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "9 - purge admission generation"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "10 - managed raw objects"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "11 - managed backend profiles"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "12 - archive mutation revisions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "13 - archive retained set revision"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "14 - archive object bindings"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "15 - archive upload admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "16 - archive version object references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "17 - provider backend identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "18 - archive object recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "19 - archive mutation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "20 - archive mutation observations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "21 - document part attempt admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "22 - document part publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "23 - document key reservations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "24 - abandoned document attempt cleanup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "25 - repository physical locations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "26 - repository retention bridge"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "27 - repository retirement"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "28 - archive reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "29 - shared archive reader locks"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "30 - archive read calls"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "31 - reader incarnation fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "32 - reader local quiescence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "33 - archive reader recovery order"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "34 - repository operation admission"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "35 - repository operation write fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "36 - operation bound document attempts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "37 - document revision lock batches"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "38 - document revision projection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "39 - document revision retention"
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor - +------------------------------------+
+| assert_document_revision_retention |
++------------------------------------+
+|                                    |
++------------------------------------+
+
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "40 - document operation selections"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "41 - document admission lock modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "42 - document operation selection history"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "43 - selected document attempt writes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "44 - document reader pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "45 - document reader batch release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "46 - document reader quiescent recovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "47 - document reader recovery discovery"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "48 - repository schema artifact staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "49 - repository operation recovery fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "50 - repository schema replaced claim release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "51 - document event recording"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "52 - independent document publication"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "53 - native document coordinates"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "54 - revision physical lookup"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "55 - document revision schema references"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "56 - document revision schema evidence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "57 - document revision schema assets"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "58 - document schema policy catalog"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "59 - document schema policy publication fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "60 - document schema retention manifest"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "61 - document schema admission binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "62 - document schema container role"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "63 - document historical read pins"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "64 - repository operation rejection"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "65 - repository retention lock set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "66 - document assessment staging"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "67 - document assessment artifacts"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "68 - document assessment roots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "69 - document assessment slot snapshots"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "70 - shared repository retention set"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "71 - document assessment read sessions"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "72 - document assessment read release"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "73 - document assessment read identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "74 - reader registration identity"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "75 - nonnegative archive statistics"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "76 - admission rejection assessment binding"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "77 - rejected assessment read authority"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "78 - repository execution claims"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "79 - repository claim mutation fences"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "80 - single call execution claim fence"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "81 - private publication preparations"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "82 - private publication modes"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "83 - private assessment start"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Migrating schema "public" to version "84 - journaled owner mode guards"
+[Test worker] INFO org.flywaydb.core.internal.command.DbMigrate - Successfully applied 84 migrations to schema "public", now at version v84 (execution time 00:00.381s)
+Oct 05, 2026 7:30:09 PM org.hibernate.jpa.boot.spi.PersistenceXmlParser parsePersistenceXml
+WARN: HHH008518: Encountered multiple persistence-unit stanzas defining same name [document-ledger]; persistence-unit names must be unique
+Oct 05, 2026 7:30:09 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 05, 2026 7:30:09 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 05, 2026 7:30:09 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 05, 2026 7:30:09 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://localhost:49283/test?loggerLevel=OFF]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: test/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 05, 2026 7:30:10 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+Oct 05, 2026 7:30:15 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 55P03
+Oct 05, 2026 7:30:15 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: canceling statement due to lock timeout
+  Where: while locking tuple (0,1) in relation "repository_operation_owners"
+Oct 05, 2026 7:30:18 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 55P03
+Oct 05, 2026 7:30:18 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: canceling statement due to lock timeout
+  Where: while locking tuple (0,15) in relation "document_part_attempts"
+Oct 05, 2026 7:30:19 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: P0001
+Oct 05, 2026 7:30:19 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: Document selection compare-and-set conflict
+  Where: PL/pgSQL function guard_document_operation_selection_attempt() line 34 at RAISE
+Oct 05, 2026 7:30:36 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: HHH000247: ErrorCode: 0, SQLState: 55P03
+Oct 05, 2026 7:30:36 PM org.hibernate.engine.jdbc.spi.SqlExceptionHelper logExceptions
+WARN: ERROR: canceling statement due to lock timeout
+  Where: while locking tuple (6,6) in relation "document_part_attempts"
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[Test worker] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+]]></system-err>
+</testsuite>
