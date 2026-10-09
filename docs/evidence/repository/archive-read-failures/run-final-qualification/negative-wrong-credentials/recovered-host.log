@@ -1,0 +1,131 @@
+CHECK_OK wrong-credentials.provider_refuses :: direct GET with the wrong secret -> S3Exception: 403 SignatureDoesNotMatch
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@7957dc72
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.037s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 09, 2026 7:30:44 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 09, 2026 7:30:44 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 09, 2026 7:30:44 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 09, 2026 7:30:44 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33214/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 09, 2026 7:30:44 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+CHECK_OK wrong-credentials.host :: host composition with the wrong provider secret succeeds (no provider call at composition)
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 1000 ms, sweep interval 3600000 ms, reconcile disabled)
+[repo-archive-mutation-recovery] WARN ai.protomolt.proto.repo.service.ManagedArchiveServices - Archive cleanup failed for 6262007c-acdb-4916-99da-60e8ec8fcff6; durable retry remains pending
+java.lang.IllegalStateException: Archive object reclamation failed; retry remains required
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:51)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recover(ManagedArchiveServices.java:75)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recoverMutations(ManagedArchiveServices.java:61)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$1(RepoServices.java:827)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: software.amazon.awssdk.services.s3.model.S3Exception: The request signature we calculated does not match the signature you provided. Check your key and signing method. (Service: S3, Status Code: 403, Request ID: null) (SDK Attempt Count: 1)
+	at software.amazon.awssdk.services.s3.model.S3Exception$BuilderImpl.build(S3Exception.java:113)
+	at software.amazon.awssdk.services.s3.model.S3Exception$BuilderImpl.build(S3Exception.java:61)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.utils.RetryableStageHelper.retryPolicyDisallowedRetryException(RetryableStageHelper.java:251)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:86)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:53)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:35)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:82)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:62)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:43)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:213)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:105)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:176)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:82)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCall(BaseSyncClientHandler.java:200)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:76)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectVersions(DefaultS3Client.java:9702)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.findVersions(S3ObjectReclaimer.java:38)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.reclaim(S3ObjectReclaimer.java:18)
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:47)
+	... 5 more
+[repo-archive-mutation-recovery] WARN ai.protomolt.proto.repo.service.ManagedArchiveServices - Archive cleanup failed for bbd47b5c-6f71-49ee-94ea-b594d5d81092; durable retry remains pending
+java.lang.IllegalStateException: Archive object reclamation failed; retry remains required
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:51)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recover(ManagedArchiveServices.java:75)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recoverMutations(ManagedArchiveServices.java:61)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$1(RepoServices.java:827)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: software.amazon.awssdk.services.s3.model.S3Exception: The request signature we calculated does not match the signature you provided. Check your key and signing method. (Service: S3, Status Code: 403, Request ID: null) (SDK Attempt Count: 1)
+	at software.amazon.awssdk.services.s3.model.S3Exception$BuilderImpl.build(S3Exception.java:113)
+	at software.amazon.awssdk.services.s3.model.S3Exception$BuilderImpl.build(S3Exception.java:61)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.utils.RetryableStageHelper.retryPolicyDisallowedRetryException(RetryableStageHelper.java:251)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:86)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:53)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:35)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:82)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:62)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:43)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:213)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:105)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:176)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:82)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCall(BaseSyncClientHandler.java:200)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:76)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectVersions(DefaultS3Client.java:9702)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.findVersions(S3ObjectReclaimer.java:38)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.reclaim(S3ObjectReclaimer.java:18)
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:47)
+	... 5 more
+CHECK_OK wrong-credentials.read_refused.alpha-report :: getEntry -> PERMISSION_DENIED [RepositoryException(PERMISSION_DENIED) <- BlobStoreException(PERMISSION_DENIED) <- S3Exception]
+CHECK_OK wrong-credentials.read_refused.alpha-notes :: getEntry -> PERMISSION_DENIED [RepositoryException(PERMISSION_DENIED) <- BlobStoreException(PERMISSION_DENIED) <- S3Exception]
+CHECK_OK wrong-credentials.read_refused.beta-subject :: getEntry -> PERMISSION_DENIED [RepositoryException(PERMISSION_DENIED) <- BlobStoreException(PERMISSION_DENIED) <- S3Exception]
+CHECK_OK wrong-credentials.read_refused.beta-draft :: getEntry -> PERMISSION_DENIED [RepositoryException(PERMISSION_DENIED) <- BlobStoreException(PERMISSION_DENIED) <- S3Exception]
+CHECK_OK wrong-credentials.pending.retry_required :: recovery lane recorded a retryable cleanup failure instead of completion: state=ARCHIVE_MUTATION_STATE_RETRY_REQUIRED pending=2 confirmedAbsent=0 error=BACKEND_RECLAMATION_FAILED statusRevision=2
+CHECK_OK wrong-credentials.pending.error_code :: pending=2 error=BACKEND_RECLAMATION_FAILED
+CHECK_OK wrong-credentials.pending.targets_retained :: targets stay DELETING with the failure recorded and no byte deleted; attempts=[1, 1] states=[DELETING/BACKEND_RECLAMATION_FAILED, DELETING/BACKEND_RECLAMATION_FAILED]
+CHECK_OK wrong-credentials.bytes_intact.provider.cc8b901abd78 :: LIVE bucket=qualification-abq-alpha-67031fdb-qualification-archive key=qualification-archive/archive/abq-alpha-67031fdb/qualification-docs/33bf93e4-b5ca-3507-b17b-6fbbe879605c/markdown/writes/508e0a2a-9f3b-40b1-80b6-90844af3c058/0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 version=fff259f5-a379-4025-a43d-7762b6884552 sha256=0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 etag="6ce8784d5c9f8ff85aff70f77ac3416c"
+CHECK_OK wrong-credentials.bytes_intact.provider.a0539fd3221b :: LIVE bucket=qualification-abq-alpha-67031fdb-qualification-archive key=qualification-archive/archive/abq-alpha-67031fdb/qualification-docs/33bf93e4-b5ca-3507-b17b-6fbbe879605c/markdown/writes/fd02e1b6-d5c9-4097-816e-90fd00b3497a/5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f version=d5886fbc-8da5-409e-88c2-dcd67cffeb29 sha256=5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f etag="a6f6a43006fba9b742bc977c2a3d412e"
+CHECK_OK wrong-credentials.bytes_intact.provider.e14eac7e1a91 :: LIVE bucket=qualification-abq-alpha-67031fdb-qualification-archive key=qualification-archive/archive/abq-alpha-67031fdb/qualification-docs/33bf93e4-b5ca-3507-b17b-6fbbe879605c/original/writes/a5a0c4bf-354b-4c5c-873c-5c60d0563cf9/3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 version=7dbea21f-c7f8-4580-9372-be1f9fb5cfab sha256=3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 etag="20cacf4858b088c849d9ae043f0c76d0"
+CHECK_OK wrong-credentials.bytes_intact.provider.587b828edc0b :: LIVE bucket=qualification-abq-alpha-67031fdb-qualification-archive key=qualification-archive/archive/abq-alpha-67031fdb/qualification-docs/33bf93e4-b5ca-3507-b17b-6fbbe879605c/writes/b4202594-bf56-4bc0-9c76-def3a3136274 version=56b3f57d-a4ae-4c05-a90b-5d6188467cb2 sha256=4d468aa08c6a9c30b1ce6970acf4a3ec01c6b64d2b98d6629d86242f6ac76f38 etag="388d3675ab92c81874766b5a75c539a8"
+CHECK_OK wrong-credentials.bytes_intact.provider.14911c0764de :: LIVE bucket=qualification-abq-alpha-67031fdb-qualification-archive key=qualification-archive/archive/abq-alpha-67031fdb/qualification-docs/042e6793-ee57-31bf-8631-809baf27e8eb/original/writes/a248b395-7bf3-4460-83db-a48af28a5100/a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b version=5de45c26-721d-4d7d-970e-f1a4db8a7f47 sha256=a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b etag="5ecdad92022d7c561a7ea5ecd98ec68c"
+CHECK_OK wrong-credentials.bytes_intact.provider.524cfa6b468e :: LIVE bucket=qualification-abq-beta-67031fdb-qualification-archive key=qualification-archive/archive/abq-beta-67031fdb/qualification-docs/ad171eb8-db7c-33fd-969e-c3b8db1ff44d/original/writes/5575b6be-5a4c-448f-8685-57723a1ea4db/e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b version=4296e6e9-a857-4fe4-afb3-7ed664216b51 sha256=e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b etag="8e5836ae88382e6698b42f9290f44b0b"
+CHECK_OK wrong-credentials.bytes_intact.provider.53eb76840f75 :: LIVE bucket=qualification-abq-beta-67031fdb-qualification-archive key=qualification-archive/archive/abq-beta-67031fdb/qualification-docs/ad171eb8-db7c-33fd-969e-c3b8db1ff44d/scratch/writes/04eb7484-e8f7-46f9-975b-3b2e7dbb7d2b/9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a version=620227cf-d7ae-4f99-a437-05188288dbc6 sha256=9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a etag="1419bee1c5959d8da958079afd3235ab"
+CHECK_OK wrong-credentials.bytes_intact.provider.209f76c10b1e :: LIVE bucket=qualification-abq-beta-67031fdb-qualification-archive key=qualification-archive/archive/abq-beta-67031fdb/qualification-docs/ad171eb8-db7c-33fd-969e-c3b8db1ff44d/scratch/writes/87c34ee8-1c29-491f-a64b-79cf0e561ec2/057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea version=bb2ed384-61d6-4c09-a149-047a4b6d733e sha256=057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea etag="6e6fde398a490806f80ede8d6dabb74a"
+CHECK_OK wrong-credentials.bytes_intact.provider.8aa12304242d :: LIVE bucket=qualification-abq-beta-67031fdb-qualification-archive key=qualification-archive/archive/abq-beta-67031fdb/qualification-scratch/da03021a-07bd-3866-8203-74a9304d5c60/original/writes/0a85839f-b676-45ca-82e3-b98658519766/44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f version=ff2686cc-4b5e-4308-af18-b7950f5d834f sha256=44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f etag="22b2ddea2fc34916b16cec00fce7d4b1"
+CHECK_OK wrong-credentials.bytes_intact.provider.6563971c3ba0 :: LIVE bucket=qualification-abq-beta-67031fdb-qualification-archive key=qualification-archive/archive/abq-beta-67031fdb/qualification-scratch/da03021a-07bd-3866-8203-74a9304d5c60/original/writes/24fbf25b-c479-456e-b565-cf7169c2d07f/fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 version=b90c6941-89c6-49e7-8af7-21a680d7f890 sha256=fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 etag="d8750ef2035bfb1962fb8676e8c2a84c"
+CHECK_OK wrong-credentials.bytes_intact.provider.count :: objects=10 live=10 reclaimed=0
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK wrong-credentials.not_ready :: READY is only written by a fully verified host
+ARCHIVE_BACKUP_QUALIFICATION_RECOVERED_WRONG_CREDENTIALS_OK

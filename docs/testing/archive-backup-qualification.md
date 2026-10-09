@@ -112,16 +112,16 @@ or the raw exception type) and recorded with its cause chain in the markers.
 | mixed-captures, missing-component, corrupt-checksum, unsealed, nonempty-target | run-2's provider archive in run-1's set; `sql/ledger.dump` removed; one byte of the provider archive flipped; `SEALED` removed; occupied restore directory | preflight refuses before any resource is created; the target stays untouched |
 | inconsistent-snapshot | run-2's provider archive in run-1's set, resealed | every recorded version absent (NoSuchBucket); every `GetEntry` FAILED_PRECONDITION (`BlobStoreException(FAILED_PRECONDITION)` from the provider's 404 on a missing bucket); manifests, listings and stats still read; the mutation replays; recovery records BACKEND_RECLAMATION_FAILED and RETRY_REQUIRED, targets stay DELETING; no READY |
 | missing-version | a newer version put under the markdown key of version 1, then the recorded version deleted | `GetEntry(v1)` DATA_LOSS (`BlobNotFoundException`: RustFS answers NoSuchKey for the deleted version id); the manifest is intact; the sibling `original` of the same version and versions 2 and 3 read byte-equal; the newer version is never substituted |
-| corrupt-payload | one byte of the 1 MiB `attachment.bin` data file flipped on the extracted restored volume before RustFS starts | RustFS detects the damaged part and aborts the response for the recorded version id (the SDK gives up after four attempts); `GetEntry(v3)` and the single-rendition read are UNAVAILABLE with `BlobStoreException(UNAVAILABLE) <- IOException` in the cause chain, so no bytes are served; manifest intact; siblings and other versions read byte-equal. The DATA_LOSS branch of `ArchiveObjectReader` (bytes delivered with a wrong digest) is not reachable on this provider |
+| corrupt-payload | one byte of the 1 MiB `attachment.bin` data file flipped on the extracted restored volume before RustFS starts | RustFS verifies the bitrot hash of the whole data block before serving it: every GET of the recorded version answers `200 OK` with the complete header set and the object's `Content-Length`, then ends the body at zero bytes (HEAD still answers 200). `GetEntry(v3)` and the single-rendition read are UNAVAILABLE with `BlobStoreException(UNAVAILABLE) <- IOException` in the cause chain and the adapter message naming the short body (`received 0 of 1048576 declared bytes`), so no bytes are served; manifest intact; siblings and other versions read byte-equal. The DATA_LOSS branch of `ArchiveObjectReader` (bytes delivered with a wrong digest) is not reachable on this provider; [historical-read-failures.md](historical-read-failures.md#why-data_loss-is-unreachable-for-damaged-bytes-on-rustfs) records the wire observations |
 | wrong-endpoint | recorded generation at a different endpoint | `ManagedBackendLedger.bind` refuses: already bound to another physical profile; the host never composes |
-| new-generation | a new generation at the recorded endpoint | the host composes; every bound read fails with the resolver's `IllegalStateException` (`Original archive backend is not configured on this host`), which `RepositoryErrors.call` does not translate (baseline, recorded for the error-translation work); manifests still read; recovery records BACKEND_RECLAMATION_FAILED and RETRY_REQUIRED; every recorded byte is still on the provider |
+| new-generation | a new generation at the recorded endpoint | the host composes; every bound read is `FAILED_PRECONDITION` "Original archive backend is not configured on this host" with the host resolver's `UnservedBackendGenerationException` as cause, on the library path and as the gRPC status and description; manifests still read; recovery records BACKEND_RECLAMATION_FAILED and RETRY_REQUIRED; every recorded byte is still on the provider |
 | wrong-credentials | wrong provider secret | direct GET 403; the host composes without a provider call; every bound read PERMISSION_DENIED with `BlobStoreException(PERMISSION_DENIED)` in the cause chain; recovery RETRY_REQUIRED; every recorded byte intact |
 | wrong-database-credentials | wrong ledger password | host exit nonzero on `password authentication failed`; no READY |
 
 ## Running
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew -I repo/container/src/test/resources/archive-backup-qualification/qualification.init.gradle \
   :protomolt-repo-container:test --tests '*ArchiveBackupQualificationIT' --max-workers=2 --console=plain
 ```
@@ -169,25 +169,40 @@ pruning authority; `PruneVersions` is not used.
 | Subsequent legitimate write | `after-write.new_version`, `after-write.sequence_advanced`, `after-write.readable`, `after-write.listing`, `after-write.entry.*` |
 | Authorized lifecycle operation without losing a retained sibling | `after-write.lifecycle.admitted`, `.completed`, `.v1` to `.v4`, `.bindings`, `after-write.lifecycle.provider.*`, `.stats` |
 | Negative: missing exact provider version | `missingProviderVersionRefusesWithoutSubstitution`: `missing-version.read_refused` (DATA_LOSS), `.siblings_readable`, `.unaffected.*` |
-| Negative: corrupt payload | `corruptPayloadRefusesWithoutServingBytes`: `corrupt-payload.read_refused` (UNAVAILABLE with the provider cause), `.rendition_refused`, `.manifest_intact`, `.siblings_readable` |
+| Negative: corrupt payload | `corruptPayloadRefusesWithoutServingBytes`: `corrupt-payload.read_refused` (UNAVAILABLE with the provider cause), `.read_refused.short_body` (the adapter message names the received and declared byte counts), `.rendition_refused`, `.manifest_intact`, `.siblings_readable` |
 | Negative: mismatched catalog and store sets | `mismatchedOrDamagedBackupSetsAreRefusedAtPreflight` (`mixed-captures.refused_before_resources`) and `resealedMismatchedCatalogAndStoreRefuseArchiveReads` (`inconsistent-snapshot.read_refused.*`, `.pending.retry_required`) |
-| Negative: wrong provider binding | `wrongEndpointUnderRecordedGenerationRefuses` (`wrong-endpoint.refused`) and `newGenerationAtRecordedEndpointRefusesReadsAndReclamation` (`new-generation.read_refused.*`, `.pending.retry_required`, `.bytes_intact.*`) |
+| Negative: wrong provider binding | `wrongEndpointUnderRecordedGenerationRefuses` (`wrong-endpoint.refused`) and `newGenerationAtRecordedEndpointRefusesReadsAndReclamation` (`new-generation.read_refused.*` with code, message and cause chain, `.transport.read_refused` with the equal gRPC status and description, `.pending.retry_required`, `.bytes_intact.*`) |
 | Negative: wrong credentials | `wrongProviderCredentialsRefuseReadsAndReclamation` (`wrong-credentials.provider_refuses`, `.read_refused.*`, `.pending.retry_required`, `.bytes_intact.*`) and `wrongDatabaseCredentialsRefuseTheHost` |
 | Two complete clean-room rehearsals | `rehearsalRunOne`, `rehearsalRunTwo` (independent stores, credentials, generation and backup set each) |
 
-## Baseline classifications recorded for the error-translation work
+## Classifications the negative cases pin
 
-These are observations of the current production code, asserted exactly; they are not
-changed here.
+Asserted exactly, at the library boundary and, where a case composes a host, as the
+in-process gRPC status and description.
 
-- A bound archive read under a generation the host does not serve fails with the
-  resolver's `IllegalStateException` ("Original archive backend is not configured on this
-  host") from `ArchiveOperations.getEntry`; `RepositoryErrors.call` maps
-  `IllegalArgumentException` and provider exceptions but not this one.
+- A bound archive read under a generation the host does not serve is
+  `FAILED_PRECONDITION` "Original archive backend is not configured on this host". The
+  host's resolvers in `ManagedArchiveServices` raise the typed
+  `UnservedBackendGenerationException` (its message names the configured and recorded
+  generations and realm, never a credential or endpoint); `ArchiveObjectReader` translates
+  it once, after authorization and the pin, with the typed refusal as cause, so
+  `ArchiveOperations.getEntry` and `ArchiveGrpcService` agree. The reclamation lane's
+  resolver raises the same exception and records BACKEND_RECLAMATION_FAILED as for any
+  other resolver failure. The `IllegalStateException` of a closed ledger or a broken
+  invariant keeps its type. The document twins need no translation: the resolver of
+  `DocumentAttemptRecoveryService` raises inside `DocumentAttemptRecovery.recover`, which
+  returns the failure as `Result.failure` with outcome RETRY (`reconcilePass` has no throwing
+  public path and the host lifecycle loop logs the result), the raw-object reclaimer's
+  resolver in `RepoServices` is called only from its lifecycle lane, which catches and logs,
+  and the document read resolver in `ManagedDocumentServices.requireOriginal` already raises
+  `FAILED_PRECONDITION` "Original document backend is unavailable".
 - A provider refusal during a bound read surfaces as `RepositoryException` with the
   `BlobStoreException` code (PERMISSION_DENIED for 403, FAILED_PRECONDITION for a missing
-  bucket's 404, UNAVAILABLE when the provider stops the response), with the provider
-  exception in the cause chain.
+  bucket's 404, UNAVAILABLE when the provider ends the body before its declared length,
+  with the byte counts in the adapter message), with the provider exception in the cause
+  chain. Archive bound reads keep the adapter code for a refused credential, while
+  historical document reads classify the same 403 as `FAILED_PRECONDITION`
+  (`RepositoryErrors.historicalProvider`); that asymmetry is recorded here, not changed.
 - A missing object or version is DATA_LOSS from `ArchiveObjectReader`; RustFS answers
   NoSuchKey rather than NoSuchVersion for a deleted version id, and both map to
   `BlobNotFoundException`.
@@ -213,7 +228,7 @@ The archive suites of `protomolt-repo-container` and `protomolt-repo-service` we
 the same tree to show the behaviors the qualification relies on are the current ones:
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew :protomolt-repo-container:test --tests '*Archive*' \
   :protomolt-repo-service:test --tests '*Archive*' --max-workers=2 --console=plain
 ```

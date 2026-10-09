@@ -264,6 +264,32 @@ final class ArchiveBackupQualificationContentChecks {
         }
     }
 
+    /** The authenticated transport refuses the first recorded entry with exactly the library's code and message as status and description. */
+    void verifyTransportRefusal(String phase, String expectedStatus, String expectedDescription) throws Exception {
+        String token = ArchiveBackupQualificationFixture.env(ArchiveBackupQualificationFixture.API_TOKEN_ENV);
+        String name = "qualification-archive-" + UUID.randomUUID();
+        var server = host.startInProcess(name, token, null);
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            var first = entries().getFirst();
+            String tag = RepositoryBackupRehearsalJson.string(first, "tag");
+            long version = versions(first).getLast();
+            var request = GetEntryRequest.newBuilder().setAddress(address(first)).setVersion(version).build();
+            var headers = new Metadata();
+            headers.put(Metadata.Key.of(API_TOKEN_HEADER, Metadata.ASCII_STRING_MARSHALLER), token);
+            var stub = ArchiveServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30, TimeUnit.SECONDS)
+                    .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+            String status, description;
+            try { stub.getEntry(request); status = "OK"; description = ""; }
+            catch (StatusRuntimeException failure) { status = failure.getStatus().getCode().name(); description = String.valueOf(failure.getStatus().getDescription()); }
+            checks.require(status.equals(expectedStatus) && description.equals(expectedDescription), phase + ".transport.read_refused",
+                    "authenticated gRPC read of " + tag + " v" + version + " -> " + status + " \"" + description + "\" equals the library classification");
+        } finally {
+            channel.shutdownNow(); channel.awaitTermination(10, TimeUnit.SECONDS);
+            server.shutdownNow(); server.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
     /**
      * Replay through the production paths: an identical save is elided with the retained
      * manifest (no version lands), and the recorded mutation request returns its original
@@ -349,6 +375,22 @@ final class ArchiveBackupQualificationContentChecks {
             return ("NoSuchVersion".equals(code) ? "NoSuchVersionException" : failure.getClass().getSimpleName()) + ": " + failure.statusCode() + " " + code;
         }
         catch (Exception failure) { return failure.getClass().getSimpleName() + ": " + failure.getMessage(); }
+    }
+
+    /** The message of a domain failure, which the transport serves as its status description; "OK" when the action succeeds. */
+    static String message(Action action) {
+        try { action.run(); return "OK"; }
+        catch (Exception failure) { return String.valueOf(failure.getMessage()); }
+    }
+
+    /** The message of the provider-boundary failure on the cause chain, or "none" when no BlobStoreException is present. */
+    static String providerMessage(Action action) {
+        try { action.run(); return "OK"; }
+        catch (Exception failure) {
+            for (Throwable cause = failure; cause != null; cause = cause.getCause())
+                if (cause instanceof BlobStoreException provider) return String.valueOf(provider.getMessage());
+            return "none";
+        }
     }
 
     /** The provider-boundary cause chain of a domain failure, for recording how a refusal was classified. */

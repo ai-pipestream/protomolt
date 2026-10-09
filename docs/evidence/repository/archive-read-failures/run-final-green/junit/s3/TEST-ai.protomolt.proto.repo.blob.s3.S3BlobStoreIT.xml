@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:28:39.575Z" hostname="krick" time="7.143">
+  <properties/>
+  <testcase name="copyWithBlankSourceFailsFastBeforeAnyProviderCall()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.002"/>
+  <testcase name="getOfAbsentKeyRaisesNotFound()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.015"/>
+  <testcase name="copyOfMissingSourceRaisesNotFound()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.017"/>
+  <testcase name="verifiedPutWithWrongChecksumFails()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.01"/>
+  <testcase name="deleteAllChunksBeyond1000KeysAndToleratesAbsentKeys()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="2.458"/>
+  <testcase name="headObjectOfAbsentKeyRaisesNotFound()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.005"/>
+  <testcase name="deleteRemovesTheObject()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.011"/>
+  <testcase name="listReturnsEverythingUnderAPrefix()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.008"/>
+  <testcase name="copyDuplicatesTheObjectServerSide()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.01"/>
+  <testcase name="putThenGetRoundTripsBytesContentTypeAndMetadata()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.009"/>
+  <testcase name="verifiedPutWithMatchingChecksumSucceeds()" classname="ai.protomolt.proto.repo.blob.s3.S3BlobStoreIT" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: b69e533f042988b66756cb7cbcb5c8bb497599e71c30ee2fca52fe8d14c990b1
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.456477582S
+]]></system-err>
+</testsuite>

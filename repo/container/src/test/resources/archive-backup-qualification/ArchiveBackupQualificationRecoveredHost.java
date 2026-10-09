@@ -368,9 +368,15 @@ public final class ArchiveBackupQualificationRecoveredHost {
             var address = ArchiveBackupQualificationContentChecks.address(entry);
             String whole = ArchiveBackupQualificationContentChecks.outcome(() -> host.archiveRepository().getEntry(operator, GetEntryRequest.newBuilder().setAddress(address).setVersion(version).build()));
             String causes = ArchiveBackupQualificationContentChecks.causes(() -> host.archiveRepository().getEntry(operator, GetEntryRequest.newBuilder().setAddress(address).setVersion(version).build()));
-            // RustFS detects the damaged part and aborts the response; the SDK gives up and the host reports the provider refusal.
+            // RustFS verifies the bitrot hash of the whole block before serving it: the response carries 200 with the full
+            // header set and the declared length, then the body ends at zero bytes. That is the wire picture of a dropped
+            // connection, so the adapter reports UNAVAILABLE and names the short body; no bytes are served.
             checks.require(whole.equals(expectedCode) && causes.contains("BlobStoreException(" + expectedCode + ")"), "corrupt-payload.read_refused",
-                    "getEntry(" + tag + " v" + version + ") -> " + whole + " [" + causes + "]; the provider aborted the read of the damaged part, no bytes served");
+                    "getEntry(" + tag + " v" + version + ") -> " + whole + " [" + causes + "]; the provider ended the body of the damaged part before its declared length, no bytes served");
+            long size = RepositoryBackupRehearsalJson.number(damaged, "size");
+            String provider = ArchiveBackupQualificationContentChecks.providerMessage(() -> host.archiveRepository().getEntry(operator, GetEntryRequest.newBuilder().setAddress(address).setVersion(version).build()));
+            checks.require(provider.contains("received 0 of " + size + " declared bytes"), "corrupt-payload.read_refused.short_body",
+                    "the adapter names the short body on the cause chain: \"" + provider + "\"");
             String single = ArchiveBackupQualificationContentChecks.outcome(() -> host.archiveRepository().getEntry(operator, GetEntryRequest.newBuilder().setAddress(address).setVersion(version).addRenditions(rendition).build()));
             checks.require(single.equals(expectedCode), "corrupt-payload.rendition_refused", "getEntry(" + rendition + " only) -> " + single);
             var manifest = host.archiveRepository().getManifest(operator, GetEntryManifestRequest.newBuilder().setAddress(address).setVersion(version).build()).getManifest();
@@ -452,12 +458,18 @@ public final class ArchiveBackupQualificationRecoveredHost {
                 String tag = RepositoryBackupRehearsalJson.string(entry, "tag");
                 var address = ArchiveBackupQualificationContentChecks.address(entry);
                 long version = ArchiveBackupQualificationContentChecks.versions(entry).getLast();
-                String read = ArchiveBackupQualificationContentChecks.outcome(() -> host.archiveRepository().getEntry(operator, GetEntryRequest.newBuilder().setAddress(address).setVersion(version).build()));
-                checks.require(read.equals("IllegalStateException: " + BACKEND_NOT_CONFIGURED), "new-generation.read_refused." + tag,
-                        "getEntry -> " + read + " (baseline: the resolver's IllegalStateException is not translated to a RepositoryException code)");
+                var request = GetEntryRequest.newBuilder().setAddress(address).setVersion(version).build();
+                String read = ArchiveBackupQualificationContentChecks.outcome(() -> host.archiveRepository().getEntry(operator, request));
+                String message = ArchiveBackupQualificationContentChecks.message(() -> host.archiveRepository().getEntry(operator, request));
+                String causes = ArchiveBackupQualificationContentChecks.causes(() -> host.archiveRepository().getEntry(operator, request));
+                // The host does not serve the recorded generation: a host configuration precondition, classified at the reader
+                // from the resolver's typed refusal, never a provider failure and never an untranslated runtime exception.
+                checks.require(read.equals("FAILED_PRECONDITION") && message.equals(BACKEND_NOT_CONFIGURED) && causes.contains("UnservedBackendGenerationException"),
+                        "new-generation.read_refused." + tag, "getEntry -> " + read + " \"" + message + "\" [" + causes + "]");
                 var manifest = host.archiveRepository().getManifest(operator, GetEntryManifestRequest.newBuilder().setAddress(address).setVersion(version).build()).getManifest();
                 checks.require(manifest.equals(content.recorded(tag, version).getManifest()), "new-generation.manifest_intact." + tag, "catalog-only reads still serve the recorded manifest");
             }
+            content.verifyTransportRefusal("new-generation", "FAILED_PRECONDITION", BACKEND_NOT_CONFIGURED);
             pendingRetryRequired(content, checks, host, record, endpoint, "new-generation");
             ArchiveBackupQualificationContentChecks.verifyProviderObjects(checks, "new-generation.bytes_intact", endpoint, ArchiveBackupQualificationSeedHost.allBindings(record));
         }

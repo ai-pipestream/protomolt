@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:28:19.346Z" hostname="krick" time="2.502">
+  <properties/>
+  <testcase name="absentAndMatchingWritesFenceStaleSnapshots()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.156"/>
+  <testcase name="twoConcurrentCreatesAndTwoMatchingReplacementsHaveOneWinner()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.082"/>
+  <testcase name="versionedReadsReturnOriginalBytesAfterSameKeyReplacement()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.155"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: f782b86681be138e9c4c95fcb5105d1218e0e7b3801ddc20cd5186b4db2be33d
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.363113044S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 583115c323acfce6ffaab450350a722a58699a6e50c1514ee5ad103ef0ad3689
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /wizardly_napier: Waiting for 60 seconds for URL: http://localhost:57783/health (where port 57783 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.239658857S
+]]></system-err>
+</testsuite>

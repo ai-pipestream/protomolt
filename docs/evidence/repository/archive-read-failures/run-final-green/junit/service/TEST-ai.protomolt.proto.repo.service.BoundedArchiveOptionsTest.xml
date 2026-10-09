@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.BoundedArchiveOptionsTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:22:31.075Z" hostname="krick" time="0.004">
+  <properties/>
+  <testcase name="explicitResponseLimitRequiresConstructionAndTransportBudget()" classname="ai.protomolt.proto.repo.service.BoundedArchiveOptionsTest" time="0.0"/>
+  <testcase name="budgetMustAdmitAtLeastOneMaximumTransportPutWithoutIntegerOverflow()" classname="ai.protomolt.proto.repo.service.BoundedArchiveOptionsTest" time="0.001"/>
+  <testcase name="boundsRejectInvalidConcurrencyAndPayloadShapes()" classname="ai.protomolt.proto.repo.service.BoundedArchiveOptionsTest" time="0.001"/>
+  <testcase name="publicFactoryRejectsUnqualifiedStorageBeforeConnecting()" classname="ai.protomolt.proto.repo.service.BoundedArchiveOptionsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

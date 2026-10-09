@@ -1,0 +1,20 @@
+CHECK_OK inconsistent-snapshot.provider_versions_absent :: 10/10 recorded versions absent from the other capture's provider
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v3 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-notes.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-subject.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-subject.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-draft.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.versions.alpha-report :: listing equal: [3, 2, 1]
+CHECK_OK inconsistent-snapshot.versions.alpha-notes :: listing equal: [1]
+CHECK_OK inconsistent-snapshot.versions.beta-subject :: listing equal: [2, 1]
+CHECK_OK inconsistent-snapshot.versions.beta-draft :: listing equal: [2]
+CHECK_OK inconsistent-snapshot.stats.qualification-docs.67031fdb :: entries=2 versions=4 retainedBytes=1050766 currentBytes=1050710
+CHECK_OK inconsistent-snapshot.stats.qualification-docs.67031fdb :: entries=1 versions=2 retainedBytes=25 currentBytes=25
+CHECK_OK inconsistent-snapshot.stats.qualification-scratch.67031fdb :: entries=1 versions=1 retainedBytes=30 currentBytes=30
+CHECK_OK inconsistent-snapshot.replay :: mutation replay returns the recorded logical admission; state=ARCHIVE_MUTATION_STATE_RETRY_REQUIRED
+CHECK_OK inconsistent-snapshot.pending.retry_required :: recovery lane recorded a retryable cleanup failure instead of completion: state=ARCHIVE_MUTATION_STATE_RETRY_REQUIRED pending=2 confirmedAbsent=0 error=BACKEND_RECLAMATION_FAILED statusRevision=2
+CHECK_OK inconsistent-snapshot.pending.error_code :: pending=2 error=BACKEND_RECLAMATION_FAILED
+CHECK_OK inconsistent-snapshot.pending.targets_retained :: targets stay DELETING with the failure recorded and no byte deleted; attempts=[1, 1] states=[DELETING/BACKEND_RECLAMATION_FAILED, DELETING/BACKEND_RECLAMATION_FAILED]
+CHECK_OK inconsistent-snapshot.not_ready :: READY is only written by a fully verified host

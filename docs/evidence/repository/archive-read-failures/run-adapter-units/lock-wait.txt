@@ -1,0 +1,8 @@
+lock_requested=2026-10-09T23:20:39Z
+command=./gradlew :protomolt-repo-blob-s3:test --tests *S3BoundedReadFailureTest --tests *S3BoundedReadStreamTest --tests *S3ReadFailureTest --max-workers=2 --console=plain
+lock_acquired=2026-10-09T23:20:39Z
+loadavg_at_start=5.03 4.77 4.07 4/16147 3715078
+gradle_exit=0
+loadavg_at_end=4.95 4.76 4.07 7/16157 3715706
+lock_released=2026-10-09T23:20:44Z
+wrapper_exit=0

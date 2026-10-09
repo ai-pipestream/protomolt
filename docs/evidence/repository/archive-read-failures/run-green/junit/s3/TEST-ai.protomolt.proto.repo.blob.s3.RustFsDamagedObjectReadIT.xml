@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.RustFsDamagedObjectReadIT" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:08.362Z" hostname="krick" time="9.559">
+  <properties/>
+  <testcase name="damagedPartReadsAsUnavailableWithByteCountsAndNeverAsDataLoss()" classname="ai.protomolt.proto.repo.blob.s3.RustFsDamagedObjectReadIT" time="7.616"/>
+  <system-out><![CDATA[RUSTFS_DAMAGE file=./dce6f34a-0b9e-45a3-b02d-78c325f10a70/part.1;6825b5aee1548d8c23a329529f31581b821b862c9806813959afd46d0213cd37  ./dce6f34a-0b9e-45a3-b02d-78c325f10a70/part.1;315e2eaf6fd268aa17cd1620fac204be7ed61cff7df2bbe63b604f86f5ac9763  ./dce6f34a-0b9e-45a3-b02d-78c325f10a70/part.1;offset=4096 before=32 after=33
+RUSTFS_DAMAGE bounded -> BlobStoreException(UNAVAILABLE): Object provider ended the response body early: received 0 of 1048576 declared bytes in the single body read the SDK does not retry <- IOException: Premature EOF
+RUSTFS_DAMAGE whole -> BlobStoreException(UNAVAILABLE): Object provider read could not complete <- RetryableException: Failed to read response. (SDK Attempt Count: 4) <- IOException: Premature EOF
+]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: 1153e3b6a90308adb28f51766ba439f7c766d0379ca294a4f96f28b258540dfe
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.36868382S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 9f50a3364d6d7f4e844b8a28cda382ebbea166c0b415f0a6192db961b12ae4cc
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /angry_knuth: Waiting for 60 seconds for URL: http://localhost:57706/health (where port 57706 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.238023886S
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 979ec4a2fc836d9a45c2d4eb22ad65a27dbc8be1f1ab4af03b374450f7584456
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.328977496S
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: d5e2582e59017da49ebc47e23921a616ff9264d46f7cc55420e4f553d493048a
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /mystifying_wilson: Waiting for 60 seconds for URL: http://localhost:57707/health (where port 57707 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.235860615S
+]]></system-err>
+</testsuite>

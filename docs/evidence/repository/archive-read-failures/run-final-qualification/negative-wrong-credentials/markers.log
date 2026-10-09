@@ -1,0 +1,9 @@
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:40363
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-qualification-e34ceabcd-a5cd3a2f-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1617 > max stored xid8 0 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=31, document_mutation_revision_seq=0}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (archive bindings, uploads with provider version ids, references, mutation admission and retention rows included)
+CHECK_OK restore.archive_state :: archive pins, upload states, admitted mutations, pending targets, references, versions and entries equal the source: {archiveReadPins=0, uploadsNotLive=0, uploads=10, admittedMutations=1, pendingTargets=2, versionReferences=11, versions=7, entries=4}
+CHECK_OK wrong-credentials.observed :: recovered host observed the refusal: ARCHIVE_BACKUP_QUALIFICATION_RECOVERED_WRONG_CREDENTIALS_OK; no READY advertised
+CHECK_OK wrong-credentials.original_backup_untouched :: run-1 backup set unchanged

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:28:51.407Z" hostname="krick" time="2.908">
+  <properties/>
+  <testcase name="staleMatchingWritesConflictWithoutMutation()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.028"/>
+  <testcase name="conditionalBoundaryUsesExistingSpiLimitAndDoesNotMutateOnRefusal()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.13"/>
+  <testcase name="concurrentAbsentCreatesHaveExactlyOneWinner()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.056"/>
+  <testcase name="concurrentMatchingWritesHaveExactlyOneWinner()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.017"/>
+  <testcase name="backendVersionIdentityTracksWritesNotCallerRevisions()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.007"/>
+  <testcase name="absentWritesFenceDuplicateCreates()" classname="ai.protomolt.proto.repo.blob.s3.S3LocalStackConditionalIT" time="0.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.localstack/localstack:4.13 - Creating container for image: localstack/localstack:4.13
+[Test worker] INFO tc.localstack/localstack:4.13 - Container localstack/localstack:4.13 is starting: a3703c66c621ad0a59e04de2b16754dcc5ec38f289c164b62b7362ce2b82d4c9
+[Test worker] INFO tc.localstack/localstack:4.13 - Container localstack/localstack:4.13 started in PT2.313000644S
+]]></system-err>
+</testsuite>

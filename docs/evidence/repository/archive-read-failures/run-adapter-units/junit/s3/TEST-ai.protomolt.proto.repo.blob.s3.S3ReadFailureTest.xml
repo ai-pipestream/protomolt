@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:20:41.126Z" hostname="krick" time="2.829">
+  <properties/>
+  <testcase name="refusedConnectionIsUnavailableWithItsCause()" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.192"/>
+  <testcase name="[1] &quot;NoSuchKey&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.043"/>
+  <testcase name="[2] &quot;NoSuchVersion&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.007"/>
+  <testcase name="[1] 500" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.511"/>
+  <testcase name="[2] 5000" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="2.016"/>
+  <testcase name="[1] &quot;503&quot;, &quot;SlowDown&quot;, &quot;UNAVAILABLE&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.011"/>
+  <testcase name="[2] &quot;500&quot;, &quot;InternalError&quot;, &quot;UNAVAILABLE&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.003"/>
+  <testcase name="[3] &quot;403&quot;, &quot;AccessDenied&quot;, &quot;PERMISSION_DENIED&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.004"/>
+  <testcase name="[4] &quot;401&quot;, &quot;InvalidToken&quot;, &quot;UNAUTHENTICATED&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.004"/>
+  <testcase name="[5] &quot;429&quot;, &quot;TooManyRequests&quot;, &quot;RESOURCE_EXHAUSTED&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.003"/>
+  <testcase name="[6] &quot;404&quot;, &quot;NoSuchBucket&quot;, &quot;FAILED_PRECONDITION&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.003"/>
+  <testcase name="[7] &quot;400&quot;, &quot;InvalidArgument&quot;, &quot;INVALID_ARGUMENT&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.003"/>
+  <testcase name="[8] &quot;400&quot;, &quot;RequestTimeout&quot;, &quot;DEADLINE_EXCEEDED&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ReadFailureTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
