@@ -253,6 +253,8 @@ tasks.named('test') { exclude '**/HistoricalRuntimeQualificationTest*' }
 // The backup/recovery rehearsal runs only through -I src/test/resources/backup-recovery/rehearsal.init.gradle,
 // which supplies its runtime and re-includes it. Selecting it without the script finds no tests and fails.
 tasks.named('test') { exclude '**/RepositoryBackupRehearsalIT*' }
+// The archive rehearsal requires its dedicated runtime init script.
+tasks.named('test') { exclude '**/ArchiveBackupQualificationIT*' }
 tasks.register('admissionHistoricalRuntimeTest', Test) {
     group = 'verification'
     description = 'Run individual historical production-JAR qualification hosts'
