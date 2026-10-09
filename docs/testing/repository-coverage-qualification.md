@@ -21,9 +21,9 @@ All classes live in `repo/container/src/test/java/ai/protomolt/proto/repo/contai
 | Class | Cases | Purpose |
 |---|---|---|
 | `RepositoryCoverageQualificationSupport` | helper | commit gate, `pg_blocking_pids` wait, SQL readers, legacy root-owner writer, supported successor-install step |
-| `RepositoryCoverageQualificationReleaseRaceIT` | 8 | reconciliation versus root release, both commit orders, commit and rollback, two terminal kinds |
+| `RepositoryCoverageQualificationReleaseRaceIT` | 9 | reconciliation versus root release, both commit orders, commit and rollback, two terminal kinds, bounded-wait failure |
 | `RepositoryCoverageQualificationReleasedLineageIT` | 2 | lineage anchored to a genuinely released root, legacy and current anchor |
-| `RepositoryCoverageQualificationAncestryLimitIT` | 1 | 64 accepted, 65 refused, adversarial SQL guard checks |
+| `RepositoryCoverageQualificationAncestryLimitIT` | 2 | 64 accepted and 65 refused through the supported protocol; separate labeled adversarial SQL guard checks |
 | `RepositoryCoverageQualificationBatchIT` | 2 | partial batch commit and retry, whole-account observation and keyset order |
 
 Run them with:
@@ -74,7 +74,19 @@ release row's stored capture fingerprint equals its SQL recomputation and
 `receipt.capturesSha256()`; the terminal kind column and `receipt.terminal()` match
 the fixture's abandonment token and owner nonce or the generation-1 rejection;
 claim and owner leases unchanged; both payload budgets at zero reserved bytes. The
-executor, factory and gate close in `finally`, including on assertion failure.
+executor, factory and gate close in `finally`, including on assertion failure; after
+the race each case asserts the worker executor terminated, the gate's entry latch is
+at zero and the gated backend has no open transaction in `pg_stat_activity`.
+
+Rollback-first is a real transaction rollback: the first operation's JDBC commit is
+replaced by `SQLSTATE 40001`, the ledger wrapper rolls back, and the second operation
+proceeds from the untouched state. The bounded-wait failure case
+`boundedWaitFailureClosesLatchesAndLeavesStateIntact` covers the other failure shape:
+the release commit stays held, a reconciler with a one-second lock wait fails on
+PostgreSQL's lock timeout within the asserted bound, the unresolved row, live root
+and decode budget are intact, the barrier then opens in `finally`, the release
+commits, a fresh reconciliation returns `VERIFIED_RELEASED`, and the release retry
+returns the original receipt.
 
 ### 2. Successor lineage anchored to a genuinely released historical preparation
 
@@ -101,7 +113,9 @@ unchanged; budget at zero.
 
 ### 3. The 64-link ancestry limit at its boundary
 
-Case: `AncestryLimitIT.sixtyFourLinksVerifyAndTheSixtyFifthIsRefusedWithoutClearingUnresolved`.
+Cases: `AncestryLimitIT.sixtyFourLinksVerifyAndTheSixtyFifthIsRefusedWithoutClearingUnresolved`
+(supported protocol only) and `AncestryLimitIT.adversarialSqlCannotRecordLineageBeyondTheLimit`
+(clearly labeled adversarial SQL on a separately built fixture).
 
 The fixture derives 65 installs through the supported protocol: lease expiry,
 `RepositoryCoordinatorRecoveryDiscovery` reporting `INSTALLED_NOT_ACTIVATED`, an
@@ -116,10 +130,14 @@ generation, anchor 0 and the exact previous digest; generation 65 fails twice wi
 `FAILED_PRECONDITION` and message `Preparation coverage ancestry exceeds 64 links`,
 keeps its unresolved row and writes no lineage row; generation 64 retries as
 `ALREADY_VERIFIED_SUCCESSOR`; a batch reaching generation 65 propagates the same
-code and a page beyond it still observes `unresolved=true`. Two clearly labeled
-adversarial inserts follow: a depth-65 row satisfying every trigger check fails on
-the `depth` check constraint, and a depth-64 row at generation 65 is refused by the
-trigger. Effects, leases and budgets are unchanged.
+code and a page beyond it still observes `unresolved=true`. Effects, leases and
+budgets are unchanged.
+
+The adversarial case rebuilds the 65-link fixture, verifies depths 1 through 64
+through the handler, then issues two direct inserts: a depth-65 row satisfying every
+trigger check fails on the `depth` check constraint, and a depth-64 row at generation
+65 is refused by the trigger because no depth-63 predecessor exists. Neither clears
+the unresolved row; effects, leases and budgets are unchanged.
 
 ### 4. Partial-batch completion, retry and whole-account observation
 
@@ -160,6 +178,7 @@ supplementary to the runnable cases above, not substitutes for them.
 | `violates check constraint ... depth` | adversarial depth-65 SQL insert |
 | trigger refusal (`RuntimeException`) | adversarial understated-depth SQL insert |
 | `PENDING_SUCCESSOR` | successor before its released anchor is verified |
+| PostgreSQL `lock timeout` (`SQLSTATE 55P03`) | reconciler queued past its one-second bound in the bounded-wait failure case |
 
 No test raised a timeout, weakened an assertion or skipped. `RACE_TIMEOUTS` (15 s
 lock wait, 30 s statement) applies only to the operation queued behind the held
@@ -177,7 +196,6 @@ commit and is a safety net; the ordinary suites keep `SqlTimeouts(2 s, 10 s)`.
 | Abandonment or cancellation committing while reconciliation waits on the claim | reconcile-live does not inspect the terminal; a terminal committed first must not change the `LIVE_ROOTS` outcome, and a release in between must flip it to `RELEASE_RECEIPT` | `DocumentPublicationAbandonment.abandon`, `DocumentPreparationTerminalEvidence.lockAndRequire` | `ReleaseRaceIT` with the gate on the abandonment commit |
 | Batch entry certified by another process between scan and entry | entry should report `ALREADY_CERTIFIED` rather than fail; only sequential coverage exists | `DocumentPreparationCoverageBatch.reconcile` | `BatchIT` with a second batch on another factory |
 | Same-operation higher generation installed inside the current page after the scan | the page ends before the new key; the observation must still report it | `DocumentPreparationCoverageBatch` final `EXISTS` | `BatchIT` whole-account case (lower key only) |
-| Held commit outlasting `lock_timeout` on the waiting reconciler | the bounded wait must surface a timeout, leave the unresolved row and release the budget | `SqlTimeouts.apply`, `Tx.inTransaction` | `ReleaseRaceIT` with the barrier never opened before the bound |
 | Cancellation of the read control between batch entries | `control.check()` between entries must stop without touching later keys and keep earlier commits | `DocumentPreparationCoverageBatch` loop | `DocumentPreparationCoverageReconciliationIT.callerMismatchAndCancellationCannotClearUnresolved` |
 | Connection pool exhaustion or connection loss mid-batch | the failing entry must propagate; later entries must remain unresolved | `Tx`, Hikari pool of three in `DocumentNativePublicationFixture.context` | none |
 | New source-root acquisition against a future prune decision (future-writer race) | the pruning design requires it before deletion is enabled; it has no reconciliation-side counterpart yet | `docs/design/repository-revision-pruning.md`, V116, V117 | `2026-10-08-history-acquisition-fence`, `2026-10-08-assessment-source-fence` |
@@ -189,7 +207,10 @@ commit and is a safety net; the ordinary suites keep `SqlTimeouts(2 s, 10 s)`.
   No shared production, SQL, fixture or Gradle file changed, and no shared-file
   request is open.
 - No production defect was found by these cases. Every refusal observed was the
-  documented behavior of the handlers and SQL guards.
+  documented behavior of the handlers and SQL guards, so no red test or proposed
+  diff is owed. The handoff names competing reconcilers and lost acknowledgement as
+  the coordinator's uncommitted `DocumentPreparationCoverageRecoveryIT`; they are
+  listed in the inventory and deliberately not recreated here.
 - The base branch on Forgejo moved to `97e6b9ab` after this work started. The base
   commit is an ancestor of that head and this branch adds only new paths that the
   head does not touch, so no merge conflict exists.

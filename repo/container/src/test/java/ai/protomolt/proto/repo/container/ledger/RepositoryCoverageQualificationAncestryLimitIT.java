@@ -22,9 +22,8 @@ import static org.assertj.core.api.Assertions.*;
  * The 64-link ancestry limit at its boundary. Sixty-five successors are installed through
  * the supported expiry, discovery, supersession and V93 install protocol with one-second
  * leases; no lease or recovery limit is removed. Lineage verification accepts depth 64 and
- * refuses depth 65 without clearing the unresolved row. A clearly labeled adversarial SQL
- * insert then shows the table constraint refuses depth 65 even when the trigger's
- * relational checks are satisfied.
+ * refuses depth 65 without clearing the unresolved row. A separate, clearly labeled
+ * adversarial SQL case shows the table constraint and trigger refuse direct rows.
  */
 @Testcontainers
 class RepositoryCoverageQualificationAncestryLimitIT {
@@ -39,15 +38,7 @@ class RepositoryCoverageQualificationAncestryLimitIT {
             var op = key.operationId();
             assertThat(certificate(c, op, 0)[0]).isEqualTo("LIVE_ROOTS");
 
-            var plans = new ArrayList<RepositorySuccessorInstall.Plan>();
-            var current = installedHistoricalSuccessor(c, rig, Duration.ofSeconds(1));
-            plans.add(current);
-            for (int generation = 2; generation <= 65; generation++) {
-                current = installNextUnactivated(c, rig, current, Duration.ofSeconds(1));
-                assertThat(current.next().predecessorGeneration()).isEqualTo(generation);
-                plans.add(current);
-            }
-            assertThat(count(c, "repository_successor_installs", op)).isEqualTo(65);
+            var plans = chain(c, rig);
             assertThat(count(c, UNRESOLVED, op)).isEqualTo(65);
             var before = effects(c, op);
             var leasesBefore = leases(c, op);
@@ -90,9 +81,34 @@ class RepositoryCoverageQualificationAncestryLimitIT {
             assertThat(beyond.entries()).isEmpty();
             assertThat(beyond.unresolved()).isTrue();
 
-            // ADVERSARIAL SQL, not a supported operation: a direct depth-65 lineage row whose edge,
-            // identities, anchor and verified depth-64 predecessor all satisfy the V119 trigger is
-            // still refused by the table's depth constraint.
+            assertThat(effects(c, op)).containsExactly(before);
+            assertThat(leases(c, op)).containsExactly(leasesBefore);
+            assertThat(budget.reservedBytes()).isZero();
+            assertThat(rig.budget().reservedBytes()).isZero();
+        }
+    }
+
+
+    /**
+     * ADVERSARIAL SQL, clearly separated from the supported protocol above. The same
+     * 65-link fixture is built, generations 1 through 64 are verified by the handler, and
+     * direct SQL then tries to record generation 65. The table's depth constraint refuses a
+     * depth-65 row even though every V119 trigger check passes, and the trigger refuses an
+     * understated depth because no depth-63 predecessor exists at generation 64. Neither
+     * attempt clears the unresolved row.
+     */
+    @Test void adversarialSqlCannotRecordLineageBeyondTheLimit() throws Exception {
+        try (var c = context(POSTGRES); var rig = historicalInitial(c)) {
+            var key = rig.record().key();
+            var op = key.operationId();
+            chain(c, rig);
+            var budget = new PayloadBudget(64L * 1024 * 1024);
+            var reconciliation = new DocumentPreparationCoverageReconciliation(c.tx(), budget, TIMEOUTS);
+            for (int generation = 1; generation <= 64; generation++)
+                assertThat(reconciliation.reconcile(CALLER, key, generation, NONE)).isEqualTo(VERIFIED_SUCCESSOR);
+            var before = effects(c, op);
+            var leasesBefore = leases(c, op);
+            // Depth 65: trigger checks pass, the check constraint refuses.
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                 em.createNativeQuery("""
                         INSERT INTO repository_preparation_coverage_lineage(account_id,principal,operation_id,predecessor_generation,
@@ -108,8 +124,7 @@ class RepositoryCoverageQualificationAncestryLimitIT {
                         WHERE p.operation_id=:o AND p.predecessor_generation=65
                         """).setParameter("o", op).executeUpdate();
             })).hasStackTraceContaining("violates check constraint").hasStackTraceContaining("depth");
-            // ADVERSARIAL SQL: understating the depth is refused because the depth-63 predecessor
-            // it claims does not exist at generation 64.
+            // Depth 64 at generation 65: the trigger refuses the missing depth-63 predecessor.
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {
                 em.createNativeQuery("""
                         INSERT INTO repository_preparation_coverage_lineage(account_id,principal,operation_id,predecessor_generation,
@@ -134,6 +149,20 @@ class RepositoryCoverageQualificationAncestryLimitIT {
             assertThat(budget.reservedBytes()).isZero();
             assertThat(rig.budget().reservedBytes()).isZero();
         }
+    }
+
+    /** 65 installs through the supported protocol; returns the plans for generations 1 through 65. */
+    private static ArrayList<RepositorySuccessorInstall.Plan> chain(Context c, DocumentCaptureAdmissionClosureIT.Rig rig) {
+        var plans = new ArrayList<RepositorySuccessorInstall.Plan>();
+        var current = installedHistoricalSuccessor(c, rig, Duration.ofSeconds(1));
+        plans.add(current);
+        for (int generation = 2; generation <= 65; generation++) {
+            current = installNextUnactivated(c, rig, current, Duration.ofSeconds(1));
+            assertThat(current.next().predecessorGeneration()).isEqualTo(generation);
+            plans.add(current);
+        }
+        assertThat(count(c, "repository_successor_installs", rig.record().key().operationId())).isEqualTo(65);
+        return plans;
     }
 
     private static long[] effects(Context c, UUID op) {

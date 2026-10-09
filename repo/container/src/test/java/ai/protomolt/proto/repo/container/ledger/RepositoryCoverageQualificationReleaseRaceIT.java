@@ -10,6 +10,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -87,8 +88,12 @@ class RepositoryCoverageQualificationReleaseRaceIT {
                     catch (ExecutionException failure) { firstFailure = failure.getCause(); }
                     secondResult = follower.get(20, TimeUnit.SECONDS);
                 } finally { gate.open(); }
+                workers.shutdown();
+                assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).as("worker threads finished").isTrue();
             }
             assertThat(gate.fired()).isTrue();
+            assertThat(gate.entered.getCount()).isZero();
+            assertThat(openTransactions(c, gate.pid.get())).as("gated backend holds no open transaction").isZero();
 
             DocumentPreparationRootReleases.Receipt receipt;
             String expectedProof;
@@ -164,6 +169,66 @@ class RepositoryCoverageQualificationReleaseRaceIT {
             assertThat(reconcileBudget.reservedBytes()).isZero();
             assertThat(rig.budget().reservedBytes()).isZero();
         }
+    }
+
+    /**
+     * Failure path with the barrier never opened in time: the waiting reconciler reaches its
+     * bounded lock wait and fails with PostgreSQL's lock timeout. The unresolved row, the
+     * live root and the decode budget are intact, every latch and worker closes in finally,
+     * the gated backend ends with no open transaction, and both operations then complete.
+     */
+    @Test void boundedWaitFailureClosesLatchesAndLeavesStateIntact() throws Exception {
+        try (var c = context(POSTGRES, "117"); var rig = historicalInitial(c, LEASE)) {
+            var record = rig.record();
+            var op = record.key().operationId();
+            DocumentPreparationRootReleaseIT.abandon(c, rig);
+            DocumentPreparationRootReleaseIT.drain(c, rig);
+            DocumentPreparationCoverageCertificatesIT.migrate(c);
+            var leasesBefore = leases(c, op);
+            var gate = new CommitGate(RELEASE_MARKER, op, false);
+            var reconcileBudget = new PayloadBudget(64L * 1024 * 1024);
+            var bounded = new SqlTimeouts(Duration.ofSeconds(1), Duration.ofSeconds(5));
+            Throwable waiterFailure = null;
+            DocumentPreparationRootReleases.Receipt receipt;
+            try (var gated = factory(gate.wrap(c.pool())); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+                var leader = workers.submit(() -> DocumentPreparationRootReleases.release(new Tx(gated), rig.budget(), CALLER, record, NONE));
+                try {
+                    assertThat(gate.entered.await(10, TimeUnit.SECONDS)).isTrue();
+                    var follower = workers.submit(() -> new DocumentPreparationCoverageReconciliation(c.tx(), reconcileBudget, bounded)
+                            .reconcile(CALLER, record.key(), 0, NONE));
+                    assertThat(awaitBlockedOnClaim(c, gate.pid.get(), follower, Duration.ofSeconds(5))).isTrue();
+                    long started = System.nanoTime();
+                    try { follower.get(10, TimeUnit.SECONDS); fail("reconciliation should have hit its lock wait bound"); }
+                    catch (ExecutionException failure) { waiterFailure = failure.getCause(); }
+                    assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(8));
+                    assertThat(waiterFailure).hasStackTraceContaining("lock timeout");
+                    // The waiter's failure left the pre-race state untouched while the leader still holds its commit.
+                    assertThat(count(c, UNRESOLVED, op)).isEqualTo(1);
+                    assertThat(count(c, CERTIFICATES, op)).isZero();
+                    DocumentPreparationRootReleaseIT.assertLive(c, rig);
+                    assertThat(reconcileBudget.reservedBytes()).isZero();
+                } finally { gate.open(); }
+                receipt = leader.get(20, TimeUnit.SECONDS);
+                workers.shutdown();
+                assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(gate.entered.getCount()).isZero();
+            assertThat(openTransactions(c, gate.pid.get())).isZero();
+            assertThat(reconcile(c.tx(), reconcileBudget, record)).isEqualTo(VERIFIED_RELEASED);
+            assertThat(certificate(c, op, 0)[0]).isEqualTo("RELEASE_RECEIPT");
+            assertThat(DocumentPreparationRootReleases.release(c.tx(), rig.budget(), CALLER, record, NONE)).isEqualTo(receipt);
+            assertThat(count(c, UNRESOLVED, op)).isZero();
+            assertThat(count(c, "repository_preparation_history_roots", op)).isZero();
+            assertThat(leases(c, op)).containsExactly(leasesBefore);
+            assertThat(reconcileBudget.reservedBytes()).isZero();
+            assertThat(rig.budget().reservedBytes()).isZero();
+        }
+    }
+
+    private static long openTransactions(Context c, int pid) {
+        return c.tx().readOnly(em -> ((Number) em.createNativeQuery(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid=:pid AND (state LIKE 'idle in transaction%' OR state='active')")
+                .setParameter("pid", pid).getSingleResult()).longValue());
     }
 
     private static DocumentPreparationCoverageReconciliation.Result reconcile(Tx tx, PayloadBudget budget,
