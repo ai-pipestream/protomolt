@@ -1,6 +1,9 @@
 package ai.protomolt.proto.repo.engine;
 
+import ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.container.blob.DocumentIds;
+import ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization;
 import ai.protomolt.proto.repo.container.ledger.DocumentHistoricalReadPlan;
 import ai.protomolt.proto.repo.container.ledger.DocumentReadLedger;
 import ai.protomolt.proto.repo.spi.HistoricalDocumentRepository;
@@ -9,6 +12,7 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.DocumentManifest;
+import ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -16,7 +20,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Shared capture/read/delivery behavior. The host owns reader maintenance and shutdown. */
+/**
+ * Shared capture/read/delivery behavior. The host owns reader maintenance and shutdown.
+ * Every entrypoint classifies provider and resource failures through
+ * {@link HistoricalReadFailures} before reauthorizing the bound caller, so library and
+ * transport callers observe the same repository-domain code for the same condition.
+ */
 public final class DocumentHistoricalOperations implements HistoricalDocumentRepository, HistoricalMaterializationRepository {
     private final DocumentReadLedger ledger;
     private final DocumentPartReader parts;
@@ -33,6 +42,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         Objects.requireNonNull(control).check();
         DocumentReadBatch batch = null;
         boolean delivered = false;
+        RuntimeException primary = null;
         try (var history = capture(caller, address, revision, control); var use = history.use()) {
             try {
                 control.check();
@@ -52,11 +62,13 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
                 delivered = true;
                 return result;
             } catch (RuntimeException failure) {
-                reauthorizeFailure(history, control, failure);
-                throw failure;
+                throw reauthorizeFailure(history, control, failure);
             }
+        } catch (RuntimeException failure) {
+            primary = failure;
+            throw failure;
         } finally {
-            if (!delivered && batch != null) batch.close();
+            if (!delivered) HistoricalReadFailures.release(primary, batch);
         }
     }
 
@@ -64,6 +76,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         Objects.requireNonNull(control).check();
         DocumentHistoricalRead result = null;
         boolean delivered = false;
+        RuntimeException primary = null;
         try (var history = capture(caller, address, revision, control)) {
             try {
                 control.check();
@@ -73,11 +86,13 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
                 delivered = true;
                 return result;
             } catch (RuntimeException failure) {
-                reauthorizeFailure(history, control, failure);
-                throw failure;
+                throw reauthorizeFailure(history, control, failure);
             }
+        } catch (RuntimeException failure) {
+            primary = failure;
+            throw failure;
         } finally {
-            if (!delivered && result != null) result.close();
+            if (!delivered) HistoricalReadFailures.release(primary, result);
         }
     }
 
@@ -87,8 +102,8 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
             HistoricalMaterializationRepository.Limits limits, RepositoryReadControl control) {
         Objects.requireNonNull(selection); Objects.requireNonNull(limits);
         var result = readMaterialized(caller, address, revision, selection.revisionOrdinal(),
-                new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection(selection.rootSha256(), selection.pathSha256()),
-                new ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits(limits.maxFragmentBytes(),
+                new DocumentSchemaMaterialization.Selection(selection.rootSha256(), selection.pathSha256()),
+                new DocumentSchemaMaterialization.Limits(limits.maxFragmentBytes(),
                         limits.maxEvidenceBytes(), limits.maxRetainedBytes(), limits.maxReferences(),
                         limits.maxDecodedBytes(), limits.maxBoundaries()), control);
         boolean transferred = false;
@@ -100,7 +115,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
     }
 
     private record Materialized(HistoricalMaterializationRepository.Selection selection,
-            ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization result)
+            DocumentHistoricalMaterialization result)
             implements HistoricalMaterializationRepository.Result {
         @Override public synchronized HistoricalMaterializationRepository.View view(RepositoryReadControl control) {
             var view = result.view(control);
@@ -115,14 +130,15 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
     }
 
     /** Selected typed view; does not confer a fresh validation verdict. */
-    public ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization readMaterialized(
+    public DocumentHistoricalMaterialization readMaterialized(
             RepositoryCaller caller, NodeAddress address, UUID revision, int ordinal,
-            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Selection selection,
-            ai.protomolt.proto.repo.admission.DocumentSchemaMaterialization.Limits limits,
+            DocumentSchemaMaterialization.Selection selection,
+            DocumentSchemaMaterialization.Limits limits,
             RepositoryReadControl control) {
         Objects.requireNonNull(control).check(); Objects.requireNonNull(selection); Objects.requireNonNull(limits);
-        ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMaterialization result = null;
+        DocumentHistoricalMaterialization result = null;
         boolean delivered = false;
+        RuntimeException primary = null;
         try (var history = capture(caller, address, revision, control)) {
             try {
                 result = validated.readMaterialized(history, ordinal, selection, limits, control);
@@ -130,18 +146,20 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
                 delivered = true;
                 return result;
             } catch (RuntimeException failure) {
-                reauthorizeFailure(history, control, failure);
-                throw failure;
+                throw reauthorizeFailure(history, control, failure);
             }
+        } catch (RuntimeException failure) {
+            primary = failure;
+            throw failure;
         } finally {
-            if (!delivered && result != null) result.close();
+            if (!delivered) HistoricalReadFailures.release(primary, result);
         }
     }
 
     private DocumentReadLedger.PinnedHistory capture(RepositoryCaller caller, NodeAddress address,
             UUID revision, RepositoryReadControl control) {
         Objects.requireNonNull(caller); Objects.requireNonNull(address); Objects.requireNonNull(revision);
-        ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(address);
+        DocumentIds.nodeId(address);
         // Result close stays local. Recover one drained slot only when admission
         // needs it, without hiding a failed SQL release or retrying uncertain capture.
         ledger.releaseDrainedAtCapacity(1);
@@ -149,14 +167,21 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         return ledger.captureHistorical(caller, address, revision);
     }
 
-    private static void reauthorizeFailure(DocumentReadLedger.PinnedHistory history,
+    /**
+     * Classifies a failure raised after capture, then rechecks the caller before the
+     * classification leaves. Cancellation and expiry carry no result to authorize and start
+     * no JDBC work; a refused reauthorization replaces the classification entirely.
+     */
+    private static RuntimeException reauthorizeFailure(DocumentReadLedger.PinnedHistory history,
             RepositoryReadControl control, RuntimeException failure) {
+        var classified = HistoricalReadFailures.translate(failure);
         control.check();
-        if (failure instanceof RepositoryException repository
+        if (classified instanceof RepositoryException repository
                 && (repository.code() == RepositoryException.Code.CANCELLED
                 || repository.code() == RepositoryException.Code.DEADLINE_EXCEEDED))
-            throw new RepositoryException(repository.code(), "Historical read cancelled or expired");
+            return new RepositoryException(repository.code(), "Historical read cancelled or expired", repository);
         history.authorizeDelivery(control);
+        return classified;
     }
 
     private static final class Raw implements RawRead {
@@ -173,7 +198,7 @@ public final class DocumentHistoricalOperations implements HistoricalDocumentRep
         @Override public synchronized UUID revision() { requireOpen(); return plan.revision(); }
         @Override public synchronized long publicationRevision() { requireOpen(); return plan.publicationRevision(); }
         @Override public synchronized DocumentManifest manifest() { requireOpen(); return plan.manifest(); }
-        @Override public synchronized ai.protomolt.proto.repo.v1.HistoricalDocumentMetadata metadata() { requireOpen(); return plan.metadata(); }
+        @Override public synchronized HistoricalDocumentMetadata metadata() { requireOpen(); return plan.metadata(); }
         @Override public synchronized List<Fragment> fragments() { requireOpen(); return fragments; }
         @Override public synchronized void authorizeDelivery(RepositoryReadControl control) {
             requireOpen(); history.authorizeDelivery(control);
