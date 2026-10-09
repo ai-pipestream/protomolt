@@ -132,11 +132,10 @@ flock -w 1800 /tmp/protomolt-repository-qualification.lock \
 
 The init script wires the module's ordinary `test` task the way the document rehearsal's
 does: it adds the admission inventory bundle and the production host classpath, marks the
-task never up to date, re-includes the class that `build.gradle` excludes from the ordinary
-`test` task, and sets the opt-in property. The ordinary task therefore never selects the
-class and never reports it skipped; selecting it without the script finds no tests and
-fails, as `RepositoryBackupRehearsalIT` does. With the script every case runs and a passing
-run has zero skipped cases. `-Pprotomolt.qualificationKeep=true` leaves
+task never up to date and sets the opt-in property. The ordinary test task excludes the
+class; the dedicated script removes that exclusion. Selecting the class without the
+script fails with no matching tests, rather than reporting a skip. With the script every case
+runs and a passing run has zero skipped cases. `-Pprotomolt.qualificationKeep=true` leaves
 each case's containers and volumes. Evidence lands under
 `repo/container/build/archive-backup-qualification/<timestamp>/`.
 
@@ -208,6 +207,8 @@ changed here.
 - When a recovered host exits through a failed check, the interrupted lifecycle lanes log
   "Closed by interrupt" JDBC warnings during shutdown; the passing hosts show none. This is
   shutdown noise of the lanes' one-second intervals, not a data effect.
+- The coordinator integration excludes this class from ordinary tests and re-includes
+  it through its dedicated init script. Missing runtime wiring is an assertion failure.
 
 ## Affected archive suites
 

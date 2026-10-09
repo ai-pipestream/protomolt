@@ -17,13 +17,12 @@ gradle.projectsEvaluated { g ->
         }
     }
     p.tasks.named('test') {
+        setExcludes(getExcludes().findAll { it != '**/ArchiveBackupQualificationIT*' })
         dependsOn 'admissionTransportRuntimeInventory', 'archiveBackupQualificationHostClasspath'
-        // build.gradle keeps the qualification out of the ordinary test task; this script is its only entry.
-        setExcludes(excludes.findAll { it != '**/ArchiveBackupQualificationIT*' })
         // A qualification run is evidence of this run; never replay a cached or up-to-date result.
         outputs.upToDateWhen { false }
         outputs.cacheIf { false }
-        // The suite skips itself unless this property says the script wired its runtime.
+        // Missing runtime wiring is a failure when this suite is selected.
         systemProperty 'protomolt.test.archiveBackupQualification', 'true'
         // -Pprotomolt.qualificationKeep=true leaves each case's containers and volumes for inspection.
         systemProperty 'protomolt.test.qualificationKeep', p.findProperty('protomolt.qualificationKeep') ?: 'false'

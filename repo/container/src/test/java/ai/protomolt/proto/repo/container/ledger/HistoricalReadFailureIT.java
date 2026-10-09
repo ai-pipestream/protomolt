@@ -166,11 +166,12 @@ class HistoricalReadFailureIT {
         @Override public void headObject(String bucket, String key) { delegate.headObject(bucket, key); }
     }
 
-    /** In-process gRPC over the same engine instance; the identity header is test authentication only. */
+    /** Sequential in-process gRPC over the same engine; the identity header is test authentication only. */
     private static final class Transport implements AutoCloseable {
         final Server server;
         final ManagedChannel channel;
         final PayloadBudget responses = new PayloadBudget(32L * 1024 * 1024);
+        final AtomicReference<CountDownLatch> terminal = new AtomicReference<>(new CountDownLatch(0));
         Transport(DocumentHistoricalOperations history, String account) throws Exception {
             Function<Caller, RepositoryCaller> bindings = authenticated -> switch (authenticated.name()) {
                 case "member" -> new RepositoryCaller("member", false, Set.of(account), Set.of());
@@ -181,8 +182,18 @@ class HistoricalReadFailureIT {
             ServerInterceptor auth = new ServerInterceptor() {
                 @Override public <Q, S> ServerCall.Listener<Q> interceptCall(ServerCall<Q, S> call, Metadata headers, ServerCallHandler<Q, S> next) {
                     String principal = headers.get(IDENTITY);
-                    if (principal == null) return next.startCall(call, headers);
-                    return Contexts.interceptCall(Context.current().withValue(CallerContexts.CALLER, Caller.scoped(principal, Set.of())), call, headers, next);
+                    var finished = new CountDownLatch(1);
+                    terminal.set(finished);
+                    var listener = principal == null ? next.startCall(call, headers)
+                            : Contexts.interceptCall(Context.current().withValue(CallerContexts.CALLER, Caller.scoped(principal, Set.of())), call, headers, next);
+                    return new io.grpc.ForwardingServerCallListener.SimpleForwardingServerCallListener<Q>(listener) {
+                        @Override public void onComplete() {
+                            try { super.onComplete(); } finally { finished.countDown(); }
+                        }
+                        @Override public void onCancel() {
+                            try { super.onCancel(); } finally { finished.countDown(); }
+                        }
+                    };
                 }
             };
             server = InProcessServerBuilder.forName(name)
@@ -192,14 +203,27 @@ class HistoricalReadFailureIT {
             channel = InProcessChannelBuilder.forName(name).maxInboundMessageSize(8 * 1024 * 1024).build();
         }
         DocumentHistoryServiceGrpc.DocumentHistoryServiceBlockingStub history(String principal, Duration deadline) {
+            awaitTerminal();
             var headers = new Metadata(); headers.put(IDENTITY, principal);
             return DocumentHistoryServiceGrpc.newBlockingStub(channel).withDeadlineAfter(deadline.toMillis(), TimeUnit.MILLISECONDS)
                     .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
         }
         DocumentHistoryMaterializationServiceGrpc.DocumentHistoryMaterializationServiceBlockingStub selected(String principal, Duration deadline) {
+            awaitTerminal();
             var headers = new Metadata(); headers.put(IDENTITY, principal);
             return DocumentHistoryMaterializationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(deadline.toMillis(), TimeUnit.MILLISECONDS)
                     .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+        }
+        // The client can receive completion before the server releases its single-call slot.
+        // Terminal listener callbacks run after the producer and include its close/cancel handler.
+        void awaitTerminal() {
+            try {
+                assertThat(terminal.get().await(10, TimeUnit.SECONDS))
+                        .as("previous server call reached its terminal callback").isTrue();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted waiting for server call completion", interrupted);
+            }
         }
         @Override public void close() throws Exception {
             channel.shutdownNow(); server.shutdownNow();
@@ -574,22 +598,10 @@ class HistoricalReadFailureIT {
                 while (System.nanoTime() < deadline && (budget.reservedBytes() != 0 || transport.responses.reservedBytes() != 0
                         || reads.releaseDrained(64) > 0 || reads.outstandingReads() != 0)) Thread.sleep(20);
                 released();
-                awaitFreeSlot(read);
+                wire(read, "member", Duration.ofSeconds(10));
             }
             recording.reset();
             released();
-        }
-
-        /** The call slot is released in the handler's finally, after the engine released its resources; bound the wait. */
-        private void awaitFreeSlot(String read) throws Exception {
-            long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-            while (true) {
-                try { wire(read, "member", Duration.ofSeconds(10)); return; }
-                catch (StatusRuntimeException failure) {
-                    if (failure.getStatus().getCode() != Status.Code.RESOURCE_EXHAUSTED || System.nanoTime() >= deadline) throw failure;
-                    Thread.sleep(20);
-                }
-            }
         }
 
         void expectExpiredDuringProvider() throws Exception {
@@ -651,6 +663,7 @@ class HistoricalReadFailureIT {
          * already holds the answer, so both budget checks are bounded rather than instantaneous.
          */
         private void released() throws Exception {
+            transport.awaitTerminal();
             long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
             while ((budget.reservedBytes() != 0 || transport.responses.reservedBytes() != 0) && System.nanoTime() < deadline) Thread.sleep(10);
             assertThat(budget.reservedBytes()).as("payload budget released").isZero();

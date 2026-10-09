@@ -17,7 +17,6 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -62,7 +61,7 @@ class ArchiveBackupQualificationIT {
     private Path firstBackup, secondBackup;
 
     @BeforeAll void compileHosts() throws Exception {
-        Assumptions.assumeTrue("true".equals(System.getProperty("protomolt.test.archiveBackupQualification")),
+        org.junit.jupiter.api.Assertions.assertTrue("true".equals(System.getProperty("protomolt.test.archiveBackupQualification")),
                 "ArchiveBackupQualificationIT runs only through -I repo/container/" + INIT_SCRIPT);
         Files.createDirectories(ROOT);
         compiled = ArchiveBackupQualificationProbeCompiler.compile(Files.createDirectories(ROOT.resolve("hosts")));
