@@ -40,15 +40,7 @@ final class DocumentPublicationModesJournal {
         return loadRetained(caller, claim, predecessor, control, access);
     }
 
-    /**
-     * Scoped callers receive only a comparison result, never private recovery state.
-     * One transaction: the claim and owner fences come first, the immutable preparation
-     * and fixed modes are read behind them, and the bounded decode and comparison
-     * complete before commit, so no authority change can interleave between the read
-     * and the delivered result. The decode touches only reserved bytes and no provider;
-     * lease expiry after the fence is caught by the next fencing transaction, as it is
-     * for every short fenced transaction.
-     */
+    /** Scoped callers receive only a comparison result, never private recovery state. */
     void requireObservedModes(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> observed,
             RepositoryReadControl control) {
@@ -57,28 +49,43 @@ final class DocumentPublicationModesJournal {
         if (!owner.key().operationId().equals(command.operationId())) throw new IllegalArgumentException("Mode command differs from owner");
         if (owner.executionClaim().isEmpty()) return;
         var claim = owner.executionClaim().orElseThrow();
-        try (var validation = new DocumentPublicationModeValidation(budget)) {
+        PayloadBudget.Lease[] reservations = {null, null};
+        try {
+            var captured = tx.inTransaction(em -> {
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
+                var preparation = DocumentPublicationPreparationJournal.capture(em, claim, owner.generation()-1, size -> {
+                    reservations[0] = budget.reserve(MAX_BYTES);
+                    reservations[1] = budget.reserve(size);
+                }, control);
+                if (preparation == null) return null; // Explicit claim-only primitive, without a preparation journal.
+                return new Captured(preparation, readModes(em, claim, owner.generation()-1));
+            });
+            control.check();
+            if (captured == null) return;
+            // Keep integrity/error ordering: validate preparation before missing or malformed modes.
+            var preparation = DocumentPublicationPreparationJournal.decode(captured.preparation(), reservations[1].bytes(),
+                    claim.key(), claim.commandSha256(), owner.generation()-1);
+            control.check();
+            if (captured.modes() == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Fixed publication modes are absent");
+            var fixed = decodeModes(preparation, captured.modes());
+            control.check();
+            if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                    "Observed publication modes differ from fixed modes");
             tx.inTransaction(em -> {
                 RepositoryOperationLedger.fenceLiveOwner(em, owner);
                 RepositoryOperationLedger.requireCommand(em, owner.key(), command);
-                var captured = validation.capture(em, claim, owner.generation()-1, control);
-                if (captured == null) return null; // Explicit claim-only primitive, without a preparation journal.
-                control.check();
-                // Keep integrity/error ordering: validate preparation before missing or malformed modes.
-                var preparation = DocumentPublicationPreparationJournal.decode(captured.preparation(), validation.preparationBytes(),
-                        claim.key(), claim.commandSha256(), owner.generation()-1);
-                control.check();
-                if (captured.modes() == null) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                        "Fixed publication modes are absent");
-                var fixed = decodeModes(preparation, captured.modes());
-                control.check();
-                if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
-                        "Observed publication modes differ from fixed modes");
-                return null;
+                control.check(); return null;
             });
             control.check();
+        } finally {
+            if (reservations[1] != null) reservations[1].close();
+            if (reservations[0] != null) reservations[0].close();
         }
     }
+
+    private record Captured(Object[] preparation, Object[] modes) {}
 
     /** Compare immutable bindings after current authorization, with the owner locked in this transaction. */
     static void requireBoundModes(jakarta.persistence.EntityManager em, RepositoryOperationLedger.Key key,
