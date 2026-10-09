@@ -161,6 +161,37 @@ class DocumentAssessmentStorageRuntimeTest {
                     assertThat(replay.waitFor(10, TimeUnit.SECONDS)).isTrue();
                 }
             }
+            // Native schema revisions and the historical creation cases take about a minute on their own,
+            // so they run in a separate host and database rather than inside the aggregate host's budget.
+            try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                 var statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE DATABASE native_schema_revision");
+            }
+            var schemaRevisionBuilder = new ProcessBuilder(
+                    Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading", "-cp",
+                    classpath + java.io.File.pathSeparator + probe,
+                    "ai.protomolt.proto.repo.container.ledger.HistoricalOwnerReconciliationHost", bundle.toString(), "schema-revision");
+            schemaRevisionBuilder.environment().putAll(builder.environment());
+            String schemaRevisionJdbc = postgres.getJdbcUrl().replaceFirst(
+                    "/" + java.util.regex.Pattern.quote(postgres.getDatabaseName()) + "(?=\\?|$)", "/native_schema_revision");
+            assertThat(schemaRevisionJdbc).isNotEqualTo(postgres.getJdbcUrl());
+            schemaRevisionBuilder.environment().put("PROTOMOLT_TEST_JDBC", schemaRevisionJdbc);
+            var schemaRevisionLog = directory.resolve("native-schema-revision.log");
+            var schemaRevision = schemaRevisionBuilder.redirectErrorStream(true).redirectOutput(schemaRevisionLog.toFile()).start();
+            final String schemaRevisionResult;
+            try {
+                assertThat(schemaRevision.waitFor(150, TimeUnit.SECONDS)).as("Schema revision host completed; log: %s", schemaRevisionLog).isTrue();
+                assertThat(Files.size(schemaRevisionLog)).isLessThan(1_048_576);
+                schemaRevisionResult = Files.readString(schemaRevisionLog);
+                assertThat(schemaRevision.exitValue()).as(schemaRevisionResult).isZero();
+                assertThat(schemaRevisionResult).contains("NATIVE_SCHEMA_REVISION_HOST_OK", "NATIVE_SCHEMA_METADATA_REVISIONS_OK");
+            } finally {
+                if (schemaRevision.isAlive()) {
+                    schemaRevision.destroyForcibly();
+                    assertThat(schemaRevision.waitFor(10, TimeUnit.SECONDS)).isTrue();
+                }
+            }
             var process = builder.redirectErrorStream(true).redirectOutput(log.toFile()).start();
             try {
                 // This host runs the aggregate provider, publication and crash-recovery probes.
@@ -187,7 +218,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 }
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 // Preserve every existing marker assertion across both mandatory hosts.
-                String result = Files.readString(log) + "\n" + replayResult;
+                String result = Files.readString(log) + "\n" + replayResult + "\n" + schemaRevisionResult;
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK","BOUNDED_DOCUMENT_TYPED_REJECTION_OK","BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK","BOUNDED_PUBLICATION_RPC_CANCELLATION_OK","BOUNDED_PUBLICATION_SCHEMA_SHUTDOWN_OK","BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK","BOUNDED_PUBLIC_CONSUMER_RPC_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");

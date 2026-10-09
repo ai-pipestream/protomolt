@@ -19,7 +19,6 @@ public final class AssessmentCreationProbe {
         var executionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "execution");
         var scopedExecutionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "scoped-execution", true);
         var runtimeSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "runtime");
-        var schemaRevisionSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision", true);
         var successorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "successor", true);
         var ownedSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "owned-successor", true);
         var openSuccessorSource = AssessmentMixedReuseProbe.publishSource(tx, provider, "open-successor", true);
@@ -43,7 +42,7 @@ public final class AssessmentCreationProbe {
         NativeAssessmentExecutionProbe.run(tx, database, provider, executionSource, observation);
         NativeAssessmentExecutionProbe.runScoped(tx, database, provider, scopedExecutionSource, observation);
         NativeAssessmentRuntimeProbe.run(database, provider, runtimeSource);
-        NativeSchemaRevisionProbe.run(tx, provider, schemaRevisionSource, database);
+        // NativeSchemaRevisionProbe runs in its own host and database (HistoricalOwnerReconciliationHost schema-revision).
         AssessmentMixedReuseProbe.run(tx, provider, mixedSource, initial, observation);
         // Operation replay has its own bounded host and database. Its policy restoration
         // preserves this same definition; later cases do not depend on its revision number.
