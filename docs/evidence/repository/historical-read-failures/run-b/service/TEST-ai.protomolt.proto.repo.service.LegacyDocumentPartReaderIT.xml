@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:43:13.051Z" hostname="krick" time="4.184">
+  <properties/>
+  <testcase name="aggregateByteLimitIsCheckedBeforeFetchingAnyPart()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.009"/>
+  <testcase name="[1] &quot;digest&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.005"/>
+  <testcase name="[2] &quot;size&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.004"/>
+  <testcase name="[3] &quot;state&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.004"/>
+  <testcase name="[4] &quot;slot&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.004"/>
+  <testcase name="[5] &quot;key&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.003"/>
+  <testcase name="[6] &quot;duplicate-slot&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.003"/>
+  <testcase name="[7] &quot;duplicate-key&quot;" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.002"/>
+  <testcase name="suppliedCoreIdentityMustMatch()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.007"/>
+  <testcase name="unsupportedReadDoesNotFallBack()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.007"/>
+  <testcase name="exactOrderedBytesUseRecordedCoreVersion()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.013"/>
+  <testcase name="missingSourceRetainsRetryAsFullSaveMeaning()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.046"/>
+  <testcase name="noRecordedNonCoreVersionCannotSilentlyChooseHistoricalBytes()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.007"/>
+  <testcase name="oversizedSourceFailsDuringBoundedRead()" classname="ai.protomolt.proto.repo.service.LegacyDocumentPartReaderIT" time="0.01"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: eae56d58dcf34581a16808cae339e7cdbaab11fcd619d55bbb5530ba7ffd73c0
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.892486828S
+]]></system-err>
+</testsuite>

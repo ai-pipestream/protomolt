@@ -1,0 +1,185 @@
+CHECK_OK restore.row_counts :: every base table's row count equals the seed record after close: tables=92
+CHECK_OK restore.row_counts_manifest :: row counts equal the sealed manifest
+CHECK_OK restore.reader_incarnations.active :: restored ACTIVE incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.fenced :: restored FENCED incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.unknown :: restored UNKNOWN incarnations=0 (restored verbatim, none revived)
+CHECK_OK restore.reader_incarnations.quiesced :: restored QUIESCED incarnations=2 (restored verbatim, none revived)
+CHECK_OK restore.backend_profile :: managed_backend_profiles row equals the recorded identity for generation qualification-gen-5561333d-5a4f-4034-ba65-27c5641d2ec7
+CHECK_OK restore.sequences :: sequence values={archive_mutation_revision_seq=31, document_mutation_revision_seq=0}
+CHECK_OK restore.migration_level :: flyway level V119
+CHECK_OK restore.xid_past_stored :: current=1619 maxStored=0
+CHECK_OK restore.bindings.alpha-report :: 4 bindings equal the seed record: generation, realm, bucket, key, provider version, etag, digest, size, references, retention fence
+CHECK_OK restore.rows.alpha-report :: entry cursor, mutation revisions, root checksums and byte totals equal the seed record
+CHECK_OK restore.bindings.alpha-notes :: 1 bindings equal the seed record: generation, realm, bucket, key, provider version, etag, digest, size, references, retention fence
+CHECK_OK restore.rows.alpha-notes :: entry cursor, mutation revisions, root checksums and byte totals equal the seed record
+CHECK_OK restore.bindings.beta-subject :: 3 bindings equal the seed record: generation, realm, bucket, key, provider version, etag, digest, size, references, retention fence
+CHECK_OK restore.rows.beta-subject :: entry cursor, mutation revisions, root checksums and byte totals equal the seed record
+CHECK_OK restore.bindings.beta-draft :: 2 bindings equal the seed record: generation, realm, bucket, key, provider version, etag, digest, size, references, retention fence
+CHECK_OK restore.rows.beta-draft :: entry cursor, mutation revisions, root checksums and byte totals equal the seed record
+CHECK_OK restore.pending.admission_rows :: immutable admission, command bytes, receipt bytes, targets and observation revision equal the seed record: {commandSha256=f442dd285de848bc11cf33bad014edf7cd82a4aa0dad132635c175f93a21cbbd, commandBytesSha256=f442dd285de848bc11cf33bad014edf7cd82a4aa0dad132635c175f93a21cbbd, admissionReceiptSha256=d2c75ee44239c71e453476662ddb364654c4e2f26017db2d1d77fd62208c3c70, sampledRevision=19, observationRevision=1, targets=5548ff54-5afa-4c1f-a5dd-0d5ebbe8203a,610925e2-7562-40d1-beae-bb4b787b7e84}
+CHECK_OK restore.cleanup_state :: no read pin; upload states equal the seed record: {LIVE=10}
+CHECK_OK restore.provider.52f02ed7d13b :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/markdown/writes/4c5dbb17-bcbc-499b-9409-2a53efbc429d/0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 version=793ff1b3-4f9a-4be4-a951-cd9536a6c088 sha256=0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 etag="6ce8784d5c9f8ff85aff70f77ac3416c"
+CHECK_OK restore.provider.69c612d19090 :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/markdown/writes/acc35a22-5b36-4355-9efc-db6088a639bc/5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f version=6d00b50f-fef4-4f5c-b93f-19f4fdcd5089 sha256=5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f etag="a6f6a43006fba9b742bc977c2a3d412e"
+CHECK_OK restore.provider.888c117af71e :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/original/writes/9453d112-dcfa-4ef1-a6c2-10689c5cab92/3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 version=eeb7a682-9be6-421d-8f71-63bdf1e3e947 sha256=3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 etag="20cacf4858b088c849d9ae043f0c76d0"
+CHECK_OK restore.provider.ed32f93c3b7d :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/writes/8d300edc-d2b4-4125-b685-bb977945e566 version=bbc971eb-5695-4ba3-8175-fde8d31c4759 sha256=4d468aa08c6a9c30b1ce6970acf4a3ec01c6b64d2b98d6629d86242f6ac76f38 etag="388d3675ab92c81874766b5a75c539a8"
+CHECK_OK restore.provider.82452e949b81 :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/e5b526d4-e487-3221-96e7-ce31f8989b3b/original/writes/74d7d979-32ba-484d-9abb-c7a08616fa5f/a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b version=e4da216b-41b7-47ee-b55d-e7b92f1adcb2 sha256=a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b etag="5ecdad92022d7c561a7ea5ecd98ec68c"
+CHECK_OK restore.provider.26980a19972c :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/original/writes/9a044738-687d-4243-9920-ad3a9003fa0f/e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b version=7750b0ee-1217-4448-874e-f081b06cecd0 sha256=e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b etag="8e5836ae88382e6698b42f9290f44b0b"
+CHECK_OK restore.provider.0f33a9423543 :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/scratch/writes/36271039-2986-40ba-a689-0fb78f219a44/9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a version=c6b60305-5ad4-47bd-9a5d-a1f04c1ca0b7 sha256=9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a etag="1419bee1c5959d8da958079afd3235ab"
+CHECK_OK restore.provider.1e1caf8416f4 :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/scratch/writes/f41717d7-9272-48ca-a346-6e0bab513242/057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea version=92460527-e474-44c8-a649-5f2fce84184a sha256=057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea etag="6e6fde398a490806f80ede8d6dabb74a"
+CHECK_OK restore.provider.0e4f737c23eb :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-scratch/f41cff02-26d6-3bbc-80d7-c254d6b520f5/original/writes/5f12188a-5460-4c2f-afc6-138b8a2fa3d9/44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f version=93c581f3-bcf4-4e19-b559-7b7ec3a16c77 sha256=44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f etag="22b2ddea2fc34916b16cec00fce7d4b1"
+CHECK_OK restore.provider.54638c1c8249 :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-scratch/f41cff02-26d6-3bbc-80d7-c254d6b520f5/original/writes/c516d169-37fc-4813-9446-1195c3e93830/fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 version=275ee118-01e0-4a19-8a96-f9a6d59af7b9 sha256=fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 etag="d8750ef2035bfb1962fb8676e8c2a84c"
+CHECK_OK restore.provider.count :: objects=10 live=10 reclaimed=0
+CHECK_OK restore.pending.observation :: production observation before any host: still ADMITTED with 2 pending targets at status revision 1, equal to the recorded receipt
+CHECK_OK restore.entry.alpha-report.v1.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK restore.entry.alpha-report.v1.manifest :: manifest equal; frozen snapshot title=Quarterly report
+CHECK_OK restore.entry.alpha-report.v1.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK restore.entry.alpha-report.v1.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK restore.entry.alpha-report.v2.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK restore.entry.alpha-report.v2.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK restore.entry.alpha-report.v2.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK restore.entry.alpha-report.v2.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK restore.entry.alpha-report.v3.bytes :: renditions=3 byte-equal to the recorded read
+CHECK_OK restore.entry.alpha-report.v3.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK restore.entry.alpha-report.v3.present :: every PRESENT manifest rendition delivered bytes: 3
+CHECK_OK restore.entry.alpha-report.v3.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK restore.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK restore.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK restore.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK restore.entry.alpha-notes.v1.info :: current metadata equal: title=Notes currentVersion=1 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK restore.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK restore.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK restore.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK restore.entry.beta-subject.v1.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK restore.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK restore.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK restore.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK restore.entry.beta-subject.v2.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK restore.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK restore.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK restore.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK restore.entry.beta-draft.v2.info :: current metadata equal: title=Draft currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK restore.fresh_incarnation :: recovered host registered 2 new ACTIVE incarnation(s); restored states unchanged
+CHECK_OK restore.versions.alpha-report :: listing equal: [3, 2, 1]
+CHECK_OK restore.versions.alpha-notes :: listing equal: [1]
+CHECK_OK restore.versions.beta-subject :: listing equal: [2, 1]
+CHECK_OK restore.versions.beta-draft :: listing equal: [2]
+CHECK_OK restore.stats.qualification-docs.a9442bc8 :: entries=2 versions=4 retainedBytes=1050766 currentBytes=1050710
+CHECK_OK restore.stats.qualification-docs.a9442bc8 :: entries=1 versions=2 retainedBytes=25 currentBytes=25
+CHECK_OK restore.stats.qualification-scratch.a9442bc8 :: entries=1 versions=1 retainedBytes=30 currentBytes=30
+CHECK_OK restore.access.alpha-report.operator :: process authority reads alpha-report
+CHECK_OK restore.access.alpha-report.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-report.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-report.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-report.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK restore.access.alpha-report.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK restore.access.alpha-notes.operator :: process authority reads alpha-notes
+CHECK_OK restore.access.alpha-notes.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-notes.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-notes.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.alpha-notes.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK restore.access.alpha-notes.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK restore.access.beta-subject.operator :: process authority reads beta-subject
+CHECK_OK restore.access.beta-subject.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-subject.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-subject.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-subject.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK restore.access.beta-subject.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK restore.access.beta-draft.operator :: process authority reads beta-draft
+CHECK_OK restore.access.beta-draft.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-draft.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-draft.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK restore.access.beta-draft.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK restore.access.beta-draft.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK restore.access.mutation_lookup :: member=PERMISSION_DENIED other account=NOT_FOUND
+CHECK_OK restore.access_matrix_unchanged :: matrix={operator.alpha-report=OK, member.alpha-report=PERMISSION_DENIED, stranger.alpha-report=PERMISSION_DENIED, outsider.alpha-report=PERMISSION_DENIED, member-write.alpha-report=PERMISSION_DENIED, member-mutation.alpha-report=PERMISSION_DENIED, cross-account.alpha-report=NOT_FOUND, operator.alpha-notes=OK, member.alpha-notes=PERMISSION_DENIED, stranger.alpha-notes=PERMISSION_DENIED, outsider.alpha-notes=PERMISSION_DENIED, member-write.alpha-notes=PERMISSION_DENIED, member-mutation.alpha-notes=PERMISSION_DENIED, cross-account.alpha-notes=NOT_FOUND, operator.beta-subject=OK, member.beta-subject=PERMISSION_DENIED, stranger.beta-subject=PERMISSION_DENIED, outsider.beta-subject=PERMISSION_DENIED, member-write.beta-subject=PERMISSION_DENIED, member-mutation.beta-subject=PERMISSION_DENIED, cross-account.beta-subject=NOT_FOUND, operator.beta-draft=OK, member.beta-draft=PERMISSION_DENIED, stranger.beta-draft=PERMISSION_DENIED, outsider.beta-draft=PERMISSION_DENIED, member-write.beta-draft=PERMISSION_DENIED, member-mutation.beta-draft=PERMISSION_DENIED, cross-account.beta-draft=NOT_FOUND, member-mutation-lookup=PERMISSION_DENIED, cross-account-mutation-lookup=NOT_FOUND}
+CHECK_OK restore.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK restore.transport.entry :: authenticated read of alpha-report v1 equals the recorded response
+CHECK_OK restore.transport.mutation_lookup :: authenticated receipt lookup carries the recorded logical admission; state=ARCHIVE_MUTATION_STATE_COMPLETED
+CHECK_OK restore.pending.completed :: mutation recovery lane reclaimed every pending target after restore: state=ARCHIVE_MUTATION_STATE_COMPLETED pending=0 confirmedAbsent=2 statusRevision=2
+CHECK_OK restore.pending.completed_receipt :: confirmedAbsent=2 statusRevision=2; logical admission unchanged
+CHECK_OK restore.replay.put.alpha-report :: deduplicated=true version=3; retained manifest returned, no version landed
+CHECK_OK restore.replay.mutation.beta-subject :: same operation id and command: logical admission equal, state=ARCHIVE_MUTATION_STATE_COMPLETED pending=0 statusRevision=2
+CHECK_OK restore.pending.targets_reclaimed :: both targets DELETED after one cleanup attempt each; the shared original stays LIVE
+CHECK_OK restore.after-cleanup.provider.26980a19972c :: LIVE bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/original/writes/9a044738-687d-4243-9920-ad3a9003fa0f/e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b version=7750b0ee-1217-4448-874e-f081b06cecd0 sha256=e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b etag="8e5836ae88382e6698b42f9290f44b0b"
+CHECK_OK restore.after-cleanup.provider.0f33a9423543 :: DELETED bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/scratch/writes/36271039-2986-40ba-a689-0fb78f219a44/9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a: recorded version c6b60305-5ad4-47bd-9a5d-a1f04c1ca0b7 -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1); versions left under the key=0
+CHECK_OK restore.after-cleanup.provider.1e1caf8416f4 :: DELETED bucket=qualification-abq-beta-a9442bc8-qualification-archive key=qualification-archive/archive/abq-beta-a9442bc8/qualification-docs/80acaeea-eb4a-3da9-8acc-a680f4d18642/scratch/writes/f41717d7-9272-48ca-a346-6e0bab513242/057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea: recorded version 92460527-e474-44c8-a649-5f2fce84184a -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1); versions left under the key=0
+CHECK_OK restore.after-cleanup.provider.count :: objects=3 live=1 reclaimed=2
+CHECK_OK after-cleanup.entry.alpha-report.v1.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.alpha-report.v1.manifest :: manifest equal; frozen snapshot title=Quarterly report
+CHECK_OK after-cleanup.entry.alpha-report.v1.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK after-cleanup.entry.alpha-report.v2.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.alpha-report.v2.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK after-cleanup.entry.alpha-report.v2.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK after-cleanup.entry.alpha-report.v3.bytes :: renditions=3 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.alpha-report.v3.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK after-cleanup.entry.alpha-report.v3.present :: every PRESENT manifest rendition delivered bytes: 3
+CHECK_OK after-cleanup.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK after-cleanup.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-cleanup.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-cleanup.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-cleanup.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-cleanup.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-cleanup.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-cleanup.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK after-cleanup.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-write.new_version :: version 4 committed after restore; original and attachment re-referenced by the recorded bindings, new markdown object bound
+CHECK_OK after-write.sequence_advanced :: archive_mutation_revision_seq 35 > restored 31; entry revision 35 > 31
+CHECK_OK after-write.readable :: version 4 reads with the shared original, the shared attachment and the new markdown
+CHECK_OK after-write.listing :: versions=[4, 3, 2, 1]
+CHECK_OK after-write.entry.alpha-report.v1.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK after-write.entry.alpha-report.v1.manifest :: manifest equal; frozen snapshot title=Quarterly report
+CHECK_OK after-write.entry.alpha-report.v1.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK after-write.entry.alpha-report.v2.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK after-write.entry.alpha-report.v2.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK after-write.entry.alpha-report.v2.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK after-write.entry.alpha-report.v3.bytes :: renditions=3 byte-equal to the recorded read
+CHECK_OK after-write.entry.alpha-report.v3.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK after-write.entry.alpha-report.v3.present :: every PRESENT manifest rendition delivered bytes: 3
+CHECK_OK after-write.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-write.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK after-write.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-write.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-write.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-write.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-write.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-write.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-write.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-write.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-write.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK after-write.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-write.versions.alpha-report :: recorded manifests retained inside listing [4, 3, 2, 1]
+CHECK_OK after-write.versions.alpha-notes :: recorded manifests retained inside listing [1]
+CHECK_OK after-write.versions.beta-subject :: recorded manifests retained inside listing [2, 1]
+CHECK_OK after-write.versions.beta-draft :: recorded manifests retained inside listing [2]
+CHECK_OK after-write.lifecycle.admitted :: markdown deleted from four retained versions: three distinct objects targeted, state=ARCHIVE_MUTATION_STATE_ADMITTED
+CHECK_OK after-write.lifecycle.completed :: retention cleanup completed at the original backend: state=ARCHIVE_MUTATION_STATE_COMPLETED pending=0 confirmedAbsent=3 statusRevision=3
+CHECK_OK after-write.lifecycle.confirmed :: confirmedAbsent=3
+CHECK_OK after-write.lifecycle.v1 :: markdown tombstoned with reason and provenance; 1 retained sibling rendition(s) byte-equal
+CHECK_OK after-write.lifecycle.v2 :: markdown tombstoned with reason and provenance; 1 retained sibling rendition(s) byte-equal
+CHECK_OK after-write.lifecycle.v3 :: markdown tombstoned with reason and provenance; 2 retained sibling rendition(s) byte-equal
+CHECK_OK after-write.lifecycle.v4 :: markdown tombstoned with reason and provenance; 2 retained sibling rendition(s) byte-equal
+CHECK_OK after-write.lifecycle.bindings :: the shared original (versions 1,2,3,4) and attachment (versions 3,4) stay LIVE; three markdown objects DELETED
+CHECK_OK after-write.lifecycle.provider.52f02ed7d13b :: DELETED bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/markdown/writes/4c5dbb17-bcbc-499b-9409-2a53efbc429d/0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3: recorded version 793ff1b3-4f9a-4be4-a951-cd9536a6c088 -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1); versions left under the key=0
+CHECK_OK after-write.lifecycle.provider.69c612d19090 :: DELETED bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/markdown/writes/acc35a22-5b36-4355-9efc-db6088a639bc/5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f: recorded version 6d00b50f-fef4-4f5c-b93f-19f4fdcd5089 -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1); versions left under the key=0
+CHECK_OK after-write.lifecycle.provider.40b91e17cac5 :: DELETED bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/markdown/writes/e15ceac0-d269-4c29-8836-a1514f399879/70d0e3aaa7e836af5e7ec2849a26c17949e70db9ffb250bcf1196494df1ae64c: recorded version 6866c106-6c44-43e1-a74d-15b57fefa745 -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1); versions left under the key=0
+CHECK_OK after-write.lifecycle.provider.888c117af71e :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/original/writes/9453d112-dcfa-4ef1-a6c2-10689c5cab92/3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 version=eeb7a682-9be6-421d-8f71-63bdf1e3e947 sha256=3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 etag="20cacf4858b088c849d9ae043f0c76d0"
+CHECK_OK after-write.lifecycle.provider.ed32f93c3b7d :: LIVE bucket=qualification-abq-alpha-a9442bc8-qualification-archive key=qualification-archive/archive/abq-alpha-a9442bc8/qualification-docs/b1904641-5171-3112-b095-98ce8d98d522/writes/8d300edc-d2b4-4125-b685-bb977945e566 version=bbc971eb-5695-4ba3-8175-fde8d31c4759 sha256=4d468aa08c6a9c30b1ce6970acf4a3ec01c6b64d2b98d6629d86242f6ac76f38 etag="388d3675ab92c81874766b5a75c539a8"
+CHECK_OK after-write.lifecycle.provider.count :: objects=5 live=2 reclaimed=3
+CHECK_OK after-write.lifecycle.stats :: entries=2 versions=5 retainedBytes=1050645 currentBytes=1050645
+CHECK_OK after-lifecycle.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-lifecycle.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK after-lifecycle.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-lifecycle.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-lifecycle.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-lifecycle.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-lifecycle.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-lifecycle.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK after-lifecycle.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK after-lifecycle.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK after-lifecycle.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK after-lifecycle.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK restore.ready :: recovered host advertised ready after verification, fresh write and lifecycle operation
+CHECK_OK verify.not_ready :: READY is only written by a fully verified host

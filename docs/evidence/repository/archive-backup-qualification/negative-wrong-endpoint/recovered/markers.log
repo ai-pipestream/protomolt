@@ -1,0 +1,2 @@
+CHECK_OK wrong-endpoint.refused :: java.lang.IllegalStateException: Managed backend generation is already bound to another physical profile
+CHECK_OK wrong-endpoint.not_ready :: READY is only written by a fully verified host

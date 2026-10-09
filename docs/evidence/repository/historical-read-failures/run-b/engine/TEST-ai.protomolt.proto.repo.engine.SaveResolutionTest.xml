@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.SaveResolutionTest" tests="23" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.476Z" hostname="krick" time="0.02">
+  <properties/>
+  <testcase name="aPipelineSaveWithoutANodeIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.003"/>
+  <testcase name="aPipelineSaveKeepsItsClusterHint()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="legacyResponseCannotInventAPrefixForNativeRevision()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="aBlankDriveIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="anIntakeSaveWithoutADatasourceIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="aBlankDocumentIdIsMintedAndCarriedIntoTheAddress()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="anIntakeSaveUnderAnotherAccountsGraphIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aBlankClusterHintIsNoHint()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="theProviderMetadataCarriesEveryAddressSegment()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.003"/>
+  <testcase name="anIntakeSaveWithoutAGraphIdSaysWhichOneItWanted()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="theIntakeArmIsChosenByPresenceNotByTheFlagsValue()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="aPipelineSaveWithoutAGraphIdIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="theIntakeGraphIdIsBuiltFromTheAccount()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="anIntakeSaveIsAddressedByItsDatasource()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aSuppliedDocumentIdIsLeftAlone()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aDocumentWithoutOwnershipIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="anIntakeSaveWithAnExplicitlyBlankClusterIsAllowed()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="neitherArmOfTheOriginDiscriminatorIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="anIntakeSaveCarryingAClusterIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aBlankAccountIsRefusedRatherThanDefaulted()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aPipelineSaveMayNotClaimAnIntakeGraph()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <testcase name="aRequestWithoutADocumentIsRefused()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.001"/>
+  <testcase name="aPipelineSaveIsAddressedByItsGraphNode()" classname="ai.protomolt.proto.repo.engine.SaveResolutionTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

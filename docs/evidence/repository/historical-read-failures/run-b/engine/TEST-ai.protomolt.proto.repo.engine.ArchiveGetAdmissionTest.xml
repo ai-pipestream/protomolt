@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.ArchiveGetAdmissionTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.283Z" hostname="krick" time="0.099">
+  <properties/>
+  <testcase name="closeAndSharedBudgetDoNotReleaseLiveConstruction()" classname="ai.protomolt.proto.repo.engine.ArchiveGetAdmissionTest" time="0.032"/>
+  <testcase name="rejectsAggregateMetadataAndInvalidStoredSizesWithoutReservations()" classname="ai.protomolt.proto.repo.engine.ArchiveGetAdmissionTest" time="0.053"/>
+  <testcase name="computesExactProtobufFramingAcrossVarintBoundaries()" classname="ai.protomolt.proto.repo.engine.ArchiveGetAdmissionTest" time="0.002"/>
+  <testcase name="manifestAllowanceSurvivesCloseAndIsSharedAcrossTheWholeCall()" classname="ai.protomolt.proto.repo.engine.ArchiveGetAdmissionTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
