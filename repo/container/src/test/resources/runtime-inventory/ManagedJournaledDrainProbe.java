@@ -540,29 +540,32 @@ public final class ManagedJournaledDrainProbe {
                         () -> expired.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
                 require(repositoryCalls.get()==beforeClientChecks,"client identity and cancellation checks precede network calls");
                 expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(PublishDocumentRequest.getDefaultInstance()));
+                awaitTransportRelease(service,budget);
                 var response=remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE);
                 require(response.hasCommitted(),"transport published a committed receipt");
+                awaitTransportRelease(service,budget);
                 require(repository.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),
                         "library replay equals fresh transport receipt");
                 require(authenticated.publishDocument(request(work)).equals(response),"transport replay equals library receipt");
+                awaitTransportRelease(service,budget);
                 require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote SPI replay equals library receipt");
                 // Client completion may arrive before the server observes call closure;
                 // drain the one-call transport before checking request validation.
                 require(service.awaitIdle(Duration.ofSeconds(5)),
                         "completed publication transport calls release their permits before the next validation assertion");
                 expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(request(work).toBuilder().clearPayloads().build()));
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 corruptWire.set(true);
                 try { remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE); throw new AssertionError("remote client accepted corrupt wire receipt"); }
                 catch (RepositoryException invalid) {
                     require(invalid.code()==RepositoryException.Code.DATA_LOSS && invalid.getMessage().equals("Invalid remote publication receipt"),
                             "client independently checks receipt correspondence after server validation");
                 } finally { corruptWire.set(false); }
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 for (var mapping : Map.of("conflict",RepositoryException.Code.CONFLICT,"unsupported",RepositoryException.Code.UNSUPPORTED).entrySet()) {
                     fault.set(mapping.getKey());
                     expectRepositoryCode(mapping.getValue(),() -> remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
-                    awaitBudgetRelease(budget);
+                    awaitTransportRelease(service,budget);
                 }
                 fault.set("");
                 preserveCredential.set(true);
@@ -572,15 +575,15 @@ public final class ManagedJournaledDrainProbe {
                                 io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(boundHeaders)),clientBudget,Duration.ofSeconds(30),1);
                 require(scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE).equals(response),"scoped authenticated replay preserves receipt");
                 require(received.get().credentialBinding().equals(Optional.of(credential)),"SPI received exact scoped credential");
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 credentialAdministration(tx,credential,"revoke");
                 expectRepositoryCode(RepositoryException.Code.UNAUTHENTICATED,
                         () -> scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE));
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 for (String mode : List.of("committed","rejected")) {
                     fault.set(mode);
                     expectStatus(io.grpc.Status.Code.DATA_LOSS,() -> authenticated.publishDocument(request(work)));
-                    awaitBudgetRelease(budget);
+                    awaitTransportRelease(service,budget);
                 }
                 fault.set("unexpected");
                 try { authenticated.publishDocument(request(work)); throw new AssertionError("Expected sanitized failure"); }
@@ -588,7 +591,7 @@ public final class ManagedJournaledDrainProbe {
                     require(failure.getStatus().getCode()==io.grpc.Status.Code.INTERNAL
                             && "Publication failed".equals(failure.getStatus().getDescription()),"unexpected failure is sanitized");
                 }
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 fault.set("wait");
                 var cancelClient=new java.util.concurrent.atomic.AtomicBoolean();
                 var future=executor.submit(() -> remote.publishDocument(ADMIN,request(work),new RepositoryReadControl() {
@@ -607,14 +610,15 @@ public final class ManagedJournaledDrainProbe {
                     require(budget.reservedBytes()>0,"active cancelled producer retains its byte reservation");
                     expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> authenticated.publishDocument(request(work)));
                 } finally { release.countDown(); }
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 fault.set("");
                 require(authenticated.publishDocument(request(work)).equals(response),"cancelled call released slot for exact replay");
+                awaitTransportRelease(service,budget);
                 require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote client can replay after cancellation");
                 require(clientBudget.reservedBytes()==0,"client released input and response reservations");
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 verifyNetworkParser(service,authentication,headers,request(work),response,repositoryCalls);
-                awaitBudgetRelease(budget);
+                awaitTransportRelease(service,budget);
                 System.out.println("MANAGED_PUBLICATION_TRANSPORT_PARITY_OK");
                 return response.getCommitted();
             } finally {
@@ -651,6 +655,14 @@ public final class ManagedJournaledDrainProbe {
                 require(server.awaitTermination(10,TimeUnit.SECONDS),"Netty publication server stopped");
             }
         }
+    }
+
+    // Client completion may arrive before the server observes call closure. The transport admits
+    // one call, so drain its permit as well as the delivery reservation before the next call.
+    private static void awaitTransportRelease(DocumentPublicationGrpcService service,
+            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) throws Exception {
+        require(service.awaitIdle(Duration.ofSeconds(5)),"completed publication transport calls release their permits");
+        awaitBudgetRelease(budget);
     }
 
     private static void awaitBudgetRelease(ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) throws Exception {
