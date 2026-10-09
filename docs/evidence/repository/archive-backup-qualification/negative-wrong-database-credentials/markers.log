@@ -1,0 +1,8 @@
+CHECK_OK restore.provider_identity :: restored provider volume served at the recorded endpoint http://127.0.0.1:39883
+CHECK_OK restore.pg_restore :: exit=0 into new database protomolt-qualification-3739c746d-d9e4ad37-rst-pg
+CHECK_OK restore.xid_epoch :: next xid 1617 > max stored xid8 0 (no advancement needed)
+CHECK_OK restore.sequences :: sequences={archive_mutation_revision_seq=31, document_mutation_revision_seq=0}
+CHECK_OK restore.migration_level :: V119
+CHECK_OK restore.catalog_identity :: every table's row fingerprint equals the source capture: tables=92 (archive bindings, uploads with provider version ids, references, mutation admission and retention rows included)
+CHECK_OK restore.archive_state :: archive pins, upload states, admitted mutations, pending targets, references, versions and entries equal the source: {archiveReadPins=0, uploadsNotLive=0, uploads=10, admittedMutations=1, pendingTargets=2, versionReferences=11, versions=7, entries=4}
+CHECK_OK wrong-database-credentials.refused :: recovered host exit=1; PostgreSQL refused the credential; no READY

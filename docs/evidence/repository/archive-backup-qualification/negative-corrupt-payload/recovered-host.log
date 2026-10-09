@@ -1,0 +1,61 @@
+CHECK_OK corrupt-payload.provider_observation :: direct GET of the damaged version by its recorded version id -> RetryableException: Failed to read response. (SDK Attempt Count: 4)
+CHECK_OK corrupt-payload.provider_bytes_changed :: the provider no longer serves the recorded digest for the recorded version
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@f8908f6
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.047s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 09, 2026 3:39:12 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 09, 2026 3:39:12 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 09, 2026 3:39:12 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 09, 2026 3:39:12 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33159/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 09, 2026 3:39:12 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 1000 ms, sweep interval 3600000 ms, reconcile disabled)
+CHECK_OK corrupt-payload.read_refused :: getEntry(alpha-report v3) -> UNAVAILABLE [RepositoryException(UNAVAILABLE) <- BlobStoreException(UNAVAILABLE) <- IOException]; the provider aborted the read of the damaged part, no bytes served
+CHECK_OK corrupt-payload.rendition_refused :: getEntry(attachment.bin only) -> UNAVAILABLE
+CHECK_OK corrupt-payload.manifest_intact :: the catalog still attests the recorded digest
+CHECK_OK corrupt-payload.siblings_readable :: sibling renditions still read byte-equal: [markdown, original]
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.alpha-notes.v1.info :: current metadata equal: title=Notes currentVersion=1 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK corrupt-payload.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-subject.v1.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK corrupt-payload.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-subject.v2.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK corrupt-payload.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK corrupt-payload.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK corrupt-payload.entry.beta-draft.v2.info :: current metadata equal: title=Draft currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK corrupt-payload.unaffected.alpha-report.v1 :: versions that do not reference the damaged object read byte-equal
+CHECK_OK corrupt-payload.unaffected.alpha-report.v2 :: versions that do not reference the damaged object read byte-equal
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK corrupt-payload.not_ready :: READY is only written by a fully verified host
+ARCHIVE_BACKUP_QUALIFICATION_RECOVERED_CORRUPT_PAYLOAD_OK
