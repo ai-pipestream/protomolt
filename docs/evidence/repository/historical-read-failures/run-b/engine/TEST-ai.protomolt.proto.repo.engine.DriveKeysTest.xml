@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.DriveKeysTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.651Z" hostname="krick" time="0.005">
+  <properties/>
+  <testcase name="theDocumentKeyRootCarriesTheAccountAndNode()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.001"/>
+  <testcase name="archiveNamespaceReservationCoversHistoricalKeysWithoutInterpretingOpaqueSegments()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="blobsAndDocumentsDoNotShareAKeyspace()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.001"/>
+  <testcase name="anAbsentPrefixLeavesTheKeyAtTheRoot()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="aNestedPrefixIsKept()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="aTrailingSlashDoesNotDoubleUp()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="managedReservationDoesNotDecodeOrReserveSimilarOpaqueKeys()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="aPlainPrefixIsJoinedWithASingleSlash()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.0"/>
+  <testcase name="theDefaultBlobKeyIsContentAddressedAndStable()" classname="ai.protomolt.proto.repo.engine.DriveKeysTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
