@@ -12,7 +12,7 @@ import java.util.*;
 /** Real provider reads, production-JAR observation, and SQL CREATE of historical evidence. */
 public final class HistoricalAssessmentCreationProbe {
     private enum Scenario {
-        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, PUBLIC_RECOVERY, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, OWNED_SCOPED_COLD, OWNED_SCOPED_COLD_RESTART_WRITER,
+        ORDINARY, ORDINARY_LOST_ACK, CLAIMED, MIXED, MIXED_CONTENTION, REVOKED_BEFORE_STAGE, PUBLIC_RECOVERY, PUBLIC_COMMIT_WINNER, INITIAL_OWNER, INITIAL_OWNER_REJECTIONS, OWNED_SCOPED_COLD, OWNED_SCOPED_COLD_RESTART_WRITER,
         STAGE_WINS, CREATE_WINS, ROLLBACK, LOST_ACK, START_ROLLBACK, START_LOST_ACK, START_CONCURRENT, SUCCESSOR, OPAQUE_PUBLICATION,
         PUBLICATION_LOST_ACK, PUBLICATION_EXPIRED, PUBLICATION_REVOKED, MIXED_PUBLICATION, SCOPED_MIXED_PUBLICATION,
         SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_MIXED_SUCCESSOR, OWNED_SCOPED_CREATE_LOST_ACK,
@@ -26,7 +26,7 @@ public final class HistoricalAssessmentCreationProbe {
             DocumentPublishedRevision revision, DocumentPublishedRevision opaqueRevision, javax.sql.DataSource database,
             boolean reconciliationOnly) throws Exception {
         for (var scenario : Scenario.values()) {
-            if (scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || scenario == Scenario.INITIAL_OWNER || scenario == Scenario.OWNED_SCOPED_REJECTION || scenario == Scenario.OWNED_SCOPED_COLD || scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER) continue;
+            if (scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.OWNED_SCOPED_REJECTION || scenario == Scenario.OWNED_SCOPED_COLD || scenario == Scenario.OWNED_SCOPED_COLD_RESTART_WRITER) continue;
             if (scenario == Scenario.OWNED_SCOPED_SELF_SUPERSESSION || scenario == Scenario.OWNED_SCOPED_OVERLAP || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS || scenario == Scenario.OWNED_SCOPED_COMMIT_WINS_OLD_FIRST || scenario == Scenario.OWNED_SCOPED_CLAIM_EXPIRES || scenario == Scenario.OWNED_SCOPED_TAKEOVER_FIRST) continue;
             if ((installedOwner(scenario) && scenario != Scenario.OWNED_SCOPED_MIXED_SUCCESSOR) != reconciliationOnly) continue;
             if (scenario == Scenario.ROLLBACK || scenario == Scenario.LOST_ACK
@@ -68,6 +68,11 @@ public final class HistoricalAssessmentCreationProbe {
         try (var fault = new HistoricalCreateCommitFault(database, true)) {
             run(fault.tx(), provider, source, revision, database, Scenario.INITIAL_OWNER, fault, null, tx);
         }
+    }
+
+    static void initialOwnerRejections(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
+            DocumentPublishedRevision revision, javax.sql.DataSource database) throws Exception {
+        run(tx, provider, source, revision, database, Scenario.INITIAL_OWNER_REJECTIONS, null, null, tx);
     }
 
     static void selfSupersession(Tx tx, AssessmentProviderProbe provider, AssessmentMixedReuseProbe.Source source,
@@ -113,10 +118,10 @@ public final class HistoricalAssessmentCreationProbe {
         boolean lostAck = scenario == Scenario.ORDINARY_LOST_ACK;
         boolean installedOwner = installedOwner(scenario);
         boolean claimed = scenario != Scenario.ORDINARY && !lostAck;
-        boolean mixed = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || scenario == Scenario.INITIAL_OWNER || scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
+        boolean mixed = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.MIXED || scenario == Scenario.MIXED_CONTENTION
                 || scenario == Scenario.MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_PUBLICATION
                 || scenario == Scenario.SCOPED_MIXED_SUCCESSOR || installedOwner;
-        boolean scoped = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || scenario == Scenario.INITIAL_OWNER || scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
+        boolean scoped = scenario == Scenario.PUBLIC_RECOVERY || scenario == Scenario.PUBLIC_COMMIT_WINNER || (scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS) || scenario == Scenario.REVOKED_BEFORE_STAGE || scenario == Scenario.PUBLICATION_REVOKED
                 || scenario == Scenario.SCOPED_MIXED_PUBLICATION || scenario == Scenario.SCOPED_MIXED_SUCCESSOR
                 || installedOwner || gate != null;
         var credential = new RepositoryCredentialBinding("historical-create",
@@ -169,9 +174,10 @@ public final class HistoricalAssessmentCreationProbe {
                 } else if (scenario == Scenario.PUBLIC_COMMIT_WINNER) {
                     HistoricalPublicDispatchProbe.runWinners(tx, provider, caller, command, source.placement(), revision,
                             fragments, budget, database);
-                } else if (scenario == Scenario.INITIAL_OWNER) {
+                } else if ((scenario == Scenario.INITIAL_OWNER || scenario == Scenario.INITIAL_OWNER_REJECTIONS)) {
                     HistoricalInitialOwnerProbe.run(tx, provider, caller, command, policy, source.placement(), revision,
-                            fragments, budget, observation, fault, database);
+                            fragments, budget, observation, fault, database, scenario == Scenario.INITIAL_OWNER_REJECTIONS
+                                    ? HistoricalInitialOwnerProbe.Part.REJECTIONS : HistoricalInitialOwnerProbe.Part.PUBLIC_DISPATCH);
                 } else if (gate != null) {
                     HistoricalCreateWinnerProbe.run(tx, independent, gate, scenario == Scenario.CREATE_WINS, caller,
                             command, policy, source.placement(), history, fragments, budget, observation);

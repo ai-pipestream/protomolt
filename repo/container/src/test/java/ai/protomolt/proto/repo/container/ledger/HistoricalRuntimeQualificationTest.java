@@ -32,10 +32,8 @@ class HistoricalRuntimeQualificationTest {
                 "SCOPED_INITIAL_HISTORICAL_CREATE_RECONCILED_OK", "HISTORICAL_UPLOAD_REPLAY_OK",
                 "HISTORICAL_UPLOAD_REVOKE_OK", "HISTORICAL_UPLOAD_CANCEL_OK", "HISTORICAL_UPLOAD_LOST_PROVIDER_REPLY_OK",
                 "HISTORICAL_UPLOAD_LOST_VERIFICATION_REPLY_OK", "HISTORICAL_UPLOAD_SHUTDOWN_OK", "HISTORICAL_UPLOAD_EXPIRE_OK",
-                "HISTORICAL_UPLOAD_TAKEOVER_OK", "HISTORICAL_RUNTIME_SHUTDOWN_OK", "HISTORICAL_INITIAL_REJECTION_OK",
-                "HISTORICAL_INITIAL_REJECTION_REPLY_LOST_OK", "HISTORICAL_SUCCESSOR_REJECTION_OK",
-                "HISTORICAL_SUCCESSOR_REJECTION_REVOKED_OK", "HISTORICAL_REJECTION_BEATS_CANCELLATION_OK",
-                "HISTORICAL_CANCELLATION_BEFORE_REJECTION_OK", "HISTORICAL_REJECTION_REPLAY_REVOKED_OK",
+                "HISTORICAL_UPLOAD_TAKEOVER_OK", "HISTORICAL_RUNTIME_SHUTDOWN_OK",
+                "HISTORICAL_SUCCESSOR_REJECTION_OK", "HISTORICAL_SUCCESSOR_REJECTION_REVOKED_OK",
                 "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_GRPC_OK", "HISTORICAL_PUBLIC_START_ACK_RECOVERY_OK",
                 "HISTORICAL_PUBLIC_CREATE_ACK_RECOVERY_OK", "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK",
                 "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK", "HISTORICAL_PUBLIC_CANCEL_DRAIN_OK",
@@ -48,6 +46,12 @@ class HistoricalRuntimeQualificationTest {
                 "HISTORICAL_PUBLIC_READ_LIBRARY_DRAIN_OK", "HISTORICAL_PUBLIC_READ_GRPC_DRAIN_OK",
                 "HISTORICAL_PUBLIC_WRITE_LIBRARY_DRAIN_OK", "HISTORICAL_PUBLIC_WRITE_GRPC_DRAIN_OK",
                 "HISTORICAL_PUBLIC_POLICY_LIBRARY_DRAIN_OK", "HISTORICAL_PUBLIC_POLICY_GRPC_DRAIN_OK");
+    }
+    @Test void initialOwnerRejections() throws Exception {
+        run("initial-owner-rejections", "HISTORICAL_INITIAL_OWNER_REJECTIONS_HOST_OK", "SCOPED_INITIAL_HISTORICAL_PUBLICATION_OK",
+                "HISTORICAL_INITIAL_REJECTION_OK", "HISTORICAL_INITIAL_REJECTION_REPLY_LOST_OK",
+                "HISTORICAL_REJECTION_BEATS_CANCELLATION_OK", "HISTORICAL_CANCELLATION_BEFORE_REJECTION_OK",
+                "HISTORICAL_REJECTION_REPLAY_REVOKED_OK");
     }
     @Test void selfSupersession() throws Exception {
         run("self-supersession", "HISTORICAL_SELF_SUPERSESSION_HOST_OK", "SCOPED_HISTORICAL_SELF_SUPERSESSION_INSTALLED_OK",
@@ -166,7 +170,8 @@ class HistoricalRuntimeQualificationTest {
                 String output = Files.readString(log);
                 assertThat(process.exitValue()).as(output).isZero();
                 assertThat(output).contains(markers);
-                if (!"initial-owner".equals(mode) && !"public-commit-winner".equals(mode) && !"public-recovery".equals(mode)) {
+                if (!"initial-owner".equals(mode) && !"initial-owner-rejections".equals(mode)
+                        && !"public-commit-winner".equals(mode) && !"public-recovery".equals(mode)) {
                     assertThat(output).contains("SCOPED_HISTORICAL_PROPOSED_OWNER_INSTALLED_OK",
                             "claim-expires".equals(mode) ? "SCOPED_HISTORICAL_EXPIRED_PUBLISHER_RETIRED_OK" : "SCOPED_INSTALLED_HISTORICAL_TERMINAL_RETIRED_OK");
                 }

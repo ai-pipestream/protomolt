@@ -1,0 +1,18 @@
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.alpha-v1 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.alpha-v1 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.alpha-v1 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.alpha-v1.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.alpha-v1.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.alpha-v2 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.alpha-v2 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.alpha-v2 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.alpha-v2.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.alpha-v2.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.raw_explicit_opaque.beta-v1 :: raw fragments still byte-equal: explicit opaque access, no validity claim
+CHECK_OK corrupt-descriptor.validated_refused.beta-v1 :: readValidated -> DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.validated_classification.beta-v1 :: admission DataLoss type leaked without the SPI DATA_LOSS code: DataLoss: retained schema artifact digest mismatch: d3c36ba5f98a0f7e178ff0e046753a20d6f4e2e1dc974a5e956750b7bd552412
+CHECK_OK corrupt-descriptor.materialized.beta-v1.root :: readMaterialized -> OK; intact root artifact decodes its own retained definition ba05e0e2dbc07edbac083c1be97100c9b58280235d4c124715af628a6286a9ce/protomolt.rehearsal.Record
+CHECK_OK corrupt-descriptor.materialized.beta-v1.nested :: readMaterialized -> DATA_LOSS; damaged artifact, no typed value invented
+CHECK_OK corrupt-descriptor.live_registry_never_consulted :: armed live registry with the correct definition: resolutions=0
+CHECK_OK corrupt-descriptor.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK corrupt-descriptor.not_ready :: READY is only written by a fully verified host

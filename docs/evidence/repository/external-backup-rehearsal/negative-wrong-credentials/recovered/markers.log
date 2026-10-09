@@ -1,0 +1,7 @@
+CHECK_OK wrong-credentials.provider_refuses :: direct GET with the wrong secret -> S3Exception: The request signature we calculated does not match the signature you provided. Check your key and signing method. (Service: S3, Status Code: 403, Request ID: null) (SDK Attempt Count: 1)
+CHECK_OK wrong-credentials.host :: host composition with the wrong provider secret succeeds (no provider call at composition)
+CHECK_OK wrong-credentials.history_refused.alpha-v1 :: readRaw -> BlobStoreException: Object provider rejected the read
+CHECK_OK wrong-credentials.history_refused.alpha-v2 :: readRaw -> BlobStoreException: Object provider rejected the read
+CHECK_OK wrong-credentials.history_refused.beta-v1 :: readRaw -> BlobStoreException: Object provider rejected the read
+CHECK_OK wrong-credentials.schema.no_live_lookup :: live schema resolution attempts=0
+CHECK_OK wrong-credentials.not_ready :: READY is only written by a fully verified host

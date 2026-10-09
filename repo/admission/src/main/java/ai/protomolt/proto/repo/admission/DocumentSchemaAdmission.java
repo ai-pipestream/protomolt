@@ -33,6 +33,12 @@ public final class DocumentSchemaAdmission {
     private static final int MIB = 1024 * 1024;
     private DocumentSchemaAdmission() {}
 
+    /** Retained schema bytes or metadata are absent, corrupt or inconsistent with their recorded identity. */
+    public static class DataLoss extends IllegalStateException {
+        DataLoss(String message) { super(message); }
+        DataLoss(String message, Throwable cause) { super(message, cause); }
+    }
+
     /**
      * Member-wide serialized byte/count budgets, not a heap reservation. V1 additionally
      * limits descriptor artifacts to 16 MiB/256 files/4096 edges/depth 64, structural

@@ -1,0 +1,55 @@
+{
+  "startedAt": "2026-10-08T15:23:52.013928869Z",
+  "root": "/work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T15-23-50.726419172Z",
+  "outcomes": {
+    "run-1": {
+      "passed": true,
+      "backup": "/work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T15-23-50.726419172Z/run-1/backup",
+      "generation": "rehearsal-gen-c16c54be-9701-4c7b-9ff6-4b85d2bac633",
+      "providerPort": 41759,
+      "maxStoredXid": 1083,
+      "tables": 92
+    },
+    "run-2": {
+      "passed": true,
+      "backup": "/work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/backup-rehearsal/2026-10-08T15-23-50.726419172Z/run-2/backup",
+      "generation": "rehearsal-gen-1a53792c-bf1a-4db2-bc03-0bb2c35baebb",
+      "providerPort": 38117,
+      "maxStoredXid": 1083,
+      "tables": 92
+    },
+    "negative-preflight": {
+      "passed": true
+    },
+    "negative-inconsistent-snapshot": {
+      "passed": true
+    },
+    "negative-missing-version": {
+      "passed": true
+    },
+    "negative-corrupt-descriptor": {
+      "passed": true
+    },
+    "negative-missing-descriptor": {
+      "passed": true
+    },
+    "negative-wrong-endpoint": {
+      "passed": true
+    },
+    "negative-new-generation": {
+      "passed": true
+    },
+    "negative-wrong-credentials": {
+      "passed": true
+    },
+    "negative-wrong-database-credentials": {
+      "passed": true
+    },
+    "identity-gap": {
+      "issuedVersion": "47d37e5d-237c-4fd9-bb1d-88fef3f723fb",
+      "passed": true,
+      "recordedVersion": "9ca35e2f-4532-44a8-b9cb-8b0a3ce91a98"
+    }
+  },
+  "finishedAt": "2026-10-08T15:26:18.083014442Z"
+}

@@ -9,8 +9,13 @@ public final class HistoricalOwnerReconciliationHost {
             Class.forName("org.junit.jupiter.api.Test");
             throw new AssertionError("Ambient test framework leaked into reconciliation host");
         } catch (ClassNotFoundException expected) { /* Production classpath only. */ }
+        if (args.length == 2 && args[1].equals("schema-revision")) {
+            schemaRevision(args[0]);
+            return;
+        }
         var check = args.length == 1 ? HistoricalInstalledOwnerProbe.Check.ORDINARY : switch (args[1]) {
             case "initial-owner" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER;
+            case "initial-owner-rejections" -> HistoricalInstalledOwnerProbe.Check.INITIAL_OWNER_REJECTIONS;
             case "public-commit-winner" -> HistoricalInstalledOwnerProbe.Check.PUBLIC_COMMIT_WINNER;
             case "public-recovery" -> HistoricalInstalledOwnerProbe.Check.PUBLIC_RECOVERY;
             case "cold-owner" -> HistoricalInstalledOwnerProbe.Check.COLD;
@@ -36,6 +41,7 @@ public final class HistoricalOwnerReconciliationHost {
         }
         System.out.println(switch (check) {
             case INITIAL_OWNER -> "HISTORICAL_INITIAL_OWNER_HOST_OK";
+            case INITIAL_OWNER_REJECTIONS -> "HISTORICAL_INITIAL_OWNER_REJECTIONS_HOST_OK";
             case PUBLIC_COMMIT_WINNER -> "HISTORICAL_PUBLIC_COMMIT_WINNER_HOST_OK";
             case PUBLIC_RECOVERY -> "HISTORICAL_PUBLIC_RECOVERY_HOST_OK";
             case COLD -> "HISTORICAL_COLD_OWNER_HOST_OK";
@@ -47,5 +53,20 @@ public final class HistoricalOwnerReconciliationHost {
             default -> "HISTORICAL_RECONCILIATION_HOST_OK";
         });
 
+    }
+
+    /** Native schema revisions and the non-reconciliation historical creation cases, in their own process budget. */
+    private static void schemaRevision(String bundle) throws Exception {
+        var observation = DocumentAssessmentRuntimeObserver.observe(Path.of(bundle), () -> {});
+        try (var provider = new AssessmentProviderProbe();
+             var database = new LedgerDatabase(new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
+                     System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")))) {
+            var tx = new Tx(database.entityManagerFactory());
+            var source = AssessmentMixedReuseProbe.publishSource(tx, provider, "schema-revision", true);
+            new DocumentSchemaPolicies(tx).activate(AssessmentCreationProbe.initialPolicy(), 0, () -> {});
+            NativeSchemaRevisionProbe.run(tx, provider, source, database.dataSource());
+            observation.identity(() -> {});
+        }
+        System.out.println("NATIVE_SCHEMA_REVISION_HOST_OK");
     }
 }

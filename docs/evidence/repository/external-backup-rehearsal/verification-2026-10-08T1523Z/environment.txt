@@ -1,0 +1,10 @@
+java.version=25.0.3
+java.vm.name=OpenJDK 64-Bit Server VM
+os=Linux 7.0.0-34-generic amd64
+docker.server=29.8.1
+postgres.image=postgres:18-alpine sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+rustfs.image=rustfs/rustfs:1.0.0-beta.11-preview.1 sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+git.head=d91af584607d84745fd4689c1ea3b7e8f0519255
+git.status=M ../../docs/evidence/repository/external-backup-rehearsal/README.md; M ../../docs/operations/repository-backup-recovery.md; M ../admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentRetainedSchemaAssets.java; M ../admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentSchemaAdmission.java; M build.gradle; M src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalSchemas.java; M src/test/java/ai/protomolt/proto/repo/container/ledger/DocumentHistoricalSchemasIT.java; M src/test/java/ai/protomolt/proto/repo/container/ledger/RepositoryBackupRehearsalIT.java; M src/test/resources/backup-recovery/RepositoryBackupRehearsalRecoveredHost.java; M src/test/resources/backup-recovery/rehearsal.init.gradle;?? ../../INSTRUCTIONS.md
+load.average=5.83 5.42 5.00 8/18734 871407
+bundle=/work/worktrees/protomolt/external-backup-rehearsal/repo/container/build/admission-transport-runtime
