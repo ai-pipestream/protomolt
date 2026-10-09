@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMetadataTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:49.958Z" hostname="krick" time="0.01">
+  <properties/>
+  <testcase name="corruptionNeverBecomesUnknownOrRounded()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMetadataTest" time="0.003"/>
+  <testcase name="preservesExactMicrosNullsAndEmptyStrings()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMetadataTest" time="0.002"/>
+  <testcase name="unsupportedVersionAndCapacityAreExplicit()" classname="ai.protomolt.proto.repo.container.ledger.DocumentHistoricalMetadataTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

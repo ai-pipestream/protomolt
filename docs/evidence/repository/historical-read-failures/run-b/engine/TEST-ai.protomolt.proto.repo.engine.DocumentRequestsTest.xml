@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.DocumentRequestsTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.434Z" hostname="krick" time="0.021">
+  <properties/>
+  <testcase name="theCurrentTimestampCarriesSecondsAndNanos()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.002"/>
+  <testcase name="aCompleteAddressPassesThrough()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="aTokenIsARowOffset()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="aWhitespaceSegmentIsAsAbsentAsAnEmptyOne()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.002"/>
+  <testcase name="aSelfReferencingCauseTerminates()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="anAbsentUuidSaysItIsRequiredAndAMalformedOneShowsWhatItGot()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="anAbsentTokenIsTheFirstPage()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="blankBecomesNullSoAnUnsetProtoStringIsAnUnsetColumn()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="partsBecomeASet()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.003"/>
+  <testcase name="aMissingBlobIsFoundThroughItsWrappers()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="aCyclicCauseChainTerminates()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="anAddressDescribesItselfWithEverySegment()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="aNegativeOffsetIsRefusedAsAnOffsetNotAsANumber()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="aUuidParses()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="aPartFromANewerPeerIsRefusedRatherThanDropped()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="everySegmentIsRequired()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <testcase name="noPartsIsAnEmptySetNotAFailure()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="anUnparseableTokenShowsWhatItGot()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.0"/>
+  <testcase name="theUnspecifiedPartIsRefusedUnderTheCallersFieldName()" classname="ai.protomolt.proto.repo.engine.DocumentRequestsTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
