@@ -24,3 +24,25 @@ Commands use flock -w 1800 /tmp/protomolt-repository-qualification.lock:
 
 The longer lock wait changes no test timeout. Hosted CI has not been verified here.
 Earlier agent evidence is retained without changing the reported skips.
+
+## Hosted failure and lifecycle repair
+
+GitHub run 37987266157 failed build (25) on head a91608a5386f40f8d4ceaacc9959dc163a8f6fbe.
+HistoricalReadFailureIT received RESOURCE_EXHAUSTED while starting the validated
+baseline RPC after the raw baseline RPC. Client completion can precede the
+server's terminal callback and single-call permit release. The sequential test
+transport now waits for that callback before starting another RPC. Capacity stays
+at one; assertions and production code are unchanged. The cancellation follow-up
+also uses this barrier instead of retrying RESOURCE_EXHAUSTED.
+
+The same hosted run failed ApicurioDescriptorLoaderIntegrationTest after a registry
+connection closed during reference loading. No registry code was changed here.
+The local rerun passed all seven cases with zero failures, errors or skips.
+That local result does not establish the cause of the hosted connection failure.
+
+Local repair command (under the same qualification lock):
+
+    ./gradlew :protomolt-repo-container:test --tests '*HistoricalReadFailureIT' :protomolt-schema-apicurio:test --tests '*ApicurioDescriptorLoaderIntegrationTest' --max-workers=2 --console=plain
+
+Both suites passed in 32 seconds. Sol reviewed the terminal callback barrier and
+found no blocker. Hosted checks must pass again before merging.
