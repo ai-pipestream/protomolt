@@ -1,0 +1,102 @@
+CHECK_OK seed.drive.abq-alpha-dfe4cbc7 :: drive=282c7110-3613-3e86-9beb-2b8a39a99ae4 bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive
+CHECK_OK seed.drive.provisioned_versioned.abq-alpha-dfe4cbc7 :: host-provisioned bucket reports versioning ENABLED through the plain S3 API: qualification-abq-alpha-dfe4cbc7-qualification-archive
+CHECK_OK seed.drive.abq-beta-dfe4cbc7 :: drive=f9bc2fe0-d9b7-3a9f-99b7-6ecb05747604 bucket=qualification-abq-beta-dfe4cbc7-qualification-archive
+CHECK_OK seed.drive.provisioned_versioned.abq-beta-dfe4cbc7 :: host-provisioned bucket reports versioning ENABLED through the plain S3 API: qualification-abq-beta-dfe4cbc7-qualification-archive
+CHECK_OK seed.report.v1 :: version 1 with two bound renditions, snapshot title=Quarterly report
+CHECK_OK seed.report.v2.shared_object :: version 2 re-references the unchanged original (object 1b97bfeb-e1c2-417a-866c-6c0e06bbf378) and lands a new markdown object
+CHECK_OK seed.report.v3.streamed :: streamed 1 MiB rendition landed version 3 at key qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/620c363f-3bb2-3e01-8006-485c0c458b23/writes/ddf3f50b-2230-4c55-9296-d4f0ccd69120
+CHECK_OK seed.report.v3.re_referenced :: version 3 re-references both current siblings and binds the streamed object
+CHECK_OK seed.report.dedup :: identical content elided: version stays 3, retained manifest returned
+CHECK_OK seed.notes.v1 :: PRESENT original and EMPTY rendition in one manifest
+CHECK_OK seed.subject.v2.shared_object :: version 2 re-references the original it did not carry
+CHECK_OK seed.pending.admitted :: RTBF rendition deletion admitted: two tombstoned versions, two physical targets pending, no cleanup yet
+CHECK_OK seed.pending.replay_live :: replay while live returns the same logical admission, still pending
+CHECK_OK seed.pending.tombstone.v1 :: tombstone keeps size, digest, binding and reason as provenance
+CHECK_OK seed.pending.tombstone.v2 :: tombstone keeps size, digest, binding and reason as provenance
+CHECK_OK seed.draft.unversioned :: NONE policy: version 1 is not retained (NOT_FOUND), only version 2 lists
+CHECK_OK seed.ledger.bindings.alpha-report :: 4 LIVE bindings under generation qualification-gen-3a56f40a-fa9f-46ec-89b7-e46f6776bb8b, each with a provider version id and mirrored references
+CHECK_OK seed.ledger.bindings.alpha-notes :: 1 LIVE bindings under generation qualification-gen-3a56f40a-fa9f-46ec-89b7-e46f6776bb8b, each with a provider version id and mirrored references
+CHECK_OK seed.ledger.bindings.beta-subject :: 3 LIVE bindings under generation qualification-gen-3a56f40a-fa9f-46ec-89b7-e46f6776bb8b, each with a provider version id and mirrored references
+CHECK_OK seed.ledger.bindings.beta-draft :: 2 LIVE bindings under generation qualification-gen-3a56f40a-fa9f-46ec-89b7-e46f6776bb8b, each with a provider version id and mirrored references
+CHECK_OK seed.ledger.report_sharing :: four physical objects across seven version references; the original is referenced by versions 1,2,3
+CHECK_OK seed.ledger.pending_targets :: two unreferenced LIVE targets fenced retiring without a cleanup attempt; the shared original keeps both references
+CHECK_OK seed.ledger.draft_superseded :: the superseded NONE-policy object stays LIVE and unreferenced for aged reconciliation
+CHECK_OK seed.replay.put.alpha-report :: deduplicated=true version=3; retained manifest returned, no version landed
+CHECK_OK seed.replay.mutation.beta-subject :: same operation id and command: logical admission equal, state=ARCHIVE_MUTATION_STATE_ADMITTED pending=2 statusRevision=1
+CHECK_OK seed.entry.alpha-report.v1.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK seed.entry.alpha-report.v1.manifest :: manifest equal; frozen snapshot title=Quarterly report
+CHECK_OK seed.entry.alpha-report.v1.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK seed.entry.alpha-report.v1.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK seed.entry.alpha-report.v2.bytes :: renditions=2 byte-equal to the recorded read
+CHECK_OK seed.entry.alpha-report.v2.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK seed.entry.alpha-report.v2.present :: every PRESENT manifest rendition delivered bytes: 2
+CHECK_OK seed.entry.alpha-report.v2.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK seed.entry.alpha-report.v3.bytes :: renditions=3 byte-equal to the recorded read
+CHECK_OK seed.entry.alpha-report.v3.manifest :: manifest equal; frozen snapshot title=Revised report
+CHECK_OK seed.entry.alpha-report.v3.present :: every PRESENT manifest rendition delivered bytes: 3
+CHECK_OK seed.entry.alpha-report.v3.info :: current metadata equal: title=Current label currentVersion=3 classification=CLASSIFICATION_STATE_UNCLASSIFIED
+CHECK_OK seed.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK seed.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK seed.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK seed.entry.alpha-notes.v1.info :: current metadata equal: title=Notes currentVersion=1 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK seed.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK seed.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK seed.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK seed.entry.beta-subject.v1.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK seed.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK seed.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK seed.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK seed.entry.beta-subject.v2.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK seed.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK seed.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK seed.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK seed.entry.beta-draft.v2.info :: current metadata equal: title=Draft currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK seed.versions.alpha-report :: listing equal: [3, 2, 1]
+CHECK_OK seed.versions.alpha-notes :: listing equal: [1]
+CHECK_OK seed.versions.beta-subject :: listing equal: [2, 1]
+CHECK_OK seed.versions.beta-draft :: listing equal: [2]
+CHECK_OK seed.stats.qualification-docs.dfe4cbc7 :: entries=2 versions=4 retainedBytes=1050766 currentBytes=1050710
+CHECK_OK seed.stats.qualification-docs.dfe4cbc7 :: entries=1 versions=2 retainedBytes=25 currentBytes=25
+CHECK_OK seed.stats.qualification-scratch.dfe4cbc7 :: entries=1 versions=1 retainedBytes=30 currentBytes=30
+CHECK_OK seed.access.alpha-report.operator :: process authority reads alpha-report
+CHECK_OK seed.access.alpha-report.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-report.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-report.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-report.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK seed.access.alpha-report.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK seed.access.alpha-notes.operator :: process authority reads alpha-notes
+CHECK_OK seed.access.alpha-notes.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-notes.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-notes.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.alpha-notes.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK seed.access.alpha-notes.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK seed.access.beta-subject.operator :: process authority reads beta-subject
+CHECK_OK seed.access.beta-subject.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-subject.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-subject.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-subject.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK seed.access.beta-subject.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK seed.access.beta-draft.operator :: process authority reads beta-draft
+CHECK_OK seed.access.beta-draft.member :: member without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-draft.stranger :: stranger without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-draft.outsider :: outsider without process authority: PERMISSION_DENIED
+CHECK_OK seed.access.beta-draft.member_writes :: put=PERMISSION_DENIED mutation=PERMISSION_DENIED
+CHECK_OK seed.access.beta-draft.cross_account :: the same entry id under the other account: NOT_FOUND
+CHECK_OK seed.access.mutation_lookup :: member=PERMISSION_DENIED other account=NOT_FOUND
+CHECK_OK seed.transport.unauthenticated :: status=UNAUTHENTICATED
+CHECK_OK seed.transport.entry :: authenticated read of alpha-report v1 equals the recorded response
+CHECK_OK seed.transport.mutation_lookup :: authenticated receipt lookup carries the recorded logical admission; state=ARCHIVE_MUTATION_STATE_ADMITTED
+CHECK_OK seed.provider.49eadb7fc0e3 :: LIVE bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/620c363f-3bb2-3e01-8006-485c0c458b23/markdown/writes/7f7a8c7d-cd10-40e6-a51b-98316fad97a9/5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f version=26793116-4253-41a8-af93-6721adae1eb5 sha256=5b24832a3cf4b122755c2548e94fc5b81f0ee977d51d988aa117f18e5ebfec5f etag="a6f6a43006fba9b742bc977c2a3d412e"
+CHECK_OK seed.provider.d09b494dbbeb :: LIVE bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/620c363f-3bb2-3e01-8006-485c0c458b23/markdown/writes/9b387ad8-b7fd-47b6-a165-0edd60f7d427/0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 version=5e351f0a-870f-4ebd-af83-11f64c286d8f sha256=0b61ed7160d074897e6f4bb71b7f013c28b977b9c1f113d649901e402ea8dce3 etag="6ce8784d5c9f8ff85aff70f77ac3416c"
+CHECK_OK seed.provider.baf384bc68b2 :: LIVE bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/620c363f-3bb2-3e01-8006-485c0c458b23/original/writes/287eedd7-e688-46cb-b548-d639120af3cb/3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 version=2f7b8183-59ef-4627-bcd8-20f7cea512ae sha256=3d9a7260fe3fed7c866101cbb7e08ad2524a0f111905db271b18f15d1bc2b944 etag="20cacf4858b088c849d9ae043f0c76d0"
+CHECK_OK seed.provider.66968843a940 :: LIVE bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/620c363f-3bb2-3e01-8006-485c0c458b23/writes/ddf3f50b-2230-4c55-9296-d4f0ccd69120 version=9881c7b4-ee2a-48a4-b643-63cd30e1059c sha256=4d468aa08c6a9c30b1ce6970acf4a3ec01c6b64d2b98d6629d86242f6ac76f38 etag="388d3675ab92c81874766b5a75c539a8"
+CHECK_OK seed.provider.c5512cc55e41 :: LIVE bucket=qualification-abq-alpha-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-alpha-dfe4cbc7/qualification-docs/1b2a3018-acc1-3ab3-88bd-aa1181ef6d04/original/writes/beddf878-e801-4a18-b87a-f4ad9ab99cc9/a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b version=6c962d91-4823-4f3c-bc60-40c6cc823b32 sha256=a7e68fec16c379812ebdea6cfb672ddb712d2c50302996f26bacee6829510a4b etag="5ecdad92022d7c561a7ea5ecd98ec68c"
+CHECK_OK seed.provider.547199d39d41 :: LIVE bucket=qualification-abq-beta-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-beta-dfe4cbc7/qualification-docs/7d6c2c0b-703e-370a-b9d3-9cf1586910fa/original/writes/a4813861-9c53-4495-ae2a-53f4d9a8ca66/e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b version=40260b2b-1850-4df2-abc8-d79c6be6d835 sha256=e46c396df8b8d143196bdcdfef76ed6bc33be1126765281d36bb9cc53663cd2b etag="8e5836ae88382e6698b42f9290f44b0b"
+CHECK_OK seed.provider.447a0d1d9ad5 :: LIVE bucket=qualification-abq-beta-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-beta-dfe4cbc7/qualification-docs/7d6c2c0b-703e-370a-b9d3-9cf1586910fa/scratch/writes/7a702ac9-8c39-493a-aa50-163a0682d5b7/9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a version=0ba90c09-e112-4a46-9fbb-f566df133527 sha256=9a90b090eb864fa0c82c468eccbc2cab06122b5cbf308b35e6ac59141a034e7a etag="1419bee1c5959d8da958079afd3235ab"
+CHECK_OK seed.provider.a16c1c21758e :: LIVE bucket=qualification-abq-beta-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-beta-dfe4cbc7/qualification-docs/7d6c2c0b-703e-370a-b9d3-9cf1586910fa/scratch/writes/a5512f98-4c16-4aa2-be65-c1872d93a7e6/057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea version=77a81483-d2a0-4f4b-9694-cef05448878e sha256=057d82a72ad9f069979440fc1d6ea35555fcbff6a87c2477e2800d23e41524ea etag="6e6fde398a490806f80ede8d6dabb74a"
+CHECK_OK seed.provider.0756490c2917 :: LIVE bucket=qualification-abq-beta-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-beta-dfe4cbc7/qualification-scratch/98b3a0dc-a69e-39ec-a85b-45c966b5701a/original/writes/2e07f667-7057-4fbd-96cf-9583334579e5/fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 version=75b1f8cc-ceea-48ad-9b4b-7872939cec4e sha256=fb78e66e95fb5f477ce9361ac565cd54ac73f72cbd4c62775aa983007c859277 etag="d8750ef2035bfb1962fb8676e8c2a84c"
+CHECK_OK seed.provider.25d46563b8dc :: LIVE bucket=qualification-abq-beta-dfe4cbc7-qualification-archive key=qualification-archive/archive/abq-beta-dfe4cbc7/qualification-scratch/98b3a0dc-a69e-39ec-a85b-45c966b5701a/original/writes/3ff6f74b-88bb-468c-becb-32cbd3e9a365/44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f version=bd6d33d0-4fbf-44b3-b909-912af1347594 sha256=44379b91b417aca9703100a0590c7dfd838682c0c807cbd483a0e0e22b063c1f etag="22b2ddea2fc34916b16cec00fce7d4b1"
+CHECK_OK seed.provider.count :: objects=10 live=10 reclaimed=0
+CHECK_OK seed.host.incarnations_closed :: no ACTIVE reader incarnation after close: {ACTIVE=0, FENCED=0, UNKNOWN=0, QUIESCED=2}
+CHECK_OK seed.host.pins_released :: no archive read pin after close
+CHECK_OK seed.host.uploads_settled :: every upload row is LIVE (no staging, verification or cleanup in flight): {LIVE=10}

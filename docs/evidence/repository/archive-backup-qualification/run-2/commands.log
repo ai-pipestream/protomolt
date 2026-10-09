@@ -1,0 +1,163 @@
+2026-10-09T19:38:27.037965679Z exit=0 $ id -u
+  stdout: 1000
+2026-10-09T19:38:27.040046815Z exit=0 $ id -g
+  stdout: 1000
+2026-10-09T19:38:27.053905501Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-09T19:38:27.081067313Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:27.105071243Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-09T19:38:27.143019041Z exit=0 $ docker network create protomolt-qualification-29c83f8a5-6418cb7b-net
+  stdout: 68dec239fc5a2853f1816840758811a146d001be046cf65f3be8d0f380d3c86a
+2026-10-09T19:38:27.158180300Z exit=0 $ docker volume create protomolt-qualification-29c83f8a5-6418cb7b-src-pg-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-pg-data
+2026-10-09T19:38:27.176411114Z exit=0 $ docker volume create protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data
+2026-10-09T19:38:27.397029633Z exit=0 $ docker run -d --name protomolt-qualification-29c83f8a5-6418cb7b-src-pg --network protomolt-qualification-29c83f8a5-6418cb7b-net -p 127.0.0.1:0:5432 -v protomolt-qualification-29c83f8a5-6418cb7b-src-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: a2e3d3b7e789c3cf3633c4b80cfa03fc011c10b3c5ff05149d7aeb89e2c1e65c
+2026-10-09T19:38:27.416468081Z exit=0 $ docker port protomolt-qualification-29c83f8a5-6418cb7b-src-pg 5432/tcp
+  stdout: 127.0.0.1:33155
+2026-10-09T19:38:27.461176061Z exit=2 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - no response
+2026-10-09T19:38:28.017629871Z exit=1 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - rejecting connections
+2026-10-09T19:38:28.552586370Z exit=0 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-src-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-09T19:38:28.760811123Z exit=0 $ docker run -d --name protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs --network protomolt-qualification-29c83f8a5-6418cb7b-net -p 127.0.0.1:38369:9000 -v protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=qualification-0584ad5b -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: 26218c673fc06de34e9eea1be959b2bcc103e3e5f1c977e2cb9970485e63b597
+2026-10-09T19:38:28.804242119Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:28.841029653Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-09T19:38:34.620105928Z note: ArchiveBackupQualificationSeedHost exit=0 log=seed-host.log
+2026-10-09T19:38:35.269218151Z exit=0 $ docker run --rm --network protomolt-qualification-29c83f8a5-6418cb7b-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-archive-recovery/repo/container/build/archive-backup-qualification/2026-10-09T19-38-04.404898323Z/run-2/backup/sql:/out postgres:18-alpine pg_dump -h protomolt-qualification-29c83f8a5-6418cb7b-src-pg -U repo -d repo --format=custom --no-owner --no-privileges -f /out/ledger.dump
+2026-10-09T19:38:35.649649600Z exit=0 $ docker stop -t 60 protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+2026-10-09T19:38:35.664163384Z exit=0 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-pg --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-09T19:38:35.449888009Z
+2026-10-09T19:38:35.860621227Z exit=0 $ docker stop -t 60 protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+2026-10-09T19:38:35.871461977Z exit=0 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs --format {{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}
+  stdout: exited 0 2026-10-09T19:38:35.696985119Z
+2026-10-09T19:38:36.334423005Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data:/data:ro -v /work/worktrees/protomolt/external-archive-recovery/repo/container/build/archive-backup-qualification/2026-10-09T19-38-04.404898323Z/run-2/backup/provider:/out postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -cf /out/rustfs-data.tar . && chown 1000:1000 /out/rustfs-data.tar
+2026-10-09T19:38:36.374038978Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:36.396010134Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-09T19:38:36.546499543Z exit=0 $ docker rm -f protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+2026-10-09T19:38:36.564006187Z exit=1 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+  stdout: []
+  stderr: error: no such object: protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+2026-10-09T19:38:36.694704682Z exit=0 $ docker rm -f protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+2026-10-09T19:38:36.720335980Z exit=1 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+  stdout: []
+  stderr: error: no such object: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+2026-10-09T19:38:36.738436818Z exit=1 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-pg --format {{.Id}}
+  stderr: error: no such object: protomolt-qualification-29c83f8a5-6418cb7b-src-pg
+2026-10-09T19:38:36.757810612Z exit=1 $ docker inspect protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs --format {{.Id}}
+  stderr: error: no such object: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs
+2026-10-09T19:38:37.192940925Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: 2c2d742602ac7630861d1ed0fdd556e675e5b35705f94d89284089b44c00d8c5
+2026-10-09T19:38:37.212884297Z exit=0 $ docker volume create protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data
+2026-10-09T19:38:37.228906364Z exit=0 $ docker volume create protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data
+2026-10-09T19:38:37.697449578Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-09T19:38:38.150526256Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data:/data:ro postgres:18-alpine sh -c find /data -mindepth 1 | head -1
+2026-10-09T19:38:38.628810480Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data:/data -v /work/worktrees/protomolt/external-archive-recovery/repo/container/build/archive-backup-qualification/2026-10-09T19-38-04.404898323Z/run-2/backup/provider:/in:ro postgres:18-alpine sh -c set -e; cd /data && tar --numeric-owner -xf /in/rustfs-data.tar
+2026-10-09T19:38:38.834589108Z exit=0 $ docker run -d --name protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs --network protomolt-qualification-29c83f8a5-6418cb7b-net -p 127.0.0.1:38369:9000 -v protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=qualification-0584ad5b -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+  stdout: f456029fdddfcc885572c68df97fb35041c562e913e7220ef290308b20624b0d
+2026-10-09T19:38:39.053769438Z exit=0 $ docker run -d --name protomolt-qualification-29c83f8a5-6418cb7b-rst-pg --network protomolt-qualification-29c83f8a5-6418cb7b-net -p 127.0.0.1:0:5432 -v protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data:/var/lib/postgresql -e POSTGRES_USER=repo -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_DB=repo postgres:18-alpine -c fsync=on
+  stdout: 9ccf26d01644f10da2bba47e366e1b1409e911495b75c067fd477fac2be15083
+2026-10-09T19:38:39.067693398Z exit=0 $ docker port protomolt-qualification-29c83f8a5-6418cb7b-rst-pg 5432/tcp
+  stdout: 127.0.0.1:33156
+2026-10-09T19:38:39.106897521Z exit=2 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - no response
+2026-10-09T19:38:39.646390178Z exit=0 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-09T19:38:40.184914333Z exit=0 $ docker exec protomolt-qualification-29c83f8a5-6418cb7b-rst-pg pg_isready -U repo -d repo
+  stdout: /var/run/postgresql:5432 - accepting connections
+2026-10-09T19:38:42.123110605Z exit=0 $ docker run --rm --network protomolt-qualification-29c83f8a5-6418cb7b-net --user 1000:1000 -e PGPASSWORD -v /work/worktrees/protomolt/external-archive-recovery/repo/container/build/archive-backup-qualification/2026-10-09T19-38-04.404898323Z/run-2/backup/sql:/in:ro postgres:18-alpine pg_restore -h protomolt-qualification-29c83f8a5-6418cb7b-rst-pg -U repo -d repo --exit-on-error --no-owner --no-privileges /in/ledger.dump
+2026-10-09T19:38:47.050768988Z note: ArchiveBackupQualificationRecoveredHost exit=0 log=recovered-host.log
+2026-10-09T19:38:47.510755431Z exit=0 $ docker run --rm -v protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data:/data:ro postgres:18-alpine sh -c cd /data && find . -type f | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -d' ' -f1
+  stdout: 2c2d742602ac7630861d1ed0fdd556e675e5b35705f94d89284089b44c00d8c5
+2026-10-09T19:38:47.527711495Z exit=0 $ docker logs protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs
+  stdout: Initializing data directories: /data
+          Initializing log directory: /logs
+          Starting: /usr/bin/rustfs /data
+2026-10-09T19:38:47.541045178Z exit=0 $ docker logs protomolt-qualification-29c83f8a5-6418cb7b-rst-pg
+  stdout: The files belonging to this database system will be owned by user "postgres".
+          This user must also own the server process.
+          
+          The database cluster will be initialized with locale "en_US.utf8".
+          The default database encoding has accordingly been set to "UTF8".
+          The default text search configuration will be set to "english".
+          
+          Data page checksums are enabled.
+          
+          fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok
+          creating subdirectories ... ok
+          selecting dynamic shared memory implementation ... posix
+          selecting default "max_connections" ... 100
+          selecting default "shared_buffers" ... 128MB
+          selecting default time zone ... UTC
+          creating configuration files ... ok
+          running bootstrap script ... ok
+          performing post-bootstrap initialization ... ok
+          syncing data to disk ... ok
+          
+          
+          Success. You can now start the database server using:
+          
+              pg_ctl -D /var/lib/postgresql/18/docker -l logfile start
+          
+          waiting for server to start....2026-10-09 19:38:39.530 UTC [52] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-09 19:38:39.536 UTC [52] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-09 19:38:39.552 UTC [58] LOG:  database system was shut down at 2026-10-09 19:38:39 UTC
+          2026-10-09 19:38:39.559 UTC [52] LOG:  database system is ready to accept connections
+           done
+          server started
+          2026-10-09 19:38:39.644 UTC [73] FATAL:  database "repo" does not exist
+          CREATE DATABASE
+          
+          
+          /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+          
+          waiting for server to shut down....2026-10-09 19:38:39.664 UTC [52] LOG:  received fast shutdown request
+          2026-10-09 19:38:39.669 UTC [52] LOG:  aborting any active transactions
+          2026-10-09 19:38:39.670 UTC [52] LOG:  background worker "logical replication launcher" (PID 61) exited with exit code 1
+          2026-10-09 19:38:39.670 UTC [56] LOG:  shutting down
+          2026-10-09 19:38:39.675 UTC [56] LOG:  checkpoint starting: shutdown immediate
+          2026-10-09 19:38:39.733 UTC [56] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.016 s, sync=0.026 s, total=0.064 s; sync files=303, longest=0.005 s, average=0.001 s; distance=4362 kB, estimate=4362 kB; lsn=0/1BA8858, redo lsn=0/1BA8858
+          2026-10-09 19:38:39.750 UTC [52] LOG:  database system is shut down
+           done
+          server stopped
+          
+          PostgreSQL init process complete; ready for start up.
+  stderr: sh: locale: not found
+          2026-10-09 19:38:39.257 UTC [46] WARNING:  no usable system locales were found
+          initdb: warning: enabling "trust" authentication for local connections
+          initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+          2026-10-09 19:38:39.784 UTC [1] LOG:  starting PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+          2026-10-09 19:38:39.784 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+          2026-10-09 19:38:39.784 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+          2026-10-09 19:38:39.794 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+          2026-10-09 19:38:39.805 UTC [81] LOG:  database system was shut down at 2026-10-09 19:38:39 UTC
+          2026-10-09 19:38:39.811 UTC [1] LOG:  database system is ready to accept connections
+2026-10-09T19:38:47.939250837Z exit=0 $ docker rm -f protomolt-qualification-29c83f8a5-6418cb7b-rst-pg
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-pg
+2026-10-09T19:38:48.328961212Z exit=0 $ docker rm -f protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs
+2026-10-09T19:38:48.344486740Z exit=0 $ docker volume rm -f protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-rustfs-data
+2026-10-09T19:38:48.372847089Z exit=0 $ docker volume rm -f protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-rst-pg-data
+2026-10-09T19:38:48.389505038Z exit=0 $ docker volume rm -f protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-rustfs-data
+2026-10-09T19:38:48.417342908Z exit=0 $ docker volume rm -f protomolt-qualification-29c83f8a5-6418cb7b-src-pg-data
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-src-pg-data
+2026-10-09T19:38:48.575043803Z exit=0 $ docker network rm protomolt-qualification-29c83f8a5-6418cb7b-net
+  stdout: protomolt-qualification-29c83f8a5-6418cb7b-net

@@ -1,0 +1,24 @@
+CHECK_OK missing-version.provider_version_absent :: GET recorded version -> NoSuchKeyException: The specified key does not exist. (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+CHECK_OK missing-version.latest_differs :: a newer latest version exists under the same key: b783dcc6-5920-4d1a-9605-6b3299bad60d
+CHECK_OK missing-version.read_refused :: getEntry(alpha-report v1) -> DATA_LOSS [RepositoryException(DATA_LOSS) <- BlobNotFoundException <- NoSuchKeyException]; the newer version was not substituted
+CHECK_OK missing-version.manifest_intact :: the catalog still describes the version exactly
+CHECK_OK missing-version.siblings_readable :: sibling renditions of the same version still read byte-equal: [original]
+CHECK_OK missing-version.entry.alpha-notes.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK missing-version.entry.alpha-notes.v1.manifest :: manifest equal; frozen snapshot title=Notes
+CHECK_OK missing-version.entry.alpha-notes.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK missing-version.entry.alpha-notes.v1.info :: current metadata equal: title=Notes currentVersion=1 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK missing-version.entry.beta-subject.v1.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK missing-version.entry.beta-subject.v1.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK missing-version.entry.beta-subject.v1.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK missing-version.entry.beta-subject.v1.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK missing-version.entry.beta-subject.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK missing-version.entry.beta-subject.v2.manifest :: manifest equal; frozen snapshot title=Subject record
+CHECK_OK missing-version.entry.beta-subject.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK missing-version.entry.beta-subject.v2.info :: current metadata equal: title=Subject record currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK missing-version.entry.beta-draft.v2.bytes :: renditions=1 byte-equal to the recorded read
+CHECK_OK missing-version.entry.beta-draft.v2.manifest :: manifest equal; frozen snapshot title=Draft
+CHECK_OK missing-version.entry.beta-draft.v2.present :: every PRESENT manifest rendition delivered bytes: 1
+CHECK_OK missing-version.entry.beta-draft.v2.info :: current metadata equal: title=Draft currentVersion=2 classification=CLASSIFICATION_STATE_IDENTIFIED
+CHECK_OK missing-version.unaffected.alpha-report.v2 :: other versions of the same entry read byte-equal
+CHECK_OK missing-version.unaffected.alpha-report.v3 :: other versions of the same entry read byte-equal
+CHECK_OK missing-version.not_ready :: READY is only written by a fully verified host

@@ -1,0 +1,23 @@
+2026-10-09T19:38:05.354950774Z exit=0 $ id -u
+  stdout: 1000
+2026-10-09T19:38:05.357441864Z exit=0 $ id -g
+  stdout: 1000
+2026-10-09T19:38:05.371096150Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-09T19:38:05.391901156Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:05.411150941Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-09T19:38:05.423653029Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-09T19:38:05.446903789Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:05.464772994Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+2026-10-09T19:38:05.466533913Z exit=0 $ git rev-parse HEAD
+  stdout: 6c5cff4275362b3e084c7a1e1951387b943ccfff
+2026-10-09T19:38:05.494715877Z exit=0 $ git status --short
+  stdout: ?? ../../INSTRUCTIONS.md
+          ?? ../../docs/testing/archive-backup-qualification.md
+2026-10-09T19:38:05.496752087Z exit=0 $ cat /proc/loadavg
+  stdout: 3.58 3.15 3.63 2/16200 2529101

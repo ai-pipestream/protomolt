@@ -1,0 +1,10 @@
+2026-10-09T19:38:48.581600832Z exit=0 $ id -u
+  stdout: 1000
+2026-10-09T19:38:48.584314734Z exit=0 $ id -g
+  stdout: 1000
+2026-10-09T19:38:48.601739534Z exit=0 $ docker version --format {{.Server.Version}}
+  stdout: 29.8.1
+2026-10-09T19:38:48.622075689Z exit=0 $ docker image inspect postgres:18-alpine --format {{.Id}}
+  stdout: sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+2026-10-09T19:38:48.640805486Z exit=0 $ docker image inspect rustfs/rustfs:1.0.0-beta.11-preview.1 --format {{.Id}}
+  stdout: sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
