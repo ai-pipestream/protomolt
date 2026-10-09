@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.BlobOperationsTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.384Z" hostname="krick" time="0.225">
+  <properties/>
+  <testcase name="deleteWithoutADriveIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.005"/>
+  <testcase name="getWithoutAnObjectKeyIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="deleteWithoutAnObjectKeyIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.0"/>
+  <testcase name="conditionalRequestsRejectInvalidContractsBeforeAccessingStorage()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.169"/>
+  <testcase name="getWithoutAStorageRefIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="getWithoutADriveIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="deleteWithoutAStorageRefIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.0"/>
+  <testcase name="putWithABlankDriveIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.002"/>
+  <testcase name="getAndDeleteRefuseTheSameReferencesTheSameWay()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="rawOperationsRejectNonAdministrativeCallersBeforeStorageAccess()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="putWithoutADriveIsRefused()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.001"/>
+  <testcase name="reservedMutationsAreRejectedBeforeDriveLookupForEverySegmentPosition()" classname="ai.protomolt.proto.repo.engine.BlobOperationsTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

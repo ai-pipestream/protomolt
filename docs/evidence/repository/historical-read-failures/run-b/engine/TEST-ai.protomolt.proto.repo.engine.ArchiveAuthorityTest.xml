@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.ArchiveAuthorityTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-09T18:40:10.248Z" hostname="krick" time="0.097">
+  <properties/>
+  <testcase name="scopedCallerCannotReachArchiveStorage()" classname="ai.protomolt.proto.repo.engine.ArchiveAuthorityTest" time="0.088"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>
