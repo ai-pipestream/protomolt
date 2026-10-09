@@ -101,3 +101,8 @@ tasks.named('test') {
     outputs.upToDateWhen { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
     outputs.cacheIf { !partialBenchmark.get() && !replicaBenchmark.get() && !archiveReadBenchmark.get() }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/ArchiveReadBenchmarkIT*', ['PROTOMOLT_ARCHIVE_READ_BENCHMARK=true'])
+optInSuite('**/DocumentPartialBenchmarkIT*', ['PROTOMOLT_PARTIAL_BENCHMARK=true'])
+optInSuite('**/RepositoryScaleBenchmarkIT*', ['PROTOMOLT_REPLICA_BENCHMARK=true'])

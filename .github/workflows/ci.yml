@@ -238,6 +238,10 @@ jobs:
         run: docker compose -f docker-compose.integration.yml up -d --wait
 
       - name: Run integration tests
+        # The registry suites are opt-in (optInSuite in the root build.gradle); this job starts
+        # the registries, so it opts in. Without the flag the build job leaves them out.
+        env:
+          PROTOMOLT_INTEGRATION_REGISTRIES: 'true'
         run: >
           ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-confluent:test
           :protomolt-search-index-solr:test :protomolt-search-index-opensearch:test

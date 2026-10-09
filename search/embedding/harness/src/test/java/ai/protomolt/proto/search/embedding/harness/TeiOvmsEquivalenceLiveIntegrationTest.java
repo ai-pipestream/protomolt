@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Live equivalence check: TEI and OpenVINO Model Server serving the same embedding model must
@@ -46,13 +46,13 @@ class TeiOvmsEquivalenceLiveIntegrationTest {
         String teiTarget = System.getenv(TeiEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE);
         String ovmsTarget = System.getenv(OvmsEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE);
         String ovmsModel = System.getenv(OvmsEmbeddingProvider.MODEL_ENVIRONMENT_VARIABLE);
-        assumeTrue(teiTarget != null && !teiTarget.isBlank(),
+        assertTrue(teiTarget != null && !teiTarget.isBlank(),
                 "Set " + TeiEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE
                         + " to the TEI server's host:port to run this test");
-        assumeTrue(ovmsTarget != null && !ovmsTarget.isBlank(),
+        assertTrue(ovmsTarget != null && !ovmsTarget.isBlank(),
                 "Set " + OvmsEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE
                         + " to the OVMS server's host:port to run this test");
-        assumeTrue(ovmsModel != null && !ovmsModel.isBlank(),
+        assertTrue(ovmsModel != null && !ovmsModel.isBlank(),
                 "Set " + OvmsEmbeddingProvider.MODEL_ENVIRONMENT_VARIABLE
                         + " to the servable name to run this test");
 

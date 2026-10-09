@@ -38,3 +38,6 @@ tasks.withType(Test).configureEach {
         systemProperty 'protomolt.it.apicurio.url', apicurioUrl.get()
     }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/*IntegrationTest*', ['PROTOMOLT_INTEGRATION_REGISTRIES=true'])

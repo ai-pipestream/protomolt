@@ -76,3 +76,6 @@ processResources {
         from("${rootDir}/apps/console/dist")
     }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/LiveStructuredInferenceIT*', ['PROTOMOLT_LIVE_STRUCTURED_ENDPOINT'])

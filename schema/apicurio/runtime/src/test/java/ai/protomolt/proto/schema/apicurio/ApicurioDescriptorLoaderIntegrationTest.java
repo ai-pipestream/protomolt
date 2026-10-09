@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Integration tests for {@link ApicurioDescriptorLoader} against a live Apicurio Registry 3.x
@@ -190,8 +190,8 @@ class ApicurioDescriptorLoaderIntegrationTest {
     void setUp() throws Exception {
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
         registryUrl = configuredRegistryUrl(REGISTRY.getUrl());
-        assumeTrue(registryReachable(),
-                "Apicurio Registry not reachable at " + registryUrl + " - skipping integration tests");
+        assertTrue(registryReachable(),
+                "Apicurio Registry not reachable at " + registryUrl + " - start them with docker-compose.integration.yml");
 
         // Same client construction path as ApicurioDescriptorLoaderProducer; the SDK
         // normalizes the base URL by appending /apis/registry/v3 when missing.

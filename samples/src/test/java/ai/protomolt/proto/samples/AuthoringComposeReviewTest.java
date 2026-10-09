@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Packaged-browser proof of persisted review failure, bound retry, and stale refusal. */
 @Tag("integration")
@@ -58,8 +58,8 @@ class AuthoringComposeReviewTest {
     void packagedBrowserShowsFailedReviewAndRetriesOnlyCurrentInvocation() throws Exception {
         String authoringImage = System.getenv("PROTOMOLT_AUTHORING_REVIEW_IMAGE");
         String repositoryImage = System.getenv("PROTOMOLT_REPO_REVIEW_IMAGE");
-        assumeTrue(authoringImage != null || repositoryImage != null,
-                "Set both digest image inputs to opt into the packaged review gate");
+        assertTrue(authoringImage != null || repositoryImage != null,
+                "Set both digest image inputs for the packaged review gate");
         assertThat(authoringImage).isNotNull();
         assertThat(repositoryImage).isNotNull();
         assertDigestImage(authoringImage);

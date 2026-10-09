@@ -7,7 +7,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The provider against a live OVMS embeddings servable: a BYTES string batch goes out and
@@ -25,10 +25,10 @@ class OvmsLiveIntegrationTest {
     void liveServableEmbedsABatchIntoABehavingVectorSpace() {
         String target = System.getenv(OvmsEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE);
         String model = System.getenv(OvmsEmbeddingProvider.MODEL_ENVIRONMENT_VARIABLE);
-        assumeTrue(target != null && !target.isBlank(),
+        assertTrue(target != null && !target.isBlank(),
                 "Set " + OvmsEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE
                         + " to the OVMS server's host:port to run this test");
-        assumeTrue(model != null && !model.isBlank(),
+        assertTrue(model != null && !model.isBlank(),
                 "Set " + OvmsEmbeddingProvider.MODEL_ENVIRONMENT_VARIABLE
                         + " to the servable name to run this test");
 

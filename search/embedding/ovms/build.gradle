@@ -33,3 +33,6 @@ protobuf {
         }
     }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/OvmsLiveIntegrationTest*', ['PROTOMOLT_OVMS_TARGET', 'PROTOMOLT_OVMS_MODEL'])

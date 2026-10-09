@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * One cheap read against the real Confluence workspace, proving the facade
@@ -42,8 +42,8 @@ class ConfluenceLiveSmokeIT {
                 ConfluenceConnectorConfig.ENV_EMAIL_ALIAS);
         String token = credential(ConfluenceConnectorConfig.ENV_API_TOKEN,
                 ConfluenceConnectorConfig.ENV_API_TOKEN_ALIAS);
-        assumeTrue(email != null && token != null,
-                "no live Confluence credentials in the environment; skipping");
+        assertTrue(email != null && token != null,
+                "live Confluence credentials are required in the environment");
         String baseUrl = System.getenv(ConfluenceConnectorConfig.ENV_BASE_URL);
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = DEFAULT_BASE_URL;

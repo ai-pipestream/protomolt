@@ -7,7 +7,6 @@ import ai.protomolt.proto.inference.v1.ModelCapabilities;
 import ai.protomolt.proto.inference.v1.ModelEntry;
 import ai.protomolt.proto.inference.v1.Role;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,7 +15,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * INFERENCE_LIVE_OVMS_URL (e.g. http://krick-1:9300) and
  * INFERENCE_LIVE_OVMS_MODEL (e.g. OpenVINO/gemma-3-12b-it-int4-ov).
  */
-@EnabledIfEnvironmentVariable(named = "INFERENCE_LIVE_OVMS_URL", matches = ".+")
 class OpenVinoProviderLiveIT {
 
     private final OpenVinoProvider provider = new OpenVinoProvider();

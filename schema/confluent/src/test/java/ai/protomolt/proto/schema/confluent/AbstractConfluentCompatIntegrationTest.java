@@ -27,7 +27,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Integration tests for the two Confluent-compatible loaders against a live registry, run once
@@ -98,8 +98,8 @@ abstract class AbstractConfluentCompatIntegrationTest {
     @BeforeAll
     void setUp() throws Exception {
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-        assumeTrue(registryReachable(),
-                "Schema registry not reachable at " + registryBaseUrl() + " - skipping integration tests");
+        assertTrue(registryReachable(),
+                "Schema registry not reachable at " + registryBaseUrl() + " - start them with docker-compose.integration.yml");
         registerProtobufSchema(subject, PERSON_PROTO, null);
         registerProtobufSchema(teamSubject, TEAM_PROTO,
                 "[{\"name\":\"person.proto\",\"subject\":\"" + subject + "\",\"version\":1}]");

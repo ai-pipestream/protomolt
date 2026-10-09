@@ -106,3 +106,6 @@ tasks.register('liveSmokeTest', Test) {
         includeTestsMatching 'ai.protomolt.proto.acquire.confluence.ConfluenceLiveSmokeIT'
     }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/ConfluenceLiveSmokeIT*', ['CONFLUENCE_EMAIL|CONFLUENCE_USER', 'CONFLUENCE_API_TOKEN|CONFLUENCE_TOKEN'])

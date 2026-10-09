@@ -14,3 +14,6 @@ dependencies {
 
     testImplementation libs.slf4j.simple
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/OpenVinoProviderLiveIT*', ['INFERENCE_LIVE_OVMS_URL'])
