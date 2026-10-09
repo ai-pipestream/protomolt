@@ -150,7 +150,8 @@ Redis archive suite in `protomolt-repo-container` and `protomolt-repo-service`.
 
 - Archive ACLs do not exist; the matrix pins the process-authority contract.
 - No `xid8` value is stored by archive tables; the counter check is trivial here.
-- The ordinary `test` task reports the class skipped; excluding it needs a
-  `build.gradle` line (shared file, requested from the coordinator).
+- The archived original run reported an opt-in skip. Coordinator integration now
+  excludes the class from ordinary tests and re-includes it through the dedicated
+  init script; missing runtime wiring fails instead of skipping.
 - Not covered: Redis profiles, LocalStack, online capture, provider identity remapping,
   hosted CI, performance, `PruneVersions`.

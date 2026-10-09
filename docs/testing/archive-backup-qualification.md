@@ -208,6 +208,8 @@ changed here.
 - When a recovered host exits through a failed check, the interrupted lifecycle lanes log
   "Closed by interrupt" JDBC warnings during shutdown; the passing hosts show none. This is
   shutdown noise of the lanes' one-second intervals, not a data effect.
+- Ordinary tests exclude this class and the dedicated init script re-includes it. Missing
+  runtime wiring is an assertion failure, not a skip.
 
 ## Affected archive suites
 
