@@ -1,0 +1,4 @@
+lock_wait_attempt_1=2026-10-09T19:20:57Z
+lock_timeout_attempt_1=2026-10-09T19:30:57Z
+lock_wait_attempt_2=2026-10-09T19:30:57Z
+acquired_on_attempt=2

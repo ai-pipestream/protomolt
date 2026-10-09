@@ -1,0 +1,18 @@
+Exception in thread "main" ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalFailure: Cannot connect to jdbc:postgresql://127.0.0.1:33163/repo
+	at ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalLedger.<init>(RepositoryBackupRehearsalLedger.java:29)
+	at ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalLedger.fromEnvironment(RepositoryBackupRehearsalLedger.java:34)
+	at ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationRecoveredHost.verifyCatalog(ArchiveBackupQualificationRecoveredHost.java:90)
+	at ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationRecoveredHost.verify(ArchiveBackupQualificationRecoveredHost.java:143)
+	at ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationRecoveredHost.main(ArchiveBackupQualificationRecoveredHost.java:58)
+Caused by: org.postgresql.util.PSQLException: FATAL: password authentication failed for user "repo"
+	at org.postgresql.core.v3.ConnectionFactoryImpl.doAuthentication(ConnectionFactoryImpl.java:837)
+	at org.postgresql.core.v3.ConnectionFactoryImpl.tryConnect(ConnectionFactoryImpl.java:309)
+	at org.postgresql.core.v3.ConnectionFactoryImpl.openConnectionImpl(ConnectionFactoryImpl.java:367)
+	at org.postgresql.core.ConnectionFactory.openConnection(ConnectionFactory.java:52)
+	at org.postgresql.jdbc.PgConnection.<init>(PgConnection.java:295)
+	at org.postgresql.Driver.makeConnection(Driver.java:437)
+	at org.postgresql.Driver.connect(Driver.java:305)
+	at java.sql/java.sql.DriverManager.getConnection(DriverManager.java:613)
+	at java.sql/java.sql.DriverManager.getConnection(DriverManager.java:199)
+	at ai.protomolt.proto.repo.container.ledger.RepositoryBackupRehearsalLedger.<init>(RepositoryBackupRehearsalLedger.java:26)
+	... 4 more

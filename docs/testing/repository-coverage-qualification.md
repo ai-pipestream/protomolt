@@ -26,10 +26,12 @@ All classes live in `repo/container/src/test/java/ai/protomolt/proto/repo/contai
 | `RepositoryCoverageQualificationAncestryLimitIT` | 2 | 64 accepted and 65 refused through the supported protocol; separate labeled adversarial SQL guard checks |
 | `RepositoryCoverageQualificationBatchIT` | 2 | partial batch commit and retry, whole-account observation and keyset order |
 
-Run them with:
+Run them with the shared host lock. The wait bound exceeds the longest single holder of
+the lock, `admissionStorageTest` at about twenty minutes; a shorter bound expires behind it
+and produces no result.
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock ./gradlew \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock ./gradlew \
  :protomolt-repo-container:test --tests '*RepositoryCoverageQualification*' \
  --max-workers=2 --console=plain
 ```

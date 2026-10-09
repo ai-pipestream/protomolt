@@ -100,17 +100,21 @@ Serialise heavy runs on a shared host with the common advisory lock. Gradle neve
 replays a cached benchmark (the task opts out of up-to-date checks and the build
 cache). Each command below runs the correctness gate first.
 
+Every command takes the shared host lock. The wait bound exceeds the longest single holder
+of the lock, `admissionStorageTest` at about twenty minutes; a shorter bound expires behind
+it and produces no result.
+
 Correctness gate only:
 
 ```sh
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew :protomolt-repo-container:nativeReplicaTest --max-workers=2 --console=plain
 ```
 
 Measured comparison (one repetition; run it three times):
 
 ```sh
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew -I docs/evidence/repository/external-rustfs-scaling/RepositoryScalingBenchmark.init.gradle \
   :protomolt-repo-container:nativeReplicaBenchmark \
   -PnativeBenchmarkJournaled=true -PnativeBenchmarkPlan=mirrored \

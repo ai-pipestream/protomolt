@@ -1,0 +1,36 @@
+// Dedicated wiring for the ArchiveBackupQualification suite (archive-entry backup
+// and recovery qualification). Its seed and recovered hosts run as child JVMs on
+// the production transport runtime only; this script resolves that runtime and
+// the admission inventory bundle without touching shared build files, and opts
+// the suite in. Used only via -I on the documented command; never affects other
+// tasks. The same shape as backup-recovery/rehearsal.init.gradle.
+gradle.projectsEvaluated { g ->
+    def p = g.rootProject.project(':protomolt-repo-container')
+    def hostClasspath = p.objects.fileCollection()
+    hostClasspath.from(p.tasks.named('jar').map { it.archiveFile }, p.configurations.named('assessmentTransportRuntime'))
+    p.tasks.register('archiveBackupQualificationHostClasspath') {
+        def out = p.layout.buildDirectory.file('archive-backup-qualification/host-classpath.txt')
+        outputs.file(out)
+        doLast {
+            out.get().asFile.parentFile.mkdirs()
+            out.get().asFile.text = hostClasspath.files.join(File.pathSeparator) + '\n'
+        }
+    }
+    p.tasks.named('test') {
+        dependsOn 'admissionTransportRuntimeInventory', 'archiveBackupQualificationHostClasspath'
+        // build.gradle keeps the qualification out of the ordinary test task; this script is its only entry.
+        setExcludes(excludes.findAll { it != '**/ArchiveBackupQualificationIT*' })
+        // A qualification run is evidence of this run; never replay a cached or up-to-date result.
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        // The suite skips itself unless this property says the script wired its runtime.
+        systemProperty 'protomolt.test.archiveBackupQualification', 'true'
+        // -Pprotomolt.qualificationKeep=true leaves each case's containers and volumes for inspection.
+        systemProperty 'protomolt.test.qualificationKeep', p.findProperty('protomolt.qualificationKeep') ?: 'false'
+        doFirst {
+            systemProperty 'protomolt.test.backupHostClasspath', hostClasspath.files.join(File.pathSeparator)
+            systemProperty 'protomolt.test.admissionRuntimeBundle',
+                    p.layout.buildDirectory.dir('admission-transport-runtime').get().asFile.absolutePath
+        }
+    }
+}
