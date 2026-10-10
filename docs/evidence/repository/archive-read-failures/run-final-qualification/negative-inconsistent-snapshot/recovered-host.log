@@ -1,0 +1,130 @@
+CHECK_OK inconsistent-snapshot.provider_versions_absent :: 10/10 recorded versions absent from the other capture's provider
+[main] WARN com.zaxxer.hikari.HikariConfig - document-ledger - idleTimeout has been set but has no effect because the pool is operating as a fixed size pool.
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Starting...
+[main] INFO com.zaxxer.hikari.pool.HikariPool - document-ledger - Added connection org.postgresql.jdbc.PgConnection@57f791c6
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Start completed.
+[main] INFO org.flywaydb.core.FlywayExecutor - Database: jdbc:postgresql:******** (PostgreSQL 18.6)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbValidate - Successfully validated 119 migrations (execution time 00:00.051s)
+[main] WARN org.flywaydb.core.internal.util.DeprecationUtils - initSql is deprecated and will be removed in a future release. Please use 'afterConnect' callback instead
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Current version of schema "public": 119
+[main] INFO org.flywaydb.core.internal.command.DbMigrate - Schema "public" is up to date. No migration necessary.
+Oct 09, 2026 7:29:59 PM org.hibernate.jpa.internal.util.LogHelper logPersistenceUnitInformation
+INFO: HHH008540: Processing PersistenceUnitInfo [name: document-ledger]
+Oct 09, 2026 7:29:59 PM org.hibernate.Version logVersion
+INFO: HHH000001: Hibernate ORM core version 7.4.10.Final
+Oct 09, 2026 7:29:59 PM org.hibernate.engine.jdbc.dialect.internal.DialectFactoryImpl constructDialect
+WARN: HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+Oct 09, 2026 7:29:59 PM org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator logConnectionInfo
+INFO: HHH10001005: Database info:
+	Database JDBC URL [jdbc:postgresql://127.0.0.1:33209/repo]
+	Database driver: PostgreSQL JDBC Driver
+	Database dialect: PostgreSQLDialect
+	Database version: 18.6
+	Default catalog/schema: repo/public
+	Autocommit mode: undefined/unknown
+	Isolation level: READ_COMMITTED [default READ_COMMITTED]
+	JDBC fetch size: none
+	Pool: DataSourceConnectionProvider
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+Oct 09, 2026 7:30:00 PM org.hibernate.engine.transaction.jta.platform.internal.JtaPlatformInitiator initiateService
+INFO: HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo lifecycle loops started (purge interval 1000 ms, sweep interval 3600000 ms, reconcile disabled)
+[repo-archive-mutation-recovery] WARN ai.protomolt.proto.repo.service.ManagedArchiveServices - Archive cleanup failed for 6262007c-acdb-4916-99da-60e8ec8fcff6; durable retry remains pending
+java.lang.IllegalStateException: Archive object reclamation failed; retry remains required
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:51)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recover(ManagedArchiveServices.java:75)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recoverMutations(ManagedArchiveServices.java:61)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$1(RepoServices.java:827)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: software.amazon.awssdk.services.s3.model.NoSuchBucketException: The specified bucket does not exist (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+	at software.amazon.awssdk.services.s3.model.NoSuchBucketException$BuilderImpl.build(NoSuchBucketException.java:150)
+	at software.amazon.awssdk.services.s3.model.NoSuchBucketException$BuilderImpl.build(NoSuchBucketException.java:98)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.utils.RetryableStageHelper.retryPolicyDisallowedRetryException(RetryableStageHelper.java:251)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:86)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:53)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:35)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:82)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:62)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:43)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:213)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:105)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:176)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:82)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCall(BaseSyncClientHandler.java:200)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:76)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectVersions(DefaultS3Client.java:9702)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.findVersions(S3ObjectReclaimer.java:38)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.reclaim(S3ObjectReclaimer.java:18)
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:47)
+	... 5 more
+[repo-archive-mutation-recovery] WARN ai.protomolt.proto.repo.service.ManagedArchiveServices - Archive cleanup failed for bbd47b5c-6f71-49ee-94ea-b594d5d81092; durable retry remains pending
+java.lang.IllegalStateException: Archive object reclamation failed; retry remains required
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:51)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recover(ManagedArchiveServices.java:75)
+	at ai.protomolt.proto.repo.service.ManagedArchiveServices.recoverMutations(ManagedArchiveServices.java:61)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycle$1(RepoServices.java:827)
+	at ai.protomolt.proto.repo.service.RepoServices.lambda$startLifecycleThread$0(RepoServices.java:934)
+	at java.base/java.lang.VirtualThread.run(VirtualThread.java:460)
+Caused by: software.amazon.awssdk.services.s3.model.NoSuchBucketException: The specified bucket does not exist (Service: S3, Status Code: 404, Request ID: null) (SDK Attempt Count: 1)
+	at software.amazon.awssdk.services.s3.model.NoSuchBucketException$BuilderImpl.build(NoSuchBucketException.java:150)
+	at software.amazon.awssdk.services.s3.model.NoSuchBucketException$BuilderImpl.build(NoSuchBucketException.java:98)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.utils.RetryableStageHelper.retryPolicyDisallowedRetryException(RetryableStageHelper.java:251)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:86)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.RetryableStage.execute(RetryableStage.java:39)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:53)
+	at software.amazon.awssdk.core.internal.http.StreamManagingStage.execute(StreamManagingStage.java:35)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.executeWithTimer(ApiCallTimeoutTrackingStage.java:82)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:62)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ApiCallTimeoutTrackingStage.execute(ApiCallTimeoutTrackingStage.java:43)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.RequestPipelineBuilder$ComposingRequestPipelineStage.execute(RequestPipelineBuilder.java:206)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:37)
+	at software.amazon.awssdk.core.internal.http.pipeline.stages.ExecutionFailureExceptionReportingStage.execute(ExecutionFailureExceptionReportingStage.java:26)
+	at software.amazon.awssdk.core.internal.http.AmazonSyncHttpClient$RequestExecutionBuilderImpl.execute(AmazonSyncHttpClient.java:213)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.invoke(BaseSyncClientHandler.java:105)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.doExecute(BaseSyncClientHandler.java:176)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.lambda$execute$1(BaseSyncClientHandler.java:82)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.measureApiCall(BaseSyncClientHandler.java:200)
+	at software.amazon.awssdk.core.internal.handler.BaseSyncClientHandler.execute(BaseSyncClientHandler.java:76)
+	at software.amazon.awssdk.core.client.handler.SdkSyncClientHandler.execute(SdkSyncClientHandler.java:45)
+	at software.amazon.awssdk.awscore.client.handler.AwsSyncClientHandler.execute(AwsSyncClientHandler.java:53)
+	at software.amazon.awssdk.services.s3.DefaultS3Client.listObjectVersions(DefaultS3Client.java:9702)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.findVersions(S3ObjectReclaimer.java:38)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimer.reclaim(S3ObjectReclaimer.java:18)
+	at ai.protomolt.proto.repo.engine.ArchiveObjectRecovery.recover(ArchiveObjectRecovery.java:47)
+	... 5 more
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-report.v3 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.alpha-notes.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-subject.v1 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-subject.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.read_refused.beta-draft.v2 :: getEntry -> FAILED_PRECONDITION [RepositoryException(FAILED_PRECONDITION) <- BlobStoreException(FAILED_PRECONDITION) <- NoSuchBucketException]
+CHECK_OK inconsistent-snapshot.versions.alpha-report :: listing equal: [3, 2, 1]
+CHECK_OK inconsistent-snapshot.versions.alpha-notes :: listing equal: [1]
+CHECK_OK inconsistent-snapshot.versions.beta-subject :: listing equal: [2, 1]
+CHECK_OK inconsistent-snapshot.versions.beta-draft :: listing equal: [2]
+CHECK_OK inconsistent-snapshot.stats.qualification-docs.67031fdb :: entries=2 versions=4 retainedBytes=1050766 currentBytes=1050710
+CHECK_OK inconsistent-snapshot.stats.qualification-docs.67031fdb :: entries=1 versions=2 retainedBytes=25 currentBytes=25
+CHECK_OK inconsistent-snapshot.stats.qualification-scratch.67031fdb :: entries=1 versions=1 retainedBytes=30 currentBytes=30
+CHECK_OK inconsistent-snapshot.replay :: mutation replay returns the recorded logical admission; state=ARCHIVE_MUTATION_STATE_RETRY_REQUIRED
+CHECK_OK inconsistent-snapshot.pending.retry_required :: recovery lane recorded a retryable cleanup failure instead of completion: state=ARCHIVE_MUTATION_STATE_RETRY_REQUIRED pending=2 confirmedAbsent=0 error=BACKEND_RECLAMATION_FAILED statusRevision=2
+CHECK_OK inconsistent-snapshot.pending.error_code :: pending=2 error=BACKEND_RECLAMATION_FAILED
+CHECK_OK inconsistent-snapshot.pending.targets_retained :: targets stay DELETING with the failure recorded and no byte deleted; attempts=[1, 1] states=[DELETING/BACKEND_RECLAMATION_FAILED, DELETING/BACKEND_RECLAMATION_FAILED]
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown initiated...
+[main] INFO com.zaxxer.hikari.HikariDataSource - document-ledger - Shutdown completed.
+[main] INFO ai.protomolt.proto.repo.service.RepoServices - repo-service stopped
+CHECK_OK inconsistent-snapshot.not_ready :: READY is only written by a fully verified host
+ARCHIVE_BACKUP_QUALIFICATION_RECOVERED_INCONSISTENT_SNAPSHOT_OK

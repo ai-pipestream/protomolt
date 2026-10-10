@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.ArchiveReadBenchmarkIT" tests="1" skipped="1" failures="0" errors="0" timestamp="2026-10-09T23:22:20.575Z" hostname="krick" time="0.0">
+  <properties/>
+  <testcase name="measurePinnedReadsAcrossIndependentAndSharedObjects()" classname="ai.protomolt.proto.repo.service.ArchiveReadBenchmarkIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

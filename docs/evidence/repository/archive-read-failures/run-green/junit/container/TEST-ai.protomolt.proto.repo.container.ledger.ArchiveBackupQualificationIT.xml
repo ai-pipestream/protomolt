@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" tests="10" skipped="10" failures="0" errors="0" timestamp="2026-10-09T23:10:07.539Z" hostname="krick" time="0.005">
+  <properties/>
+  <testcase name="rehearsalRunOne()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="rehearsalRunTwo()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="mismatchedOrDamagedBackupSetsAreRefusedAtPreflight()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="resealedMismatchedCatalogAndStoreRefuseArchiveReads()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="missingProviderVersionRefusesWithoutSubstitution()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="corruptPayloadRefusesWithoutServingBytes()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="wrongEndpointUnderRecordedGenerationRefuses()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="newGenerationAtRecordedEndpointRefusesReadsAndReclamation()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="wrongProviderCredentialsRefuseReadsAndReclamation()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <testcase name="wrongDatabaseCredentialsRefuseTheHost()" classname="ai.protomolt.proto.repo.container.ledger.ArchiveBackupQualificationIT" time="0.0">
+    <skipped/>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

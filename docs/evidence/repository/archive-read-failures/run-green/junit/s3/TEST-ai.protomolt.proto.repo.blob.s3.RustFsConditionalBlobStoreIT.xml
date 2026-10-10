@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:17.935Z" hostname="krick" time="5.588">
+  <properties/>
+  <testcase name="absentAndMatchingWritesFenceStaleSnapshots()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.086"/>
+  <testcase name="twoConcurrentCreatesAndTwoMatchingReplacementsHaveOneWinner()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.079"/>
+  <testcase name="versionedReadsReturnOriginalBytesAfterSameKeyReplacement()" classname="ai.protomolt.proto.repo.blob.s3.RustFsConditionalBlobStoreIT" time="0.137"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Creating container for image: rustfs/rustfs:1.0.0-beta.11-preview.1
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 is starting: 37ff737bd8773bd4248978c26a5e18c91bad2a0bb40867c29a9353534d198b79
+[Test worker] INFO org.testcontainers.containers.wait.strategy.HttpWaitStrategy - /happy_tharp: Waiting for 60 seconds for URL: http://localhost:57710/health (where port 57710 maps to container port 9000)
+[Test worker] INFO tc.rustfs/rustfs:1.0.0-beta.11-preview.1 - Container rustfs/rustfs:1.0.0-beta.11-preview.1 started in PT0.238651993S
+]]></system-err>
+</testsuite>

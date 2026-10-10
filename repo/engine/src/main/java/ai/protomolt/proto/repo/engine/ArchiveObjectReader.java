@@ -15,13 +15,18 @@ import static ai.protomolt.proto.repo.engine.RepositoryErrors.failedPrecondition
 public final class ArchiveObjectReader implements AutoCloseable {
     /**
      * Host-owned clients are borrowed, never closed by the reader. Resolve the exact
-     * persisted generation and realm, or fail. Current defaults are not substitutes.
-     * Provider configuration and credential rotation remain host responsibilities.
+     * persisted generation and realm, or raise {@link UnservedBackendGenerationException};
+     * the reader reports that refusal as FAILED_PRECONDITION with the exception as cause.
+     * Current defaults are not substitutes. Provider configuration and credential rotation
+     * remain host responsibilities.
      */
     @FunctionalInterface
     public interface BackendResolver {
         BlobStore resolve(String generation, String storageRealm);
     }
+
+    /** Constant for callers and transports; the resolver's detail stays on the cause chain. */
+    static final String BACKEND_NOT_CONFIGURED = "Original archive backend is not configured on this host";
 
     private final ArchiveReadLedger reads;
     private final BackendResolver backends;
@@ -105,7 +110,11 @@ public final class ArchiveObjectReader implements AutoCloseable {
             if (readable.size() > Integer.MAX_VALUE)
                 throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
                         "Archive object exceeds the byte-array read limit");
-            var store = backends.resolve(location.backendGeneration(), binding.storageRealm());
+            BlobStore store;
+            try { store = backends.resolve(location.backendGeneration(), binding.storageRealm()); }
+            catch (UnservedBackendGenerationException unserved) {
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, BACKEND_NOT_CONFIGURED, unserved);
+            }
             if (store == null) throw failedPrecondition("Original archive backend is not available");
             BlobStore.GetResult result;
             try {

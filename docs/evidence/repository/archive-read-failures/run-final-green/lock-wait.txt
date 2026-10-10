@@ -1,0 +1,8 @@
+lock_requested=2026-10-09T23:21:00Z
+command=./gradlew :protomolt-repo-engine:test --tests *HistoricalReadFailure* :protomolt-repo-container:test --tests *Archive* --tests *HistoricalReadFailure* :protomolt-repo-service:test --tests *Archive* --tests *HistoricalReadFailure* :protomolt-repo-blob-s3:test --continue --max-workers=2 --console=plain
+lock_acquired=2026-10-09T23:21:00Z
+loadavg_at_start=4.25 4.61 4.03 5/16135 3717151
+gradle_exit=0
+loadavg_at_end=10.20 5.83 4.73 5/16194 3776466
+lock_released=2026-10-09T23:29:05Z
+wrapper_exit=0

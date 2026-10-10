@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:47.412Z" hostname="krick" time="7.068">
+  <properties/>
+  <testcase name="absentKeyDoesNotScanEveryPageOfPrefixNeighbours()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="3.585"/>
+  <testcase name="capabilityCannotBeAdvertisedWithoutSupplyingItsPort()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="0.001"/>
+  <testcase name="failedListingDoesNotBecomeSuccessfulCleanup()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="0.006"/>
+  <testcase name="reclaimsHistoricalVersionsAndMarkersWithoutTouchingPrefixNeighbours()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="0.076"/>
+  <testcase name="moreThanOneBatchRequiresAnotherPassBeforeReportingAbsence()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="1.401"/>
+  <testcase name="suspendedVersioningReclaimsNullVersionAndEarlierVersions()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="0.018"/>
+  <testcase name="unversionedBytesAndLateRecreationAreReclaimedOnEachPass()" classname="ai.protomolt.proto.repo.blob.s3.S3ObjectReclaimerIT" time="0.018"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 6623da8aba1590df89423b1d52cfd05b8a49c46e0395549b0089327d3ce86465
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT1.929342607S
+]]></system-err>
+</testsuite>

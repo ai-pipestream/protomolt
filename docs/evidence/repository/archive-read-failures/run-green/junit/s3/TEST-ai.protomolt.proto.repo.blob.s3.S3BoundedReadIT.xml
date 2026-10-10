@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3BoundedReadIT" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:37.433Z" hostname="krick" time="6.1">
+  <properties/>
+  <testcase name="negativeLimitFailsBeforeProviderRequest()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadIT" time="0.001"/>
+  <testcase name="returnsExactRequestedVersionAndIdentityAtLimit()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadIT" time="0.039"/>
+  <testcase name="zeroLimitAllowsOnlyEmptyObjects()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadIT" time="0.018"/>
+  <testcase name="missingObjectRemainsDistinct()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadIT" time="0.021"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO org.testcontainers.images.PullPolicy - Image pull policy will be performed by: DefaultPullPolicy()
+[Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor - Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+[Test worker] INFO org.testcontainers.DockerClientFactory - Testcontainers version: 2.0.5
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Loaded org.testcontainers.dockerclient.UnixSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+[Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy - Found Docker environment with local Unix socket (unix:///var/run/docker.sock)
+[Test worker] INFO org.testcontainers.DockerClientFactory - Docker host IP address is localhost
+[Test worker] INFO org.testcontainers.DockerClientFactory - Connected to docker: 
+  Server Version: 29.8.1
+  API Version: 1.56
+  Operating System: Ubuntu 26.04.1 LTS
+  Total Memory: 124142 MB
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Creating container for image: testcontainers/ryuk:0.14.0
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 is starting: d043f1a856e039378290da793ceb35ab4d5e00a9f39a40b1957035f1db78308d
+[Test worker] INFO tc.testcontainers/ryuk:0.14.0 - Container testcontainers/ryuk:0.14.0 started in PT0.353255305S
+[Test worker] INFO org.testcontainers.utility.RyukResourceReaper - Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+[Test worker] INFO org.testcontainers.DockerClientFactory - Checking the system...
+[Test worker] INFO org.testcontainers.DockerClientFactory - ✔︎ Docker server version should be at least 1.6.0
+[Test worker] INFO tc.localstack/localstack:3.8 - Creating container for image: localstack/localstack:3.8
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 is starting: 430bd323849df01a1ca91a4979c9d677ad447d463e9c77cb7319fe87e5ca43d9
+[Test worker] INFO tc.localstack/localstack:3.8 - Container localstack/localstack:3.8 started in PT2.387697732S
+]]></system-err>
+</testsuite>
