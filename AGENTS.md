@@ -4,8 +4,20 @@
 
 - **Push Forgejo first, GitHub second.** Forgejo
   (`git.rokkon.com/ai-pipestream/protomolt`, remote `origin`) is the master
-  build; GitHub (remote `github`) is the public copy. Nothing auto-syncs
-  between them — push both, in that order.
+  build; GitHub (remote `github`) is the public copy. Push branches to both,
+  in that order. Main is different: it moves on Forgejo through a pull
+  request and is forwarded to GitHub by `.forgejo/workflows/forward-main-to-github.yml`.
+- **Main is forwarded, not merged on GitHub.** The forward opens a GitHub
+  pull request only so the required checks run on the exact Forgejo commit,
+  then fast-forwards GitHub main to it and closes that pull request. It does
+  not force. Do not merge pull requests into GitHub main; a merge commit made
+  on GitHub puts the mains on different commits.
+- **Work that landed on GitHub first is kept.**
+  `.forgejo/workflows/github-ancestor-guard.yml` fails a Forgejo pull request to
+  main when the head does not already contain GitHub main, listing the missing
+  commits; the forward halts the same way. Merge GitHub main into the branch
+  and the guard accepts it. Both workflows read the `GITHUB_FORWARD_TOKEN`
+  repository secret, a GitHub token with write access to the repository.
 - This repo was GitHub-canonical until 2026-08-01 (the forgejo repo used to
   be a read-only pull mirror of GitHub). The mirror was deleted and the repo
   recreated as a normal repo; forgejo is now the source of truth. If a
@@ -17,7 +29,8 @@
 
 - **GitHub Actions is the build of record** (`.github/workflows/ci.yml`:
   build 21/25, conformance, console, integration — branch protection
-  requires all five, so pushes to GitHub main go through a PR).
+  requires all of them; the forward workflow attaches them to each Forgejo
+  main commit before GitHub main moves).
 - **Forgejo runs no build CI.** Its two workflows are
   `publish-registry.yml` (snapshot publish to the instance's Maven
   registry — consumers like `knn-node` resolve `ai.pipestream.*` from it)
