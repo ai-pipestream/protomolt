@@ -1,0 +1,28 @@
+# Rejects a pull request to main whose head does not already contain GitHub main.
+#
+# Forgejo is canonical and main is forwarded to GitHub as a fast-forward. When
+# work lands on GitHub first, a Forgejo merge that lacks it would make the
+# forward impossible without clobbering, so this check fails before the merge
+# and names the missing commits. Merge GitHub main into the branch to clear it.
+# The job name is the status context the main branch protection requires.
+name: GitHub ancestor guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  github-ancestor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: GitHub main must be an ancestor of this pull request
+        env:
+          GITHUB_FORWARD_TOKEN: ${{ secrets.GITHUB_FORWARD_TOKEN }}
+          GITHUB_REPOSITORY_SLUG: ai-pipestream/protomolt
+        run: |
+          source .forgejo/scripts/github-main.sh
+          require_github_main_ancestor "$(git rev-parse HEAD)"
