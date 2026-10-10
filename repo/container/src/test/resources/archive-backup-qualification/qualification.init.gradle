@@ -17,9 +17,8 @@ gradle.projectsEvaluated { g ->
         }
     }
     p.tasks.named('test') {
+        setExcludes(getExcludes().findAll { it != '**/ArchiveBackupQualificationIT*' })
         dependsOn 'admissionTransportRuntimeInventory', 'archiveBackupQualificationHostClasspath'
-        // build.gradle keeps the qualification out of the ordinary test task; this script is its only entry.
-        setExcludes(excludes.findAll { it != '**/ArchiveBackupQualificationIT*' })
         // A qualification run is evidence of this run; never replay a cached or up-to-date result.
         outputs.upToDateWhen { false }
         outputs.cacheIf { false }
