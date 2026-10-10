@@ -1,0 +1,46 @@
+=== baseline-1 start 2026-10-09T18:02:10Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 dirty=0 loadavg=2.47 2.59 2.72 5/15923 1909874
+=== baseline-1 lock_wait_s=0 loadavg=2.47 2.59 2.72 7/15924 1909879
+=== baseline-1 end 2026-10-09T18:06:07Z exit=0 raw= loadavg=14.22 8.45 5.03 6/16609 1935151
+=== baseline-2 start 2026-10-09T18:06:07Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 dirty=1 loadavg=14.22 8.45 5.03 3/16609 1935173
+=== baseline-2 lock_wait_s=0 loadavg=14.22 8.45 5.03 4/16611 1935178
+=== baseline-2 end 2026-10-09T18:09:54Z exit=0 raw= loadavg=13.33 11.38 6.96 4/16543 1957958
+=== baseline-3 start 2026-10-09T18:09:54Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 dirty=1 loadavg=13.33 11.38 6.96 2/16543 1957980
+=== baseline-3 lock_wait_s=0 loadavg=13.33 11.38 6.96 3/16545 1957985
+=== correction: baseline-1 raw=repo/container/build/native-replica-benchmark/6ee0bb90-951b-4827-9ded-0b734b9952b8 baseline-2 raw=repo/container/build/native-replica-benchmark/311ccd5b-c02d-43b3-a2a7-77c8c3e3730a (archived from the JUnit system-out; the first runner's grep of the plain console log found no NATIVE_BENCHMARK_OUTPUT line)
+=== baseline-3 end 2026-10-09T18:13:41Z exit=0 raw= loadavg=11.18 11.97 8.19 7/16614 1982256
+=== baseline-trace start 2026-10-09T18:13:41Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 dirty=1 loadavg=11.18 11.97 8.19 4/16614 1982278
+=== baseline-trace lock_wait_s=0 loadavg=11.18 11.97 8.19 4/16616 1982283
+=== baseline-trace end 2026-10-09T18:17:32Z exit=0 raw= loadavg=13.74 13.16 9.52 4/16815 2005858
+=== correction: baseline-3 raw=repo/container/build/native-replica-benchmark/6dbf8f3d-80e9-4cdc-9813-227ffd17932c baseline-trace raw=repo/container/build/native-replica-benchmark/46bf519c-c6d1-46cf-b74f-ec40b6492a1c (archived from the JUnit system-out)
+=== it-baseline start 2026-10-09T18:18:17Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 tracked_dirty=0 loadavg=7.82 11.69 9.19 3/16676 2009700 args=:protomolt-repo-container:test --tests ai.protomolt.proto.repo.container.ledger.PublicationModeEfficiencyIT
+=== it-baseline lock_wait_s=0 loadavg=7.82 11.69 9.19 5/16677 2009705
+=== it-baseline end 2026-10-09T18:19:01Z exit=1 loadavg=6.01 10.63 8.95 2/16665 2014026
+=== it-candidate start 2026-10-09T18:20:50Z head=5f8acfb413febd0a3ce1233d06d9a143d1220f86 tracked_dirty=2 loadavg=6.10 9.12 8.57 3/16970 2026574 args=:protomolt-repo-container:test --tests ai.protomolt.proto.repo.container.ledger.PublicationModeEfficiencyIT --tests ai.protomolt.proto.repo.container.ledger.DocumentPublicationModesJournalIT
+=== it-candidate lock_wait_s=0 loadavg=6.10 9.12 8.57 3/16972 2026579
+=== it-candidate end 2026-10-09T18:21:28Z exit=0 loadavg=7.20 9.10 8.59 4/17120 2031787
+=== candidate-1 start 2026-10-09T18:22:20Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=4.73 8.14 8.29 7/16892 2038749
+=== candidate-1 lock_wait_s=0 loadavg=4.73 8.14 8.29 3/16893 2038754
+=== candidate-1 end 2026-10-09T18:26:04Z exit=0 raw=/work/worktrees/protomolt/external-publication-mode-efficiency/repo/container/build/native-replica-benchmark/0051242c-91e4-4154-9ab8-3f527e58a47f loadavg=14.58 11.80 9.74 8/16417 2062243
+=== candidate-2 start 2026-10-09T18:26:04Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=14.58 11.80 9.74 2/16421 2062269
+=== candidate-2 lock_wait_s=34 loadavg=10.66 11.14 9.59 8/16596 2067212
+=== candidate-2 end 2026-10-09T18:30:21Z exit=0 raw=/work/worktrees/protomolt/external-publication-mode-efficiency/repo/container/build/native-replica-benchmark/a44a6d73-3064-49f0-94bc-6af8e2a7209c loadavg=11.18 11.25 9.95 9/16883 2091314
+=== candidate-3 start 2026-10-09T18:30:21Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=11.18 11.25 9.95 7/16887 2091341
+=== candidate-3 lock_wait_s=38 loadavg=7.95 10.43 9.73 6/16920 2096543
+=== candidate-3 end 2026-10-09T18:34:45Z exit=0 raw=/work/worktrees/protomolt/external-publication-mode-efficiency/repo/container/build/native-replica-benchmark/495807d5-88cb-4edb-8cfb-31a0039170e5 loadavg=14.08 12.38 10.64 11/16866 2120101
+=== candidate-trace start 2026-10-09T18:34:45Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=14.08 12.38 10.64 11/16870 2120128
+=== candidate-trace lock_wait_s=52 loadavg=8.38 11.09 10.30 6/16799 2127940
+=== candidate-trace end 2026-10-09T18:39:30Z exit=0 raw=/work/worktrees/protomolt/external-publication-mode-efficiency/repo/container/build/native-replica-benchmark/fd759be8-2771-4b72-818b-a54c51c4e709 loadavg=13.79 12.24 10.91 9/16601 2151399
+=== regression-publication-replay start 2026-10-09T18:39:55Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=11.00 11.70 10.77 9/16919 2157095 args=:protomolt-repo-container:test --tests *Publication* --tests *Replay* --tests *Journal* --tests *Successor* --tests *ReservedPreparation* --tests *ScopedRegistration*
+=== regression-publication-replay lock_wait_s=203 loadavg=6.27 8.89 9.83 11/16551 2188705
+=== regression-publication-replay end 2026-10-09T18:55:12Z exit=0 loadavg=4.94 5.27 7.24 7/16163 2275602
+=== admission-storage start 2026-10-09T18:55:12Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=4.94 5.27 7.24 7/16162 2275626 args=:protomolt-repo-container:admissionStorageTest
+=== admission-storage end 2026-10-09T19:05:12Z exit=98 loadavg=2.38 3.25 5.35 6/16358 2343387
+=== native-replica-gate start 2026-10-09T19:05:12Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=2.38 3.25 5.35 5/16364 2343418 args=:protomolt-repo-container:nativeReplicaTest
+=== native-replica-gate end 2026-10-09T19:15:12Z exit=98 loadavg=3.84 3.66 4.47 11/16348 2392572
+=== admission-storage start 2026-10-09T19:15:35Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=4.06 3.73 4.48 4/16378 2395260 args=:protomolt-repo-container:admissionStorageTest
+=== admission-storage lock_wait_s=172 loadavg=7.74 5.30 4.93 4/16189 2426065
+=== lock-timeout record: the first admission-storage attempt (2026-10-09T18:55:12Z to 19:05:12Z) and the first native-replica-gate attempt (19:05:12Z to 19:15:12Z) never ran Gradle; flock -w 600 expired while another agent's run held the lock. exit=98 above is the runner's missing-exit-code sentinel, not a test outcome. Both tasks are rerun below.
+=== admission-storage end 2026-10-09T19:38:02Z exit=0 loadavg=3.63 3.15 3.64 4/16079 2528546
+=== native-replica-gate start 2026-10-09T19:38:02Z head=1c9faac60852818ea023c0ef6e67327fa0731929 tracked_dirty=0 loadavg=3.63 3.15 3.64 4/16105 2528599 args=:protomolt-repo-container:nativeReplicaTest
+=== native-replica-gate lock_wait_s=104 loadavg=6.76 4.39 4.03 2/16146 2551294
+=== native-replica-gate end 2026-10-09T19:40:22Z exit=0 loadavg=6.79 4.63 4.12 28/16173 2558836
