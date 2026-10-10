@@ -120,8 +120,12 @@ or the raw exception type) and recorded with its cause chain in the markers.
 
 ## Running
 
+The lock wait bound exceeds the longest single holder of the shared lock,
+`admissionStorageTest` at about twenty minutes; a shorter bound expires behind it and
+produces no result, which is a lock timeout to record, not a test outcome.
+
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew -I repo/container/src/test/resources/archive-backup-qualification/qualification.init.gradle \
   :protomolt-repo-container:test --tests '*ArchiveBackupQualificationIT' --max-workers=2 --console=plain
 ```
@@ -212,7 +216,7 @@ The archive suites of `protomolt-repo-container` and `protomolt-repo-service` we
 the same tree to show the behaviors the qualification relies on are the current ones:
 
 ```
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew :protomolt-repo-container:test --tests '*Archive*' \
   :protomolt-repo-service:test --tests '*Archive*' --max-workers=2 --console=plain
 ```

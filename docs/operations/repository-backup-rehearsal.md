@@ -71,10 +71,12 @@ implemented and is not attempted here.
 
 Prerequisites: Docker reachable by the invoking user (both pinned images are pulled by
 exact tag if absent), the Java 25 toolchain, and no other repository rehearsal on the host
-using the same advisory lock.
+using the same advisory lock. The wait bound exceeds the longest single holder of the
+lock, `admissionStorageTest` at about twenty minutes; a shorter bound expires behind it
+and produces no result.
 
 ```shell
-flock -w 600 /tmp/protomolt-repository-qualification.lock \
+flock -w 1800 /tmp/protomolt-repository-qualification.lock \
   ./gradlew -I repo/container/src/test/resources/backup-recovery/rehearsal.init.gradle \
   :protomolt-repo-container:test --tests '*RepositoryBackupRehearsal*' --max-workers=2 --console=plain
 ```
