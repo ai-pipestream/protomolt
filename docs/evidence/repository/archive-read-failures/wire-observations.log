@@ -1,0 +1,328 @@
+[22:52:02] $ docker volume create pm-followups-fixb-9642-vol
+pm-followups-fixb-9642-vol
+   exit=0
+[22:52:02] $ docker run -d --name pm-followups-fixb-9642-rustfs -p 127.0.0.1:0:9000 -v pm-followups-fixb-9642-vol:/data -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 -e RUSTFS_CONSOLE_ENABLE=false -e RUSTFS_ACCESS_KEY=fixb-access -e RUSTFS_SECRET_KEY=<redacted> rustfs/rustfs:1.0.0-beta.11-preview.1 /data
+7b337c36dcc8adc956dba2bc07b5154b26c26b3ec705e05173c58d4f4ab4e505
+   exit=0
+[22:52:02] endpoint http://127.0.0.1:33191
+[22:52:02] $ curl -s -o /dev/null -w health %{http_code}\n http://127.0.0.1:33191/health
+health 200
+   exit=0
+[22:52:02] $ aws --endpoint-url http://127.0.0.1:33191 s3api create-bucket --bucket fixb-bucket
+   exit=0
+[22:52:02] $ aws --endpoint-url http://127.0.0.1:33191 s3api put-bucket-versioning --bucket fixb-bucket --versioning-configuration Status=Enabled
+   exit=0
+9d2b42e74f6103d673a230bf1facf9766a79eba6f54c7442ea6e8b47cc8e4622  /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/big.bin
+22850a06ae5d2c350df85c77cdaf764c42bfa70f622ecfb6ad767d70919bf603  /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/small.bin
+[22:52:03] put big (1 MiB) and small (2 KiB)
+{
+    "ETag": "\"7cbf4300c60476680b31764f651faa38\"",
+    "ChecksumCRC64NVME": "oGo0s0KTmi0=",
+    "VersionId": "1f71ca66-4dac-4694-af8b-2cef1b8416b9"
+}
+{
+    "ETag": "\"c971e96dca8d4a25635d2e8c20df69b1\"",
+    "ChecksumCRC64NVME": "vxRS0Oq6mGg=",
+    "VersionId": "3d4c0d4f-ef6a-4d40-adf3-0e8fc0dfb1c7"
+}
+[22:52:04] === baseline GET big by version id (curl, direct HTTP client)
+* Established connection to 127.0.0.1 (127.0.0.1 port 33191) from 127.0.0.1 port 52174 
+* using HTTP/1.x
+* aws_sigv4: Canonical request (enclosed in []) - [GET
+/fixb-bucket/dir/big.bin
+versionId=1f71ca66-4dac-4694-af8b-2cef1b8416b9
+host:127.0.0.1:33191
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20261009T225204Z
+
+host;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855]
+* aws_sigv4: String to sign (enclosed in []) - [AWS4-HMAC-SHA256
+20261009T225204Z
+20261009/us-east-1/s3/aws4_request
+1e0a97e7d92aeb3f3d9491063b87c503894a8b3aa275d50cf6b51bbd405a279d]
+* aws_sigv4: Signature - 7085a738e807a98edce0bc3abc1ee04c643a65b90bd76e2dd8e8916915f3384b
+* Request completely sent off
+< HTTP/1.1 200 OK
+< accept-ranges: bytes
+< content-length: 1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: 8943a5fa-38f8-460d-805a-3d2cefed9001
+< date: Fri, 09 Oct 2026 22:52:04 GMT
+< 
+* Connection #0 to host 127.0.0.1:33191 left intact
+code=200 size_download=1048576 exit=0
+curl exit=0
+9d2b42e74f6103d673a230bf1facf9766a79eba6f54c7442ea6e8b47cc8e4622  /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/baseline-big.bin
+[22:52:04] === baseline HEAD big
+HTTP/1.1 200 OK
+accept-ranges: bytes
+content-length: 1048576
+content-type: application/octet-stream
+etag: "7cbf4300c60476680b31764f651faa38"
+last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+x-request-id: a823bc05-650e-460d-8b66-45290716523d
+date: Fri, 09 Oct 2026 22:52:04 GMT
+
+[22:52:04] === volume layout
+-rw-r--r-- 1 rustfs rustfs 1048608 Oct  9 22:52 /data/fixb-bucket/dir/big.bin/65c0adb5-1837-44eb-9ff8-61356f0801e1/part.1
+-rw-r--r-- 1 rustfs rustfs     473 Oct  9 22:52 /data/fixb-bucket/dir/big.bin/xl.meta
+-rw-r--r-- 1 rustfs rustfs    2661 Oct  9 22:52 /data/fixb-bucket/dir/small.bin/xl.meta
+[22:52:04] === stop, flip one byte at offset 4096 of the big part file, restart
+[22:52:04] $ docker stop pm-followups-fixb-9642-rustfs
+pm-followups-fixb-9642-rustfs
+   exit=0
+part=./65c0adb5-1837-44eb-9ff8-61356f0801e1/part.1
+d5617b492ece4717134edfa6749dbc8d345f50b5dd46f6634111981a16900a80  ./65c0adb5-1837-44eb-9ff8-61356f0801e1/part.1
+11f373082a9cb8650427f3d57c3116c757375301e255f5ac6705be2c53a589c6  ./65c0adb5-1837-44eb-9ff8-61356f0801e1/part.1
+before=67 after=66
+-rw-r--r-- 1 rustfs rustfs 1048608 Oct  9 22:52 ./65c0adb5-1837-44eb-9ff8-61356f0801e1/part.1
+[22:52:05] $ docker start pm-followups-fixb-9642-rustfs
+pm-followups-fixb-9642-rustfs
+   exit=0
+[22:52:05] endpoint after restart http://127.0.0.1:33192
+[22:52:05] ready after 2 probes (signed HEAD small -> 200)
+[22:52:05] ready after 1 probes (signed HEAD small -> 200)
+[22:52:05] === damaged: HEAD big
+HTTP/1.1 200 OK
+accept-ranges: bytes
+content-length: 1048576
+content-type: application/octet-stream
+etag: "7cbf4300c60476680b31764f651faa38"
+last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+x-request-id: 96905d5a-348c-4bb5-8881-ce2120f8cce4
+date: Fri, 09 Oct 2026 22:52:05 GMT
+
+curl exit=0
+[22:52:05] === damaged: GET big by version id, full trace of the response side
+code=200 size_download=0 size_header=339
+curl exit=18
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0*   Trying 127.0.0.1:33192...
+* Established connection to 127.0.0.1 (127.0.0.1 port 33192) from 127.0.0.1 port 41414 
+* using HTTP/1.x
+* aws_sigv4: Canonical request (enclosed in []) - [GET
+/fixb-bucket/dir/big.bin
+versionId=1f71ca66-4dac-4694-af8b-2cef1b8416b9
+host:127.0.0.1:33192
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20261009T225205Z
+
+host;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855]
+* aws_sigv4: String to sign (enclosed in []) - [AWS4-HMAC-SHA256
+20261009T225205Z
+20261009/us-east-1/s3/aws4_request
+cfa3d04cc70be2969be7a9bb703e8abd16dd08422c95be79304f917dc699c88c]
+* aws_sigv4: Signature - c57f647a8ae51d73416784507c44f652c0403b158018f0aa01e53bbb547383c6
+* Request completely sent off
+< HTTP/1.1 200 OK
+< accept-ranges: bytes
+< content-length: 1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: b333d373-98dc-4106-8598-da2acef031fd
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+* end of response with 1048576 bytes missing
+
+* closing connection #0
+curl: (18) end of response with 1048576 bytes missing
+-rw-rw-r-- 1 krickert krickert 34 Oct  9 18:50 /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/damaged-big.bin
+bytes delivered: 34
+[22:52:05] === damaged: second GET (latest, no version id)
+< HTTP/1.1 200 OK
+< accept-ranges: bytes
+< content-length: 1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: 81846e77-345e-4ee6-b85f-3418d575c737
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+code=200 size_download=0
+curl exit=18
+[22:52:05] === damaged: third GET by version id
+< HTTP/1.1 200 OK
+< accept-ranges: bytes
+< content-length: 1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: 5d83eed0-e56b-4e1e-8acd-13c67064a6cb
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+code=200 size_download=0
+curl exit=18
+[22:52:05] === damaged: Range 0-1023 (before the flipped byte)
+< HTTP/1.1 206 Partial Content
+< accept-ranges: bytes
+< content-length: 1024
+< content-range: bytes 0-1023/1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: c30be5a9-67c1-42b5-a454-cdfb904c28ee
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+code=206 size_download=0
+curl exit=18
+cmp: /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/range1.bin: No such file or directory
+[22:52:05] === damaged: Range 4000-5000 (across the flipped byte)
+< HTTP/1.1 206 Partial Content
+< accept-ranges: bytes
+< content-length: 1001
+< content-range: bytes 4000-5000/1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: 281e6225-5289-4e9d-b920-2f368b1f6ca7
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+code=206 size_download=0
+curl exit=18
+cmp: /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/range2.bin: No such file or directory
+range2 differs from original
+[22:52:05] === damaged: GET with x-amz-checksum-mode: ENABLED
+< HTTP/1.1 200 OK
+< accept-ranges: bytes
+< x-amz-checksum-crc64nvme: oGo0s0KTmi0=
+< content-length: 1048576
+< content-type: application/octet-stream
+< etag: "7cbf4300c60476680b31764f651faa38"
+< last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+< x-amz-version-id: 1f71ca66-4dac-4694-af8b-2cef1b8416b9
+< x-request-id: 9e8c0ba0-b2ec-45fc-8baa-ce3bee2cea6c
+< date: Fri, 09 Oct 2026 22:52:05 GMT
+< 
+code=200 size_download=0
+curl exit=18
+[22:52:05] === damaged: get-object-attributes
+{
+    "LastModified": "2026-10-09T22:52:03+00:00",
+    "VersionId": "1f71ca66-4dac-4694-af8b-2cef1b8416b9",
+    "ETag": "7cbf4300c60476680b31764f651faa38",
+    "Checksum": {
+        "ChecksumCRC64NVME": "oGo0s0KTmi0="
+    },
+    "ObjectSize": 1048576
+}
+[22:52:06] === damaged: aws cli get-object (botocore)
+
+('Connection broken: IncompleteRead(0 bytes read, 1048576 more expected)', IncompleteRead(0 bytes read, 1048576 more expected))
+exit=0
+-rw-rw-r-- 1 krickert krickert 0 Oct  9 18:52 /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/cli-damaged.bin
+[22:52:06] === small (intact) GET still works
+code=200 size_download=2048
+small-equal
+[22:52:06] === rustfs container log (tail)
+Initializing data directories: /data
+Initializing log directory: /logs
+Starting: /usr/bin/rustfs /data
+Initializing data directories: /data
+Initializing log directory: /logs
+Starting: /usr/bin/rustfs /data
+[22:52:06] === rustfs internal log files
+total 40
+drwxr-x--- 1 rustfs rustfs  4096 Oct  9 22:52 .
+drwxr-xr-x 1 root   root    4096 Oct  9 22:52 ..
+-rw-r--r-- 1 rustfs rustfs 32570 Oct  9 22:52 rustfs.log
+--- /logs/rustfs.log
+{"timestamp":"2026-10-09T22:52:05.921884482Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.921891355Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.921937913Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45632","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.926559082Z","level":"ERROR","message":"bitrot reader hash mismatch, id=6fd0f566-96bf-41e4-a700-14706e5c5634 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.926598456Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1048576,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.926634554Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.926644623Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.926720767Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45634","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.931270471Z","level":"ERROR","message":"bitrot reader hash mismatch, id=843156f5-04a3-49f6-a297-b8981964dc84 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.931298665Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1024,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.931329212Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1024,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.931338079Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1024,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.9313862Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45636","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(36)"}
+{"timestamp":"2026-10-09T22:52:05.937432674Z","level":"ERROR","message":"bitrot reader hash mismatch, id=26393533-b4e4-41fe-9631-eb07a40f966d data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937455007Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":4000,"block_length":1001,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937478671Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":4000,"part_length":1001,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937486406Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":4000,"requested_length":1001,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937529838Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45642","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.945014292Z","level":"ERROR","message":"bitrot reader hash mismatch, id=952fe291-8b20-46df-aaff-b846ea051a70 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.9450401Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1048576,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945064777Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945071951Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945115864Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45658","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538682777Z","level":"ERROR","message":"bitrot reader hash mismatch, id=2317080f-d464-4625-a4d0-08a62a3d38c3 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538708355Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1048576,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538731349Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538738292Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538784299Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45678","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+[22:52:06] === phase 2: damage the inline small object (data lives in xl.meta), stop, flip a byte 64 bytes before the end of xl.meta, restart
+[22:52:06] $ docker stop pm-followups-fixb-9642-rustfs
+pm-followups-fixb-9642-rustfs
+   exit=0
+3a42c803c80fe82a127a2d508e3818cc51eddf7b2ce7478187f970778aa4b47a  /data/fixb-bucket/dir/small.bin/xl.meta
+4c37925c457cc985fda7662b7664ed82af17b0875ad33fa7dc9d66d1a93fa236  /data/fixb-bucket/dir/small.bin/xl.meta
+size=2661 offset=2597 before=93 after=92
+[22:52:07] $ docker start pm-followups-fixb-9642-rustfs
+pm-followups-fixb-9642-rustfs
+   exit=0
+[22:52:07] endpoint after restart http://127.0.0.1:33193
+[22:52:08] ready after 2 probes (signed HEAD small -> 200)
+[22:52:08] ready after 1 probes (signed HEAD small -> 200)
+[22:52:08] === inline damaged: HEAD small
+HTTP/1.1 200 OK
+accept-ranges: bytes
+content-length: 2048
+content-type: application/octet-stream
+etag: "c971e96dca8d4a25635d2e8c20df69b1"
+last-modified: Fri, 09 Oct 2026 22:52:03 GMT
+x-amz-version-id: 3d4c0d4f-ef6a-4d40-adf3-0e8fc0dfb1c7
+x-request-id: f25b8a00-2a8f-41e2-b2a1-3399ab3a8fcb
+date: Fri, 09 Oct 2026 22:52:08 GMT
+
+curl exit=0
+[22:52:08] === inline damaged: GET small
+< HTTP/1.1 503 Service Unavailable
+< content-type: application/xml
+< x-request-id: 6f844c9a-a6b5-4c7b-a392-93589d118e95
+< content-length: 158
+< date: Fri, 09 Oct 2026 22:52:08 GMT
+< 
+code=503 size_download=158
+curl exit=0
+-rw-rw-r-- 1 krickert krickert 158 Oct  9 18:52 /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/inline-damaged.bin
+/tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/inline-damaged.bin /tmp/claude-1000/-work/02f7e92e-c625-5244-a36f-6346fd0651a6/scratchpad/fixb/small.bin differ: byte 1, line 1
+[22:52:08] === rustfs log lines after the damaged reads (ERROR/WARN mentioning bitrot, checksum, hash, verify, corrupt)
+{"timestamp":"2026-10-09T22:52:05.937478671Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":4000,"part_length":1001,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937486406Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":4000,"requested_length":1001,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.937529838Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45642","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(62)"}
+{"timestamp":"2026-10-09T22:52:05.945014292Z","level":"ERROR","message":"bitrot reader hash mismatch, id=952fe291-8b20-46df-aaff-b846ea051a70 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.9450401Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1048576,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945064777Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945071951Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:05.945115864Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45658","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538682777Z","level":"ERROR","message":"bitrot reader hash mismatch, id=2317080f-d464-4625-a4d0-08a62a3d38c3 data_len=1048576","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538708355Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":1048576,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538731349Z","level":"ERROR","message":"Erasure decode failed during GetObject","bucket":"fixb-bucket","object":"dir/big.bin","part_index":0,"part_number":1,"part_offset":0,"part_length":1048576,"bytes_written":0,"stage":"decode","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::read","filename":"crates/ecstore/src/set_disk/read.rs","line_number":1053,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538738292Z","level":"ERROR","message":"Set disk object read pipeline failed","event":"set_disk_write","component":"ecstore","subsystem":"set_disk","bucket":"fixb-bucket","object":"dir/big.bin","pool_index":0,"set_index":0,"offset":0,"requested_length":1048576,"skip_verify_bitrot":false,"state":"read_pipeline_failed","stage":"emit","reason":"read_quorum","error":"ErasureReadQuorum","target":"rustfs_ecstore::set_disk::ops::object","filename":"crates/ecstore/src/set_disk/ops/object.rs","line_number":667,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:06.538784299Z","level":"ERROR","message":"HTTP transport failed","event":"http_transport_failed","component":"server","subsystem":"transport","peer_addr":"[::ffff:172.17.0.1]:45678","error_kind":"service_error","error":"error from user's Body stream","result":"transport_error","target":"rustfs::server::http","filename":"rustfs/src/server/http.rs","line_number":1810,"threadName":"rustfs-worker","threadId":"ThreadId(61)"}
+{"timestamp":"2026-10-09T22:52:07.546736051Z","level":"ERROR","message":"Notification runtime failed to start; continuing in degraded mode","event":"notify_system_state","component":"main","subsystem":"startup","state":"degraded","error":"System initialization error: failed to refresh notify module switch: storage layer not initialized","target":"rustfs::main::run","filename":"rustfs/src/startup_audit.rs","line_number":63,"threadName":"main","threadId":"ThreadId(1)"}
+{"timestamp":"2026-10-09T22:52:08.091865496Z","level":"ERROR","message":"bitrot reader hash mismatch, id=a306f170-4181-4b78-9f52-0fec7c60cba5 data_len=2048","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(63)"}
+{"timestamp":"2026-10-09T22:52:08.091910832Z","level":"ERROR","message":"bitrot reader hash mismatch, id=138495c1-d556-424c-9570-a1d07abee4d4 data_len=2048","target":"rustfs_ecstore::erasure::coding::bitrot","filename":"crates/ecstore/src/erasure/coding/bitrot.rs","line_number":201,"threadName":"rustfs-worker","threadId":"ThreadId(63)"}
+{"timestamp":"2026-10-09T22:52:08.091926011Z","level":"ERROR","message":"Erasure decode could not gather enough shards","data_shards":1,"total_shards":1,"available_shards":0,"block_offset":0,"block_length":2048,"stage":"stripe_read","reason":"read_quorum","errors":"[Some(Io(Custom { kind: InvalidData, error: \"bitrot hash mismatch\" }))]","target":"rustfs_ecstore::erasure::coding::decode","filename":"crates/ecstore/src/erasure/coding/decode.rs","line_number":1589,"threadName":"rustfs-worker","threadId":"ThreadId(63)"}
+{"timestamp":"2026-10-09T22:52:08.095582405Z","level":"ERROR","duration":"4.241701ms","resp":"Response { status: 503, version: HTTP/1.1, headers: {\"content-type\": \"application/xml\"}, body: Body { once: b\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>SlowDown</Code><Message>Resource requested is unreadable, please reduce your request rate</Message></Error>\" } }","target":"s3s::service","filename":"/home/runner/.cargo/git/checkouts/s3s-5cf49da3e5499213/a547162/crates/s3s/src/service.rs","line_number":640,"threadName":"rustfs-worker","threadId":"ThreadId(63)"}
+{"timestamp":"2026-10-09T22:52:08.095740895Z","level":"ERROR","message":"HTTP request completed","event":"http_request_completed","component":"server","subsystem":"http","request_id":"6f844c9a-a6b5-4c7b-a392-93589d118e95","trace_id":"unknown","span_id":"unknown","peer_addr":"::ffff:172.17.0.1","method":"GET","uri":"/fixb-bucket/dir/small.bin?versionId=3d4c0d4f-ef6a-4d40-adf3-0e8fc0dfb1c7","status_code":503,"duration_ms":4,"result":"server_error","target":"rustfs::server::layer","filename":"rustfs/src/server/layer.rs","line_number":258,"threadName":"rustfs-worker","threadId":"ThreadId(63)"}
+[22:52:08] done
+[22:52:08] cleanup

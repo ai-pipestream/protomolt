@@ -39,7 +39,8 @@ final class ManagedArchiveServices {
         readRecovery = new ArchiveReadRecovery(tx);
         recovery = new ArchiveObjectRecovery(cleanup, profiles, (original, originalProfile) -> {
             if (!generation.equals(original) || !profile.equals(originalProfile))
-                throw new IllegalStateException("Original archive backend is not configured on this host");
+                throw new UnservedBackendGenerationException("Host serves archive backend generation " + generation
+                        + "; the binding records generation " + original + " and realm " + originalProfile.storageRealm());
             return reclaimer;
         });
         // Register only after all configuration-dependent components are built.
@@ -48,7 +49,8 @@ final class ManagedArchiveServices {
                 : new ArchiveReadLedger(tx, UUID.randomUUID(), hostExecution);
         reader = new ArchiveObjectReader(ledger, (original, realm) -> {
             if (!generation.equals(original) || !profile.storageRealm().equals(realm))
-                throw new IllegalStateException("Original archive backend is not configured on this host");
+                throw new UnservedBackendGenerationException("Host serves archive backend generation " + generation
+                        + " in realm " + profile.storageRealm() + "; the binding records generation " + original + " and realm " + realm);
             return store;
         });
     }

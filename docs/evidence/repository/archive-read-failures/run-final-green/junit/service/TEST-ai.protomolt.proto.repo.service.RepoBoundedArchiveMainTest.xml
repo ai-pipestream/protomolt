@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:28:15.461Z" hostname="krick" time="0.005">
+  <properties/>
+  <testcase name="refusesMissingIdentityAndMalformedOrUnqualifiedSettings()" classname="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" time="0.002"/>
+  <testcase name="retriesOnlyDirectDrainTimeouts()" classname="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" time="0.001"/>
+  <testcase name="exceptionalServingExitDrainsBeforeRestoringInterruption()" classname="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" time="0.0"/>
+  <testcase name="restoresInterruptConsumedByAwaitTermination()" classname="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" time="0.001"/>
+  <testcase name="parsesExplicitProviderAndBoundedDefaultsWithoutOpeningResources()" classname="ai.protomolt.proto.repo.service.RepoBoundedArchiveMainTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] WARN ai.protomolt.proto.repo.service.RepoBoundedArchiveMain - Archive shutdown waiting for ARCHIVE_PUT
+[Test worker] WARN ai.protomolt.proto.repo.service.RepoBoundedArchiveMain - Archive shutdown waiting for ARCHIVE_PUT
+[Test worker] WARN ai.protomolt.proto.repo.service.RepoBoundedArchiveMain - Archive shutdown waiting for ARCHIVE_RPC
+]]></system-err>
+</testsuite>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:10:44.590Z" hostname="krick" time="0.054">
+  <properties/>
+  <testcase name="releaseKeepsThePrimaryFailureAndAttachesACloseFailure()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.029"/>
+  <testcase name="writePathManagedFailureMappingIsUnchanged()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.009"/>
+  <testcase name="resourceAndCapabilityFailuresOutsideTheAdapterAreClassified()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.002"/>
+  <testcase name="corruptionAndMissingVersionsNeverBecomeRetryableOutages()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.001"/>
+  <testcase name="repositorySqlInvariantAndArgumentFailuresPassThroughUnchanged()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.0"/>
+  <testcase name="writePathCallMappingIsUnchanged()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.002"/>
+  <testcase name="everyProviderCodeHasAConstantHistoricalClassificationThatKeepsItsCause()" classname="ai.protomolt.proto.repo.engine.HistoricalReadFailureTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

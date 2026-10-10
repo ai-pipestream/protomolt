@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" tests="6" skipped="0" failures="2" errors="0" timestamp="2026-10-09T23:02:22.672Z" hostname="krick" time="0.861">
+  <properties/>
+  <testcase name="refusedConnectionOnBoundedReadIsUnavailableWithoutByteCounts()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.256"/>
+  <testcase name="emptyBodyAfterDeclaredLengthIsUnavailableAndNamesTheBytes()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.054">
+    <failure message="java.lang.AssertionError: &#10;Expecting actual:&#10;  &quot;Object provider read could not complete&quot;&#10;to contain:&#10;  &quot;received 0 of 1048576 declared bytes&quot; " type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting actual:
+  &quot;Object provider read could not complete&quot;
+to contain:
+  &quot;received 0 of 1048576 declared bytes&quot; 
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.lambda$emptyBodyAfterDeclaredLengthIsUnavailableAndNamesTheBytes$2(S3BoundedReadFailureTest.java:121)
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.emptyBodyAfterDeclaredLengthIsUnavailableAndNamesTheBytes(S3BoundedReadFailureTest.java:119)
+</failure>
+  </testcase>
+  <testcase name="chunkedOversizedBodyIsRejectedRatherThanReturningPrefix()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.011"/>
+  <testcase name="stalledBodyKeepsTimeoutMeaningAfterHeaders()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.508"/>
+  <testcase name="oversizedHeaderRejectsWithoutWaitingForBody()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.01"/>
+  <testcase name="bodyEndingBeforeDeclaredLengthIsUnavailableAndNamesTheBytes()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest" time="0.013">
+    <failure message="java.lang.AssertionError: &#10;Expecting actual:&#10;  &quot;Object provider read could not complete&quot;&#10;to contain:&#10;  &quot;received 4 of 10 declared bytes&quot; " type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting actual:
+  &quot;Object provider read could not complete&quot;
+to contain:
+  &quot;received 4 of 10 declared bytes&quot; 
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.lambda$bodyEndingBeforeDeclaredLengthIsUnavailableAndNamesTheBytes$2(S3BoundedReadFailureTest.java:101)
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadFailureTest.bodyEndingBeforeDeclaredLengthIsUnavailableAndNamesTheBytes(S3BoundedReadFailureTest.java:99)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

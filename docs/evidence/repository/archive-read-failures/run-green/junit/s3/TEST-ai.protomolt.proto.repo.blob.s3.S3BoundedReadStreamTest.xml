@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" tests="5" skipped="0" failures="1" errors="0" timestamp="2026-10-09T23:17:31.023Z" hostname="krick" time="0.026">
+  <properties/>
+  <testcase name="unknownLengthConsumesOnlyLimitAndSentinelThenCloses()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" time="0.02"/>
+  <testcase name="negativeProviderLengthFailsBeforeBodyRead()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" time="0.0"/>
+  <testcase name="bodyLongerThanDeclaredLengthIsDataLoss()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" time="0.0"/>
+  <testcase name="prematureEofDoesNotReturnPartialSuccess()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" time="0.0"/>
+  <testcase name="falseSmallLengthDoesNotBypassConsumptionLimit()" classname="ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest" time="0.003">
+    <failure message="java.lang.AssertionError: &#10;Expecting actual throwable to be an instance of:&#10;  ai.protomolt.proto.repo.blob.spi.BlobStore.BlobReadLimitException&#10;but was:&#10;  ai.protomolt.proto.repo.blob.spi.BlobStoreException: Object length disagrees with provider metadata&#10;&#9;at ai.protomolt.proto.repo.blob.s3.S3ObjectReads.corruptLength(S3ObjectReads.java:109)&#10;&#9;at ai.protomolt.proto.repo.blob.s3.S3ObjectReads.read(S3ObjectReads.java:37)&#10;&#9;at ai.protomolt.proto.repo.blob.s3.S3BlobStore.getBounded(S3BlobStore.java:212)&#10;&#9;...(99 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)" type="java.lang.AssertionError">java.lang.AssertionError: 
+Expecting actual throwable to be an instance of:
+  ai.protomolt.proto.repo.blob.spi.BlobStore.BlobReadLimitException
+but was:
+  ai.protomolt.proto.repo.blob.spi.BlobStoreException: Object length disagrees with provider metadata
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReads.corruptLength(S3ObjectReads.java:109)
+	at ai.protomolt.proto.repo.blob.s3.S3ObjectReads.read(S3ObjectReads.java:37)
+	at ai.protomolt.proto.repo.blob.s3.S3BlobStore.getBounded(S3BlobStore.java:212)
+	...(99 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)
+	at ai.protomolt.proto.repo.blob.s3.S3BoundedReadStreamTest.falseSmallLengthDoesNotBypassConsumptionLimit(S3BoundedReadStreamTest.java:57)
+</failure>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:11:27.394Z" hostname="krick" time="337.678">
+  <properties/>
+  <testcase name="sigkillDuringPublicationPreservesHeadAndRestartReclaimsUnpublishedBytes()" classname="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" time="304.336"/>
+  <testcase name="concurrentBootstrapUsesOneWinningDriveLocationAcrossProcesses()" classname="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" time="6.722"/>
+  <testcase name="productionProcessRestartsWithoutRelocatingDriveAndRetainsExactRetry()" classname="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" time="8.865"/>
+  <testcase name="invalidConfigurationExitsBeforeConnectingToUnavailableDatabase()" classname="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" time="0.266"/>
+  <testcase name="sigtermWaitsPastDrainDeadlineForAcceptedSqlCommitThenRestartReadsIt()" classname="ai.protomolt.proto.repo.service.BoundedArchiveProcessIT" time="16.271"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[[Test worker] INFO tc.redis:7-alpine - Creating container for image: redis:7-alpine
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine is starting: a67d361d2cc782e220e2d96be62a86ca9ff2abe8b47b16fcba9d44abd612ade2
+[Test worker] INFO tc.redis:7-alpine - Container redis:7-alpine started in PT0.273840875S
+[Test worker] INFO tc.postgres:18-alpine - Creating container for image: postgres:18-alpine
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine is starting: fbc7e63e24048c7ff8b1da2ff326d16e39004477e83379a14b97b52b6cdf8d4e
+[Test worker] INFO tc.postgres:18-alpine - Container postgres:18-alpine started in PT0.9423848S
+[Test worker] INFO tc.postgres:18-alpine - Container is started (JDBC URL: jdbc:postgresql://localhost:57689/test?loggerLevel=OFF)
+]]></system-err>
+</testsuite>

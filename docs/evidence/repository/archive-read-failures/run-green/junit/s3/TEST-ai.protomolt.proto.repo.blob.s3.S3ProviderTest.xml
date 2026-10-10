@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:34.568Z" hostname="krick" time="1.549">
+  <properties/>
+  <testcase name="discoveryAndOpeningDoNotContactTheEndpoint()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.004"/>
+  <testcase name="[1] &quot;credentials-mode&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.003"/>
+  <testcase name="[2] &quot;api-call-timeout-ms&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[3] &quot;api-attempt-timeout-ms&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[4] &quot;connection-timeout-ms&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[5] &quot;socket-timeout-ms&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[6] &quot;region&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[7] &quot;path-style&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="refusesUnknownAndInvalidConfiguration()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.001"/>
+  <testcase name="[1] &quot;0&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.001"/>
+  <testcase name="[2] &quot;-1&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[3] &quot;forever&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.001"/>
+  <testcase name="[4] &quot;2147483648&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="[5] &quot;9223372036854775808&quot;" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.001"/>
+  <testcase name="explicitDefaultChainDoesNotResolveCredentialsDuringAcquisition()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.009"/>
+  <testcase name="rejectsInconsistentTimeoutBudget()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="0.0"/>
+  <testcase name="providerAppliesFiniteTimeoutToStalledHttpRead()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderTest" time="1.507"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

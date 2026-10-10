@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3ProviderLifecycleTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:29:02.115Z" hostname="krick" time="0.258">
+  <properties/>
+  <testcase name="closeReleasesTheOwnedClientAndIsIdempotent()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderLifecycleTest" time="0.005"/>
+  <testcase name="unsupportedCapabilityRequirementReleasesTheSelectedHandle()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderLifecycleTest" time="0.004"/>
+  <testcase name="cleanupFailureRetainsPrimaryAndSuppressedFailures()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderLifecycleTest" time="0.006"/>
+  <testcase name="startupFailureSurfacesAtTheFirstOperationAndStillCloses()" classname="ai.protomolt.proto.repo.blob.s3.S3ProviderLifecycleTest" time="0.24"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

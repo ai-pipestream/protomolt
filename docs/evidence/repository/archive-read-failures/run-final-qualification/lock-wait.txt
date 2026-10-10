@@ -1,0 +1,8 @@
+lock_requested=2026-10-09T23:29:05Z
+command=./gradlew -I repo/container/src/test/resources/archive-backup-qualification/qualification.init.gradle :protomolt-repo-container:test --tests *ArchiveBackupQualificationIT --max-workers=2 --console=plain
+lock_acquired=2026-10-09T23:29:05Z
+loadavg_at_start=10.20 5.83 4.73 3/16192 3776575
+gradle_exit=0
+loadavg_at_end=8.46 6.41 5.06 6/16443 3805070
+lock_released=2026-10-09T23:30:53Z
+wrapper_exit=0

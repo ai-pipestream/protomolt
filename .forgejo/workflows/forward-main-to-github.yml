@@ -1,0 +1,31 @@
+# Forwards every new Forgejo main head to GitHub main as a fast-forward.
+#
+# Forgejo is canonical. The forward never forces and never merges on GitHub:
+# it opens a pull request only so GitHub's required checks run on the exact
+# commit, then fast-forwards GitHub main to it and closes the pull request.
+# If GitHub main has commits Forgejo main lacks, the run fails loudly and moves
+# nothing; the fix is a Forgejo pull request that merges GitHub main in, which
+# the ancestor guard then accepts.
+name: Forward main to GitHub
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: forward-main-to-github
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fast-forward GitHub main to this commit after its required checks pass
+        env:
+          GITHUB_FORWARD_TOKEN: ${{ secrets.GITHUB_FORWARD_TOKEN }}
+          GITHUB_REPOSITORY_SLUG: ai-pipestream/protomolt
+        run: bash .forgejo/scripts/forward-main-to-github.sh

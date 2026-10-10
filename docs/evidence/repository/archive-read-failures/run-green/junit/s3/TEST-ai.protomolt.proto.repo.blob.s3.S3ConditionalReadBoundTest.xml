@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:17:31.049Z" hostname="krick" time="0.006">
+  <properties/>
+  <testcase name="conditionalOperationsAreDisabledByDefaultBeforeAnyS3Request()" classname="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" time="0.001"/>
+  <testcase name="absentLengthCanReadAtMostTheLimitPlusOneByte()" classname="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" time="0.004"/>
+  <testcase name="rejectsShortBodyAgainstDeclaredLength()" classname="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" time="0.0"/>
+  <testcase name="knownOversizedObjectIsRejectedBeforeReadingItsBody()" classname="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" time="0.0"/>
+  <testcase name="invalidEtagAbortsBeforeReadingBody()" classname="ai.protomolt.proto.repo.blob.s3.S3ConditionalReadBoundTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
