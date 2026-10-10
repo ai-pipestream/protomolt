@@ -43,11 +43,11 @@ final class DocumentPublicationModesJournal {
     /**
      * Scoped callers receive only a comparison result, never private recovery state.
      * One transaction: the claim and owner fences come first, the immutable preparation
-     * and fixed modes are read behind them, and the bounded decode and comparison
-     * complete before commit, so no authority change can interleave between the read
-     * and the delivered result. The decode touches only reserved bytes and no provider;
-     * lease expiry after the fence is caught by the next fencing transaction, as it is
-     * for every short fenced transaction.
+     * and fixed modes are read behind them, the bounded decode and comparison follow,
+     * and the claim, owner and command are fenced again after the decode, before commit.
+     * A takeover cannot interleave, because it needs the claim row this transaction holds;
+     * a lease that expires while decoding is refused by the second fence, so a delivered
+     * result was live at a point after the decode, as with the former trailing transaction.
      */
     void requireObservedModes(RepositoryCaller caller, RepositoryOperationLedger.Owner owner,
             DocumentPublicationCommand command, Map<String, DocumentPublicationCandidate.Mode> observed,
@@ -74,6 +74,9 @@ final class DocumentPublicationModesJournal {
                 control.check();
                 if (!fixed.equals(observed)) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
                         "Observed publication modes differ from fixed modes");
+                // A lease that expired while decoding is refused here, before any caller work.
+                RepositoryOperationLedger.fenceLiveOwner(em, owner);
+                RepositoryOperationLedger.requireCommand(em, owner.key(), command);
                 return null;
             });
             control.check();
