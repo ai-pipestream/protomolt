@@ -365,6 +365,9 @@ class DocumentPartReaderIT {
             }
             assertThat(publication.manifest().getPartsList().stream().filter(p -> p.getSubKey().equals("b") || p.getSubKey().equals("c")))
                     .allSatisfy(p -> assertThat(p.getWrittenBy()).isEqualTo(nextWriter));
+            // Written and carried parts alike get well-formed provider keys (also checked by the partial-save benchmark).
+            assertThat(publication.manifest().getPartsList().stream().filter(p -> p.getState() == PartState.PART_STATE_PRESENT))
+                    .isNotEmpty().allSatisfy(p -> assertThat(p.getObjectKey()).isNotEmpty().doesNotContain("//"));
         } finally {
             writer.close(); reader.close();
             assertThat(writer.awaitIdle(java.time.Duration.ofSeconds(5))).isTrue();

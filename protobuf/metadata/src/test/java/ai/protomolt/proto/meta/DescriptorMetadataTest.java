@@ -35,4 +35,24 @@ class DescriptorMetadataTest {
                 .extracting(FieldMeta::getSensitivity)
                 .isEqualTo("public");
     }
+
+    @Test
+    void readsMetadataFromDescriptorsBuiltWithoutTheExtensionsRegistered() throws Exception {
+        // Parsing without a registry leaves the meta.v1 options as unknown fields, as a
+        // descriptor compiled from source or loaded from bytes elsewhere would carry them.
+        var file = AnnotatedDoc.getDescriptor().getFile();
+        var bytes = file.toProto().toByteString();
+        var unregistered = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(
+                com.google.protobuf.DescriptorProtos.FileDescriptorProto.parseFrom(bytes),
+                file.getDependencies().toArray(com.google.protobuf.Descriptors.FileDescriptor[]::new));
+        var doc = unregistered.findMessageTypeByName(AnnotatedDoc.getDescriptor().getName());
+        var docId = doc.findFieldByName("doc_id");
+        assertThat(docId.getOptions().hasExtension(MetadataProto.field)).isFalse();
+
+        assertThat(DescriptorMetadata.field(docId)).get()
+                .extracting(FieldMeta::getSensitivity).isEqualTo("public");
+        assertThat(DescriptorMetadata.message(doc)).get()
+                .extracting(MessageMeta::getOwner).isEqualTo("search-platform");
+        assertThat(DescriptorMetadata.asBag(doc)).isEqualTo(DescriptorMetadata.asBag(AnnotatedDoc.getDescriptor()));
+    }
 }
