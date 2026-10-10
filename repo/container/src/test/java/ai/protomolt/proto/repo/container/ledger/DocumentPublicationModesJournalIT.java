@@ -112,16 +112,14 @@ class DocumentPublicationModesJournalIT {
 
     private static PayloadBudget budget() { return new PayloadBudget(32L * 1024 * 1024); }
 
-    @Test void scopedModeComparisonUsesOneCommitAndExactRowBudget() {
+    @Test void scopedModeComparisonUsesTwoCommitsAndExactPreparationBudget() {
         try (var c = context(POSTGRES)) {
             var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
             new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
             var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
                     .owner().orElseThrow();
             var scoped = new RepositoryCaller("principal", false, Set.of(value.key().account()), Set.of());
-            long modesBytes = ((Number) c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT octet_length(modes::text) FROM repository_publication_modes").getSingleResult())).longValue();
-            var bounded = new PayloadBudget(DocumentPublicationPreparationCodec.encode(value).size() + modesBytes);
+            var bounded = new PayloadBudget(DocumentPublicationModesJournal.MAX_BYTES + DocumentPublicationPreparationCodec.encode(value).size());
             var commits = new java.util.concurrent.atomic.AtomicInteger();
             var source = DocumentJdbcFaults.afterCommit(c.pool(), commits::incrementAndGet);
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
@@ -129,14 +127,14 @@ class DocumentPublicationModesJournalIT {
                 var journal = new DocumentPublicationModesJournal(new Tx(emf), bounded);
                 commits.set(0);
                 journal.requireObservedModes(scoped, owner, value.command(), MODES, NONE);
-                assertThat(commits.get()).as("fence, reads, decode and comparison in one transaction").isEqualTo(1);
+                assertThat(commits.get()).as("capture and final live authority check").isEqualTo(2);
                 assertThat(bounded.reservedBytes()).isZero();
                 commits.set(0);
                 assertThatThrownBy(() -> journal.requireObservedModes(scoped, owner, value.command(),
                         Map.of("member-0", DocumentPublicationCandidate.Mode.OPAQUE), NONE))
                         .isInstanceOfSatisfying(RepositoryException.class, failure ->
                                 assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION));
-                assertThat(commits.get()).as("mismatch rolls the fenced transaction back").isZero();
+                assertThat(commits.get()).as("mismatch refuses after capture").isEqualTo(1);
                 assertThat(bounded.reservedBytes()).isZero();
             }
         }
@@ -215,14 +213,13 @@ class DocumentPublicationModesJournalIT {
         }
     }
 
-    @Test void insufficientModesBudgetReleasesPreparationReservation() {
+    @Test void insufficientCaptureBudgetReleasesModesReservation() {
         try (var c = context(POSTGRES)) {
             var value = input(c); var budget = budget(); var claim = save(c, value, budget, LEASE);
             new DocumentPublicationModesJournal(c.tx(), budget).bind(CALLER, claim, 0, MODES, NONE);
             var owner = new RepositoryOperationLedger(c.tx()).admit(value.key(), value.command(), value.seeds().ownerNonce(), LEASE, claim)
                     .owner().orElseThrow();
-            // Exactly the preparation fits; the modes row cannot be reserved after it.
-            var bounded = new PayloadBudget(DocumentPublicationPreparationCodec.encode(value).size());
+            var bounded = new PayloadBudget(DocumentPublicationModesJournal.MAX_BYTES);
             assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), bounded)
                     .requireObservedModes(CALLER, owner, value.command(), MODES, NONE))
                     .isInstanceOf(PayloadBudget.CapacityExceededException.class);
@@ -232,7 +229,7 @@ class DocumentPublicationModesJournalIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings={"claim-transfer", "owner-expiry", "cancel"})
-    void deliveredComparisonGrantsNoAuthorityAfterChanges(String change) throws Exception {
+    void captureCannotDeliverAfterAuthorityChanges(String change) throws Exception {
         try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var value = input(c); var budget = budget();
             var claim = save(c, value, budget, change.equals("claim-transfer") ? Duration.ofSeconds(2) : LEASE);
@@ -246,7 +243,6 @@ class DocumentPublicationModesJournalIT {
                 @Override public boolean isCancelled() { return cancelled.get(); }
                 @Override public long remainingNanos() { return Long.MAX_VALUE; }
             };
-            // The comparison commits once; hold the caller right after that commit, before delivery.
             var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
                 if (armed.compareAndSet(true, false)) {
                     captured.countDown();
@@ -270,20 +266,12 @@ class DocumentPublicationModesJournalIT {
                         }
                     }
                     release.countDown();
-                    if (change.equals("cancel"))
-                        assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS)).isInstanceOfSatisfying(ExecutionException.class,
-                                failure -> assertThat(failure.getCause()).isInstanceOfSatisfying(RepositoryException.class,
-                                        cancelledFailure -> assertThat(cancelledFailure.code()).isEqualTo(RepositoryException.Code.CANCELLED)));
-                    else {
-                        // The comparison was decided under its fence; a change after commit is the next fence's to refuse.
-                        future.get(5, TimeUnit.SECONDS);
-                        Class<? extends RuntimeException> refusal = change.equals("claim-transfer")
-                                ? RepositoryExecutionClaimLedger.Fenced.class : RepositoryOperationLedger.OwnerFencedException.class;
-                        assertThatThrownBy(() -> c.tx().inTransaction(em -> { return RepositoryOperationLedger.fenceLiveOwner(em, owner); }))
-                                .isInstanceOf(refusal);
-                        assertThatThrownBy(() -> new DocumentPublicationModesJournal(c.tx(), budget)
-                                .requireObservedModes(CALLER, owner, value.command(), MODES, NONE)).isInstanceOf(refusal);
-                    }
+                    assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS)).isInstanceOfSatisfying(ExecutionException.class, failure -> {
+                        if (change.equals("claim-transfer")) assertThat(failure.getCause()).isInstanceOf(RepositoryExecutionClaimLedger.Fenced.class);
+                        else if (change.equals("owner-expiry")) assertThat(failure.getCause()).isInstanceOf(RepositoryOperationLedger.OwnerFencedException.class);
+                        else assertThat(failure.getCause()).isInstanceOfSatisfying(RepositoryException.class,
+                                cancelledFailure -> assertThat(cancelledFailure.code()).isEqualTo(RepositoryException.Code.CANCELLED));
+                    });
                     assertThat(budget.reservedBytes()).isZero();
                 } finally {
                     release.countDown();
