@@ -13,14 +13,12 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
 /** Real-adapter diagnostic with synthetic protobuf payloads; not a production latency gate. */
 @Testcontainers
-@EnabledIfEnvironmentVariable(named = "PROTOMOLT_PARTIAL_BENCHMARK", matches = "true")
 class DocumentPartialBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final RustFsBenchmarkStore S3 = new RustFsBenchmarkStore();

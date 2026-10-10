@@ -19,14 +19,12 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
 /** Real-adapter diagnostic. The unpinned baseline is unsafe during deletion and is test-only. */
 @Testcontainers
-@EnabledIfEnvironmentVariable(named = "PROTOMOLT_ARCHIVE_READ_BENCHMARK", matches = "true")
 @Timeout(600)
 class ArchiveReadBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");

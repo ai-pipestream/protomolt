@@ -6,3 +6,6 @@ dependencies {
     testImplementation project(':protomolt-search-rerank-tei')
     testImplementation project(':protomolt-search-rerank-ovms')
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/TeiOvmsRerankEquivalenceLiveIntegrationTest*', ['PROTOMOLT_RERANK_TEI_TARGET', 'PROTOMOLT_RERANK_OVMS_URL', 'PROTOMOLT_RERANK_OVMS_MODEL'])

@@ -13,14 +13,12 @@ import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
 /** Opt-in archive transport diagnostic against local RustFS; not a production capacity model. */
 @Testcontainers
-@EnabledIfEnvironmentVariable(named = "PROTOMOLT_REPLICA_BENCHMARK", matches = "true")
 @Timeout(600)
 class RepositoryScaleBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine")

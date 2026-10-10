@@ -30,7 +30,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Integration tests for {@link ApicurioSchemaPublisher} against a live Apicurio Registry 3.x
@@ -99,8 +99,8 @@ class ApicurioSchemaPublisherIntegrationTest {
     void setUp() {
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
         registryUrl = ApicurioDescriptorLoaderIntegrationTest.configuredRegistryUrl(REGISTRY.getUrl());
-        assumeTrue(registryReachable(),
-                "Apicurio Registry not reachable at " + registryUrl + " - skipping integration tests");
+        assertTrue(registryReachable(),
+                "Apicurio Registry not reachable at " + registryUrl + " - start them with docker-compose.integration.yml");
         registryClient = RegistryClientFactory.create(RegistryClientOptions.create(registryUrl));
     }
 

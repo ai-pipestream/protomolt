@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Live equivalence check: TEI and OpenVINO Model Server serving the same reranker model must
@@ -77,13 +77,13 @@ class TeiOvmsRerankEquivalenceLiveIntegrationTest {
         String teiTarget = System.getenv(TeiRerankProvider.TARGET_ENVIRONMENT_VARIABLE);
         String ovmsUrl = System.getenv(OvmsRerankProvider.URL_ENVIRONMENT_VARIABLE);
         String ovmsModel = System.getenv(OvmsRerankProvider.MODEL_ENVIRONMENT_VARIABLE);
-        assumeTrue(teiTarget != null && !teiTarget.isBlank(),
+        assertTrue(teiTarget != null && !teiTarget.isBlank(),
                 "Set " + TeiRerankProvider.TARGET_ENVIRONMENT_VARIABLE
                         + " to the TEI server's host:port to run this test");
-        assumeTrue(ovmsUrl != null && !ovmsUrl.isBlank(),
+        assertTrue(ovmsUrl != null && !ovmsUrl.isBlank(),
                 "Set " + OvmsRerankProvider.URL_ENVIRONMENT_VARIABLE
                         + " to the OVMS server's base URL to run this test");
-        assumeTrue(ovmsModel != null && !ovmsModel.isBlank(),
+        assertTrue(ovmsModel != null && !ovmsModel.isBlank(),
                 "Set " + OvmsRerankProvider.MODEL_ENVIRONMENT_VARIABLE
                         + " to the servable name to run this test");
 

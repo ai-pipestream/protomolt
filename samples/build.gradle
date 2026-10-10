@@ -295,3 +295,7 @@ tasks.register('runCourtDocIndex', JavaExec) {
         }
     }
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/AuthoringComposeCrashTest*', ['PROTOMOLT_AUTHORING_CRASH_IMAGE', 'PROTOMOLT_REPO_CRASH_IMAGE'])
+optInSuite('**/AuthoringComposeReviewTest*', ['PROTOMOLT_AUTHORING_REVIEW_IMAGE', 'PROTOMOLT_REPO_REVIEW_IMAGE'])

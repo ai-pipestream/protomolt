@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Integration tests for {@link ConfluentSchemaPublisher} against a live Confluent-compatible
@@ -95,8 +95,8 @@ abstract class AbstractConfluentPublisherIntegrationTest {
     @BeforeAll
     void setUp() {
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-        assumeTrue(registryReachable(),
-                "Schema registry not reachable at " + registryBaseUrl() + " - skipping integration tests");
+        assertTrue(registryReachable(),
+                "Schema registry not reachable at " + registryBaseUrl() + " - start them with docker-compose.integration.yml");
     }
 
     @AfterAll

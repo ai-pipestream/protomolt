@@ -20,7 +20,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -101,7 +100,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  * transport, grounding, validation, and privacy acceptance, and accepts any
  * successful attempt count within the coordinator's budget of 1 to 3.</p>
  */
-@EnabledIfEnvironmentVariable(named = "PROTOMOLT_LIVE_STRUCTURED_ENDPOINT", matches = ".+")
 class LiveStructuredInferenceIT {
 
     private static final String ENDPOINT_ENV = "PROTOMOLT_LIVE_STRUCTURED_ENDPOINT";

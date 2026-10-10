@@ -139,6 +139,23 @@ subprojects {
             }
         }
 
+        // Opt-in suites need a live endpoint, a pinned image, running registries or an explicit
+        // benchmark switch. The plain test task leaves a suite out unless every listed environment
+        // variable is set ("NAME" means non-blank, "NAME=value" means exactly that value, and
+        // "A|B" accepts either name), so a plain run neither runs nor skips it. Selecting one
+        // with --tests without its environment finds no tests and fails, and inside the suite a
+        // missing prerequisite is a failure.
+        ext.optInSuite = { String pattern, List<String> required ->
+            def missing = required.findAll { requirement ->
+                !requirement.split('\\|').any { alternative ->
+                    def parts = alternative.split('=', 2)
+                    def actual = System.getenv(parts[0])
+                    parts.length == 2 ? actual == parts[1] : (actual != null && !actual.isBlank())
+                }
+            }
+            tasks.named('test') { if (!missing.isEmpty()) exclude pattern }
+        }
+
         // Generated protobuf sources have no javadoc tags; keep doclint useful but quiet.
         tasks.withType(Javadoc).configureEach {
             options.addStringOption('Xdoclint:all,-missing', '-quiet')

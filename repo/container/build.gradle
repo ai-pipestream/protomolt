@@ -272,3 +272,6 @@ tasks.register('admissionHistoricalRuntimeTest', Test) {
     }
     useJUnitPlatform()
 }
+
+// Opt-in suites (root build.gradle optInSuite): left out of the plain test task unless their environment is set.
+optInSuite('**/DocumentStagingBenchmarkIT*', ['PROTOMOLT_DOCUMENT_BENCHMARK=true'])

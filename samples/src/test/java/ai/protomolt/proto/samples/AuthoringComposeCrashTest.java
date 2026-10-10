@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Container-package proof of a durable remote effect before its local checkpoint. */
 @Tag("integration")
@@ -64,8 +64,8 @@ class AuthoringComposeCrashTest {
     void killedComposeExecutorReplaysOnlyTheUncheckpointedWrite() throws Exception {
         String authoringImage = System.getenv("PROTOMOLT_AUTHORING_CRASH_IMAGE");
         String repositoryImage = System.getenv("PROTOMOLT_REPO_CRASH_IMAGE");
-        assumeTrue(authoringImage != null || repositoryImage != null,
-                "Set both digest-pinned image inputs to opt into the Compose crash gate");
+        assertTrue(authoringImage != null || repositoryImage != null,
+                "Set both digest-pinned image inputs for the Compose crash gate");
         assertThat(authoringImage).as("PROTOMOLT_AUTHORING_IMAGE").isNotNull();
         assertThat(repositoryImage).as("PROTOMOLT_REPO_IMAGE").isNotNull();
         assertDigestImage(authoringImage);

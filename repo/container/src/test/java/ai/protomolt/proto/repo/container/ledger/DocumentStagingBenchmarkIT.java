@@ -11,7 +11,6 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.atomic.LongAdder;
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
@@ -21,7 +20,6 @@ import static org.assertj.core.api.Assertions.*;
 
 /** Opt-in diagnostic, not a CI timing assertion or production throughput qualification. */
 @Testcontainers
-@EnabledIfEnvironmentVariable(named = "PROTOMOLT_DOCUMENT_BENCHMARK", matches = "true")
 class DocumentStagingBenchmarkIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
     @Container static final LocalStackContainer S3 = new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8")).withServices("s3");
