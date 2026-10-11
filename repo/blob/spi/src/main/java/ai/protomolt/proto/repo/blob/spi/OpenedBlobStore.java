@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.blob.spi;
 
+import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -10,6 +11,7 @@ public final class OpenedBlobStore implements AutoCloseable {
     private final Set<BlobCapability> capabilities;
     private final NamespaceProvisioner namespaces;
     private final ObjectReclaimer reclaimer;
+    private final ExactVersionReclaimer exactVersionReclaimer;
     private boolean closed;
 
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime) {
@@ -27,13 +29,31 @@ public final class OpenedBlobStore implements AutoCloseable {
         this(store, lifetime, capabilities, namespaces, unsupportedReclaimer(capabilities));
     }
 
+    /**
+     * Re-wrapping constructors cannot wire an exact-version port, so
+     * {@link BlobCapability#EXACT_VERSION_RECLAMATION} never propagates through
+     * them: the capability is dropped from the re-wrapped handle rather than
+     * advertised against an unsupported port. This is deliberately different
+     * from {@link BlobCapability#PHYSICAL_RECLAMATION}, which predates
+     * decorator re-wrapping and keeps its requires-port refusal. A decorator
+     * that can compose exact-version reclamation advertises it explicitly
+     * through the six-arg constructor.
+     */
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
             NamespaceProvisioner namespaces, ObjectReclaimer reclaimer) {
+        this(store, lifetime, withoutExactVersionReclamation(capabilities), namespaces, reclaimer,
+                unsupportedExactVersionReclaimer());
+    }
+
+    public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
+            NamespaceProvisioner namespaces, ObjectReclaimer reclaimer,
+            ExactVersionReclaimer exactVersionReclaimer) {
         this.store = Objects.requireNonNull(store, "store");
         this.lifetime = Objects.requireNonNull(lifetime, "lifetime");
         this.capabilities = Set.copyOf(capabilities);
         this.namespaces = Objects.requireNonNull(namespaces, "namespaces");
         this.reclaimer = Objects.requireNonNull(reclaimer, "reclaimer");
+        this.exactVersionReclaimer = Objects.requireNonNull(exactVersionReclaimer, "exactVersionReclaimer");
     }
 
     public synchronized ObjectReclaimer reclaimer() {
@@ -41,10 +61,26 @@ public final class OpenedBlobStore implements AutoCloseable {
         return reclaimer;
     }
 
+    public synchronized ExactVersionReclaimer exactVersionReclaimer() {
+        if (closed) throw new IllegalStateException("Storage handle is closed");
+        return exactVersionReclaimer;
+    }
+
     private static ObjectReclaimer unsupportedReclaimer(Set<BlobCapability> capabilities) {
         if (capabilities.contains(BlobCapability.PHYSICAL_RECLAMATION))
             throw new IllegalArgumentException("PHYSICAL_RECLAMATION requires a reclaimer port");
         return (bucket, key) -> { throw new UnsupportedOperationException("Physical object reclamation is unsupported"); };
+    }
+
+    private static Set<BlobCapability> withoutExactVersionReclamation(Set<BlobCapability> capabilities) {
+        if (!capabilities.contains(BlobCapability.EXACT_VERSION_RECLAMATION)) return capabilities;
+        var stripped = EnumSet.copyOf(capabilities);
+        stripped.remove(BlobCapability.EXACT_VERSION_RECLAMATION);
+        return stripped;
+    }
+
+    private static ExactVersionReclaimer unsupportedExactVersionReclaimer() {
+        return (bucket, key, versionId) -> { throw new UnsupportedOperationException("Exact-version reclamation is unsupported"); };
     }
 
     public synchronized void ensureNamespace(String namespace) {
