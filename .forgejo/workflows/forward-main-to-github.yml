@@ -26,6 +26,6 @@ jobs:
           fetch-depth: 0
       - name: Fast-forward GitHub main to this commit after its required checks pass
         env:
-          GITHUB_FORWARD_TOKEN: ${{ secrets.GITHUB_FORWARD_TOKEN }}
+          GITHUB_FORWARD_TOKEN: ${{ secrets.GH_FORWARD_TOKEN }}
           GITHUB_REPOSITORY_SLUG: ai-pipestream/protomolt
         run: bash .forgejo/scripts/forward-main-to-github.sh
