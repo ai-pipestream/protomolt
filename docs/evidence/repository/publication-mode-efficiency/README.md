@@ -1,5 +1,9 @@
 # Publication-mode validation: one fenced transaction
 
+This directory records source `1c9faac60`. The requalified source adds a recheck of
+claim, owner and command after the decode; its counts, the 16 MiB lock window and
+the repeated suites are in [`requalification/`](requalification/README.md).
+
 Branch `agent/publication-mode-efficiency` from base
 `5f8acfb413febd0a3ce1233d06d9a143d1220f86`. The change is in
 `DocumentPublicationModesJournal.requireObservedModes` and the new
