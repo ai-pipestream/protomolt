@@ -14,7 +14,7 @@ set -euo pipefail
 
 : "${GITHUB_REPOSITORY_SLUG:?GITHUB_REPOSITORY_SLUG is required}"
 if [ -z "${GITHUB_FORWARD_TOKEN:-}" ]; then
-  echo "::error::secret GITHUB_FORWARD_TOKEN is not set; add it under the repository's Actions secrets" >&2
+  echo "::error::GITHUB_FORWARD_TOKEN is empty; set the GH_FORWARD_TOKEN Actions secret on the repository (Forgejo does not allow the GITHUB_ prefix)" >&2
   exit 2
 fi
 

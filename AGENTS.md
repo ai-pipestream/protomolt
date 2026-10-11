@@ -16,8 +16,9 @@
   `.forgejo/workflows/github-ancestor-guard.yml` fails a Forgejo pull request to
   main when the head does not already contain GitHub main, listing the missing
   commits; the forward halts the same way. Merge GitHub main into the branch
-  and the guard accepts it. Both workflows read the `GITHUB_FORWARD_TOKEN`
-  repository secret, a GitHub token with write access to the repository.
+  and the guard accepts it. Both workflows read the `GH_FORWARD_TOKEN`
+  repository secret (Forgejo does not allow the `GITHUB_` prefix), a fine-grained
+  GitHub token with Contents and Pull requests write, Checks and Administration read.
 - This repo was GitHub-canonical until 2026-08-01 (the forgejo repo used to
   be a read-only pull mirror of GitHub). The mirror was deleted and the repo
   recreated as a normal repo; forgejo is now the source of truth. If a

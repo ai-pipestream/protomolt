@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
       - name: GitHub main must be an ancestor of this pull request
         env:
-          GITHUB_FORWARD_TOKEN: ${{ secrets.GITHUB_FORWARD_TOKEN }}
+          GITHUB_FORWARD_TOKEN: ${{ secrets.GH_FORWARD_TOKEN }}
           GITHUB_REPOSITORY_SLUG: ai-pipestream/protomolt
         run: |
           source .forgejo/scripts/github-main.sh
