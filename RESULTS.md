@@ -131,8 +131,10 @@ gate. ScopedPublicationParityIT's persisted host log
 - Local green: yes — table above, this checkout, head commit.
 - Published branch: pushed to Forgejo `origin` first, then GitHub `github`.
 - Hosted CI: GitHub Actions run 38290085534 dispatched via `workflow_dispatch` on the
-  branch (branch pushes do not trigger CI; no workflow policy changed). **Pending** —
-  not a completed landing. Forgejo runs no build CI by design.
+  branch (branch pushes do not trigger CI; no workflow policy changed). **Completed:
+  success** — all four jobs green, including `build (25)` with the
+  `Repository storage host tests` step (`admissionStorageTest`) that failed in run
+  38121396523. Forgejo runs no build CI by design.
 - Merge: not merged; coordinator owns review and landing.
 
 ## PR308 coordination
@@ -154,4 +156,5 @@ or formatting churn in probe wrappers.
 - The deterministic suite drives the adapter directly (controlled observer); the
   end-to-end in-process transport path is covered by admissionStorageTest and the
   parity suite rather than by forced ordering through gRPC internals.
-- Hosted CI result is pending at submission time; this file will not claim landing.
+- Hosted CI completed green on the submitted code; merge remains with the coordinator,
+  so this branch is delivered, not landed.
