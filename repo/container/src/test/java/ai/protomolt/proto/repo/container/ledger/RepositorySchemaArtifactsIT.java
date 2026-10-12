@@ -218,11 +218,7 @@ class RepositorySchemaArtifactsIT {
     @Test void retainedReadReportsMissingPayloadExplicitly() {
         var owner = owner();
         String hash = artifacts.stage(owner, List.of(descriptor("doomed.proto")), () -> {}).getFirst();
-        tx.inTransaction(em -> {
-            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
-            em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account")
-                    .setParameter("account", owner.key().account()).executeUpdate();
-        });
+        deletePayloads(owner);
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
         assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
         assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {}))
@@ -233,18 +229,14 @@ class RepositorySchemaArtifactsIT {
         var owner = owner();
         var bytes = descriptor("doomed.proto");
         String hash = artifacts.stage(owner, List.of(bytes), () -> {}).getFirst();
-        tx.inTransaction(em -> {
-            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
-            em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account")
-                    .setParameter("account", owner.key().account()).executeUpdate();
-        });
+        deletePayloads(owner);
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
         assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
         assertThatThrownBy(() -> artifacts.stage(owner, List.of(bytes), () -> {}))
-                .hasStackTraceContaining("payload is missing");
+                .rootCause().hasMessageContaining("Schema artifact payload is missing");
         var other = owner(owner.key().account());
         assertThatThrownBy(() -> artifacts.stage(other, List.of(bytes), () -> {}))
-                .hasStackTraceContaining("payload is missing");
+                .rootCause().hasMessageContaining("Schema artifact payload is missing");
         assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
         assertThat(count(owner, "repository_schema_artifact_claims")).isEqualTo(1);
         assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {}))
@@ -308,6 +300,46 @@ class RepositorySchemaArtifactsIT {
         assertThat(count(first, "repository_schema_artifacts")).isEqualTo(1);
         assertThat(count(first, "repository_schema_artifact_payloads")).isEqualTo(1);
         assertThat(count(first, "repository_schema_artifact_claims")).isEqualTo(2);
+    }
+
+    @Test void abortedCreatorLeavesIdenticalStagingToTheWaiter() throws Exception {
+        var first = owner();
+        var second = owner(first.key().account());
+        var bytes = descriptor("abort.proto");
+        var sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray());
+        var inserted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holder = Thread.ofVirtual().start(() -> {
+            try {
+                tx.inTransaction(em -> {
+                    RepositoryOperationLedger.fenceLiveOwner(em, first);
+                    em.createNativeQuery("""
+                            SELECT stage_repository_schema_artifact(:account,:principal,:operation,:generation,:sha,:bytes)
+                            """).setParameter("account", first.key().account()).setParameter("principal", first.key().principal())
+                            .setParameter("operation", first.key().operationId()).setParameter("generation", first.generation())
+                            .setParameter("sha", sha).setParameter("bytes", bytes.toByteArray()).getSingleResult();
+                    inserted.countDown();
+                    try { assertThat(release.await(60, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+                    catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+                    abortTransaction();
+                    return null;
+                });
+            } catch (IllegalStateException expected) {
+                assertThat(expected).hasMessage("creator abort");
+            }
+        });
+        assertThat(inserted.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        var bounded = new RepositorySchemaArtifacts(tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(30))));
+        assertThatThrownBy(() -> bounded.stage(second, List.of(bytes), () -> {}))
+                .hasStackTraceContaining("lock timeout");
+        release.countDown();
+        holder.join(60_000);
+        assertThat(holder.isAlive()).isFalse();
+        String hash = bounded.stage(second, List.of(bytes), () -> {}).getFirst();
+        assertThat(count(first, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_payloads")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_claims")).isEqualTo(1);
+        assertThat(new RepositorySchemaArtifacts(tx).readRetained(second, hash, () -> {})).isEqualTo(bytes);
     }
 
     @Test void repeatedStartupMigratesCleanlyWithoutRewritingPayloads() {
@@ -526,6 +558,16 @@ class RepositorySchemaArtifactsIT {
         em.createNativeQuery("""
                 INSERT INTO repository_schema_artifact_claims VALUES(:account,'principal',:operation,1,sha256(decode('01','hex')))
                 """).setParameter("account", owner.key().account()).setParameter("operation", owner.key().operationId()).executeUpdate();
+    }
+    /** Aborts the enclosing transaction, simulating a creator that never commits. */
+    private static void abortTransaction() { throw new IllegalStateException("creator abort"); }
+    /** Fault injection: removes retained payload rows with trigger enforcement disabled, simulating lost bytes. */
+    private static void deletePayloads(RepositoryOperationLedger.Owner owner) {
+        tx.inTransaction(em -> {
+            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+            em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account")
+                    .setParameter("account", owner.key().account()).executeUpdate();
+        });
     }
     private static long count(RepositoryOperationLedger.Owner owner, String table) {
         return tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table + " WHERE account_id=:account")

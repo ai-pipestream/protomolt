@@ -70,31 +70,32 @@ $$;
 CREATE CONSTRAINT TRIGGER repository_schema_payload_required AFTER INSERT ON repository_schema_artifacts
  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION require_repository_schema_payload();
 
+-- New behavior in this migration: the payload row is written only by the call
+-- that creates the catalog identity. Staging onto an existing identity requires
+-- and verifies its retained payload; it never recreates lost bytes.
 CREATE OR REPLACE FUNCTION stage_repository_schema_artifact(
  p_account TEXT,p_principal TEXT,p_operation UUID,p_generation BIGINT,p_sha BYTEA,p_bytes BYTEA)
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
-DECLARE created_sha BYTEA; retained_bytes BYTEA;
+DECLARE created_identity BOOLEAN; retained_bytes BYTEA;
 BEGIN
  PERFORM require_repository_operation_write_fence(p_account,p_principal,p_operation,p_generation);
  IF p_bytes IS NULL OR octet_length(p_bytes) NOT BETWEEN 1 AND 16777216
    OR p_sha IS NULL OR p_sha<>sha256(p_bytes) THEN
   RAISE EXCEPTION 'Invalid schema artifact size or digest';
  END IF;
- -- An existing identity requires its retained payload; staging never recreates
- -- lost bytes. Only the creator of a new identity writes the payload row.
  INSERT INTO repository_schema_artifacts(account_id,artifact_sha256,
    creator_principal,creator_operation,creator_generation)
  VALUES(p_account,p_sha,p_principal,p_operation,p_generation)
  ON CONFLICT(account_id,artifact_sha256) DO NOTHING
- RETURNING artifact_sha256 INTO created_sha;
- IF created_sha IS NULL THEN
+ RETURNING TRUE INTO created_identity;
+ IF created_identity IS TRUE THEN
+  INSERT INTO repository_schema_artifact_payloads(account_id,artifact_sha256,payload_bytes)
+  VALUES(p_account,p_sha,p_bytes);
+ ELSE
   SELECT payload_bytes INTO retained_bytes FROM repository_schema_artifact_payloads
    WHERE account_id=p_account AND artifact_sha256=p_sha FOR KEY SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Schema artifact payload is missing'; END IF;
   IF retained_bytes<>p_bytes THEN RAISE EXCEPTION 'Schema artifact digest collision'; END IF;
- ELSE
-  INSERT INTO repository_schema_artifact_payloads(account_id,artifact_sha256,payload_bytes)
-  VALUES(p_account,p_sha,p_bytes);
  END IF;
  INSERT INTO repository_schema_artifact_claims(account_id,principal,operation_id,owner_generation,artifact_sha256)
  VALUES(p_account,p_principal,p_operation,p_generation,p_sha)
@@ -103,8 +104,9 @@ BEGIN
 END;
 $$;
 
--- Staging byte accounting now reads the payload relation. Lock order is
--- unchanged: identity rows first, then claims, in caller digest order.
+-- Retargeted in this migration: staging byte accounting reads the payload
+-- relation. Limits and lock order are unchanged: identity rows first, then
+-- claims, in caller digest order.
 CREATE OR REPLACE FUNCTION guard_repository_schema_claim() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE existing_count BIGINT; existing_bytes BIGINT; incoming_bytes INTEGER;
 BEGIN
@@ -141,6 +143,8 @@ BEGIN
 END;
 $$;
 
+-- Retargeted in this migration: the metadata existence and size check reads
+-- the payload relation. Bounds and binding rules are unchanged.
 CREATE OR REPLACE FUNCTION guard_document_revision_schema_asset() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE c document_revision_commits%ROWTYPE;
  r document_revision_publications%ROWTYPE;
@@ -169,6 +173,8 @@ BEGIN
 END;
 $$;
 
+-- Retargeted in this migration: the completeness byte sum reads the payload
+-- relation. Expected counts and the byte budget are unchanged.
 CREATE OR REPLACE FUNCTION require_complete_document_assessment_artifacts() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE expected INTEGER; actual BIGINT; bytes BIGINT;
 BEGIN

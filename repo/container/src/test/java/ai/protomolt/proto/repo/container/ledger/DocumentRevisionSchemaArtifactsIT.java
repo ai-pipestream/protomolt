@@ -26,14 +26,10 @@ class DocumentRevisionSchemaArtifactsIT {
             var p = prepare(c, 2);
             stage(c, p.owner());
             var result = publish(c, p, Fault.NONE, em -> {});
-            var before = c.tx().readOnly(em -> em.createNativeQuery("""
-                    SELECT row_to_json(r)::text FROM document_revision_publications r ORDER BY revision_id
-                    """).getResultList());
+            var before = snapshot(c, "document_revision_publications", "revision_id");
             org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
                     .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load().migrate();
-            var after = c.tx().readOnly(em -> em.createNativeQuery("""
-                    SELECT row_to_json(r)::text FROM document_revision_publications r ORDER BY revision_id
-                    """).getResultList());
+            var after = snapshot(c, "document_revision_publications", "revision_id");
             // Preparation publishes one legacy source per member; native publication adds one more.
             assertThat(after).isEqualTo(before).hasSize(2 * result.getMembersCount());
             assertThat(count(c, "document_revision_commits")).isEqualTo(2);
@@ -58,42 +54,30 @@ class DocumentRevisionSchemaArtifactsIT {
                 insertEvidence(em, revision, p.owner());
                 bindAsset(em, revision, p.owner(), descriptorHash, metadataHash);
             }, em -> {});
-            var publications = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_publications r ORDER BY revision_id").getResultList());
-            var receipts = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM repository_operation_success r ORDER BY account_id,principal,operation_id").getResultList());
+            var publications = snapshot(c, "document_revision_publications", "revision_id");
+            var receipts = snapshot(c, "repository_operation_success", "account_id,principal,operation_id");
             var identities = c.tx().readOnly(em -> em.createNativeQuery(
                     "SELECT account_id,encode(artifact_sha256,'hex'),creator_principal,creator_operation::text,creator_generation,"
                     + "encode(artifact_bytes,'hex'),size_bytes FROM repository_schema_artifacts ORDER BY 1,2").getResultList());
-            var claims = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM repository_schema_artifact_claims r ORDER BY 1").getResultList());
-            var references = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_artifacts r ORDER BY 1").getResultList());
-            var evidence = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_evidence r ORDER BY 1").getResultList());
-            var assets = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_assets r ORDER BY 1").getResultList());
+            var claims = snapshot(c, "repository_schema_artifact_claims", "1");
+            var references = snapshot(c, "document_revision_schema_artifacts", "1");
+            var evidence = snapshot(c, "document_revision_schema_evidence", "1");
+            var assets = snapshot(c, "document_revision_schema_assets", "1");
             assertThat(count(c, "repository_schema_artifacts")).isEqualTo(2);
             assertThat(count(c, "document_revision_schema_artifacts")).isEqualTo(4);
             org.flywaydb.core.Flyway.configure().dataSource(c.pool()).schemas(c.pool().getSchema())
                     .defaultSchema(c.pool().getSchema()).locations("classpath:db/migration/repo").load().migrate();
-            var publicationsAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_publications r ORDER BY revision_id").getResultList());
+            var publicationsAfter = snapshot(c, "document_revision_publications", "revision_id");
             assertThat(publicationsAfter).isEqualTo(publications);
-            var receiptsAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM repository_operation_success r ORDER BY account_id,principal,operation_id").getResultList());
+            var receiptsAfter = snapshot(c, "repository_operation_success", "account_id,principal,operation_id");
             assertThat(receiptsAfter).isEqualTo(receipts);
-            var claimsAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM repository_schema_artifact_claims r ORDER BY 1").getResultList());
+            var claimsAfter = snapshot(c, "repository_schema_artifact_claims", "1");
             assertThat(claimsAfter).isEqualTo(claims);
-            var referencesAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_artifacts r ORDER BY 1").getResultList());
+            var referencesAfter = snapshot(c, "document_revision_schema_artifacts", "1");
             assertThat(referencesAfter).isEqualTo(references);
-            var evidenceAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_evidence r ORDER BY 1").getResultList());
+            var evidenceAfter = snapshot(c, "document_revision_schema_evidence", "1");
             assertThat(evidenceAfter).isEqualTo(evidence);
-            var assetsAfter = c.tx().readOnly(em -> em.createNativeQuery(
-                    "SELECT row_to_json(r)::text FROM document_revision_schema_assets r ORDER BY 1").getResultList());
+            var assetsAfter = snapshot(c, "document_revision_schema_assets", "1");
             assertThat(assetsAfter).isEqualTo(assets);
             // One normalized payload per recorded identity, with matching bytes, digest and size.
             var payloads = c.tx().readOnly(em -> em.createNativeQuery(
@@ -284,6 +268,11 @@ class DocumentRevisionSchemaArtifactsIT {
     }
     private static String stageBytes(Context c, RepositoryOperationLedger.Owner owner, ByteString bytes) {
         return new RepositorySchemaArtifacts(c.tx()).stage(owner, List.of(bytes), () -> {}).getFirst();
+    }
+    /** Full-row JSON snapshot of one table, used to prove a migration left its rows unchanged. */
+    private static List<?> snapshot(Context c, String table, String order) {
+        return c.tx().readOnly(em -> em.createNativeQuery(
+                "SELECT row_to_json(r)::text FROM " + table + " r ORDER BY " + order).getResultList());
     }
     private static void insertEvidence(EntityManager em, UUID revision, RepositoryOperationLedger.Owner owner) {
         var raw = fragment(em, revision, 0);

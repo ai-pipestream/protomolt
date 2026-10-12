@@ -76,6 +76,21 @@ staging, and repeated-startup idempotence.
 - `readRetained` distinguishes a missing claim/owner (`unavailable`) from a
   present identity with lost bytes (`Retained schema payload is missing`).
 - Lock order preserved: catalog, payload, then claims in caller digest order.
+- Readability cleanup after re-review, with no behavior change: the stage
+  function reports identity creation as a BOOLEAN (`RETURNING TRUE`) instead
+  of a nullable digest sentinel, each replaced SQL function carries a header
+  stating whether this migration retargets or changes it, and `readRetained`
+  selects an explicit payload-presence column instead of relying on a null
+  first row element. An audit of every inner-join payload reader found each
+  one already refuses a short result set explicitly (creation row count,
+  retained-evidence row count, replay key-set equality, publication-lock row
+  count, and the historical reader's count probe), so no reader change was
+  needed. New test coverage: a creator that aborts after inserting the catalog
+  identity leaves identical staging to the blocked waiter
+  (`abortedCreatorLeavesIdenticalStagingToTheWaiter`); the missing-payload
+  regression asserts the exact `Schema artifact payload is missing` root-cause
+  message; the payload-deletion fault injection and the upgrade test's
+  full-row snapshots each use one shared helper.
 - Intermediate failures during development were all in new/updated test code
   (assertion shape, an old-target probe, a pinned count) and were fixed in the
   tests or made explicit in SQL; no production expectation was weakened.
@@ -121,6 +136,18 @@ All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
 16. Standalone scoped rehearsal on the repaired head
     (`--runs 1 --skip-negatives --xid-burn 0`) — exit 0,
     REPOSITORY_RECOVERY_REHEARSAL_OK.
+17. Re-review verification of the repair: the regression test copied alone
+    onto the reviewed head `6b80e8cb0` in an isolated worktree — exit 1,
+    failing with the review's exact assertion ("Expecting code to raise a
+    throwable"); the same test passes on the repaired head.
+18. Cleanup verification, same lock/workers with `--no-build-cache`: focused
+    `RepositorySchemaArtifactsIT` + `DocumentRevisionSchemaArtifactsIT` —
+    exit 0, 38/38.
+19. Cleanup broad gate: all `ai.protomolt.proto.repo.container.ledger.*`
+    tests — exit 0, 1,685 tests, 0 failures/errors/skips. The full module
+    suite (item 13) predates the cleanup; the cleanup touches only the stage
+    function, `readRetained`, and test code, all inside the ledger package
+    covered here.
 
 ## Test counts / failures / skips
 
