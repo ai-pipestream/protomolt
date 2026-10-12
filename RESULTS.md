@@ -148,6 +148,10 @@ All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
     suite (item 13) predates the cleanup; the cleanup touches only the stage
     function, `readRetained`, and test code, all inside the ledger package
     covered here.
+20. Creator-abort test correction (background-thread failures are captured
+    and rethrown after the join; the release latch is released in a
+    `finally` block): only the affected test rerun, as directed — exit 0,
+    1/1. No broader suite was rerun for this test-only correction.
 
 ## Test counts / failures / skips
 

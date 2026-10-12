@@ -309,6 +309,7 @@ class RepositorySchemaArtifactsIT {
         var sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray());
         var inserted = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
+        var holderFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
         var holder = Thread.ofVirtual().start(() -> {
             try {
                 tx.inTransaction(em -> {
@@ -319,22 +320,30 @@ class RepositorySchemaArtifactsIT {
                             .setParameter("operation", first.key().operationId()).setParameter("generation", first.generation())
                             .setParameter("sha", sha).setParameter("bytes", bytes.toByteArray()).getSingleResult();
                     inserted.countDown();
-                    try { assertThat(release.await(60, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
-                    catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+                    try {
+                        if (!release.await(60, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new AssertionError("release latch timed out");
+                    } catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
                     abortTransaction();
                     return null;
                 });
             } catch (IllegalStateException expected) {
-                assertThat(expected).hasMessage("creator abort");
+                if (!"creator abort".equals(expected.getMessage())) holderFailure.set(expected);
+            } catch (Throwable failure) {
+                holderFailure.set(failure);
             }
         });
         assertThat(inserted.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         var bounded = new RepositorySchemaArtifacts(tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(30))));
-        assertThatThrownBy(() -> bounded.stage(second, List.of(bytes), () -> {}))
-                .hasStackTraceContaining("lock timeout");
-        release.countDown();
+        try {
+            assertThatThrownBy(() -> bounded.stage(second, List.of(bytes), () -> {}))
+                    .hasStackTraceContaining("lock timeout");
+        } finally {
+            release.countDown();
+        }
         holder.join(60_000);
         assertThat(holder.isAlive()).isFalse();
+        if (holderFailure.get() != null) throw new AssertionError("creator thread failed unexpectedly", holderFailure.get());
         String hash = bounded.stage(second, List.of(bytes), () -> {}).getFirst();
         assertThat(count(first, "repository_schema_artifacts")).isEqualTo(1);
         assertThat(count(first, "repository_schema_artifact_payloads")).isEqualTo(1);
