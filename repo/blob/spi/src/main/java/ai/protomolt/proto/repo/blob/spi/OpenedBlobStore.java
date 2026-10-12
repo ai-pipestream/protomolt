@@ -1,6 +1,5 @@
 package ai.protomolt.proto.repo.blob.spi;
 
-import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -29,20 +28,11 @@ public final class OpenedBlobStore implements AutoCloseable {
         this(store, lifetime, capabilities, namespaces, unsupportedReclaimer(capabilities));
     }
 
-    /**
-     * Re-wrapping constructors cannot wire an exact-version port, so
-     * {@link BlobCapability#EXACT_VERSION_RECLAMATION} never propagates through
-     * them: the capability is dropped from the re-wrapped handle rather than
-     * advertised against an unsupported port. This is deliberately different
-     * from {@link BlobCapability#PHYSICAL_RECLAMATION}, which predates
-     * decorator re-wrapping and keeps its requires-port refusal. A decorator
-     * that can compose exact-version reclamation advertises it explicitly
-     * through the six-arg constructor.
-     */
+    /** An advertised exact-version capability requires explicitly forwarding its port. */
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
             NamespaceProvisioner namespaces, ObjectReclaimer reclaimer) {
-        this(store, lifetime, withoutExactVersionReclamation(capabilities), namespaces, reclaimer,
-                unsupportedExactVersionReclaimer());
+        this(store, lifetime, capabilities, namespaces, reclaimer,
+                unsupportedExactVersionReclaimer(capabilities));
     }
 
     public OpenedBlobStore(BlobStore store, AutoCloseable lifetime, Set<BlobCapability> capabilities,
@@ -72,14 +62,9 @@ public final class OpenedBlobStore implements AutoCloseable {
         return (bucket, key) -> { throw new UnsupportedOperationException("Physical object reclamation is unsupported"); };
     }
 
-    private static Set<BlobCapability> withoutExactVersionReclamation(Set<BlobCapability> capabilities) {
-        if (!capabilities.contains(BlobCapability.EXACT_VERSION_RECLAMATION)) return capabilities;
-        var stripped = EnumSet.copyOf(capabilities);
-        stripped.remove(BlobCapability.EXACT_VERSION_RECLAMATION);
-        return stripped;
-    }
-
-    private static ExactVersionReclaimer unsupportedExactVersionReclaimer() {
+    private static ExactVersionReclaimer unsupportedExactVersionReclaimer(Set<BlobCapability> capabilities) {
+        if (capabilities.contains(BlobCapability.EXACT_VERSION_RECLAMATION))
+            throw new IllegalArgumentException("EXACT_VERSION_RECLAMATION requires a reclaimer port");
         return (bucket, key, versionId) -> { throw new UnsupportedOperationException("Exact-version reclamation is unsupported"); };
     }
 

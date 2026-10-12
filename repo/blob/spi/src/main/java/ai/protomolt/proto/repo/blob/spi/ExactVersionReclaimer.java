@@ -11,7 +11,7 @@ package ai.protomolt.proto.repo.blob.spi;
  * <p>This mechanism carries no authorization. The caller must establish
  * repository prune eligibility and an irreversible acquisition fence before
  * invoking it, bind the version id from a verified write/read observation, hold
- * no SQL locks during the call, and treat {@link ExactVersionOutcome#UNCERTAIN}
+ * no SQL locks during the call, and treat {@link ExactVersionOutcome.Status#UNCERTAIN}
  * as retry-the-same-target. See {@code docs/design/exact-version-reclamation.md}.
  */
 @FunctionalInterface
@@ -28,7 +28,7 @@ public interface ExactVersionReclaimer {
      * and {@code UNIMPLEMENTED} when the backend reports it lacks a required
      * semantic. Anything a provider cannot classify explicitly — timeout,
      * connection failure, server error, interruption, corruption evidence —
-     * is {@link ExactVersionOutcome#UNCERTAIN}; no failure is ever reported as
+     * produces an uncertain result with phase, typed failure and original cause; no failure is ever reported as
      * absence. Duplicate or overlapping calls for the same target are safe;
      * other versions and delete markers on the key survive.
      *

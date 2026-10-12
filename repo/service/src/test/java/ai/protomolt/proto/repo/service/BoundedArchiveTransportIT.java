@@ -76,7 +76,7 @@ class BoundedArchiveTransportIT {
                                 return result;
                             });
                     return new OpenedBlobStore(store, () -> { closes.incrementAndGet(); actual.close(); },
-                            actual.capabilities(), actual::ensureNamespace, actual.reclaimer());
+                            actual.capabilities(), actual::ensureNamespace, actual.reclaimer(), actual.exactVersionReclaimer());
                 }
             };
             var config = new RepoServiceConfig(0,

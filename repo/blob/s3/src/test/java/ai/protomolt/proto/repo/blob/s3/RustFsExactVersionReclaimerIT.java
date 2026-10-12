@@ -233,7 +233,12 @@ class RustFsExactVersionReclaimerIT {
         }
         System.out.println("RUSTFS-TIMING image=" + IMAGE + " scenario=heldDelete outcome=" + heldOutcome
                 + " heldDeleteMs=" + millis(heldNanos));
-        assertThat(heldOutcome).isEqualTo(ExactVersionOutcome.UNCERTAIN);
+        assertThat(heldOutcome).satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isNotNull();
+                        assertThat(outcome.failure()).isNotNull();
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
 
         // Converge the same immutable target and prove isolation of everything else.
         assertThat(reclaimer.reclaim(bucket, heldKey, victim.versionId()))

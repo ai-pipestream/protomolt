@@ -227,7 +227,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.DELETE);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.UNAVAILABLE);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             assertThat(stub.lines).anyMatch(line -> line.startsWith("DELETE"));
         } finally { server.stop(0); }
     }
@@ -251,7 +256,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.DELETE);
+                        assertThat(outcome.failure()).isNotNull();
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             assertThat(entered.getCount()).isZero();
         } finally { release.countDown(); server.stop(0); }
     }
@@ -310,7 +320,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.VERIFICATION);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.ABORTED);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
         } finally { server.stop(0); }
     }
 
@@ -324,7 +339,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.QUALIFICATION);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.UNAVAILABLE);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             assertThat(stub.lines).noneMatch(line -> line.startsWith("DELETE"));
         } finally { server.stop(0); }
     }
@@ -373,7 +393,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.EXISTENCE);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.UNAVAILABLE);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             assertThat(stub.lines).noneMatch(line -> line.startsWith("DELETE"));
         } finally { server.stop(0); }
     }
@@ -395,7 +420,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.VERIFICATION);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.PERMISSION_DENIED);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
         } finally { server.stop(0); }
     }
 
@@ -440,7 +470,12 @@ class S3ExactVersionReclaimerTest {
         server.start();
         try (var sdk = client(server.getAddress().getPort())) {
             assertThat(new S3ExactVersionReclaimer(sdk).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.VERIFICATION);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.ABORTED);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
         } finally { server.stop(0); }
     }
 
@@ -475,7 +510,12 @@ class S3ExactVersionReclaimerTest {
                 });
         try {
             assertThat(new S3ExactVersionReclaimer(interrupted).reclaim(BUCKET, KEY, VERSION))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isEqualTo(ExactVersionOutcome.Phase.DELETE);
+                        assertThat(outcome.failure().code()).isEqualTo(BlobStoreException.Code.CANCELLED);
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
         } finally {
             Thread.interrupted(); // clear the restored flag so the test JVM thread stays clean

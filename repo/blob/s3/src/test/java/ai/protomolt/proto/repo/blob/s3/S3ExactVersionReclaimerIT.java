@@ -200,7 +200,12 @@ class S3ExactVersionReclaimerIT {
                 .build();
         try {
             assertThat(new S3ExactVersionReclaimer(ghost).reclaim(bucket, key, first.versionId()))
-                    .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                    .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isNotNull();
+                        assertThat(outcome.failure()).isNotNull();
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
         } finally { ghost.close(); }
         assertThat(store.get(bucket, key, first.versionId()).data()).isEqualTo(bytes("must survive backend confusion"));
     }

@@ -1,3 +1,9 @@
+> Coordinator repair supersedes the original outcome and wrapper descriptions below.
+> Uncertain outcomes now retain phase, typed error, and original cause. Constructors
+> reject an advertised exact-version capability without its port; wrappers explicitly
+> forward it. The original qualification below predates this repair. See
+> docs/evidence/repository/exact-version-review-repair.md for final validation.
+
 # RESULTS — exact-version reclamation provider foundation
 
 Assignment: `INSTRUCTIONS.md` (untracked handoff, not committed).

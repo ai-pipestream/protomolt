@@ -103,9 +103,9 @@ Explicit failures throw rather than return an outcome:
 Anything the provider cannot classify explicitly — timeout, connection
 failure, server error, interruption, corruption evidence — is `UNCERTAIN`, so
 access denial, missing namespace, corruption and unsupported behavior can
-never surface as successful absence. Causes are preserved via exception
-chaining for internal diagnosis; public messages carry only bucket/key/version
-id — never endpoints or credentials.
+never surface as successful absence. Causes are retained inside the structured result or thrown exception for
+internal diagnosis. Diagnostic messages carry phase and code, never provider
+endpoints or credentials.
 
 Interruption during provider I/O yields `UNCERTAIN` with the thread's interrupt
 status restored, not a `CANCELLED` throw: for a destructive request the caller
@@ -175,14 +175,23 @@ explicitly unsupported — none supplies a qualified immutable-version
 mechanism, and their existing constructors route to the unsupported default
 port.
 
-Re-wrapping never inherits this capability: `OpenedBlobStore` constructors
-that cannot wire an exact-version port drop `EXACT_VERSION_RECLAMATION` from
-the advertised set instead of advertising it against an unsupported port.
-This is deliberately asymmetric with `PHYSICAL_RECLAMATION`, which predates
-decorator re-wrapping (~17 sites in `repo/service`/`repo/container` already
-thread the whole-key reclaimer through) and keeps its requires-port refusal.
-A decorator that learns to compose exact-version reclamation advertises it
-explicitly through the six-arg constructor.
+Re-wrapping must explicitly forward the exact-version port through the six-argument
+constructor or explicitly omit the capability. Constructors reject a capability
+without its port; they never silently remove it. Existing repository test and
+runtime-probe wrappers now forward the port alongside the whole-key reclaimer.
+
+## Diagnostic results
+
+ExactVersionOutcome is a structured result. Terminal DELETED and ABSENT results
+have no failure. An UNCERTAIN result always contains the failed phase
+(QUALIFICATION, EXISTENCE, DELETE or VERIFICATION) and a BlobStoreException with
+a provider-neutral code and original cause. A still-present version after deletion
+carries ABORTED and an explicit diagnostic cause. Interruptions retain the thread
+flag and a CANCELLED diagnostic; they do not assert that deletion was cancelled.
+A permission failure while verifying a delete stays uncertain with PERMISSION_DENIED,
+so operators can distinguish credential repair from retrying an outage. Provider
+causes are internal diagnostic data; transport adapters must not serialize them or
+expose their raw messages. The public diagnostic message contains only phase and code.
 
 ## Caller obligations (the future prune worker)
 

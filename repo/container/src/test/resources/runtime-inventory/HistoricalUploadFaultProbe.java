@@ -87,7 +87,7 @@ final class HistoricalUploadFaultProbe {
                             }
                             return result;
                         });
-                try (var borrowed = new OpenedBlobStore(observed, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+                try (var borrowed = new OpenedBlobStore(observed, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
                      var uploads = new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, profile) -> {
                          require(generation.equals(placement.generation()) && profile.equals(placement.profile()), "exact historical backend");
                          return new DocumentUploadCoordinator.Backend(profile.identity(), borrowed);

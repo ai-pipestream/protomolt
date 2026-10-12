@@ -200,7 +200,12 @@ class S3ExactVersionRaceIT {
                 // before the provider's answer returns: the call cannot prove either
                 // terminal state and must report UNCERTAIN, never ABSENT.
                 assertThat(new S3ExactVersionReclaimer(relayClient).reclaim(bucket, key, first.versionId()))
-                        .isEqualTo(ExactVersionOutcome.UNCERTAIN);
+                        .satisfies(outcome -> {
+                        assertThat(outcome.status()).isEqualTo(ExactVersionOutcome.Status.UNCERTAIN);
+                        assertThat(outcome.phase()).isNotNull();
+                        assertThat(outcome.failure()).isNotNull();
+                        assertThat(outcome.failure().getCause()).isNotNull();
+                    });
             } finally {
                 relayClient.close();
             }

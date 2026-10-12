@@ -52,7 +52,7 @@ public final class BoundedDocumentHostProbe {
                     throw failure;
                 }
                 return new OpenedBlobStore(rejectionProbe.wrap(delayed.wrap(readGate.wrap(faults.wrap(actual.store())),options.get("key-prefix"))),() -> { actual.close(); closes.incrementAndGet(); },
-                        actual.capabilities(),actual::ensureNamespace,actual.reclaimer());
+                        actual.capabilities(),actual::ensureNamespace,actual.reclaimer(), actual.exactVersionReclaimer());
             }
         };
         BlobStoreProvider forbidden=new BlobStoreProvider() {

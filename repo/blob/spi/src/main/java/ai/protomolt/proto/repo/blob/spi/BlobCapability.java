@@ -22,8 +22,8 @@ public enum BlobCapability {
      * the whole key. Distinct from {@link #PHYSICAL_RECLAMATION}: whole-key
      * availability never implies exact-version support. A handle advertises this
      * only with a wired {@link ExactVersionReclaimer} port; re-wrapping a handle
-     * through a constructor that cannot wire the port drops the capability
-     * rather than advertising it against an unsupported port.
+     * must explicitly forward the port or explicitly omit this capability.
+     * Constructors refuse an advertised capability without its port.
      */
     EXACT_VERSION_RECLAMATION
 }
