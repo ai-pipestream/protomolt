@@ -43,3 +43,21 @@ Targeted service wrapper regression: 48 tests, 0 failures, 0 errors, 0 skips;
 exit 0. Classes: ManagedRawDocumentIT, ManagedArchiveReadShutdownIT,
 BoundedArchiveHostIT, BoundedArchiveTransportIT. Executed under the shared
 qualification lock with --max-workers=2.
+
+## Final integration repair
+
+The run at 5769f34e7 failed in RedisServiceCompositionIT because its test-only
+backing wrapper omitted the newly required exact-version port. The wrapper now
+forwards that port explicitly. The other failure was the unchanged authoring
+retry transcript test; its six-case class passed unchanged in the targeted rerun.
+This does not establish why its hosted assertion failed.
+
+Main including PR309 and PR310 was merged without production conflicts. Both
+assignment reports are preserved: schema report remains at root RESULTS.md;
+this assignment's report is docs/evidence/repository/exact-version-reclamation/RESULTS.md.
+
+Final targeted command: :protomolt-repo-service:test --tests '*RedisServiceCompositionIT'
+:protomolt-workflow-authoring:test --tests '*WorkflowAuthorTaskMutationsTest', with
+--max-workers=2 --console=plain under the qualification lock. Eight tests passed,
+zero failures/errors/skips, executed 2026-10-12T23:57Z. Log:
+/tmp/pr308-landing-targeted.log. No production logic or test expectations changed.
