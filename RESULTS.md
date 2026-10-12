@@ -116,7 +116,7 @@ All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
 
 ## PR URL
 
-<to fill after opening>
+https://git.rokkon.com/ai-pipestream/protomolt/pulls/310
 
 ## Local / branch / CI / merge
 
