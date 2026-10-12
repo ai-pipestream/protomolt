@@ -4,11 +4,11 @@
 - Branch: `agent/publication-cancellation-repair`
 - Head: see `git log` — code change in `dc68752ae`, this document added on top
 - Forgejo PR: https://git.rokkon.com/ai-pipestream/protomolt/pulls/309
-- Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38290085534
-  (covers commit 84954558d, which contains all code and test changes; any later
-  commits on the branch touch this RESULTS.md only. An earlier dispatch, run
-  38289935429 on dc68752ae, was cancelled so hosted CI measures exactly the
-  submitted code.)
+- Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38302021316
+  — completed **success** on commit 3e0905234, which contains all code, test and
+  evidence changes; any later commits on the branch touch this RESULTS.md only.
+  (Earlier dispatches 38289935429 and 38290085534 covered the initial code commit
+  and were superseded; 38290085534 also completed success.)
 
 ## Cause
 
@@ -142,11 +142,11 @@ gate. ScopedPublicationParityIT's persisted host log
 
 - Local green: yes — table above, this checkout, head commit.
 - Published branch: pushed to Forgejo `origin` first, then GitHub `github`.
-- Hosted CI: GitHub Actions run 38290085534 dispatched via `workflow_dispatch` on the
+- Hosted CI: GitHub Actions run 38302021316 dispatched via `workflow_dispatch` on the
   branch (branch pushes do not trigger CI; no workflow policy changed). **Completed:
-  success** — all four jobs green, including `build (25)` with the
-  `Repository storage host tests` step (`admissionStorageTest`) that failed in run
-  38121396523. Forgejo runs no build CI by design.
+  success** on the submitted code and tests — all four jobs green, including
+  `build (25)` with the `Repository storage host tests` step (`admissionStorageTest`)
+  that failed in run 38121396523. Forgejo runs no build CI by design.
 - Merge: not merged; coordinator owns review and landing.
 
 ## PR308 coordination
