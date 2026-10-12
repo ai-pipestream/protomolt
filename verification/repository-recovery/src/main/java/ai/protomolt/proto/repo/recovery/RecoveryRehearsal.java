@@ -403,9 +403,9 @@ public final class RecoveryRehearsal {
             case "corrupt-descriptor" -> {
                 String artifact = Json.string(record, "schemaArtifactSha256");
                 try (var ledger = new Ledger(restored.postgres().jdbcUrl(), restored.postgres().user(), restored.postgres().password())) {
-                    ledger.execute("ALTER TABLE repository_schema_artifacts DISABLE TRIGGER ALL");
-                    ledger.execute("UPDATE repository_schema_artifacts SET artifact_bytes = sha256(artifact_bytes) || artifact_bytes, artifact_sha256 = sha256(sha256(artifact_bytes) || artifact_bytes) WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
-                    ledger.execute("ALTER TABLE repository_schema_artifacts ENABLE TRIGGER ALL");
+                    ledger.execute("ALTER TABLE repository_schema_artifact_payloads DISABLE TRIGGER ALL");
+                    ledger.execute("UPDATE repository_schema_artifact_payloads SET payload_bytes = sha256(payload_bytes) || payload_bytes, artifact_sha256 = sha256(sha256(payload_bytes) || payload_bytes) WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
+                    ledger.execute("ALTER TABLE repository_schema_artifact_payloads ENABLE TRIGGER ALL");
                     checks.require(ledger.schemaCatalog().keySet().stream().noneMatch(key -> key.endsWith("/" + artifact)), "corrupt-descriptor.injected",
                             "retained descriptor artifact " + artifact + " replaced by damaged bytes on the disposable restored ledger");
                 }

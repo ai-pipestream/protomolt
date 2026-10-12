@@ -102,9 +102,9 @@ final class DocumentHistoricalSchemaRows {
             java.util.function.LongConsumer reserve) {
         control.run();
         Object[] budget = (Object[]) em.createNativeQuery("""
-                SELECT count(*),count(a.artifact_sha256),COALESCE(sum(octet_length(a.artifact_bytes)),0)
-                FROM document_revision_schema_artifacts r LEFT JOIN repository_schema_artifacts a
-                 ON a.account_id=r.account_id AND a.account_id=:account AND a.artifact_sha256=r.artifact_sha256
+                SELECT count(*),count(p.artifact_sha256),COALESCE(sum(octet_length(p.payload_bytes)),0)
+                FROM document_revision_schema_artifacts r LEFT JOIN repository_schema_artifact_payloads p
+                 ON p.account_id=r.account_id AND p.account_id=:account AND p.artifact_sha256=r.artifact_sha256
                 WHERE r.revision_id=:revision
                 """).setParameter("revision", revision).setParameter("account", account).getSingleResult();
         long count = ((Number) budget[0]).longValue();
@@ -113,9 +113,9 @@ final class DocumentHistoricalSchemaRows {
             throw invalid("Historical schema artifact set is missing or exceeds limits");
         reserve.accept(2 * ((Number) budget[2]).longValue());
         var rows = em.createNativeQuery("""
-                SELECT encode(a.artifact_sha256,'hex'),a.artifact_bytes FROM document_revision_schema_artifacts r
-                JOIN repository_schema_artifacts a ON a.account_id=r.account_id AND a.artifact_sha256=r.artifact_sha256
-                WHERE r.revision_id=:revision AND r.account_id=:account ORDER BY a.artifact_sha256 LIMIT 65
+                SELECT encode(p.artifact_sha256,'hex'),p.payload_bytes FROM document_revision_schema_artifacts r
+                JOIN repository_schema_artifact_payloads p ON p.account_id=r.account_id AND p.artifact_sha256=r.artifact_sha256
+                WHERE r.revision_id=:revision AND r.account_id=:account ORDER BY p.artifact_sha256 LIMIT 65
                 """).setParameter("revision", revision).setParameter("account", account).getResultList();
         if (rows.size() != count) throw invalid("Historical schema artifact set changed");
         var result = new LinkedHashMap<String, ByteString>();

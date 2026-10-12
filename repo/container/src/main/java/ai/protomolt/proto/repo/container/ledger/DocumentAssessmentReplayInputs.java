@@ -216,17 +216,17 @@ final class DocumentAssessmentReplayInputs implements AutoCloseable {
 
     private Map<String, ByteString> artifacts(EntityManager em, UUID id, String account, PayloadBudget budget, RepositoryReadControl control) {
         var sizes = em.createNativeQuery("""
-                SELECT a.size_bytes FROM document_assessment_artifacts r JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
+                SELECT a.size_bytes FROM document_assessment_artifacts r JOIN repository_schema_artifact_payloads a USING(account_id,artifact_sha256)
                 WHERE r.assessment_id=:id AND r.account_id=:account LIMIT 65
                 """).setParameter("id", id).setParameter("account", account).getResultList();
         long total = total(sizes, 64, 16_777_216); reserve(budget, 2 * total); control.check();
         var rows = em.createNativeQuery("""
                 SELECT encode(a.artifact_sha256,'hex'),a.size_bytes,
-                    CASE WHEN a.size_bytes BETWEEN 1 AND 16777216 THEN a.artifact_bytes END
-                FROM document_assessment_artifacts r JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
+                    CASE WHEN a.size_bytes BETWEEN 1 AND 16777216 THEN a.payload_bytes END
+                FROM document_assessment_artifacts r JOIN repository_schema_artifact_payloads a USING(account_id,artifact_sha256)
                 WHERE r.assessment_id=:id AND r.account_id=:account
                   AND (SELECT COALESCE(sum(a2.size_bytes),0) FROM document_assessment_artifacts r2
-                       JOIN repository_schema_artifacts a2 USING(account_id,artifact_sha256)
+                       JOIN repository_schema_artifact_payloads a2 USING(account_id,artifact_sha256)
                        WHERE r2.assessment_id=:id AND r2.account_id=:account)=:total
                 ORDER BY a.artifact_sha256 LIMIT 65
                 """).setParameter("id", id).setParameter("account", account).setParameter("total", total).getResultList();

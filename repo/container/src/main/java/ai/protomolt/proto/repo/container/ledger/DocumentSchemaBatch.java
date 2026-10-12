@@ -111,10 +111,12 @@ final class DocumentSchemaBatch {
         for (var digest : new java.util.TreeSet<>(artifacts.keySet())) {
             active(control);
             var rows = em.createNativeQuery("""
-                    SELECT a.size_bytes FROM repository_schema_artifacts a JOIN repository_schema_artifact_claims c
+                    SELECT p.size_bytes FROM repository_schema_artifacts a
+                     JOIN repository_schema_artifact_payloads p USING(account_id,artifact_sha256)
+                     JOIN repository_schema_artifact_claims c
                      ON c.account_id=a.account_id AND c.artifact_sha256=a.artifact_sha256
                     WHERE c.account_id=:account AND c.principal=:principal AND c.operation_id=:operation
-                     AND c.owner_generation=:generation AND c.artifact_sha256=:sha FOR KEY SHARE OF a,c
+                     AND c.owner_generation=:generation AND c.artifact_sha256=:sha FOR KEY SHARE OF a,p,c
                     """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
                     .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
                     .setParameter("sha", HexFormat.of().parseHex(digest)).getResultList();

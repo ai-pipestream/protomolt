@@ -234,7 +234,8 @@ final class DocumentNativePublicationFixture {
         });
     }
 
-    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx, boolean beforePolicyFence, boolean beforeRejection) implements AutoCloseable {
+    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx, boolean beforePolicyFence, boolean beforeRejection,
+            boolean beforePayloadSplit) implements AutoCloseable {
         public void close() { try { emf.close(); } finally { pool.close(); } }
     }
     static Context context(PostgreSQLContainer postgres) {
@@ -251,7 +252,8 @@ final class DocumentNativePublicationFixture {
         try {
             var emf=Persistence.createEntityManagerFactory("document-ledger",Map.of("hibernate.connection.datasource",pool,"hibernate.hbm2ddl.auto","validate"));
             return new Context(pool,emf,new Tx(emf), !target.equals("latest") && Integer.parseInt(target) < 59,
-                    !target.equals("latest") && Integer.parseInt(target) < 64);
+                    !target.equals("latest") && Integer.parseInt(target) < 64,
+                    !target.equals("latest") && Integer.parseInt(target) < 120);
         } catch(RuntimeException|Error failure) { pool.close(); throw failure; }
     }
 }

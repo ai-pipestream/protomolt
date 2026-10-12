@@ -1,172 +1,198 @@
-# RESULTS — publication cancellation repair
+# RESULTS: schema payload separation (V120)
 
-- Base: `bed8cf29de6bad75dea11372e1b7efedf35af943` (synchronized Forgejo/GitHub main at assignment creation)
-- Branch: `agent/publication-cancellation-repair`
-- Head: see `git log` — code change in `dc68752ae`, this document added on top
-- Forgejo PR: https://git.rokkon.com/ai-pipestream/protomolt/pulls/309
-- Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38290085534
-  (covers commit 84954558d, which contains all code and test changes; any later
-  commits on the branch touch this RESULTS.md only. An earlier dispatch, run
-  38289935429 on dc68752ae, was cancelled so hosted CI measures exactly the
-  submitted code.)
+## Base / head / branch
 
-## Cause
-
-`DocumentAssessmentStorageRuntimeTest.observedAssessmentAndSqlRunTogetherOnProductionJars`
-failed on GitHub run 38121396523 (job 114416690422) with
-`StatusRuntimeException: RESOURCE_EXHAUSTED: Publication transport is full` at
-`BoundedPublicationRpcCancellationProbe.java:61` — the exact receipt replay issued
-immediately after the committed call returned.
-
-`DocumentPublicationGrpcService` admits one call per slot (`admit()`,
-repo/service/.../DocumentPublicationGrpcService.java:82) and returns the slot only
-when BOTH events have happened (`Call.releaseIfDone`, :147):
-
-1. `producerFinished` — the handler method returned (finally block, :78), and
-2. `terminated` — gRPC delivered the server call's terminal callback
-   (`setOnCancelHandler`/`setOnCloseHandler`, :58).
-
-The terminal callback is queued onto the server call executor after the response is
-on the wire (the failing stack shows the executor hop:
-`JumpToApplicationThreadServerStreamListener` → `SerializingExecutor` →
-`ThreadPerTaskExecutor`). So **client receipt of the response never implies capacity
-release**. The probe's replay assumed it does; under executor lag on the forwarding
-runner the replay arrived at `admit()` while the committed call's slot was still
-held and was legitimately refused. Base main CI passing on the same source is the
-same race run with friendlier scheduling, not a slow-runner artifact.
-
-### Lifecycle inventory (which events imply which)
-
-- request admitted (`activeCalls++`) ⇒ slot held until release; nothing else implies release.
-- client terminal callback (cancel observed by the fixture) ⇒ server `Context`
-  cancellation propagates (`serverCancelled` latch) and the server terminal callback
-  eventually fires; it does NOT stop the producer — the producer exits only when its
-  own `control.check()` observes cancellation (worker retention contract).
-- producer exit ⇒ `producerFinished`; alone it releases nothing.
-- server terminal callback ⇒ `terminated`; alone it releases nothing.
-- producerFinished AND terminated ⇒ exactly-once release (`released` flag): byte
-  lease closed and `activeCalls--`.
-- `awaitIdle()` true ⇒ all admitted calls fully released. In these single-caller
-  fixtures the next admit then succeeds; awaitIdle is an observation, not a
-  reservation — with concurrent callers another call can claim the freed slot
-  first. This is the documented server drainage event (also used by
-  `RepoServices.close` → `ManagedDocumentServices.awaitTransportIdle` and by
-  `ManagedJournaledDrainProbe.awaitTransportRelease`).
-- `close()` ⇒ new admissions refused (UNAVAILABLE); accepted calls retain capacity
-  and resources until they drain.
-- client received response ⇒ only that `onNext`/`onCompleted` ran; does NOT imply
-  the server terminal callback ran, hence does NOT imply capacity release. This was
-  the fixture's invalid assumption.
+- Base: bed8cf29de6bad75dea11372e1b7efedf35af943 (Forgejo/GitHub main at assignment creation)
+- Branch: agent/schema-payload-separation
+- Implementation head: eee885bec5474574adaa3713fb1b2ae56e3ba81c
+- Repair head (staging no-recreate fix + regression + rehearsal evidence):
+  38afa609477c318e17d4d4095d88f7b4ddfc5193
+  (this file is committed on top; see branch tip)
+- Migration reserved: V120 (main tip is V119; PR308 untouched)
 
 ## Changed behavior
 
-**Test synchronization only; no production code changed.**
+Descriptor bytes move from the `repository_schema_artifacts` identity catalog into
+a normalized `repository_schema_artifact_payloads` relation keyed by the existing
+`(account_id, artifact_sha256)` identity. Catalog identities, staging claims, and
+V55/V56/V57 associations are preserved. Payload rows are immutable: no delete
+permission, no reclamation, no pruning. A missing retained payload is an explicit
+error, never an empty schema or a registry substitution.
 
-- `repo/container/src/test/resources/runtime-inventory/BoundedPublicationRpcCancellationProbe.java`
-  (one assertion added): after the committed call drains, the probe waits for
-  `service.awaitIdle(Duration.ofSeconds(5))` — "committed delivery returned transport
-  capacity" — before issuing the exact receipt replay. This is the established
-  convention (`awaitTransportRelease` in `ManagedJournaledDrainProbe`) that the
-  newer cancellation probe missed at this one boundary.
-- `repo/service/src/test/java/ai/protomolt/proto/repo/service/DocumentPublicationGrpcServiceTest.java`
-  (new, 5 tests): drives the adapter with a controlled `ServerCallStreamObserver`
-  so terminal callbacks fire only when the test delivers them (explicit barriers at
-  the exact boundary). Proves:
-  - response delivery does not return capacity before server termination; a replay
-    in that window is refused RESOURCE_EXHAUSTED (the CI ordering, made deterministic);
-    after the close callback, capacity returns and the replay is byte-identical;
-  - client cancellation retains capacity while the producer is still active, and
-    capacity returns when the producer actually exits;
-  - duplicate terminal signals (cancel + close + close) release capacity exactly
-    once (proven by capacity arithmetic: a second active call still occupies the
-    only slot);
-  - `close()` rejects new calls UNAVAILABLE while accepted work retains capacity and
-    completes;
-  - producer failure holds capacity until server termination, then releases.
-  Byte-lease accounting (`PayloadBudget.reservedBytes()`) returns to zero in every path.
-  Blocked-producer tests hold their producer threads under a finally-safe
-  `BlockedProducer.settle()`: the gate latch is always released, the producer joined,
-  and any background failure rethrown with its stack.
+SQL (V120 `repository_schema_artifact_payloads`):
+- New payload table with PK `(account_id, artifact_sha256)`, `payload_bytes`,
+  generated `size_bytes` (1..16 MiB), digest CHECK, FK to the catalog.
+- Backfill from catalog bytes; per-row CHECKs verify digest/size, count plus
+  identity checks prove completeness. Redundant catalog columns dropped only after.
+- INSERT-only payload guard plus a deferred catalog trigger requiring the payload.
+- `stage_repository_schema_artifact`, the claim guard, the V57 asset guard, and
+  the V67 assessment-completeness check read the payload relation with identical
+  limits (64 artifacts, 64 MiB batch, digest verification, collision refusal).
+- The claim guard's missing-payload failure is now explicit
+  (`Schema artifact payload is missing`) instead of a bare strict-select error.
+- Unchanged: claim release, V55/V67 guards, V60 manifest, V68/V69 release
+  (identity locks and digest-only reads; verified to hold no byte/size use).
 
-Contract the test now proves: the one-slot publication transport returns capacity
-exactly once, only after the producer finished AND the server terminal callback was
-delivered; `awaitIdle` is the only reliable capacity-free signal; receipt replay
-after that drainage event is byte-identical.
+Java: staging, retained reads, historical schema rows, assessment replay, retained
+evidence, assessment creation, and publication artifact locking read the payload
+relation. No Java signature, protobuf, endpoint, or provider changes.
 
-## Deterministic failing baseline
+Tests and fixtures: old-target fixture seeding keeps a pre-V120 lock probe for the
+V61/V87 upgrade tests; the in-container rehearsal's pinned migration level moves
+119 -> 120. New coverage: populated V119->V120 upgrade, payload immutability,
+explicit missing-payload errors, concurrent and lock-timeout-forced identical
+staging, and repeated-startup idempotence.
 
-The red reproducer is preserved in the repository:
-`docs/evidence/repository/publication-cancellation-repair/` holds the exact scratch
-test source (`ProbeAssumptionDemonstrationTest.java`, red by design, kept out of
-`src/test`) and `red-run.log` with the command, exit code 1 and the failure text.
-It encodes the old fixture assumption — replay immediately after response receipt —
-under the forced legal ordering (server close callback withheld past delivery):
+## Costs: migration vs steady state
 
-```
-java.lang.AssertionError: old fixture assumption fails under forced ordering:
-replay refused with RESOURCE_EXHAUSTED: RESOURCE_EXHAUSTED: Publication transport is full
-```
+- Migration (one time, inside the Flyway transaction at startup): one full
+  backfill of catalog bytes with per-row digest/size CHECKs plus count/identity
+  verification. The migration takes SHARE ROW EXCLUSIVE on the catalog and claims
+  during the backfill, and DROP COLUMN takes ACCESS EXCLUSIVE on the catalog until
+  transaction end: readers and writers on those tables block for the whole upgrade
+  transaction. Plan a quiesced upgrade window. Old binaries must not run against
+  the migrated schema (they query the dropped columns); upgrade code and schema
+  together, with no rolling mix. Cost is linear in retained descriptor bytes.
+- Steady state: one PK join to the payload row per size probe, lock probe, or
+  byte fetch; same row counts, same bounds, same digest order. No new I/O under
+  SQL locks and no account-global serialization.
 
-Command:
-`flock -w 1800 /tmp/protomolt-repository-qualification.lock ./gradlew :protomolt-repo-service:test --tests 'ai.protomolt.proto.repo.service.ProbeAssumptionDemonstrationTest' --rerun --max-workers=2 --console=plain`
-Exit code: 1 (red), matching the CI failure signature exactly. The committed suite
-asserts the same ordering as the contract (green) instead of depending on transport
-scheduling.
+## Review findings
 
-## Verification (all local runs serialized through the qualification flock)
+- Coordinator review of PR 310 found that staging recreated a missing retained
+  payload after a catalog conflict. Repaired in the stage function: the catalog
+  INSERT reports whether this call created the identity
+  (`ON CONFLICT DO NOTHING RETURNING`); only the creator writes the payload row,
+  while an existing identity requires and verifies its retained payload and
+  otherwise refuses with `Schema artifact payload is missing` before any claim
+  write. Same-owner retry and different-owner staging of a corrupted identity
+  both refuse; duplicate and concurrent identical staging semantics and lock
+  order are unchanged. Covered by
+  `stagingMustNotSilentlyRepairMissingRetainedPayload` (proven red, then green).
+- The deferred `repository_schema_payload_required` trigger cannot fail first
+  through any supported path (the claim guard checks payload existence at claim
+  time and holds KEY SHARE to commit); it stays as the table-level invariant for
+  the catalog=>payload edge.
+- `readRetained` distinguishes a missing claim/owner (`unavailable`) from a
+  present identity with lost bytes (`Retained schema payload is missing`).
+- Lock order preserved: catalog, payload, then claims in caller digest order.
+- Readability cleanup after re-review, with no behavior change: the stage
+  function reports identity creation as a BOOLEAN (`RETURNING TRUE`) instead
+  of a nullable digest sentinel, each replaced SQL function carries a header
+  stating whether this migration retargets or changes it, and `readRetained`
+  selects an explicit payload-presence column instead of relying on a null
+  first row element. An audit of every inner-join payload reader found each
+  one already refuses a short result set explicitly (creation row count,
+  retained-evidence row count, replay key-set equality, publication-lock row
+  count, and the historical reader's count probe), so no reader change was
+  needed. New test coverage: a creator that aborts after inserting the catalog
+  identity leaves identical staging to the blocked waiter
+  (`abortedCreatorLeavesIdenticalStagingToTheWaiter`); the missing-payload
+  regression asserts the exact `Schema artifact payload is missing` root-cause
+  message; the payload-deletion fault injection and the upgrade test's
+  full-row snapshots each use one shared helper.
+- Intermediate failures during development were all in new/updated test code
+  (assertion shape, an old-target probe, a pinned count) and were fixed in the
+  tests or made explicit in SQL; no production expectation was weakened.
 
-Every suite below was re-run on the final sources after the review follow-ups
-(finally-safe producer cleanup, awaitIdle documentation qualification, reproducer
-preservation); counts were identical to the earlier qualification runs.
+## Commands and exit codes
 
-| Suite | Command (gradlew args) | Exit | Tests | Failures | Skipped |
-|---|---|---|---|---|---|
-| New regression ×10 | `:protomolt-repo-service:test --tests '…DocumentPublicationGrpcServiceTest' --rerun --max-workers=2` | 0 (10/10 runs) | 5 per run | 0 | 0 |
-| admissionStorageTest (full, real providers) | `:protomolt-repo-container:admissionStorageTest --rerun --max-workers=2` | 0 | 5 | 0 | 0 |
-| scopedPublicationTest | `:protomolt-repo-container:scopedPublicationTest --rerun --max-workers=2` | 0 | 1 | 0 | 0 |
-| repo/service transport+lifecycle subset | `:protomolt-repo-service:test --tests DocumentPublicationGrpcServiceTest --tests GrpcServerLifetimeTest --tests LifecycleShutdownTest --tests UnaryRequestAdmissionTest --tests ManagedPublicationOptionsTest --tests ManagedDocumentHostIT --rerun --max-workers=2` | 0 | 28 | 0 | 0 |
+All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
+`--max-workers=2 --console=plain`:
 
-Real-provider evidence: admissionStorageTest runs the production-JAR host against
-PostgreSQL 18 (testcontainers `postgres:18-alpine`), Redis 7 (`redis:7-alpine`) and
-LocalStack S3; `observedAssessmentAndSqlRunTogetherOnProductionJars` (1130s) asserts
-the `BOUNDED_PUBLICATION_RPC_CANCELLATION_OK` marker from the repaired probe — the
-cancelled-call retention, occupied-capacity RESOURCE_EXHAUSTED, post-drainage
-committed publish and byte-identical replay all executed against the real Redis PUT
-gate. ScopedPublicationParityIT's persisted host log
-(`repo/container/build/test-results/scopedPublicationTest/scoped-publication.log`,
-44 `_OK` markers) covers the same transport under scoped authorization. XMLs:
-`repo/container/build/test-results/admissionStorageTest/`, `…/scopedPublicationTest/`,
-`repo/service/build/test-results/test/`.
+1. `./gradlew :protomolt-repo-container:test --tests RepositorySchemaArtifactsIT
+   --tests DocumentRevisionSchemaArtifactsIT` — exit 0, BUILD SUCCESSFUL, 36/36.
+2. Same task for 9 schema/history/assessment classes — exit 0, 59/59.
+3. Same task for 13 commit/drain/historical/typed classes — exit 0, 88/88.
+4. Full `:protomolt-repo-container:test` — exit 0, BUILD SUCCESSFUL in 29m19s,
+   252 classes, 2216 tests, 0 failures/errors/skips.
+5. In-container rehearsal (`-I .../rehearsal.init.gradle ... --tests
+   RepositoryBackupRehearsalIT`) — exit 1, 10/12; the 2 failures
+   (`inconsistentCatalogAndObjectSnapshotRefuses`, `wrongProviderCredentialsRefuse`)
+   fail identically on the untouched base (see limitations).
+6. Base comparison of (5) in an isolated worktree at bed8cf29 — exit 1, same
+   10/12 with the same 2 failures and identical CHECK_FAILED signatures.
+7. Standalone `verification/repository-recovery/run.sh --out <empty> --runs 1
+   --skip-negatives --xid-burn 0` — exit 0, REPOSITORY_RECOVERY_REHEARSAL_OK,
+   restore at V120 with `restore.materialized.offline_decode` OK.
+8. `:protomolt-repo-container:check -x :protomolt-repo-container:admissionStorageTest`
+   — exit 0, BUILD SUCCESSFUL.
+9. `compileJava` in `verification/repository-recovery` — exit 0.
+10. Repair verification, same lock/workers: new
+    `stagingMustNotSilentlyRepairMissingRetainedPayload` alone against the
+    unfixed function — exit 1, red as required.
+11. Focused suites after the repair (`RepositorySchemaArtifactsIT`,
+    `DocumentRevisionSchemaArtifactsIT`) — exit 0, 37/37.
+12. All 22 affected schema/history/assessment/commit/drain/typed classes after
+    the repair — exit 0, 147/147.
+13. Full `:protomolt-repo-container:test` after the repair — exit 0, BUILD
+    SUCCESSFUL in 29m18s, 252 classes, 2217 tests, 0 failures/errors/skips.
+14. In-container rehearsal on the repaired head — exit 1, 10/12 with the same
+    2 pre-existing failures.
+15. Base comparison rerun in an isolated worktree at bed8cf29 — exit 1, 10/12
+    with the same 2 failures and byte-identical check signatures; raw XML and
+    signatures preserved in
+    `docs/evidence/repository/2026-10-12-schema-payload-rehearsal-baseline/`.
+16. Standalone scoped rehearsal on the repaired head
+    (`--runs 1 --skip-negatives --xid-burn 0`) — exit 0,
+    REPOSITORY_RECOVERY_REHEARSAL_OK.
+17. Re-review verification of the repair: the regression test copied alone
+    onto the reviewed head `6b80e8cb0` in an isolated worktree — exit 1,
+    failing with the review's exact assertion ("Expecting code to raise a
+    throwable"); the same test passes on the repaired head.
+18. Cleanup verification, same lock/workers with `--no-build-cache`: focused
+    `RepositorySchemaArtifactsIT` + `DocumentRevisionSchemaArtifactsIT` —
+    exit 0, 38/38.
+19. Cleanup broad gate: all `ai.protomolt.proto.repo.container.ledger.*`
+    tests — exit 0, 1,685 tests, 0 failures/errors/skips. The full module
+    suite (item 13) predates the cleanup; the cleanup touches only the stage
+    function, `readRetained`, and test code, all inside the ledger package
+    covered here.
+20. Creator-abort test correction (background-thread failures are captured
+    and rethrown after the join; the release latch is released in a
+    `finally` block): only the affected test rerun, as directed — exit 0,
+    1/1. No broader suite was rerun for this test-only correction.
 
-## Status separation
+## Test counts / failures / skips
 
-- Local green: yes — table above, this checkout, head commit.
-- Published branch: pushed to Forgejo `origin` first, then GitHub `github`.
-- Hosted CI: GitHub Actions run 38290085534 dispatched via `workflow_dispatch` on the
-  branch (branch pushes do not trigger CI; no workflow policy changed). **Completed:
-  success** — all four jobs green, including `build (25)` with the
-  `Repository storage host tests` step (`admissionStorageTest`) that failed in run
-  38121396523. Forgejo runs no build CI by design.
-- Merge: not merged; coordinator owns review and landing.
+- Focused new/updated suites after repair: 37 + 147 = 184 tests, 0 failures,
+  0 skips (plus the earlier 183-test pre-repair baseline, superseded).
+- Full container module after repair: 2217 tests, 0 failures, 0 errors, 0 skips.
+- In-container backup rehearsal: 10/12 on branch and on base (2 pre-existing
+  failures with identical signatures; root cause not established).
+- Standalone recovery rehearsal (scoped): pass on the repaired head.
 
-## PR308 coordination
+## Real-provider evidence
 
-PR308 (5769f34e7e6b45a9734034c63c55abc3189211e2) was not merged, cherry-picked or
-modified. File overlap between the two branches: only root `RESULTS.md` (both add it;
-trivial conflict for the coordinator). PR308 also edits sibling probe files that this
-probe calls (`BoundedPublicationShutdownProbe.java`, `BoundedDocumentHostProbe.java`);
-this change does not modify those files, so no textual conflict there. No constructor
-or formatting churn in probe wrappers.
+- All suites run against real PostgreSQL 18 (Testcontainers `postgres:18-alpine`).
+- Both rehearsals restore a populated backup into an isolated PostgreSQL
+  instance; the standalone run proves retained descriptors still decode
+  (`restore.materialized.offline_decode`, catalog digests=4) on the new layout.
 
 ## Remaining limitations
 
-- The race window itself (terminal callback queued after delivery) is inherent to
-  gRPC server semantics; the contract is now pinned by the deterministic unit suite,
-  and the fixture synchronizes on the documented drainage event. No production
-  behavior changed, so hosts that relied on response receipt implying capacity were
-  never correct and none exist in-tree.
-- The deterministic suite drives the adapter directly (controlled observer); the
-  end-to-end in-process transport path is covered by admissionStorageTest and the
-  parity suite rather than by forced ordering through gRPC internals.
-- Hosted CI completed green on the submitted code; merge remains with the coordinator,
-  so this branch is delivered, not landed.
+- Two in-container rehearsal negatives (`inconsistentCatalogAndObjectSnapshotRefuses`,
+  `wrongProviderCredentialsRefuse`) fail identically on the untouched base and on
+  this branch: the recovered host expects provider-level refusal but observes
+  FAILED_PRECONDITION before provider access. Pre-existing and outside schema
+  storage; root cause is not established, so they are not classified as merely
+  environmental. Raw comparison evidence (base/head SHAs, commands, failure
+  signatures) is preserved in
+  `docs/evidence/repository/2026-10-12-schema-payload-rehearsal-baseline/`.
+  Follow-up ownership: coordinator to triage/assign; this assignment makes no
+  change in that area.
+- The standalone `--skip-negatives` run is scoped evidence for the new layout,
+  not a complete recovery gate. The in-container corrupt/missing-descriptor
+  negatives cover the new layout and pass; full standalone negatives remain for
+  the recovery workstream.
+
+## PR URL
+
+https://git.rokkon.com/ai-pipestream/protomolt/pulls/310
+
+## Local / branch / CI / merge
+
+- Local: green except the 2 pre-existing rehearsal negatives (proven on base).
+- Published branch: agent/schema-payload-separation on origin, then github.
+- Hosted CI: coordinator-owned (not run from here).
+- Merge: coordinator-owned (not merging).
