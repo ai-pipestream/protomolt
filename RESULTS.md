@@ -4,7 +4,9 @@
 - Branch: `agent/publication-cancellation-repair`
 - Head: see `git log` — code change in `dc68752ae`, this document added on top
 - Forgejo PR: https://git.rokkon.com/ai-pipestream/protomolt/pulls/309
-- Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38289935429
+- Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38290085534
+  (covers final head 84954558d; an earlier dispatch, run 38289935429 on dc68752ae,
+  was cancelled so hosted CI measures exactly the submitted sources)
 
 ## Cause
 
@@ -126,7 +128,7 @@ gate. ScopedPublicationParityIT's persisted host log
 
 - Local green: yes — table above, this checkout, head commit.
 - Published branch: pushed to Forgejo `origin` first, then GitHub `github`.
-- Hosted CI: GitHub Actions run 38289935429 dispatched via `workflow_dispatch` on the
+- Hosted CI: GitHub Actions run 38290085534 dispatched via `workflow_dispatch` on the
   branch (branch pushes do not trigger CI; no workflow policy changed). **Pending** —
   not a completed landing. Forgejo runs no build CI by design.
 - Merge: not merged; coordinator owns review and landing.
