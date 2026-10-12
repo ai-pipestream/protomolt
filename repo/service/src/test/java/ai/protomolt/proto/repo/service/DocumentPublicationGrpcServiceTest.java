@@ -26,7 +26,10 @@ import static org.assertj.core.api.Assertions.*;
  * receipt of a response is not a capacity signal: the server-side close is
  * delivered asynchronously after the response is on the wire, so a replay issued
  * on response receipt alone is legitimately refused with RESOURCE_EXHAUSTED.
- * Callers synchronize on {@code awaitIdle}, the documented drainage event.
+ * Callers synchronize on {@code awaitIdle}, the documented drainage event. An idle
+ * observation permits the next admission only because every test here is the
+ * transport's sole caller; it is an observation, not a reservation — with
+ * concurrent callers another call can claim the freed slot first.
  */
 class DocumentPublicationGrpcServiceTest {
     private static final String DRIVE = "10000000-0000-4000-8000-000000000001";
@@ -59,20 +62,21 @@ class DocumentPublicationGrpcServiceTest {
     }
 
     @Test void cancellationRetainsCapacityUntilProducerActuallyExits() throws Exception {
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        var f = new Fixture(blocked(entered, release));
+        var producer = new BlockedProducer();
+        var f = new Fixture(producer.gate());
         var first = new ControlledObserver();
-        var producer = Thread.ofVirtual().start(() -> f.publish(REQUEST, first));
-        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-        first.cancel();
-        // Cancellation reached the server; the producer still holds its slot and bytes.
-        assertThat(f.service.awaitIdle(Duration.ZERO)).isFalse();
-        var refused = new ControlledObserver();
-        f.publish(REQUEST, refused);
-        assertThat(replayedRefusal(refused)).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
-        release.countDown();
-        assertThat(producer.join(Duration.ofSeconds(5))).isTrue();
+        producer.start(f, first);
+        try {
+            assertThat(producer.entered.await(5, TimeUnit.SECONDS)).isTrue();
+            first.cancel();
+            // Cancellation reached the server; the producer still holds its slot and bytes.
+            assertThat(f.service.awaitIdle(Duration.ZERO)).isFalse();
+            var refused = new ControlledObserver();
+            f.publish(REQUEST, refused);
+            assertThat(replayedRefusal(refused)).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        } finally {
+            producer.settle();
+        }
         assertThat(Status.fromThrowable(first.error.get()).getCode()).isEqualTo(Status.Code.CANCELLED);
         // The cancel terminal signal already fired; producer exit alone completes the release.
         assertThat(f.service.awaitIdle(Duration.ofSeconds(5))).isTrue();
@@ -90,17 +94,18 @@ class DocumentPublicationGrpcServiceTest {
         assertThat(f.service.awaitIdle(Duration.ofSeconds(5))).isTrue();
         assertThat(f.budget.reservedBytes()).isZero();
         // Exactly-once proof: a second active call must still occupy the only slot.
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        f.use(blocked(entered, release));
+        var producer = new BlockedProducer();
+        f.use(producer.gate());
         var active = new ControlledObserver();
-        var producer = Thread.ofVirtual().start(() -> f.publish(REQUEST, active));
-        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-        var extra = new ControlledObserver();
-        f.publish(REQUEST, extra);
-        assertThat(replayedRefusal(extra)).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
-        release.countDown();
-        assertThat(producer.join(Duration.ofSeconds(5))).isTrue();
+        producer.start(f, active);
+        try {
+            assertThat(producer.entered.await(5, TimeUnit.SECONDS)).isTrue();
+            var extra = new ControlledObserver();
+            f.publish(REQUEST, extra);
+            assertThat(replayedRefusal(extra)).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        } finally {
+            producer.settle();
+        }
         assertThat(active.error.get()).isNull();
         active.close();
         assertThat(f.service.awaitIdle(Duration.ofSeconds(5))).isTrue();
@@ -108,19 +113,20 @@ class DocumentPublicationGrpcServiceTest {
     }
 
     @Test void closeRejectsNewCallsWhileAcceptedWorkRetainsCapacity() throws Exception {
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        var f = new Fixture(blocked(entered, release));
+        var producer = new BlockedProducer();
+        var f = new Fixture(producer.gate());
         var active = new ControlledObserver();
-        var producer = Thread.ofVirtual().start(() -> f.publish(REQUEST, active));
-        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-        f.service.close();
-        var late = new ControlledObserver();
-        f.publish(REQUEST, late);
-        assertThat(replayedRefusal(late)).isEqualTo(Status.Code.UNAVAILABLE);
-        assertThat(f.service.awaitIdle(Duration.ZERO)).isFalse();
-        release.countDown();
-        assertThat(producer.join(Duration.ofSeconds(5))).isTrue();
+        producer.start(f, active);
+        try {
+            assertThat(producer.entered.await(5, TimeUnit.SECONDS)).isTrue();
+            f.service.close();
+            var late = new ControlledObserver();
+            f.publish(REQUEST, late);
+            assertThat(replayedRefusal(late)).isEqualTo(Status.Code.UNAVAILABLE);
+            assertThat(f.service.awaitIdle(Duration.ZERO)).isFalse();
+        } finally {
+            producer.settle();
+        }
         assertThat(active.error.get()).isNull();
         assertThat(active.value.get()).isNotNull();
         active.close();
@@ -153,18 +159,47 @@ class DocumentPublicationGrpcServiceTest {
         return Status.fromThrowable(failure).getCode();
     }
 
-    private static DocumentPublicationRepository blocked(CountDownLatch entered, CountDownLatch release) {
-        return (caller, request, control) -> {
-            entered.countDown();
+    private static final class BlockedProducer {
+        final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        private Thread thread;
+
+        DocumentPublicationRepository gate() {
+            return (caller, request, control) -> {
+                entered.countDown();
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("Producer release not signalled");
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+                control.check();
+                return committed(request, caller);
+            };
+        }
+
+        void start(Fixture f, ControlledObserver observer) {
+            thread = Thread.ofVirtual().start(() -> {
+                try {
+                    f.publish(REQUEST, observer);
+                } catch (Throwable escaped) {
+                    failure.set(escaped);
+                }
+            });
+        }
+
+        /** Finally-safe cleanup: always release the latch, join the producer, propagate its failure. */
+        void settle() {
+            release.countDown();
             try {
-                if (!release.await(10, TimeUnit.SECONDS)) throw new AssertionError("Producer release not signalled");
+                assertThat(thread.join(Duration.ofSeconds(5))).as("blocked producer exits after latch release").isTrue();
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException(interrupted);
+                throw new AssertionError("Interrupted while joining the producer thread", interrupted);
             }
-            control.check();
-            return committed(request, caller);
-        };
+            if (failure.get() != null) throw new AssertionError("Producer thread failed", failure.get());
+        }
     }
 
     private static PublishDocumentResponse committed(PublishDocumentRequest request, RepositoryCaller caller) {

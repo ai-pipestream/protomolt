@@ -60,7 +60,9 @@ final class BoundedPublicationRpcCancellationProbe {
             require(committed.hasCommitted(),"new operation succeeds after cancelled call drains");
             // Response receipt is not capacity release: the server terminal callback runs
             // asynchronously after delivery. Synchronize on the documented drainage event
-            // before expecting the one-slot transport to admit the replay.
+            // before expecting the one-slot transport to admit the replay. awaitIdle is an
+            // observation, not a reservation; it admits the replay here because this probe
+            // is the transport's only caller — a concurrent caller could claim the freed slot.
             require(service.awaitIdle(Duration.ofSeconds(5)),"committed delivery returned transport capacity");
             require(blocking.publishDocument(next.request()).equals(committed),"new operation replays exact receipt");
             require(service.awaitIdle(Duration.ofSeconds(5)),"successful replay delivery finished");

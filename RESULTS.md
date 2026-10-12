@@ -46,9 +46,11 @@ same race run with friendlier scheduling, not a slow-runner artifact.
 - server terminal callback ⇒ `terminated`; alone it releases nothing.
 - producerFinished AND terminated ⇒ exactly-once release (`released` flag): byte
   lease closed and `activeCalls--`.
-- `awaitIdle()` true ⇒ all admitted calls fully released ⇒ the next admit succeeds.
-  This is the documented server drainage event (also used by `RepoServices.close` →
-  `ManagedDocumentServices.awaitTransportIdle` and by
+- `awaitIdle()` true ⇒ all admitted calls fully released. In these single-caller
+  fixtures the next admit then succeeds; awaitIdle is an observation, not a
+  reservation — with concurrent callers another call can claim the freed slot
+  first. This is the documented server drainage event (also used by
+  `RepoServices.close` → `ManagedDocumentServices.awaitTransportIdle` and by
   `ManagedJournaledDrainProbe.awaitTransportRelease`).
 - `close()` ⇒ new admissions refused (UNAVAILABLE); accepted calls retain capacity
   and resources until they drain.
@@ -82,6 +84,9 @@ same race run with friendlier scheduling, not a slow-runner artifact.
     completes;
   - producer failure holds capacity until server termination, then releases.
   Byte-lease accounting (`PayloadBudget.reservedBytes()`) returns to zero in every path.
+  Blocked-producer tests hold their producer threads under a finally-safe
+  `BlockedProducer.settle()`: the gate latch is always released, the producer joined,
+  and any background failure rethrown with its stack.
 
 Contract the test now proves: the one-slot publication transport returns capacity
 exactly once, only after the producer finished AND the server terminal callback was
@@ -90,8 +95,11 @@ after that drainage event is byte-identical.
 
 ## Deterministic failing baseline
 
-A scratch test (`ProbeAssumptionDemonstrationTest`, run then deleted, not committed)
-encoded the old fixture assumption — replay immediately after response receipt —
+The red reproducer is preserved in the repository:
+`docs/evidence/repository/publication-cancellation-repair/` holds the exact scratch
+test source (`ProbeAssumptionDemonstrationTest.java`, red by design, kept out of
+`src/test`) and `red-run.log` with the command, exit code 1 and the failure text.
+It encodes the old fixture assumption — replay immediately after response receipt —
 under the forced legal ordering (server close callback withheld past delivery):
 
 ```
@@ -100,12 +108,16 @@ replay refused with RESOURCE_EXHAUSTED: RESOURCE_EXHAUSTED: Publication transpor
 ```
 
 Command:
-`flock -w 1800 /tmp/protomolt-repository-qualification.lock ./gradlew :protomolt-repo-service:test --tests 'ai.protomolt.proto.repo.service.ProbeAssumptionDemonstrationTest' --max-workers=2 --console=plain`
+`flock -w 1800 /tmp/protomolt-repository-qualification.lock ./gradlew :protomolt-repo-service:test --tests 'ai.protomolt.proto.repo.service.ProbeAssumptionDemonstrationTest' --rerun --max-workers=2 --console=plain`
 Exit code: 1 (red), matching the CI failure signature exactly. The committed suite
 asserts the same ordering as the contract (green) instead of depending on transport
 scheduling.
 
 ## Verification (all local runs serialized through the qualification flock)
+
+Every suite below was re-run on the final sources after the review follow-ups
+(finally-safe producer cleanup, awaitIdle documentation qualification, reproducer
+preservation); counts were identical to the earlier qualification runs.
 
 | Suite | Command (gradlew args) | Exit | Tests | Failures | Skipped |
 |---|---|---|---|---|---|
