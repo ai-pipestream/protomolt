@@ -229,6 +229,28 @@ class RepositorySchemaArtifactsIT {
                 .hasMessageContaining("Retained schema payload is missing");
     }
 
+    @Test void stagingMustNotSilentlyRepairMissingRetainedPayload() {
+        var owner = owner();
+        var bytes = descriptor("doomed.proto");
+        String hash = artifacts.stage(owner, List.of(bytes), () -> {}).getFirst();
+        tx.inTransaction(em -> {
+            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+            em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account")
+                    .setParameter("account", owner.key().account()).executeUpdate();
+        });
+        assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
+        assertThatThrownBy(() -> artifacts.stage(owner, List.of(bytes), () -> {}))
+                .hasStackTraceContaining("payload is missing");
+        var other = owner(owner.key().account());
+        assertThatThrownBy(() -> artifacts.stage(other, List.of(bytes), () -> {}))
+                .hasStackTraceContaining("payload is missing");
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
+        assertThat(count(owner, "repository_schema_artifact_claims")).isEqualTo(1);
+        assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {}))
+                .hasMessageContaining("Retained schema payload is missing");
+    }
+
     @Test void concurrentIdenticalStagingSharesOnePayload() throws Exception {
         var first = owner();
         var second = owner(first.key().account());

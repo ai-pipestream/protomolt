@@ -73,24 +73,29 @@ CREATE CONSTRAINT TRIGGER repository_schema_payload_required AFTER INSERT ON rep
 CREATE OR REPLACE FUNCTION stage_repository_schema_artifact(
  p_account TEXT,p_principal TEXT,p_operation UUID,p_generation BIGINT,p_sha BYTEA,p_bytes BYTEA)
 RETURNS VOID LANGUAGE plpgsql VOLATILE AS $$
-DECLARE exact_match BOOLEAN;
+DECLARE created_sha BYTEA; retained_bytes BYTEA;
 BEGIN
  PERFORM require_repository_operation_write_fence(p_account,p_principal,p_operation,p_generation);
  IF p_bytes IS NULL OR octet_length(p_bytes) NOT BETWEEN 1 AND 16777216
    OR p_sha IS NULL OR p_sha<>sha256(p_bytes) THEN
   RAISE EXCEPTION 'Invalid schema artifact size or digest';
  END IF;
+ -- An existing identity requires its retained payload; staging never recreates
+ -- lost bytes. Only the creator of a new identity writes the payload row.
  INSERT INTO repository_schema_artifacts(account_id,artifact_sha256,
    creator_principal,creator_operation,creator_generation)
  VALUES(p_account,p_sha,p_principal,p_operation,p_generation)
- ON CONFLICT(account_id,artifact_sha256) DO NOTHING;
- INSERT INTO repository_schema_artifact_payloads(account_id,artifact_sha256,payload_bytes)
- VALUES(p_account,p_sha,p_bytes)
- ON CONFLICT(account_id,artifact_sha256) DO NOTHING;
- SELECT payload_bytes=p_bytes INTO exact_match FROM repository_schema_artifact_payloads
-  WHERE account_id=p_account AND artifact_sha256=p_sha FOR KEY SHARE;
- IF NOT FOUND THEN RAISE EXCEPTION 'Schema artifact payload is missing'; END IF;
- IF NOT exact_match THEN RAISE EXCEPTION 'Schema artifact digest collision'; END IF;
+ ON CONFLICT(account_id,artifact_sha256) DO NOTHING
+ RETURNING artifact_sha256 INTO created_sha;
+ IF created_sha IS NULL THEN
+  SELECT payload_bytes INTO retained_bytes FROM repository_schema_artifact_payloads
+   WHERE account_id=p_account AND artifact_sha256=p_sha FOR KEY SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Schema artifact payload is missing'; END IF;
+  IF retained_bytes<>p_bytes THEN RAISE EXCEPTION 'Schema artifact digest collision'; END IF;
+ ELSE
+  INSERT INTO repository_schema_artifact_payloads(account_id,artifact_sha256,payload_bytes)
+  VALUES(p_account,p_sha,p_bytes);
+ END IF;
  INSERT INTO repository_schema_artifact_claims(account_id,principal,operation_id,owner_generation,artifact_sha256)
  VALUES(p_account,p_principal,p_operation,p_generation,p_sha)
  ON CONFLICT(account_id,principal,operation_id,owner_generation,artifact_sha256) DO NOTHING;
