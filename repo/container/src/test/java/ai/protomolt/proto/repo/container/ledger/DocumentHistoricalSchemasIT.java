@@ -236,11 +236,11 @@ class DocumentHistoricalSchemasIT {
             var f = DocumentSchemaRetentionFixture.prepare(c); activate(c, f);
             var revision = publishTyped(c, f);
             c.tx().inTransaction(em -> {
-                // Simulate catalog loss while bypassing only PostgreSQL's test-schema integrity triggers.
+                // Simulate payload loss while bypassing only PostgreSQL's test-schema integrity triggers.
                 // Production application connections retain all guards and constraints.
                 em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
                 em.createNativeQuery("""
-                        DELETE FROM repository_schema_artifacts a USING document_revision_schema_artifacts r
+                        DELETE FROM repository_schema_artifact_payloads a USING document_revision_schema_artifacts r
                         WHERE r.revision_id=:revision AND a.account_id=r.account_id AND a.artifact_sha256=r.artifact_sha256
                         """).setParameter("revision", revision).executeUpdate();
             });
@@ -259,14 +259,14 @@ class DocumentHistoricalSchemasIT {
                 em.createNativeQuery("""
                         DO $$ DECLARE c text; BEGIN
                           SELECT conname INTO STRICT c FROM pg_constraint
-                           WHERE conrelid = 'repository_schema_artifacts'::regclass AND contype = 'c'
-                             AND pg_get_constraintdef(oid) LIKE '%sha256(artifact_bytes)%';
-                          EXECUTE format('ALTER TABLE repository_schema_artifacts DROP CONSTRAINT %I', c);
+                           WHERE conrelid = 'repository_schema_artifact_payloads'::regclass AND contype = 'c'
+                             AND pg_get_constraintdef(oid) LIKE '%sha256(payload_bytes)%';
+                          EXECUTE format('ALTER TABLE repository_schema_artifact_payloads DROP CONSTRAINT %I', c);
                         END $$
                         """).executeUpdate();
                 em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
                 int damaged = em.createNativeQuery("""
-                        UPDATE repository_schema_artifacts a SET artifact_bytes = a.artifact_bytes || '\\x00'::bytea
+                        UPDATE repository_schema_artifact_payloads a SET payload_bytes = a.payload_bytes || '\\x00'::bytea
                         FROM document_revision_schema_artifacts r
                         WHERE r.revision_id=:revision AND a.account_id=r.account_id AND a.artifact_sha256=r.artifact_sha256
                         """).setParameter("revision", revision).executeUpdate();

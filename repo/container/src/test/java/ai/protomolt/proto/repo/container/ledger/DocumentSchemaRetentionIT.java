@@ -34,8 +34,8 @@ class DocumentSchemaRetentionIT {
                     """).setParameter("revision", revision).getResultList());
             assertThat(storedArtifacts).isEqualTo(expectedArtifacts);
             var retainedBytes = c.tx().readOnly(em -> em.createNativeQuery("""
-                    SELECT encode(r.artifact_sha256,'hex'),a.artifact_bytes FROM document_revision_schema_artifacts r
-                    JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
+                    SELECT encode(r.artifact_sha256,'hex'),a.payload_bytes FROM document_revision_schema_artifacts r
+                    JOIN repository_schema_artifact_payloads a USING(account_id,artifact_sha256)
                     WHERE r.revision_id=:revision
                     """).setParameter("revision", revision).getResultList());
             assertThat(retainedBytes).hasSize(proof.artifacts().size());

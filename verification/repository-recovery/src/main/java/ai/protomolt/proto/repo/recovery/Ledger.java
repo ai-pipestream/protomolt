@@ -88,7 +88,7 @@ final class Ledger implements AutoCloseable {
     /** Normalized schema catalog digests (account, sha256 -> size); the bytes stay in SQL. */
     TreeMap<String, Long> schemaCatalog() {
         var catalog = new TreeMap<String, Long>();
-        query("SELECT account_id, encode(artifact_sha256,'hex'), octet_length(artifact_bytes) FROM repository_schema_artifacts ORDER BY 1,2",
+        query("SELECT account_id, encode(artifact_sha256,'hex'), octet_length(payload_bytes) FROM repository_schema_artifact_payloads ORDER BY 1,2",
                 List.of(), result -> catalog.put(result.getString(1) + "/" + result.getString(2), result.getLong(3)));
         return catalog;
     }

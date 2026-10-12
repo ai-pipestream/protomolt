@@ -79,8 +79,8 @@ final class DocumentAssessmentRetainedEvidence {
 
     private static void verifyArtifacts(EntityManager em, UUID assessment, Set<String> expected, Runnable control) {
         var rows = em.createNativeQuery("""
-                SELECT encode(r.artifact_sha256,'hex'),a.size_bytes,encode(sha256(a.artifact_bytes),'hex')
-                FROM document_assessment_artifacts r JOIN repository_schema_artifacts a USING(account_id,artifact_sha256)
+                SELECT encode(r.artifact_sha256,'hex'),a.size_bytes,encode(sha256(a.payload_bytes),'hex')
+                FROM document_assessment_artifacts r JOIN repository_schema_artifact_payloads a USING(account_id,artifact_sha256)
                 WHERE r.assessment_id=:id LIMIT 65
                 """).setParameter("id", assessment).getResultList();
         if (rows.size() != expected.size()) throw conflict();

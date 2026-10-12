@@ -121,7 +121,7 @@ class DocumentPreparationRootReleaseIT {
             var emf=Persistence.createEntityManagerFactory("document-ledger",Map.of(
                     "hibernate.connection.datasource",dataSource,"hibernate.hbm2ddl.auto","validate"));
             base.emf().close();
-            return new LegacyReaderContext(new Context(base.pool(),emf,new Tx(emf),false,false),enabled);
+            return new LegacyReaderContext(new Context(base.pool(),emf,new Tx(emf),false,false,true),enabled);
         } catch (RuntimeException|Error failure) { base.close(); throw failure; }
     }
 
