@@ -5,8 +5,10 @@
 - Head: see `git log` — code change in `dc68752ae`, this document added on top
 - Forgejo PR: https://git.rokkon.com/ai-pipestream/protomolt/pulls/309
 - Hosted GitHub CI (workflow_dispatch on the branch): https://github.com/ai-pipestream/protomolt/actions/runs/38290085534
-  (covers final head 84954558d; an earlier dispatch, run 38289935429 on dc68752ae,
-  was cancelled so hosted CI measures exactly the submitted sources)
+  (covers commit 84954558d, which contains all code and test changes; any later
+  commits on the branch touch this RESULTS.md only. An earlier dispatch, run
+  38289935429 on dc68752ae, was cancelled so hosted CI measures exactly the
+  submitted code.)
 
 ## Cause
 
