@@ -178,7 +178,7 @@ final class DocumentSchemaRetentionFixture {
             plan.members().getFirst().placement().drive().lock(em, new DriveLedger(c.tx()));
             var parts = DocumentCommitParts.bind(em, f.owner(), plan, Map.of("member", f.selected()), DocumentReuseAdmission.prepare(plan), () -> {});
             var manifest = DocumentSchemaManifest.prepare(f.batch(), "member", parts, () -> {});
-            f.batch().lockArtifacts(em, f.owner(), () -> {});
+            lockArtifacts(c, em, f);
             var candidate = DocumentCommitWriter.prepare(plan.members().getFirst(), f.content(), parts, locked, Map.of(), Instant.now(), () -> {});
             String decision;
             if (v61Admission) decision = insertV61Admission(em, f, candidate, manifest);
@@ -229,6 +229,31 @@ final class DocumentSchemaRetentionFixture {
             em.createNativeQuery("SET CONSTRAINTS ALL IMMEDIATE").executeUpdate();
             return revision;
         });
+    }
+
+    private static void lockArtifacts(Context c, EntityManager em, Fixture f) {
+        if (!c.beforePayloadSplit()) {
+            f.batch().lockArtifacts(em, f.owner(), () -> {});
+            return;
+        }
+        // Pre-V120 seeding only: the old catalog still carries the bytes, so the
+        // setup probe reads the old layout. Production always runs migrated.
+        var owner = f.owner();
+        em.createNativeQuery("SELECT require_repository_operation_write_fence(:account,:principal,:operation,:generation)")
+                .setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation()).getSingleResult();
+        for (var digest : new java.util.TreeSet<>(f.batch().artifacts().keySet())) {
+            var rows = em.createNativeQuery("""
+                    SELECT a.size_bytes FROM repository_schema_artifacts a JOIN repository_schema_artifact_claims c
+                     ON c.account_id=a.account_id AND c.artifact_sha256=a.artifact_sha256
+                    WHERE c.account_id=:account AND c.principal=:principal AND c.operation_id=:operation
+                     AND c.owner_generation=:generation AND c.artifact_sha256=:sha FOR KEY SHARE OF a,c
+                    """).setParameter("account", owner.key().account()).setParameter("principal", owner.key().principal())
+                    .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
+                    .setParameter("sha", HexFormat.of().parseHex(digest)).getResultList();
+            if (rows.size() != 1 || ((Number) rows.getFirst()).longValue() != f.batch().artifacts().get(digest).size())
+                throw new IllegalStateException("Schema artifact lacks an exact current owner claim");
+        }
     }
 
     private static String insertV61Admission(EntityManager em, Fixture f, DocumentCommitWriter.Candidate candidate,

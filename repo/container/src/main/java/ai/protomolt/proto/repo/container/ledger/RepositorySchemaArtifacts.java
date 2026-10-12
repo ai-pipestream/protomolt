@@ -113,8 +113,10 @@ final class RepositorySchemaArtifacts {
         }
         byte[] bytes = tx.readOnly(em -> {
             var rows = em.createNativeQuery("""
-                    SELECT a.artifact_bytes FROM repository_operation_owners o
+                    SELECT p.payload_bytes FROM repository_operation_owners o
                     JOIN repository_schema_artifacts a ON a.account_id=o.account_id AND a.artifact_sha256=:sha
+                    LEFT JOIN repository_schema_artifact_payloads p
+                     ON p.account_id=a.account_id AND p.artifact_sha256=a.artifact_sha256
                     WHERE o.account_id=:account AND o.principal=:principal AND o.operation_id=:operation
                      AND o.owner_generation=:generation AND o.owner_token=:token AND o.lease_until>clock_timestamp()
                      AND EXISTS(SELECT 1 FROM repository_schema_artifact_claims c
@@ -125,6 +127,7 @@ final class RepositorySchemaArtifacts {
                     .setParameter("operation", owner.key().operationId()).setParameter("generation", owner.generation())
                     .setParameter("token", owner.token()).getResultList();
             if (rows.isEmpty()) throw new IllegalStateException("Retained schema is unavailable to the live operation owner");
+            if (rows.getFirst() == null) throw new IllegalStateException("Retained schema payload is missing");
             return (byte[]) rows.getFirst();
         });
         active(control);

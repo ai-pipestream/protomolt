@@ -87,7 +87,7 @@ final class DocumentAssessmentCreationWrites {
             evidence.check(control);
             int inserted = em.createNativeQuery("""
                     INSERT INTO document_assessment_artifacts(assessment_id,account_id,artifact_sha256)
-                    SELECT :id,account_id,artifact_sha256 FROM repository_schema_artifacts
+                    SELECT :id,account_id,artifact_sha256 FROM repository_schema_artifact_payloads
                     WHERE account_id=:account AND artifact_sha256=:sha AND size_bytes=:size
                     """).setParameter("id", assessment).setParameter("account", owner.key().account())
                     .setParameter("sha", hex(artifact.getKey())).setParameter("size", artifact.getValue().size()).executeUpdate();

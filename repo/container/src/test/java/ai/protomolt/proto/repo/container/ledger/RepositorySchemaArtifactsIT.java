@@ -38,7 +38,7 @@ class RepositorySchemaArtifactsIT {
         var hashes = artifacts.stage(owner, List.of(bytes, bytes), () -> {});
         assertThat(artifacts.stage(owner, List.of(bytes), () -> {})).isEqualTo(hashes);
         byte[] stored = tx.readOnly(em -> (byte[]) em.createNativeQuery(
-                "SELECT artifact_bytes FROM repository_schema_artifacts WHERE account_id=:account")
+                "SELECT payload_bytes FROM repository_schema_artifact_payloads WHERE account_id=:account")
                 .setParameter("account", owner.key().account()).getSingleResult());
         assertThat(stored).isEqualTo(bytes.toByteArray());
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
@@ -187,7 +187,8 @@ class RepositorySchemaArtifactsIT {
     @Test void catalogAndClaimsCannotBeMutatedBeforeCleanupProtocolExists() {
         var owner = owner();
         artifacts.stage(owner, List.of(descriptor("immutable.proto")), () -> {});
-        for (String table : List.of("repository_schema_artifacts", "repository_schema_artifact_claims")) {
+        for (String table : List.of("repository_schema_artifacts", "repository_schema_artifact_claims",
+                "repository_schema_artifact_payloads")) {
             for (String statement : List.of("DELETE FROM " + table,
                     "UPDATE " + table + " SET account_id=account_id")) {
                 assertThatThrownBy(() -> tx.inTransaction(em -> {
@@ -199,6 +200,108 @@ class RepositorySchemaArtifactsIT {
             }
         }
         assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isEqualTo(1);
+        assertThat(count(owner, "repository_schema_artifact_claims")).isEqualTo(1);
+    }
+
+    @Test void claimCannotAttachToIdentityWithoutPayload() {
+        var owner = owner();
+        assertThatThrownBy(() -> tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, owner);
+            insertIdentity(em, owner);
+            claim(em, owner);
+        })).hasStackTraceContaining("Schema artifact payload is missing");
+        assertThat(count(owner, "repository_schema_artifacts")).isZero();
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
+    }
+
+    @Test void retainedReadReportsMissingPayloadExplicitly() {
+        var owner = owner();
+        String hash = artifacts.stage(owner, List.of(descriptor("doomed.proto")), () -> {}).getFirst();
+        tx.inTransaction(em -> {
+            em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
+            em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account")
+                    .setParameter("account", owner.key().account()).executeUpdate();
+        });
+        assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isZero();
+        assertThatThrownBy(() -> artifacts.readRetained(owner, hash, () -> {}))
+                .hasMessageContaining("Retained schema payload is missing");
+    }
+
+    @Test void concurrentIdenticalStagingSharesOnePayload() throws Exception {
+        var first = owner();
+        var second = owner(first.key().account());
+        var bytes = descriptor("race.proto");
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var staged = new java.util.concurrent.ConcurrentHashMap<String, String>();
+        var holder = Thread.ofVirtual().start(() -> {
+            try { assertThat(start.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+            catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+            staged.put("first", new RepositorySchemaArtifacts(tx).stage(first, List.of(bytes), () -> {}).getFirst());
+        });
+        var late = Thread.ofVirtual().start(() -> {
+            try { assertThat(start.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+            catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+            staged.put("second", new RepositorySchemaArtifacts(tx).stage(second, List.of(bytes), () -> {}).getFirst());
+        });
+        start.countDown();
+        holder.join(60_000); late.join(60_000);
+        assertThat(holder.isAlive()).isFalse();
+        assertThat(late.isAlive()).isFalse();
+        assertThat(staged).hasSize(2);
+        assertThat(staged.get("first")).isEqualTo(staged.get("second"));
+        assertThat(count(first, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_payloads")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_claims")).isEqualTo(2);
+    }
+
+    @Test void blockedIdenticalStagingWaitsForTheFirstCommitter() throws Exception {
+        var first = owner();
+        var second = owner(first.key().account());
+        var bytes = descriptor("wait.proto");
+        var sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray());
+        var inserted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holder = Thread.ofVirtual().start(() -> tx.inTransaction(em -> {
+            RepositoryOperationLedger.fenceLiveOwner(em, first);
+            em.createNativeQuery("""
+                    SELECT stage_repository_schema_artifact(:account,:principal,:operation,:generation,:sha,:bytes)
+                    """).setParameter("account", first.key().account()).setParameter("principal", first.key().principal())
+                    .setParameter("operation", first.key().operationId()).setParameter("generation", first.generation())
+                    .setParameter("sha", sha).setParameter("bytes", bytes.toByteArray()).getSingleResult();
+            inserted.countDown();
+            try { assertThat(release.await(60, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+            catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+            return null;
+        }));
+        assertThat(inserted.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        var bounded = new RepositorySchemaArtifacts(tx.withTimeouts(new SqlTimeouts(Duration.ofSeconds(2), Duration.ofSeconds(30))));
+        assertThatThrownBy(() -> bounded.stage(second, List.of(bytes), () -> {}))
+                .hasStackTraceContaining("lock timeout");
+        release.countDown();
+        holder.join(60_000);
+        assertThat(holder.isAlive()).isFalse();
+        assertThat(bounded.stage(second, List.of(bytes), () -> {})).hasSize(1);
+        assertThat(count(first, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_payloads")).isEqualTo(1);
+        assertThat(count(first, "repository_schema_artifact_claims")).isEqualTo(2);
+    }
+
+    @Test void repeatedStartupMigratesCleanlyWithoutRewritingPayloads() {
+        var owner = owner();
+        var bytes = descriptor("restart.proto");
+        String hash = artifacts.stage(owner, List.of(bytes), () -> {}).getFirst();
+        for (int restart = 0; restart < 2; restart++) {
+            try (var reopened = new LedgerDatabase(new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
+                    POSTGRES.getPassword()))) {
+                var retained = new RepositorySchemaArtifacts(new Tx(reopened.entityManagerFactory()))
+                        .readRetained(owner, hash, () -> {});
+                assertThat(retained).isEqualTo(bytes);
+            }
+        }
+        assertThat(count(owner, "repository_schema_artifacts")).isEqualTo(1);
+        assertThat(count(owner, "repository_schema_artifact_payloads")).isEqualTo(1);
         assertThat(count(owner, "repository_schema_artifact_claims")).isEqualTo(1);
     }
 
@@ -384,10 +487,17 @@ class RepositorySchemaArtifactsIT {
     }
 
     private static void insertCatalog(EntityManager em, RepositoryOperationLedger.Owner owner) {
+        insertIdentity(em, owner);
         em.createNativeQuery("""
-                INSERT INTO repository_schema_artifacts(account_id,artifact_sha256,artifact_bytes,
+                INSERT INTO repository_schema_artifact_payloads(account_id,artifact_sha256,payload_bytes)
+                VALUES(:account,sha256(decode('01','hex')),decode('01','hex'))
+                """).setParameter("account", owner.key().account()).executeUpdate();
+    }
+    private static void insertIdentity(EntityManager em, RepositoryOperationLedger.Owner owner) {
+        em.createNativeQuery("""
+                INSERT INTO repository_schema_artifacts(account_id,artifact_sha256,
                 creator_principal,creator_operation,creator_generation)
-                VALUES(:account,sha256(decode('01','hex')),decode('01','hex'),'principal',:operation,1)
+                VALUES(:account,sha256(decode('01','hex')),'principal',:operation,1)
                 """).setParameter("account", owner.key().account()).setParameter("operation", owner.key().operationId()).executeUpdate();
     }
     private static void claim(EntityManager em, RepositoryOperationLedger.Owner owner) {
