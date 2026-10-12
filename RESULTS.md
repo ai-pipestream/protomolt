@@ -5,6 +5,8 @@
 - Base: bed8cf29de6bad75dea11372e1b7efedf35af943 (Forgejo/GitHub main at assignment creation)
 - Branch: agent/schema-payload-separation
 - Implementation head: eee885bec5474574adaa3713fb1b2ae56e3ba81c
+- Repair head (staging no-recreate fix + regression + rehearsal evidence):
+  38afa609477c318e17d4d4095d88f7b4ddfc5193
   (this file is committed on top; see branch tip)
 - Migration reserved: V120 (main tip is V119; PR308 untouched)
 
@@ -45,15 +47,28 @@ staging, and repeated-startup idempotence.
 
 - Migration (one time, inside the Flyway transaction at startup): one full
   backfill of catalog bytes with per-row digest/size CHECKs plus count/identity
-  verification; the migration takes SHARE ROW EXCLUSIVE on the catalog and claims
-  (same berth as V55), so concurrent staging waits for the upgrade, not for other
-  readers. Cost is linear in retained descriptor bytes.
+  verification. The migration takes SHARE ROW EXCLUSIVE on the catalog and claims
+  during the backfill, and DROP COLUMN takes ACCESS EXCLUSIVE on the catalog until
+  transaction end: readers and writers on those tables block for the whole upgrade
+  transaction. Plan a quiesced upgrade window. Old binaries must not run against
+  the migrated schema (they query the dropped columns); upgrade code and schema
+  together, with no rolling mix. Cost is linear in retained descriptor bytes.
 - Steady state: one PK join to the payload row per size probe, lock probe, or
   byte fetch; same row counts, same bounds, same digest order. No new I/O under
   SQL locks and no account-global serialization.
 
 ## Review findings
 
+- Coordinator review of PR 310 found that staging recreated a missing retained
+  payload after a catalog conflict. Repaired in the stage function: the catalog
+  INSERT reports whether this call created the identity
+  (`ON CONFLICT DO NOTHING RETURNING`); only the creator writes the payload row,
+  while an existing identity requires and verifies its retained payload and
+  otherwise refuses with `Schema artifact payload is missing` before any claim
+  write. Same-owner retry and different-owner staging of a corrupted identity
+  both refuse; duplicate and concurrent identical staging semantics and lock
+  order are unchanged. Covered by
+  `stagingMustNotSilentlyRepairMissingRetainedPayload` (proven red, then green).
 - The deferred `repository_schema_payload_required` trigger cannot fail first
   through any supported path (the claim guard checks payload existence at claim
   time and holds KEY SHARE to commit); it stays as the table-level invariant for
@@ -88,14 +103,33 @@ All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
 8. `:protomolt-repo-container:check -x :protomolt-repo-container:admissionStorageTest`
    — exit 0, BUILD SUCCESSFUL.
 9. `compileJava` in `verification/repository-recovery` — exit 0.
+10. Repair verification, same lock/workers: new
+    `stagingMustNotSilentlyRepairMissingRetainedPayload` alone against the
+    unfixed function — exit 1, red as required.
+11. Focused suites after the repair (`RepositorySchemaArtifactsIT`,
+    `DocumentRevisionSchemaArtifactsIT`) — exit 0, 37/37.
+12. All 22 affected schema/history/assessment/commit/drain/typed classes after
+    the repair — exit 0, 147/147.
+13. Full `:protomolt-repo-container:test` after the repair — exit 0, BUILD
+    SUCCESSFUL in 29m18s, 252 classes, 2217 tests, 0 failures/errors/skips.
+14. In-container rehearsal on the repaired head — exit 1, 10/12 with the same
+    2 pre-existing failures.
+15. Base comparison rerun in an isolated worktree at bed8cf29 — exit 1, 10/12
+    with the same 2 failures and byte-identical check signatures; raw XML and
+    signatures preserved in
+    `docs/evidence/repository/2026-10-12-schema-payload-rehearsal-baseline/`.
+16. Standalone scoped rehearsal on the repaired head
+    (`--runs 1 --skip-negatives --xid-burn 0`) — exit 0,
+    REPOSITORY_RECOVERY_REHEARSAL_OK.
 
 ## Test counts / failures / skips
 
-- Focused new/updated suites: 36 + 59 + 88 = 183 tests, 0 failures, 0 skips.
-- Full container module: 2216 tests, 0 failures, 0 errors, 0 skips.
-- In-container backup rehearsal: 10/12 (2 pre-existing environmental failures,
-  proven identical on base).
-- Standalone recovery rehearsal (scoped): pass.
+- Focused new/updated suites after repair: 37 + 147 = 184 tests, 0 failures,
+  0 skips (plus the earlier 183-test pre-repair baseline, superseded).
+- Full container module after repair: 2217 tests, 0 failures, 0 errors, 0 skips.
+- In-container backup rehearsal: 10/12 on branch and on base (2 pre-existing
+  failures with identical signatures; root cause not established).
+- Standalone recovery rehearsal (scoped): pass on the repaired head.
 
 ## Real-provider evidence
 
@@ -106,13 +140,20 @@ All under `flock -w 1800 /tmp/protomolt-repository-qualification.lock` with
 
 ## Remaining limitations
 
-- The two rehearsal negatives above fail identically on base and branch in this
-  environment (recovered host expects provider-level refusal, observes
-  FAILED_PRECONDITION before provider access). Pre-existing, outside schema
-  storage, needs owner triage in another workstream.
-- Standalone rehearsal negatives were skipped (`--skip-negatives`) as the scoped
-  rehearsal; the in-container corrupt/missing-descriptor negatives cover the new
-  layout and pass.
+- Two in-container rehearsal negatives (`inconsistentCatalogAndObjectSnapshotRefuses`,
+  `wrongProviderCredentialsRefuse`) fail identically on the untouched base and on
+  this branch: the recovered host expects provider-level refusal but observes
+  FAILED_PRECONDITION before provider access. Pre-existing and outside schema
+  storage; root cause is not established, so they are not classified as merely
+  environmental. Raw comparison evidence (base/head SHAs, commands, failure
+  signatures) is preserved in
+  `docs/evidence/repository/2026-10-12-schema-payload-rehearsal-baseline/`.
+  Follow-up ownership: coordinator to triage/assign; this assignment makes no
+  change in that area.
+- The standalone `--skip-negatives` run is scoped evidence for the new layout,
+  not a complete recovery gate. The in-container corrupt/missing-descriptor
+  negatives cover the new layout and pass; full standalone negatives remain for
+  the recovery workstream.
 
 ## PR URL
 
