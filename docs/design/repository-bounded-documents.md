@@ -1,5 +1,11 @@
 # Bounded document hosts on non-streaming providers
 
+> Reconciliation note: references below to DocumentPublicationService, its
+> remote client or transport composition describe the former public API. That
+> transport is removed. Internal admission, receipts and recovery are retained;
+> this historical record does not establish their integration into every parts
+> operation. The [current guide](../repo/publication.md) owns public API guidance.
+
 Status: design for implementation. No Redis document host is available yet.
 This extends repository composition requirement 3 without changing protobuf
 names, field tags, import paths, type URLs or document commit semantics.
@@ -23,25 +29,15 @@ must not be adopted or relabeled. SQL document revisions do not require provider
 version IDs: immutable unique keys, hashes and provider receipts bind the bytes.
 Historical reads must prove this behavior with a versionless provider.
 
-## Composition
+## Internal bounded-provider requirements
 
-Add an explicit bounded-document host option/profile. Reuse the journaled
-publication repository, schema lifecycle, historical reader and attempt recovery.
-Keep provider creation in the selected factory; no S3 client or fallback belongs
-in Redis startup. The profile owns finite object, request, response, concurrency
-and aggregate reservation limits. Check uploads against the selected object cap
-before staging or provider I/O. Preserve existing conditional-write limits.
-
-Use Redis create-only storage, zero TTL and a finite object cap within 9 MiB.
-Require operator retention qualification, including persistence and eviction
-policy. Those deployment guarantees cannot be inferred from the adapter's TTL.
-Keep object reclamation tied to the original generation and physical identity.
-
-Mount authenticated publication and bounded history APIs. Do not mount legacy
-streaming raw ingestion, unrestricted legacy document/archive mutations or bridge
-routes through this profile. Unsupported operations must be explicit; do not
-route them through a buffered approximation of streaming. Archive-only and
-bounded-document profiles remain distinct assemblies over shared primitives.
+Reuse internal schema lifecycle, historical readers and attempt recovery.
+Provider creation belongs to the selected factory. A non-streaming provider must
+not approximate streaming by buffering an unbounded body. Object, transport and
+concurrency limits require separate definitions and do not establish a global
+document-size requirement. Redis retention requires operator qualification of
+persistence and eviction as well as non-expiring writes. Reclamation stays tied
+to the original backend generation and physical identity.
 
 Accepted publication, provider, schema and read work retain the provider and SQL
 resources until drain completes. A timeout keeps those resources available for
@@ -101,27 +97,11 @@ receipt through that endpoint. The durable receipt remains stored. Do not lower
 an established endpoint cap without an explicit replay-access plan. A distinct
 receipt-only API would require separate contract and authorization review.
 
-## Reviewed assembly map
+## Earlier bounded-provider qualification
 
-Use a third explicit host profile, distinct from full and bounded-archive modes.
-Existing builders retain their current defaults. Validate the new profile before
-opening SQL or provider resources. Select create-only Redis for this profile;
-require bounded reads, non-expiring writes and physical reclamation without
-requiring streaming support.
-
-Build document-attempt recovery and ManagedDocumentServices, with the publication
-facade's object maximum capped by both the provider limit and the 8 MiB protocol
-limit. Leave raw ingestion, raw recovery and managed archive unset. Reuse existing
-shutdown ordering rather than introducing another host with duplicate cleanup.
-
-The service list contains configured authenticated publication and history
-adapters only. Restrict legacy repository/archive/drive accessors, HTTP, the
-archive listener and package-level direct publication-runtime access. Trusted
-drive provisioning needs an explicit bootstrap path rather than a general mounted
-DriveService. Continue document reader reconciliation, attempt recovery and schema
-workers; omit legacy purge/sweeper and unrelated raw/archive maintenance.
-A host fixture must enumerate rejected access paths, not merely prove a successful
-publication. Sol reviewed this assembly map against the current source.
+The following dated checkpoints record the former host arrangement. Its public
+publication transport is removed; retained internal provider/recovery behavior
+must be assessed separately from integration into the canonical parts API.
 
 ## Internal implementation checkpoint
 
@@ -209,10 +189,6 @@ historical reads. Retain SQL, provider resources and reservations until accepted
 work exits; refuse new work after admission closes. Keep provider-write and schema
 load windows explicit rather than treating one held stage as evidence for both.
 
-Once these cases pass, expose bounded document configuration through the existing
-composition API with explicit object, shared payload and transport limits. Redis
-persistence and eviction remain operator qualifications. Sol reviewed this order;
-the public factory is not available yet.
 
 ## Delayed request recovery checkpoint
 
@@ -271,23 +247,14 @@ The separate bounded schema-load case now passes too. It holds actual Git-fetche
 descriptor bytes while the resolver worker remains active after caller cancellation.
 SQL and Redis stay open until worker drain; the closed resolver discards the late
 result. Evidence: `docs/evidence/repository/2026-10-07-schema-worker-shutdown`.
-The public factory and its consumer qualification are recorded below.
+Internal composition qualification is recorded below.
 
-## Public composition design
+## Internal composition qualification
 
-Expose bounded document limits through `BoundedDocumentOptions`, following the
-existing bounded archive options convention. A `RepoServices.buildBoundedDocuments`
-factory should use the existing assembly path and provider discovery. Validate
-required schema/publication options and the Redis configuration before discovery
-or resource acquisition. Preserve library-only use: historical transport and
-publication transport remain explicit, independent options with their existing
-byte and concurrency limits. Do not duplicate those limits in document options.
-
-Before documenting that factory as available, test a consumer using the public
-entry point with discovered Redis, typed publication and historical decoding.
-Test invalid providers, lifecycle/retention settings, TTL and object limits against
-an unreachable database to prove configuration fails before resource acquisition.
-Keep legacy document, archive and HTTP APIs unavailable in this composition.
+Before selecting a bounded provider, validate its lifecycle, retention, TTL and
+object limits before resource acquisition. Retain library qualification of typed
+publication and historical decoding without treating it as a new public document
+API. The canonical parts API must not be displaced by a bounded-provider profile.
 
 Redis persistence and eviction policy remain operator qualifications. The existing
 lifecycle invokes the recovery scan and revisits eligible ABSENT tombstones; the

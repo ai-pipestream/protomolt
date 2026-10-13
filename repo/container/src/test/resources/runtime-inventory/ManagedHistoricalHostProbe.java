@@ -19,11 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Actual hosted composition over PostgreSQL, retention-qualified Redis and a Git schema registry. */
 public final class ManagedHistoricalHostProbe {
     public static void main(String[] args) throws Exception {
-        for (boolean enabled : new boolean[] {false, true}) for (boolean remoteFirst : new boolean[] {false, true})
-            run(Path.of(args[0]), enabled, remoteFirst);
+        for (boolean enabled : new boolean[] {false, true}) run(Path.of(args[0]), enabled);
     }
 
-    private static void run(Path bundle, boolean enabled, boolean remoteFirst) throws Exception {
+    private static void run(Path bundle, boolean enabled) throws Exception {
         var config = new RepoServiceConfig(0, new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),
                 System.getenv("PROTOMOLT_TEST_USER"), System.getenv("PROTOMOLT_TEST_PASSWORD")),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "historical-host", 0,
@@ -59,10 +58,7 @@ public final class ManagedHistoricalHostProbe {
                                 && operation.equals(expected.operationId()), "exact operation recovery authority");
                         recoveryCalls.incrementAndGet();
                         return caller;
-                    }).withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                        require(auth.caller().unrestricted(), "test uses the authenticated host operator token");
-                        return caller;
-                    }, 32L * 1024 * 1024, 2));
+                    });
             if (enabled) options = options.withHistoricalPublication(2);
             try {
                 try (var host = RepoServices.buildBoundedDocumentsHosted(config, BridgeEngine.standard(), null, schemas,
@@ -73,33 +69,21 @@ public final class ManagedHistoricalHostProbe {
                     require(initial.hasCommitted(), "ordinary publication still works with either option");
                     var request = historical(tx, caller, fixture.request(), initial.getCommitted().getMembers(0));
                     if (enabled) ManagedHistoricalUnavailableProbe.run(config, bundle, git, definition,
-                            tx, caller, request, remoteFirst);
+                            tx, caller, request);
                     recoveryKey.set(new DocumentPublicationCommand(request.getIntent()));
                     int before = resolutions.get();
-                    String name = "managed-historical-" + UUID.randomUUID();
-                    host.startInProcess(name, "historical-host-test-token", null);
-                    var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-                    try {
-                        var headers = new Metadata();
-                        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), "historical-host-test-token");
-                        var stub = DocumentPublicationServiceGrpc.newBlockingStub(channel)
-                                .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)).withDeadlineAfter(30, TimeUnit.SECONDS);
                         if (!enabled) {
                             try { host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE);
                                 throw new AssertionError("Historical publication activated without opt-in");
                             } catch (UnsupportedOperationException expected) { require(expected.getMessage().contains("Historical reuse"), "disabled library status"); }
-                            try { stub.publishDocument(request); throw new AssertionError("Historical RPC activated without opt-in"); }
-                            catch (StatusRuntimeException expected) { require(expected.getStatus().getCode() == Status.Code.UNIMPLEMENTED, "disabled RPC status"); }
                             require(resolutions.get() == before && recoveryCalls.get() == 0, "disabled history performs no schema or recovery work");
                         } else {
-                            var result = remoteFirst ? stub.publishDocument(request)
-                                    : host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE);
+                            var result = host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE);
                             require(result.hasCommitted(), "mixed historical publication commits through host");
                             require(resolutions.get() == before + 1, "only new parsed upload resolves a live schema");
                             require(recoveryCalls.get() > 0, "explicit historical authority used");
-                            require(stub.publishDocument(request).equals(result)
-                                    && host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE).equals(result),
-                                    "library and RPC exact retries return identical receipt");
+                            require(host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE).equals(result),
+                                    "library exact retry returns identical receipt");
                             require(resolutions.get() == before + 1, "replay does not resolve schemas");
                             var expected = fixture.document().toBuilder().putParserResults("fresh", parsed()).build();
                             verify(host, caller, result.getCommitted().getMembers(0), expected);
@@ -108,9 +92,8 @@ public final class ManagedHistoricalHostProbe {
                             long commits = tx.readOnly(em -> ((Number) em.createNativeQuery(
                                     "SELECT count(*) FROM document_revision_commits WHERE operation_id=:id")
                                     .setParameter("id", recoveryKey.get().operationId()).getSingleResult()).longValue());
-                            require(commits == 1, "one historical revision commit across both public paths");
+                            require(commits == 1, "one historical revision commit across exact retry");
                         }
-                    } finally { channel.shutdownNow(); require(channel.awaitTermination(5, TimeUnit.SECONDS), "host channel drained"); }
                 }
                 require(closes.get() == 1, "successful host closes schema admission exactly once");
                 var states = new Tx(database.entityManagerFactory()).readOnly(em -> em.createNativeQuery(
@@ -121,7 +104,7 @@ public final class ManagedHistoricalHostProbe {
         } finally {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-        System.out.println("MANAGED_HISTORICAL_" + (enabled ? "ENABLED" : "DISABLED") + "_" + (remoteFirst ? "RPC" : "LIBRARY") + "_OK");
+        System.out.println("MANAGED_HISTORICAL_" + (enabled ? "ENABLED" : "DISABLED") + "_" + "LIBRARY" + "_OK");
     }
 
     private static ParserResult parsed() {

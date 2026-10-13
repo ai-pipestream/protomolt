@@ -27,7 +27,6 @@ configurations.assessmentTransportRuntime.extendsFrom(configurations.assessmentH
 dependencies {
     assessmentTransportRuntime project(':protomolt-repo-service')
     assessmentTransportRuntime project(':protomolt-repo-history-grpc')
-    assessmentTransportRuntime project(':protomolt-repo-publication-grpc')
     assessmentTransportRuntime project(':protomolt-repo-schema-registry')
     assessmentTransportRuntime project(':protomolt-schema-registry-git')
     assessmentHostRuntime project(':protomolt-repo-engine')
@@ -130,12 +129,12 @@ ext.admissionRuntimeDirectory = 'admission-transport-runtime'
 apply from: rootProject.file('gradle/admission-runtime-inventory.gradle')
 def transportAdmissionInventory = layout.buildDirectory.dir('admission-transport-runtime')
 tasks.named('test') { exclude '**/DocumentAssessmentStorageRuntimeTest*' }
-// The scoped publication parity suite needs the observed admission runtime bundle;
+// The scoped publication library suite needs the observed admission runtime bundle;
 // run it through the dedicated scopedPublicationTest task below.
 tasks.named('test') { exclude '**/ScopedPublicationParityIT*' }
 tasks.register('scopedPublicationTest', Test) {
     group = 'verification'
-    description = 'Run scoped publication authorization parity across library and authenticated gRPC'
+    description = 'Run scoped publication library authorization and receipt qualification'
     dependsOn tasks.named('admissionTransportRuntimeInventory'), tasks.named('jar'), configurations.assessmentTransportRuntime
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath

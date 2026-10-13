@@ -13,9 +13,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Drives the scoped publication authorization parity probe on the production
+ * Drives the scoped publication library authorization probe on the production
  * JAR host: real PostgreSQL and versioned LocalStack S3, the journaled runtime
- * and facade, and an authenticated in-process gRPC channel, all in a fresh
+ * and library facade, all in a fresh
  * standard JVM whose classpath is exactly the observed admission/transport
  * runtime plus the compiled probe. The scenario matrix lives in
  * {@code runtime-inventory/ScopedPublicationProbe.java}; this harness only
@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ScopedPublicationParityIT {
     @TempDir(cleanup = org.junit.jupiter.api.io.CleanupMode.ON_SUCCESS) Path directory;
 
-    @Test void scopedPublicationAuthorizationIsEquivalentAcrossLibraryAndAuthenticatedGrpc() throws Exception {
+    @Test void scopedPublicationLibraryPreservesAuthorizationAndReceipts() throws Exception {
         String bundleProperty = System.getProperty("protomolt.test.admissionRuntimeBundle");
         String hostProperty = System.getProperty("protomolt.test.storageHostClasspath");
         String logProperty = System.getProperty("protomolt.test.scopedPublicationLog");
@@ -99,13 +99,13 @@ class ScopedPublicationParityIT {
             }
             try {
                 assertThat(process.waitFor(600, TimeUnit.SECONDS))
-                        .as("Scoped publication parity probe completed; log: %s", log).isTrue();
+                        .as("Scoped publication library probe completed; log: %s", log).isTrue();
                 assertThat(Files.size(log)).isLessThan(1_048_576);
                 String result = Files.readString(log);
                 assertThat(process.exitValue()).as(result).isZero();
                 assertThat(result).as("probe log is from this run").contains("SCOPED_PUBLICATION_RUN " + run);
                 var markers = new ArrayList<String>();
-                for (String via : List.of("LIBRARY", "GRPC")) {
+                for (String via : List.of("LIBRARY")) {
                     for (String scenario : List.of("TYPED", "OPAQUE", "KEY_SEPARATION", "ROTATION", "UNBOUND",
                             "ACCOUNT", "COMMAND", "MIXED_ATOMICITY", "GRANT_REVOCATION", "GRANT_EXPIRY",
                             "REPLAY_ROTATION", "READ_REVOCATION", "UPLOAD_HELD", "COMMIT_WINS",
@@ -116,10 +116,9 @@ class ScopedPublicationParityIT {
                         markers.add("SCOPED_PUBLICATION_FINAL_CHECK_" + ordering + "_" + via + "_OK");
                     }
                 }
-                markers.add("SCOPED_PUBLICATION_TRANSPORT_FAIL_CLOSED_OK");
-                markers.add("SCOPED_PUBLICATION_PARITY_OK");
-                // 42 original scenario markers plus IDENTITY_SUBSTITUTION on each path.
-                assertThat(markers).hasSize(44).doesNotHaveDuplicates();
+                markers.add("SCOPED_PUBLICATION_LIBRARY_OK");
+                // 18 library scenarios, three barrier orderings, and the completion marker.
+                assertThat(markers).hasSize(22).doesNotHaveDuplicates();
                 for (String marker : markers) {
                     assertThat(result).as("probe log contains %s", marker).contains(marker);
                 }

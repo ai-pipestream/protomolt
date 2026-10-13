@@ -13,7 +13,7 @@ final class ManagedHistoricalUnavailableUploadProbe {
     static boolean enabled() { return "true".equals(System.getenv("PROTOMOLT_TEST_COLD_MISSING_UPLOAD")); }
 
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand command,
-            PublishDocumentRequest request, RepoServices host, DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub stub,
+            PublishDocumentRequest request, RepoServices host,
             AtomicInteger resolutions) {
         var key = new RepositoryOperationLedger.Key(command.intent().getAccountId(), caller.principalName(), command.operationId());
         assertPlacements(tx, key, command, provider);
@@ -31,17 +31,9 @@ final class ManagedHistoricalUnavailableUploadProbe {
                         && failure.getMessage().equals("Original document backend is unavailable"), "retained upload has explicit library refusal");
             }
         };
-        Runnable rpc = () -> {
-            try { stub.publishDocument(request); throw new AssertionError("Cold RPC substituted a new upload backend"); }
-            catch (StatusRuntimeException failure) {
-                require(failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
-                        && "Original document backend is unavailable".equals(failure.getStatus().getDescription()), "retained upload has explicit RPC refusal");
-            }
-        };
-        boolean remoteFirst = "initial".equals(System.getenv("PROTOMOLT_TEST_COLD_PHASE"));
-        (remoteFirst ? rpc : library).run();
+        library.run();
         var identity = identity(tx, command.operationId());
-        (remoteFirst ? library : rpc).run();
+        library.run();
         require(identity(tx, command.operationId()).equals(identity), "exact refused retry preserves recovery identity");
         require(resolutions.get() == 0, "missing upload backend does not resolve a fresh schema");
         require(source(host, caller, selector).equals(before), "mounted source remains readable and unchanged after refusal");

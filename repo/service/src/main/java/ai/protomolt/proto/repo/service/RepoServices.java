@@ -537,12 +537,12 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
-     * Journaled library publication with optional authenticated transport. Schema
+     * Internal journaled execution without a separate publication RPC. Schema
      * lifecycle ownership transfers only on successful construction. Assessment
      * bundle and authority callbacks are trusted host configuration. Historical
-     * reads remain independently optional. Built-in transports require an operator
-     * token when publication transport is selected; embedding hosts must install
-     * authentication and a 10 MiB inbound parser limit before serving services().
+     * reads remain independently optional. Built-in historical-read transports
+     * require an operator token; embedding hosts must install authentication
+     * before exposing those services.
      */
     public static RepoServices build(RepoServiceConfig config, BridgeEngine bridges,
             HistoricalReadAccess historicalAccess, ManagedSchemaAccess schemaAccess,
@@ -612,13 +612,11 @@ public final class RepoServices implements AutoCloseable {
     public List<BindableService> services() {
         requireOpen();
         if (boundedDocuments == null) requireFullProfile();
-        if (managedArchive != null) startLifecycle();
+        if (managedArchive != null || managedDocuments != null) startLifecycle();
         if (managedDocuments == null) return services;
-        if (managedDocuments.publicationService != null) startLifecycle();
         var mounted = new java.util.ArrayList<BindableService>(boundedDocuments == null ? services : List.of());
         if (managedDocuments.historyService != null) mounted.add(managedDocuments.historyService);
         if (managedDocuments.materializationService != null) mounted.add(managedDocuments.materializationService);
-        if (managedDocuments.publicationService != null) mounted.add(managedDocuments.publicationService);
         return List.copyOf(mounted);
     }
 
@@ -714,7 +712,7 @@ public final class RepoServices implements AutoCloseable {
     }
 
     private void requireTransportAuthentication(String apiToken, CallerResolver resolver) {
-        if (managedDocuments != null && (managedDocuments.historyService != null || managedDocuments.publicationService != null)
+        if (managedDocuments != null && managedDocuments.historyService != null
                 && (apiToken == null || apiToken.isBlank()))
             throw new IllegalArgumentException("Managed document transport requires a nonblank operator API token");
         if (apiToken == null && resolver != null)
@@ -973,7 +971,6 @@ public final class RepoServices implements AutoCloseable {
         // accepted calls; transport shutdown can otherwise forcibly cancel them.
         // A timeout retains every resource so the owner can retry draining.
         if (archiveIngress != null) awaitArchiveIdle(timeout);
-        if (managedDocuments != null) managedDocuments.awaitTransportIdle(timeout);
         var transports = new java.util.ArrayList<AutoCloseable>();
         transports.addAll(httpServers);
         transports.addAll(servers);

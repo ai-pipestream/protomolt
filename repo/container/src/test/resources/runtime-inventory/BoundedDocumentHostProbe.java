@@ -75,8 +75,7 @@ public final class BoundedDocumentHostProbe {
             };
             var caller=new RepositoryCaller("operator",true);
             var options=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
-                    (account,principal,operation) -> caller).withTransport(
-                    new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
+                    (account,principal,operation) -> caller);
             Fixture fixture;
             PublishDocumentResponse result;
             Fixture updated;
@@ -85,10 +84,9 @@ public final class BoundedDocumentHostProbe {
                     new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 require(opens.get()==1,"one Redis provider");
                 require(host.publicationRepository()!=null && host.historicalRepository()!=null,"document repositories mounted");
-                require(host.services().size()==2
-                        && host.services().stream().anyMatch(service -> service instanceof DocumentPublicationGrpcService)
+                require(host.services().size()==1
                         && host.services().stream().anyMatch(service -> service instanceof DocumentHistoryGrpcService),
-                        "publication and history service list");
+                        "only history transport is mounted");
                 unavailable(host::repository); unavailable(host::archiveRepository); unavailable(host::archiveMutationRepository);
                 unavailable(host::driveRepository); unavailable(host::documentPublication);
                 unavailable(host::seedAccountDrives);
@@ -100,7 +98,7 @@ public final class BoundedDocumentHostProbe {
                 require(result.hasCommitted() && result.getCommitted().getMembersCount()==1,"published member");
                 var replay=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
                 require(result.equals(replay),"exact receipt replay");
-                verifyTransport(host,new Tx(database.entityManagerFactory()),caller,fixture.request(),result);
+                verifyLibraryLimits(host,new Tx(database.entityManagerFactory()),caller,fixture.request(),result);
                 var invalid=withValue(prepare(host,new Tx(database.entityManagerFactory())),"contract-invalid");
                 var rejected=rejectionProbe.reject(host,new Tx(database.entityManagerFactory()),caller,invalid.request());
                 updated=replacement(fixture,result.getCommitted().getMembers(0));
@@ -227,25 +225,14 @@ public final class BoundedDocumentHostProbe {
         }
         System.out.println("BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK");
     }
-    /** Real host authentication with a fixture operator credential, not production API-key provisioning. */
-    private static void verifyTransport(RepoServices host, Tx tx, RepositoryCaller caller,
+    /** Internal publication replay and the configured object limit remain qualified. */
+    private static void verifyLibraryLimits(RepoServices host, Tx tx, RepositoryCaller caller,
             PublishDocumentRequest original, PublishDocumentResponse receipt) throws Exception {
-        String name="bounded-document-"+UUID.randomUUID();
-        host.startInProcess(name,"bounded-fixture-token",null);
-        var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-        try {
-            var unauthenticated=DocumentPublicationServiceGrpc.newBlockingStub(channel)
-                    .withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS);
-            expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> unauthenticated.publishDocument(original));
-            var headers=new io.grpc.Metadata();
-            headers.put(io.grpc.Metadata.Key.of("api_token",io.grpc.Metadata.ASCII_STRING_MARSHALLER),"bounded-fixture-token");
-            var client=unauthenticated.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
-            require(client.withDeadlineAfter(10,java.util.concurrent.TimeUnit.SECONDS).publishDocument(original).equals(receipt),"remote replay matches local receipt");
             var fresh=prepare(host,tx);
-            var published=client.publishDocument(fresh.request());
-            require(published.hasCommitted(),"remote typed publication committed");
+            var published=host.publicationRepository().publishDocument(caller,fresh.request(),RepositoryReadControl.NONE);
+            require(published.hasCommitted(),"library typed publication committed");
             require(host.publicationRepository().publishDocument(caller,fresh.request(),RepositoryReadControl.NONE)
-                    .equals(published),"local replay matches remote receipt");
+                    .equals(published),"exact library replay matches receipt");
             byte[] tooLarge=new byte[1024*1024+1];
             var payload=fresh.request().getPayloads(0);
             int memberIndex=0;
@@ -260,18 +247,13 @@ public final class BoundedDocumentHostProbe {
                     .setOperationId(UUID.randomUUID().toString()).setMembers(memberIndex,member))
                     .setPayloads(0,payload.toBuilder().setContent(ByteString.copyFrom(tooLarge))).build();
             DocumentPublicationInput.validate(oversized,RepositoryReadControl.NONE);
-            expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> client.publishDocument(oversized));
             try {
                 host.publicationRepository().publishDocument(caller,oversized,RepositoryReadControl.NONE);
                 throw new AssertionError("local oversized request accepted");
             } catch (IllegalArgumentException expected) {
                 require(expected.getMessage().equals("Publication upload exceeds configured object limit"),"local object cap classification");
             }
-        } finally {
-            channel.shutdownNow();
-            require(channel.awaitTermination(10,java.util.concurrent.TimeUnit.SECONDS),"bounded channel stopped");
-        }
-        System.out.println("BOUNDED_DOCUMENT_TRANSPORT_OK");
+        System.out.println("BOUNDED_DOCUMENT_LIBRARY_LIMITS_OK");
     }
     private static void expectStatus(io.grpc.Status.Code code,Runnable call) {
         try { call.run(); throw new AssertionError("Expected "+code); }

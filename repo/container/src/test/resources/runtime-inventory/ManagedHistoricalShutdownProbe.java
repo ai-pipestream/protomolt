@@ -21,10 +21,10 @@ import java.util.concurrent.atomic.*;
 public final class ManagedHistoricalShutdownProbe {
     public static void main(String[] args) throws Exception {
         for (var kind : ManagedHistoricalWorkerGate.Kind.values())
-            for (boolean remote : new boolean[] {false, true}) run(Path.of(args[0]), remote, kind);
+            run(Path.of(args[0]), kind);
     }
 
-    private static void run(Path bundle, boolean remote, ManagedHistoricalWorkerGate.Kind kind) throws Exception {
+    private static void run(Path bundle, ManagedHistoricalWorkerGate.Kind kind) throws Exception {
         var gate = new ManagedHistoricalWorkerGate(kind);
         boolean schema = kind == ManagedHistoricalWorkerGate.Kind.SCHEMA;
         boolean asynchronous = kind != ManagedHistoricalWorkerGate.Kind.PUT;
@@ -66,14 +66,9 @@ public final class ManagedHistoricalShutdownProbe {
                 public void close() { resolver.close(); }
                 public boolean awaitIdle(Duration timeout) throws InterruptedException { return resolver.awaitLoads(timeout); }
             };
-            var serverCancelled = new CountDownLatch(1);
             var options = new ManagedPublicationOptions(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5),
                     (account, principal, operation) -> caller).withRecovery((account, principal, operation) -> caller)
-                    .withHistoricalPublication(2).withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                        require(auth.caller().unrestricted(), "operator token authenticated independently");
-                        Context.current().addListener(ignored -> serverCancelled.countDown(), Runnable::run);
-                        return caller;
-                    }, 32L * 1024 * 1024, 1));
+                    .withHistoricalPublication(2);
             try (var host = new RepoServices(config, BridgeEngine.standard(), BlobStores.of(List.of(provider)),
                     new HistoricalReadAccess(auth -> caller, 32L * 1024 * 1024, 2), schemas, null, options.journaled(),
                     new BoundedDocumentProfile(1024 * 1024, 64L * 1024 * 1024), identity)) {
@@ -93,32 +88,9 @@ public final class ManagedHistoricalShutdownProbe {
                     public boolean isCancelled() { return cancelled.get(); }
                     public long remainingNanos() { return Long.MAX_VALUE; }
                 };
-                String name = "historical-shutdown-" + UUID.randomUUID();
-                String token = UUID.randomUUID().toString();
-                host.startInProcess(name, token, null);
-                var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-                var headers = new Metadata();
-                headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
-                var stub = DocumentPublicationServiceGrpc.newStub(channel)
-                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)).withDeadlineAfter(30, TimeUnit.SECONDS);
-                var service = (DocumentPublicationGrpcService) host.services().stream()
-                        .filter(value -> value instanceof DocumentPublicationGrpcService).findFirst().orElseThrow();
                 try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                     gate.armed.set(true);
-                    var rpcResult = new CompletableFuture<PublishDocumentResponse>();
-                    var rpcCall = new AtomicReference<io.grpc.stub.ClientCallStreamObserver<PublishDocumentRequest>>();
-                    Future<PublishDocumentResponse> publication;
-                    if (remote) {
-                        stub.publishDocument(request, new io.grpc.stub.ClientResponseObserver<PublishDocumentRequest, PublishDocumentResponse>() {
-                            public void beforeStart(io.grpc.stub.ClientCallStreamObserver<PublishDocumentRequest> call) { rpcCall.set(call); }
-                            public void onNext(PublishDocumentResponse value) { rpcResult.complete(value); }
-                            public void onError(Throwable failure) { rpcResult.completeExceptionally(failure); }
-                            public void onCompleted() {
-                                rpcResult.completeExceptionally(new AssertionError("Historical RPC completed without a response"));
-                            }
-                        });
-                        publication = rpcResult;
-                    } else publication = executor.submit(() -> publisher.publishDocument(caller, request, control));
+                    Future<PublishDocumentResponse> publication = executor.submit(() -> publisher.publishDocument(caller, request, control));
                     try {
                         require(gate.entered.await(10, TimeUnit.SECONDS), "historical publication reached actual selected worker reply");
                         gate.verifyBytes();
@@ -126,18 +98,10 @@ public final class ManagedHistoricalShutdownProbe {
                                 "fresh schema uses a real uncached Git load after the original source schema");
                         var pins = pins(tx, identity);
                         require(!pins.isEmpty(), "historical source has live pins before cancellation");
-                        if (remote) {
-                            rpcCall.get().cancel("cancel held historical publication", null);
-                            try { publication.get(5, TimeUnit.SECONDS); throw new AssertionError("Historical RPC returned a receipt after cancellation"); }
-                            catch (ExecutionException expected) { require(Status.fromThrowable(expected.getCause()).getCode() == Status.Code.CANCELLED,
-                                    "client receives actual RPC CANCELLED status"); }
-                            require(serverCancelled.await(5, TimeUnit.SECONDS), "historical cancellation reaches server");
-                        } else cancelled.set(true);
+                        cancelled.set(true);
                         try { host.close(Duration.ofMillis(200)); throw new AssertionError("Host closed before historical worker exited"); }
-                        catch (RepositoryDrainTimeoutException expected) {
-                            require(remote && expected.getMessage().equals("Publication RPCs still active; shared resources retained"), "RPC close retains active call");
-                        } catch (IllegalStateException expected) {
-                            require((!remote || asynchronous) && expected.getMessage().equals("Native publication resources still active; shared resources retained"), "close retains active worker");
+                        catch (IllegalStateException expected) {
+                            require(expected.getMessage().equals("Native publication resources still active; shared resources retained"), "close retains active worker");
                         }
                         require(closes.get() == 0 && gate.exited.getCount() == 1, "real provider stays open until worker exit");
                         if (!schema) require(pins(tx, identity).equals(pins), "timed-out close preserves exact historical source pins");
@@ -145,8 +109,7 @@ public final class ManagedHistoricalShutdownProbe {
                                 "caller cancellation cannot release the actual registry worker");
                         require(hostState(tx, identity).equals("ACTIVE"), "live host cannot attest termination");
                         if (!asynchronous) {
-                            if (remote) require(!service.awaitIdle(Duration.ZERO), "client cancellation does not release server producer");
-                            else require(!publication.isDone(), "library worker remains held");
+                            require(!publication.isDone(), "library worker remains held");
                         }
                         try (var connection = host.ledgerDataSource().getConnection(); var statement = connection.createStatement();
                              var result = statement.executeQuery("SELECT 1")) { require(result.next(), "SQL remains open for drain"); }
@@ -158,11 +121,8 @@ public final class ManagedHistoricalShutdownProbe {
                         require(gate.exited.await(5, TimeUnit.SECONDS), "held provider reply exits");
                         if (schema) require(resolver.awaitLoads(Duration.ofSeconds(5)) && resolver.stats().cachedBytes() == 0,
                                 "closed resolver drains and does not cache a late schema result");
-                        if (remote) require(service.awaitIdle(Duration.ofSeconds(10)), "historical RPC producer drains");
                         try { publication.get(10, TimeUnit.SECONDS); throw new AssertionError("Cancelled historical publication succeeded"); }
-                        catch (ExecutionException expected) { require(remote
-                                ? Status.fromThrowable(expected.getCause()).getCode() == Status.Code.CANCELLED
-                                : BoundedPublicationShutdownProbe.hasCancellation(expected.getCause()), "publication reports cancellation"); }
+                        catch (ExecutionException expected) { require(BoundedPublicationShutdownProbe.hasCancellation(expected.getCause()), "publication reports cancellation"); }
                         assertUnassessed(tx, request);
                         gate.verifyBytes();
                         host.close(Duration.ofSeconds(5));
@@ -175,12 +135,12 @@ public final class ManagedHistoricalShutdownProbe {
                         host.close(Duration.ofSeconds(5));
                         require(closes.get() == 1, "repeated close does not close provider twice");
                     } finally { gate.release.countDown(); }
-                } finally { channel.shutdownNow(); require(channel.awaitTermination(5, TimeUnit.SECONDS), "historical channel drained"); }
+                }
             } finally { schemas.close(); require(schemas.awaitIdle(Duration.ofSeconds(5)), "schema workers drained before Git close"); }
         } finally {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
-        System.out.println("MANAGED_HISTORICAL_HELD_" + kind + "_" + (remote ? "RPC" : "LIBRARY") + "_OK");
+        System.out.println("MANAGED_HISTORICAL_HELD_" + kind + "_" + "LIBRARY" + "_OK");
     }
 
     private static List<String> pins(Tx tx, ReaderHostOptions host) {

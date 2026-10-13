@@ -1,5 +1,11 @@
 # Repository provider qualification
 
+> Reconciliation note: references below to DocumentPublicationService, its
+> remote client or transport composition describe the former public API. That
+> transport is removed. Internal admission, receipts and recovery are retained;
+> this historical record does not establish their integration into every parts
+> operation. The [current guide](../repo/publication.md) owns public API guidance.
+
 Status: executed at the branch tip of `agent/repository-provider-qualification`
 (base `4db6d6c35bc227658e2341c750e9248a8aee3041`). Evidence:
 [2026-10-07-provider-qualification](../evidence/repository/2026-10-07-provider-qualification/README.md).
@@ -46,7 +52,6 @@ every row.
 | cache alone | `protomolt-repo-blob-cache` | 3 | none | slf4j + byte SPI only; no cache-provider SDK |
 | cache with selected Redis provider | cache + redis artifacts | 10 | `redis-sdk` | explicit selection; no AWS |
 | blob gRPC client alone | `protomolt-repo-blob-grpc` | 38 | none | gRPC/protobuf client libraries legitimate |
-| publication gRPC client alone | `protomolt-repo-publication-grpc` | 38 | none | no engine/server/SQL/Kafka/storage SDKs |
 
 Families rejected per row, by group:artifact identity: SQL/ORM/pooling/
 migration (`org.postgresql`, `org.hibernate[.orm]`, `com.zaxxer`,
@@ -211,9 +216,6 @@ resolution paths over the same artifacts.
   `repo/container` and composition work outside this assignment's ownership;
   this qualification covers the provider libraries and their published
   consumers, not the host wiring. No host claim is made.
-- `repo/publication/grpc` has no in-module unit tests; its public surface is
-  compile-probed from the published artifact here, and transport behavior is
-  owned by the packaged storage suites (coordinator scope).
 - `RemoteBlobStore` does not implement `getBounded` (fail-closed SPI
   default); callers needing bounded reads from a remote store must not assume
   it.

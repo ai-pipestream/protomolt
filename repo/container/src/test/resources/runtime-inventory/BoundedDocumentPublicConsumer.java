@@ -23,7 +23,7 @@ public final class BoundedDocumentPublicConsumer {
                 ? RepoServices.buildBoundedDocuments(config,BridgeEngine.standard(),history,schemas,publication,limits)
                 : RepoServices.buildBoundedDocumentsHosted(config,BridgeEngine.standard(),history,schemas,publication,limits,identity)) {
             phase(mode, "host-built", started);
-            require(host.services().size()==(rpc ? 2 : 0),"only explicitly selected RPCs mounted");
+            require(host.services().size()==(rpc ? 1 : 0),"only explicitly selected RPCs mounted");
             unavailable(host::repository); unavailable(host::archiveRepository); unavailable(host::archiveMutationRepository);
             unavailable(host::driveRepository); unavailable(() -> host.startHttp(0,"fixture-token"));
             phase(mode, "fixture-prepare-start", started);
@@ -37,21 +37,11 @@ public final class BoundedDocumentPublicConsumer {
                     String name="public-bounded-"+UUID.randomUUID();
                     host.startInProcess(name,"public-bounded-fixture-token",null);
                     channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-                    var raw=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(10,TimeUnit.SECONDS);
-                    unauthenticated(() -> raw.publishDocument(fixture.request()));
-                    var wrong=DocumentPublicationServiceGrpc.newBlockingStub(withToken(channel,"wrong-fixture-token"))
-                            .withDeadlineAfter(10,TimeUnit.SECONDS);
-                    unauthenticated(() -> wrong.publishDocument(fixture.request()));
                     authenticated=withToken(channel,"public-bounded-fixture-token");
-                    phase(mode, "typed-publication-start", started);
-                    result=DocumentPublicationServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
-                            .publishDocument(fixture.request());
-                    phase(mode, "typed-publication-complete", started);
-                } else {
-                    phase(mode, "typed-publication-start", started);
-                    result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
-                    phase(mode, "typed-publication-complete", started);
                 }
+                phase(mode, "typed-publication-start", started);
+                result=host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE);
+                phase(mode, "typed-publication-complete", started);
                 require(result.hasCommitted() && result.getCommitted().getMembersCount()==1,"public consumer committed typed document");
                 phase(mode, "receipt-replay-start", started);
                 require(host.publicationRepository().publishDocument(caller,fixture.request(),RepositoryReadControl.NONE).equals(result),
@@ -66,9 +56,6 @@ public final class BoundedDocumentPublicConsumer {
                 }
                 phase(mode, "history-read-complete", started);
                 if (rpc) {
-                    phase(mode, "rpc-replay-start", started);
-                    require(DocumentPublicationServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
-                            .publishDocument(fixture.request()).equals(result),"remote exact receipt replay");
                     var read=DocumentHistoryServiceGrpc.newBlockingStub(authenticated).withDeadlineAfter(10,TimeUnit.SECONDS)
                             .readRevision(ReadRevisionRequest.newBuilder().setAddress(revision.getAddress()).setRevisionId(revision.getRevisionId())
                                     .setMode(HistoricalDocumentReadMode.HISTORICAL_DOCUMENT_READ_MODE_VALIDATED).build());

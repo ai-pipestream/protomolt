@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-13T18:35:59.794Z" hostname="krick" time="0.464">
+  <properties/>
+  <testcase name="rejectsEnvelopeAndIntentLimitsBeforeBodyHashing()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.155"/>
+  <testcase name="retainsImmutableBytesAndExactCommand()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.229"/>
+  <testcase name="allowsZeroBytesButDoesNotConfuseEmptySlotsWithUploads()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.008"/>
+  <testcase name="checksCoverageEvenWhenAnnotationsAcceptIt()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.01"/>
+  <testcase name="requiresExactMemberModesAndKnownFields()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.006"/>
+  <testcase name="indexesMixedMembersByFullOrdinalRatherThanUploadOrder()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.011"/>
+  <testcase name="checksAggregateUploadLimitBeforeHashingAndHonorsCancellation()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.023"/>
+  <testcase name="hostObjectLimitPrecedesChecksumAndPreservesProtocolBounds()" classname="ai.protomolt.proto.repo.spi.DocumentPublicationInputTest" time="0.006"/>
+</testsuite>

@@ -1,5 +1,39 @@
 # AGENTS.md
 
+## Repository architecture and data integrity
+
+- `DocumentService` is the canonical public document API. Preserve selected-part
+  saves, copy-forward of untouched parts, selected chunk sets and selective reads.
+  Do not replace these behaviors with a complete-replacement publication API.
+- The separate `DocumentPublicationService` transport and its remote client are
+  removed in this reconciliation. Internal publication, admission, receipts,
+  revision history and recovery machinery remain distinct from that public API.
+  Removing a transport does not authorize deleting those protections.
+- Retained `DocumentPublicationRepository` is an internal integration and
+  qualification boundary, not an alternative application-facing document API.
+  Do not expose it again or recommend it to callers because it exists in code.
+- Structured content remains protobuf through descriptor-based mapping,
+  projection, CEL validation and repository storage. Keep original source files
+  as bytes and large source content behind claim checks. SQL owns ledger state,
+  references and simple metadata lookups; richer search belongs to search.
+- JSON is permitted at actual external boundaries and for metadata lookup
+  projections in SQL. A projection must not replace authoritative protobuf
+  content, erase unknown fields, or become a JSON round trip for validation.
+- Preserve parts, field presence, unknown fields, exact numeric values, retained
+  schema identities, Any bytes and validation annotations. Opaque storage does
+  not establish typed validation. Do not silently use a newer schema for history.
+- Reuse existing streaming and storage-provider capabilities. Document size,
+  transport message size and control-record budgets are separate. Do not invent
+  a document ceiling from a buffered adapter's limit or claim large-object
+  support by increasing a constant alone.
+- Propagate failures with their causes; never drop failed records, swallow errors,
+  return fake success or change credentials/providers as an implicit fallback.
+  Record unverified behavior explicitly instead of claiming completion.
+- Trace entry, storage, read and recovery paths before claiming fidelity. Tests
+  must assert the required behavior; a green suite alone proves no architecture.
+  Do not claim the canonical parts API gained typed admission unless its actual
+  call path and tests establish it. Historical evidence is not a current API guide.
+
 ## Remotes and push policy
 
 - **Push Forgejo first, GitHub second.** Forgejo

@@ -109,8 +109,7 @@ final class RepositoryBackupRehearsalFixture {
     static ManagedPublicationOptions publicationOptions(Path bundle) {
         var operator = operator();
         return new ManagedPublicationOptions(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5),
-                (account, principal, operation) -> operator)
-                .withTransport(new ManagedPublicationOptions.Transport(auth -> operator, 32L * 1024 * 1024, 2));
+                (account, principal, operation) -> operator);
     }
 
     /** The two dynamic types: a record carrying a nested Any whose payload is an attachment from a separate file. */

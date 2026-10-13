@@ -1,5 +1,11 @@
 # Repository operation inventory
 
+> Reconciliation note: references below to DocumentPublicationService, its
+> remote client or transport composition describe the former public API. That
+> transport is removed. Internal admission, receipts and recovery are retained;
+> this historical record does not establish their integration into every parts
+> operation. The [current guide](../repo/publication.md) owns public API guidance.
+
 ## Private capture qualification for retention release (2026-10-07)
 
 - **New private helper:** `DocumentPreparationCaptureCoverage` pre-encodes
@@ -6962,23 +6968,10 @@ or worker lifetime for every new branch. See the
 [recovery design](repository-publication-recovery.md) and linked evidence for
 remaining acceptance cases. The behavior is not a newly available public RPC.
 
-## Staged managed publication transport
+## Internal publication qualification record
 
-**New, not mounted:** DocumentPublicationService.PublishDocument. It composes the
-unchanged intent/result/rejection contracts with explicit per-member modes and
-indexed upload bytes. Generated and dynamic fixtures pass ProtoMolt validation;
-Buf lint and descriptor compatibility pass. See the
-[contract evidence](../evidence/repository/2026-10-06-publication-transport-contract/README.md).
-
-**Existing and unchanged:** DocumentService.SaveDocument, schema condition fields,
-canonical command encoding and durable receipt identities. No takeover operation,
-process authority, provider configuration or raw descriptor upload is exposed.
-
-**Required implementation:** shared facade validation and receipt binding; trusted
-host placement/container selection; retained retry-mode checks; thin authenticated
-gRPC adapter; real local/transport conformance; cancellation and lifecycle gates.
-The [transport design](repository-publication-recovery.md#managed-publication-transport-boundary)
-details resource limits and distinguishes durable rejection from transient errors.
+These checkpoints describe retained internal validation and receipt mechanisms.
+They do not recommend a separate public publication service.
 
 **New Java validation value:** `DocumentPublicationInput` in repo SPI checks the
 staged request without storage dependencies. Canonical intent validation is followed
@@ -6986,15 +6979,14 @@ by checks for upload coverage, modes, lengths, checksum, unknown fields and tota
 size. Content remains immutable protobuf bytes; execution and concurrent admission
 are separate. All 39 SPI tests and the dependency gate passed. See the
 [input evidence](../evidence/repository/2026-10-06-publication-input/README.md).
-The service remains unmounted; this value is not an authorization or execution API.
+This value is not an authorization or execution API.
 
 **Extended internal replay:** terminal mode comparison now binds requested modes
 and the canonical command to the stored receipt generation and immutable journal
 under current authorization. It does not renew an owner or start provider work.
 Legacy replay retains its interface. Both paths now validate supplied credentials
 for existing-document operations without a creation grant, closing a gap found
-by revoke/rotate regression tests. The managed publication facade and mounted
-transport remain unfinished.
+by revoke/rotate regression tests. This checkpoint qualifies internal replay only.
 The [terminal replay evidence](../evidence/repository/2026-10-06-terminal-mode-replay/README.md)
 records 68 passing PostgreSQL tests and the credential red/green regression.
 
@@ -7004,8 +6996,7 @@ input checks, shared call/byte limits, terminal mode comparison, trusted host
 selection, existing execution and exact final receipt verification. The packaged
 storage test passed, along with 39 SPI tests and the dependency check. See
 [facade evidence](../evidence/repository/2026-10-06-publication-facade/README.md).
-Production service selection and gRPC adapters remain unfinished; no endpoint was
-mounted by this change.
+This records internal facade qualification, not a public endpoint.
 
 **Extended service composition:** journaled RepoServices supplies publication
 through configured backend identity, an account-filtered drive batch and the
@@ -7013,39 +7004,7 @@ bundled Document schema. Compiler provenance is packaged with generated code;
 runtime identity reflects the loaded protobuf library. Storage, privacy and
 lock-timeout checks passed. See
 [selection evidence](../evidence/repository/2026-10-06-publication-selection/README.md).
-Public journaled configuration and transport parity remain pending. The RPC is
-not mounted.
-
-**Extended public composition, subsequent checkpoint:** ManagedPublicationOptions
-now selects journaled library publication through a public RepoServices builder.
-Drain authority is required; recovery and transport are separate explicit options.
-Publication transport mounts independently of historical reads and uses the same
-repository SPI. Built-in listeners require authentication, and the adapter verifies
-credential identity. Shutdown rejects new calls and waits for accepted producers
-and deliveries before closing listeners or shared storage. Real-store host tests
-and focused configuration/lifecycle tests passed; see
-[host evidence](../evidence/repository/2026-10-06-publication-host/README.md).
-Default host configuration still does not mount publication. A published remote
-SPI client, additional provider qualification and throughput/scaling remain open.
-
-**New remote SPI implementation, subsequent checkpoint:**
-`protomolt-repo-publication-grpc` now provides RemoteDocumentPublicationRepository
-without server, SQL or provider implementation dependencies. It uses one explicit
-authenticated identity, local input checks, bounded calls/bytes, cancellation and
-the shortest deadline. Local and remote publication use a shared receipt-shape and
-correspondence validator. Real-store tests cover fresh/replayed outcomes, scoped
-revocation, cancellation, status mapping and corruption after server validation.
-See [client evidence](../evidence/repository/2026-10-06-publication-client/README.md)
-and the [composition guide](../repo/publication.md). Isolated published-consumer
-verification, non-S3 complete-document providers and scaling remain open.
-
-**Publication-client packaging verified:** the independent consumer now compiles
-the client API from filesystem-published artifacts with both Gradle metadata and
-Maven POM-only resolution. Its isolated runtime passes the named server, SQL,
-Kafka and provider dependency exclusions. See
-[consumer evidence](../evidence/repository/2026-10-06-publication-consumer/README.md).
-No remote artifact release occurred. Non-S3 complete-document qualification,
-throughput/scaling and the remaining recovery/history/hydration work stay open.
+This checkpoint records internal host selection.
 
 **Historical successor activation checkpoint (V109):** ordinary successor
 activation and installation remain unchanged in behavior. A **new private**

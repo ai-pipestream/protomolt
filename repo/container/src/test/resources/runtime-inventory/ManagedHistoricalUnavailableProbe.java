@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class ManagedHistoricalUnavailableProbe {
     static void run(RepoServiceConfig sourceConfig, Path bundle, GitSchemaRegistryStore git,
             DocumentSchemaAdmission.Definition definition, Tx tx, RepositoryCaller caller,
-            PublishDocumentRequest source, boolean remoteFirst) throws Exception {
+            PublishDocumentRequest source) throws Exception {
         var request = source.toBuilder().setIntent(source.getIntent().toBuilder()
                 .setOperationId(UUID.randomUUID().toString())).build();
         var operation = UUID.fromString(request.getIntent().getOperationId());
@@ -44,23 +44,10 @@ final class ManagedHistoricalUnavailableProbe {
             return caller;
         };
         var options = new ManagedPublicationOptions(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5), authority)
-                .withRecovery(authority).withHistoricalPublication(2)
-                .withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                    require(auth.caller().unrestricted(), "independent authenticated operator fixture");
-                    return caller;
-                }, 32L * 1024 * 1024, 2));
+                .withRecovery(authority).withHistoricalPublication(2);
         try {
             try (var host = RepoServices.buildBoundedDocumentsHosted(config, BridgeEngine.standard(), null, schemas,
                     options, new BoundedDocumentOptions(1024 * 1024, 64L * 1024 * 1024), identity)) {
-                String name = "unavailable-historical-" + UUID.randomUUID();
-                String token = UUID.randomUUID().toString();
-                host.startInProcess(name, token, null);
-                var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-                try {
-                    var headers = new Metadata();
-                    headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
-                    var stub = DocumentPublicationServiceGrpc.newBlockingStub(channel)
-                            .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)).withDeadlineAfter(30, TimeUnit.SECONDS);
                     Runnable library = () -> {
                         try { host.publicationRepository().publishDocument(caller, request, RepositoryReadControl.NONE);
                             throw new AssertionError("Unavailable historical generation was substituted");
@@ -69,15 +56,7 @@ final class ManagedHistoricalUnavailableProbe {
                                     && failure.getMessage().equals("Original document backend is unavailable"), "explicit library backend refusal");
                         }
                     };
-                    Runnable rpc = () -> {
-                        try { stub.publishDocument(request); throw new AssertionError("Unavailable historical generation accepted over RPC"); }
-                        catch (StatusRuntimeException failure) {
-                            require(failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION
-                                    && "Original document backend is unavailable".equals(failure.getStatus().getDescription()),
-                                    "explicit RPC backend refusal");
-                        }
-                    };
-                    if (remoteFirst) { rpc.run(); library.run(); } else { library.run(); rpc.run(); }
+                    library.run(); library.run();
                     require(resolutions.get() == 0, "unavailable backend performs no schema resolution");
                     for (String table : List.of("document_revision_commits", "document_assessment_owners", "repository_operation_success")) {
                         long count = tx.readOnly(em -> ((Number) em.createNativeQuery(
@@ -85,7 +64,6 @@ final class ManagedHistoricalUnavailableProbe {
                                 .setParameter("id", operation).getSingleResult()).longValue());
                         require(count == 0, "unavailable backend creates no assessment, revision or success receipt");
                     }
-                } finally { channel.shutdownNow(); require(channel.awaitTermination(5, TimeUnit.SECONDS), "unavailable RPC channel drained"); }
             }
             var states = tx.readOnly(em -> em.createNativeQuery(
                     "SELECT state FROM repository_reader_incarnations WHERE host_execution=:id", String.class)
@@ -96,7 +74,7 @@ final class ManagedHistoricalUnavailableProbe {
                     .setParameter("id", identity.execution()).getSingleResult());
             require(hostState.equals("FENCED"), "unavailable host is fenced after reader drain");
         } finally { schemas.close(); require(schemas.awaitIdle(Duration.ofSeconds(5)), "unavailable registry drained"); }
-        System.out.println("MANAGED_HISTORICAL_UNAVAILABLE_" + (remoteFirst ? "RPC" : "LIBRARY") + "_OK");
+        System.out.println("MANAGED_HISTORICAL_UNAVAILABLE_" + "LIBRARY" + "_OK");
     }
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
 }

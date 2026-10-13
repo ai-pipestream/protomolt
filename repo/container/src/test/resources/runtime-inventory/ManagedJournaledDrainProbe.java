@@ -23,7 +23,6 @@ public final class ManagedJournaledDrainProbe {
     private static final RepositoryCaller ADMIN = new RepositoryCaller("schema-owner", true);
     public static void run(Path bundle) throws Exception {
         run(bundle,0);
-        run(bundle,1);
         run(bundle,2);
     }
 
@@ -86,18 +85,11 @@ public final class ManagedJournaledDrainProbe {
                         }
                         throw new AssertionError("Fresh publication or terminal replay requested recovery authority");
                     });
-            if (scenario==1) options=options.withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                require(auth.caller().name().equals(ADMIN.principalName()) && auth.caller().unrestricted()
-                        && auth.binding().isEmpty(),"fixture binding preserves authenticated identity");
-                return ADMIN;
-            },32L*1024*1024,4));
             var host = RepoServices.build(config, BridgeEngine.standard(), null, access, options);
             var tx = new Tx(database.entityManagerFactory());
-            try (var hosted=scenario==1 ? hostedPublication(host) : null) {
-                if (scenario!=1) require(host.services().stream().noneMatch(service -> service instanceof DocumentPublicationGrpcService),
-                        "library composition does not implicitly mount publication transport");
+            try {
                 var terminal = prepare(host, tx, generation, false);
-                var completed = executeTransport(host, tx, terminal);
+                var completed = executeLibrary(host, tx, terminal);
                 require(completed.getMembersCount() == 1, "terminal control published");
                 int largest=request(terminal).getPayloadsList().stream().mapToInt(payload -> payload.getContent().size()).max().orElseThrow();
                 require(largest>1,"fixture has a nonempty bounded upload");
@@ -172,42 +164,6 @@ public final class ManagedJournaledDrainProbe {
                     host.close(Duration.ofSeconds(5));
                     require(resolver.cachedBytes()==0,"recovery host released schema cache");
                     System.out.println("MANAGED_EXPIRED_PUBLICATION_RECOVERY_OK");
-                    return;
-                }
-                if (recoveryEnabled) {
-                    var accepted=executor.submit(() -> hosted.client().publishDocument(request(work)).getCommitted());
-                    require(entered.await(10,TimeUnit.SECONDS),"enabled host entered real schema lookup");
-                    try { host.close(Duration.ofMillis(100)); throw new AssertionError("accepted publication was not retained"); }
-                    catch (IllegalStateException expected) {
-                        require(expected instanceof RepositoryDrainTimeoutException timeout
-                                && timeout.phase()==RepositoryDrainTimeoutException.Phase.PUBLICATION_RPC,
-                                "shutdown waits for accepted call");
-                    }
-                    require(!hosted.server().isShutdown(),"shutdown timeout retains publication listener");
-                    try (var connection=host.ledgerDataSource().getConnection()) {
-                        require(connection.isValid(1),"shutdown timeout retains repository SQL");
-                    }
-                    expectStatus(io.grpc.Status.Code.UNAVAILABLE,() -> hosted.client().publishDocument(request(terminal)));
-                    require(!accepted.isDone() && !access.awaitIdle(Duration.ZERO),"schema worker remains accepted after close");
-                    release.countDown();
-                    var result=accepted.get(15,TimeUnit.SECONDS);
-                    require(result.getMembersCount()==1,"accepted typed publication finished after close");
-                    require(count(tx,"repository_operation_success",work.command.operationId())==1,"one durable publication outcome");
-                    long versions=tx.readOnly(em -> ((Number)em.createNativeQuery("""
-                            SELECT count(*) FROM document_operation_selections s
-                            JOIN document_part_attempt_objects o ON o.attempt_id=s.attempt_id
-                            WHERE s.operation_id=:id AND o.verified AND o.provider_version IS NOT NULL
-                            """).setParameter("id",work.command.operationId()).getSingleResult()).longValue());
-                    require(versions>0,"published revision selected verified provider versions");
-                    host.close(Duration.ofSeconds(5));
-                    require(hosted.server().isTerminated(),"successful drain closes publication listener");
-                    require(count(tx,"repository_coordinator_local_drains",work.command.operationId())==0,
-                            "terminal operation requires no drain marker");
-                    require(resolver.cachedBytes()==0,"enabled host released schema cache");
-                    try { host.ledgerDataSource().getConnection(); throw new AssertionError("closed enabled host still lends SQL"); }
-                    catch (java.sql.SQLException expected) { /* Final drain releases the service-owned pool. */ }
-                    System.out.println("MANAGED_RECOVERY_ACCEPTED_PUBLICATION_DRAIN_OK");
-                    System.out.println("MANAGED_PUBLICATION_HOST_DRAIN_OK");
                     return;
                 }
                 var second = prepare(host, tx, generation, true);
@@ -298,31 +254,6 @@ public final class ManagedJournaledDrainProbe {
         System.out.println("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
     }
 
-    private record HostedPublication(io.grpc.Server server, io.grpc.ManagedChannel channel,
-            DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub client) implements AutoCloseable {
-        @Override public void close() throws Exception {
-            channel.shutdownNow();
-            require(channel.awaitTermination(10,TimeUnit.SECONDS),"managed publication client stopped");
-        }
-    }
-
-    private static HostedPublication hostedPublication(RepoServices host) {
-        String name=io.grpc.inprocess.InProcessServerBuilder.generateName();
-        try { host.startInProcess(name); throw new AssertionError("publication listener accepted missing operator token"); }
-        catch (IllegalArgumentException expected) { /* Refusal happens before listener creation. */ }
-        require(host.services().stream().anyMatch(service -> service instanceof DocumentPublicationGrpcService),
-                "publication mounted independently of historical reads");
-        require(host.services().stream().noneMatch(service -> service instanceof DocumentHistoryGrpcService),
-                "history remains disabled");
-        String token="publication-fixture-"+UUID.randomUUID();
-        var server=host.startInProcess(name,"operator-fixture-"+UUID.randomUUID(), supplied -> supplied.equals(token)
-                ? Optional.of(new ai.protomolt.proto.actions.Caller(ADMIN.principalName(),Set.of(),true)) : Optional.empty());
-        var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-        var plain=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30,TimeUnit.SECONDS);
-        expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> plain.publishDocument(PublishDocumentRequest.getDefaultInstance()));
-        var headers=new io.grpc.Metadata(); headers.put(io.grpc.Metadata.Key.of("api_token",io.grpc.Metadata.ASCII_STRING_MARSHALLER),token);
-        return new HostedPublication(server,channel,plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)));
-    }
     private static void recoverExpired(RepoServices host, Tx tx, String generation, Path bundle, Work work,
             Runnable armMutation) throws Exception {
         var profile=new ManagedBackendLedger(tx).find(generation).orElseThrow();
@@ -438,237 +369,29 @@ public final class ManagedJournaledDrainProbe {
                 RepositoryReadControl.NONE);
     }
 
-    /** Fixture authentication over a real transport; this does not qualify production API-key setup. */
-    private static DocumentPublicationResult executeTransport(RepoServices host, Tx tx, Work work) throws Exception {
-        var budget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L*1024*1024);
-        var repository=host.publicationRepository();
-        var credential=new RepositoryCredentialBinding("transport-fixture",UUID.randomUUID(),1);
-        credentialAdministration(tx,credential,"register");
-        var preserveCredential=new java.util.concurrent.atomic.AtomicBoolean();
-        var fault=new java.util.concurrent.atomic.AtomicReference<String>("");
-        var entered=new CountDownLatch(1);
-        var cancelled=new CountDownLatch(1);
-        var release=new CountDownLatch(1);
-        var received=new java.util.concurrent.atomic.AtomicReference<RepositoryCaller>();
-        var repositoryCalls=new java.util.concurrent.atomic.AtomicInteger();
-        var corruptWire=new java.util.concurrent.atomic.AtomicBoolean();
-        // Faults surround the real repository, never synthesize a successful outcome.
-        DocumentPublicationRepository controlled=(caller,input,control) -> {
-            repositoryCalls.incrementAndGet();
-            received.set(caller);
-            String mode=fault.get();
-            if (mode.equals("wait")) {
-                entered.countDown();
-                try {
-                    long limit=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
-                    while (!control.isCancelled() && System.nanoTime()<limit) Thread.sleep(5);
-                    require(control.isCancelled(),"transport propagated cancellation to active producer");
-                    cancelled.countDown();
-                    require(release.await(10,TimeUnit.SECONDS),"test released cancelled producer");
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt(); throw new IllegalStateException(interrupted);
-                }
-                control.check();
-            }
-            var result=repository.publishDocument(caller,input,control);
-            return switch (mode) {
-                case "committed" -> result.toBuilder().setCommitted(result.getCommitted().toBuilder().setAccountId("wrong-account")).build();
-                case "rejected" -> PublishDocumentResponse.newBuilder().setRejected(DocumentPublicationRejection.getDefaultInstance()).build();
-                case "unexpected" -> throw new IllegalStateException("private-provider-location");
-                case "conflict" -> throw new RepositoryException(RepositoryException.Code.CONFLICT,"controlled conflict after replay");
-                case "unsupported" -> throw new RepositoryException(RepositoryException.Code.UNSUPPORTED,"controlled unsupported operation after replay");
-                default -> result;
-            };
-        };
-        var service=new DocumentPublicationGrpcService(controlled, auth -> new RepositoryCaller(
-                auth.caller().name(),auth.caller().unrestricted(),auth.caller().unrestricted() ? Set.of() : Set.of(work.command.intent().getAccountId()),
-                Set.of(),preserveCredential.get() ? auth.binding().map(binding -> new RepositoryCredentialBinding(
-                        binding.issuer(),binding.credentialId(),binding.generation())) : Optional.empty()),budget,1);
-        var identity=io.grpc.Metadata.Key.of("test-publication-identity",io.grpc.Metadata.ASCII_STRING_MARSHALLER);
-        io.grpc.ServerInterceptor authentication=new io.grpc.ServerInterceptor() {
-            @SuppressWarnings("unchecked")
-            @Override public <Q,S> io.grpc.ServerCall.Listener<Q> interceptCall(io.grpc.ServerCall<Q,S> call,
-                    io.grpc.Metadata headers,io.grpc.ServerCallHandler<Q,S> next) {
-                var value=headers.get(identity);
-                var context=io.grpc.Context.current();
-                if (value!=null) {
-                    var caller=new ai.protomolt.proto.actions.Caller(ADMIN.principalName(),Set.of(),!value.equals("bound"));
-                    var auth=new ai.protomolt.proto.authz.AuthenticatedCaller(caller,value.equals("bound")
-                            ? Optional.of(new ai.protomolt.proto.authz.CredentialBinding(credential.issuer(),credential.credentialId(),credential.generation())) : Optional.empty());
-                    context=context.withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER,caller)
-                            .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.AUTHENTICATED_CALLER,auth);
-                }
-                var delivery=new io.grpc.ForwardingServerCall.SimpleForwardingServerCall<Q,S>(call) {
-                    @Override public void sendMessage(S message) {
-                        if (corruptWire.get() && message instanceof PublishDocumentResponse response && response.hasCommitted())
-                            message=(S)response.toBuilder().setCommitted(response.getCommitted().toBuilder().setAccountId("wire-corruption")).build();
-                        super.sendMessage(message);
-                    }
-                };
-                return io.grpc.Contexts.interceptCall(context,delivery,headers,next);
-            }
-        };
-        String name=io.grpc.inprocess.InProcessServerBuilder.generateName();
-        try (var executor=Executors.newVirtualThreadPerTaskExecutor()) {
-            var server=io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
-                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
-                    .intercept(authentication).addService(service).build().start();
-            var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-            try {
-                var plain=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30,TimeUnit.SECONDS);
-                expectStatus(io.grpc.Status.Code.UNAUTHENTICATED,() -> plain.publishDocument(request(work)));
-                var boundHeaders=new io.grpc.Metadata(); boundHeaders.put(identity,"bound");
-                var bound=plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(boundHeaders));
-                expectStatus(io.grpc.Status.Code.PERMISSION_DENIED,() -> bound.publishDocument(request(work)));
-                var headers=new io.grpc.Metadata(); headers.put(identity,"process");
-                var authenticated=plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
-                var clientBudget=new ai.protomolt.proto.repo.blob.spi.PayloadBudget(32L*1024*1024);
-                var remote=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(ADMIN,
-                        DocumentPublicationServiceGrpc.newFutureStub(channel).withInterceptors(
-                                io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers)),clientBudget,Duration.ofSeconds(30),1);
-                int beforeClientChecks=repositoryCalls.get();
-                expectRepositoryCode(RepositoryException.Code.PERMISSION_DENIED,() -> remote.publishDocument(
-                        new RepositoryCaller("different",true),request(work),RepositoryReadControl.NONE));
-                expectRepositoryCode(RepositoryException.Code.CANCELLED,() -> remote.publishDocument(ADMIN,request(work),new RepositoryReadControl() {
-                    public boolean isCancelled() { return true; }
-                    public long remainingNanos() { return Long.MAX_VALUE; }
-                }));
-                var expired=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(ADMIN,
-                        DocumentPublicationServiceGrpc.newFutureStub(channel).withDeadlineAfter(-1,TimeUnit.SECONDS),
-                        clientBudget,Duration.ofSeconds(30),1);
-                expectRepositoryCode(RepositoryException.Code.DEADLINE_EXCEEDED,
-                        () -> expired.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
-                require(repositoryCalls.get()==beforeClientChecks,"client identity and cancellation checks precede network calls");
-                expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(PublishDocumentRequest.getDefaultInstance()));
-                awaitTransportRelease(service,budget);
-                var response=remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE);
-                require(response.hasCommitted(),"transport published a committed receipt");
-                awaitTransportRelease(service,budget);
-                require(repository.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),
-                        "library replay equals fresh transport receipt");
-                require(authenticated.publishDocument(request(work)).equals(response),"transport replay equals library receipt");
-                awaitTransportRelease(service,budget);
-                require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote SPI replay equals library receipt");
-                // Client completion may arrive before the server observes call closure;
-                // drain the one-call transport before checking request validation.
-                require(service.awaitIdle(Duration.ofSeconds(5)),
-                        "completed publication transport calls release their permits before the next validation assertion");
-                expectStatus(io.grpc.Status.Code.INVALID_ARGUMENT,() -> authenticated.publishDocument(request(work).toBuilder().clearPayloads().build()));
-                awaitTransportRelease(service,budget);
-                corruptWire.set(true);
-                try { remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE); throw new AssertionError("remote client accepted corrupt wire receipt"); }
-                catch (RepositoryException invalid) {
-                    require(invalid.code()==RepositoryException.Code.DATA_LOSS && invalid.getMessage().equals("Invalid remote publication receipt"),
-                            "client independently checks receipt correspondence after server validation");
-                } finally { corruptWire.set(false); }
-                awaitTransportRelease(service,budget);
-                for (var mapping : Map.of("conflict",RepositoryException.Code.CONFLICT,"unsupported",RepositoryException.Code.UNSUPPORTED).entrySet()) {
-                    fault.set(mapping.getKey());
-                    expectRepositoryCode(mapping.getValue(),() -> remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE));
-                    awaitTransportRelease(service,budget);
-                }
-                fault.set("");
-                preserveCredential.set(true);
-                var scopedCaller=new RepositoryCaller(ADMIN.principalName(),false,Set.of(work.command.intent().getAccountId()),Set.of(),Optional.of(credential));
-                var scopedRemote=new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(scopedCaller,
-                        DocumentPublicationServiceGrpc.newFutureStub(channel).withInterceptors(
-                                io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(boundHeaders)),clientBudget,Duration.ofSeconds(30),1);
-                require(scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE).equals(response),"scoped authenticated replay preserves receipt");
-                require(received.get().credentialBinding().equals(Optional.of(credential)),"SPI received exact scoped credential");
-                awaitTransportRelease(service,budget);
-                credentialAdministration(tx,credential,"revoke");
-                expectRepositoryCode(RepositoryException.Code.UNAUTHENTICATED,
-                        () -> scopedRemote.publishDocument(scopedCaller,request(work),RepositoryReadControl.NONE));
-                awaitTransportRelease(service,budget);
-                for (String mode : List.of("committed","rejected")) {
-                    fault.set(mode);
-                    expectStatus(io.grpc.Status.Code.DATA_LOSS,() -> authenticated.publishDocument(request(work)));
-                    awaitTransportRelease(service,budget);
-                }
-                fault.set("unexpected");
-                try { authenticated.publishDocument(request(work)); throw new AssertionError("Expected sanitized failure"); }
-                catch (io.grpc.StatusRuntimeException failure) {
-                    require(failure.getStatus().getCode()==io.grpc.Status.Code.INTERNAL
-                            && "Publication failed".equals(failure.getStatus().getDescription()),"unexpected failure is sanitized");
-                }
-                awaitTransportRelease(service,budget);
-                fault.set("wait");
-                var cancelClient=new java.util.concurrent.atomic.AtomicBoolean();
-                var future=executor.submit(() -> remote.publishDocument(ADMIN,request(work),new RepositoryReadControl() {
-                    public boolean isCancelled() { return cancelClient.get(); }
-                    public long remainingNanos() { return Long.MAX_VALUE; }
-                }));
-                try {
-                    require(entered.await(10,TimeUnit.SECONDS),"producer entered before cancellation");
-                    cancelClient.set(true);
-                    try { future.get(10,TimeUnit.SECONDS); throw new AssertionError("client cancellation returned a receipt"); }
-                    catch (ExecutionException failure) {
-                        require(failure.getCause() instanceof RepositoryException cancelledCall
-                                && cancelledCall.code()==RepositoryException.Code.CANCELLED,"client cancellation returns repository status");
-                    }
-                    require(cancelled.await(10,TimeUnit.SECONDS),"producer observed cancellation");
-                    require(budget.reservedBytes()>0,"active cancelled producer retains its byte reservation");
-                    expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> authenticated.publishDocument(request(work)));
-                } finally { release.countDown(); }
-                awaitTransportRelease(service,budget);
-                fault.set("");
-                require(authenticated.publishDocument(request(work)).equals(response),"cancelled call released slot for exact replay");
-                awaitTransportRelease(service,budget);
-                require(remote.publishDocument(ADMIN,request(work),RepositoryReadControl.NONE).equals(response),"remote client can replay after cancellation");
-                require(clientBudget.reservedBytes()==0,"client released input and response reservations");
-                awaitTransportRelease(service,budget);
-                verifyNetworkParser(service,authentication,headers,request(work),response,repositoryCalls);
-                awaitTransportRelease(service,budget);
-                System.out.println("MANAGED_PUBLICATION_TRANSPORT_PARITY_OK");
-                return response.getCommitted();
-            } finally {
-                release.countDown();
-                channel.shutdownNow(); server.shutdownNow();
-                require(channel.awaitTermination(10,TimeUnit.SECONDS),"publication channel stopped");
-                require(server.awaitTermination(10,TimeUnit.SECONDS),"publication server stopped");
-            }
-        }
-    }
-
-    private static void verifyNetworkParser(DocumentPublicationGrpcService service, io.grpc.ServerInterceptor authentication,
-            io.grpc.Metadata headers, PublishDocumentRequest request, PublishDocumentResponse receipt,
-            java.util.concurrent.atomic.AtomicInteger repositoryCalls) throws Exception {
-        try (var executor=Executors.newVirtualThreadPerTaskExecutor()) {
-            var server=io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
-                    .forAddress(new java.net.InetSocketAddress("127.0.0.1",0)).executor(executor)
-                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
-                    .intercept(authentication).addService(service).build().start();
-            var channel=io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder.forAddress("127.0.0.1",server.getPort())
-                    .usePlaintext().build();
-            try {
-                var client=DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(10,TimeUnit.SECONDS)
-                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
-                require(client.publishDocument(request).equals(receipt),"Netty replay equals original receipt");
-                int before=repositoryCalls.get();
-                var oversized=request.toBuilder().setPayloads(0,request.getPayloads(0).toBuilder()
-                        .setContent(ByteString.copyFrom(new byte[DocumentPublicationInput.MAX_ENVELOPE_BYTES+1]))).build();
-                expectStatus(io.grpc.Status.Code.RESOURCE_EXHAUSTED,() -> client.publishDocument(oversized));
-                require(repositoryCalls.get()==before,"oversized wire request never reached repository");
-            } finally {
-                channel.shutdownNow(); server.shutdownNow();
-                require(channel.awaitTermination(10,TimeUnit.SECONDS),"Netty publication channel stopped");
-                require(server.awaitTermination(10,TimeUnit.SECONDS),"Netty publication server stopped");
-            }
-        }
-    }
-
-    // Client completion may arrive before the server observes call closure. The transport admits
-    // one call, so drain its permit as well as the delivery reservation before the next call.
-    private static void awaitTransportRelease(DocumentPublicationGrpcService service,
-            ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) throws Exception {
-        require(service.awaitIdle(Duration.ofSeconds(5)),"completed publication transport calls release their permits");
-        awaitBudgetRelease(budget);
-    }
-
-    private static void awaitBudgetRelease(ai.protomolt.proto.repo.blob.spi.PayloadBudget budget) throws Exception {
-        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
-        while (budget.reservedBytes()!=0 && System.nanoTime()<deadline) Thread.sleep(10);
-        require(budget.reservedBytes()==0,"transport released delivery reservations after completion");
+    /** Real library facade publication and durable replay. Retired transport cases are documented separately. */
+    private static DocumentPublicationResult executeLibrary(RepoServices host, Tx tx, Work work) throws Exception {
+        var repository = host.publicationRepository();
+        var response = repository.publishDocument(ADMIN, request(work), RepositoryReadControl.NONE);
+        require(response.hasCommitted(), "library published a committed receipt");
+        DocumentPublicationResponseValidator.requireValid(work.command, ADMIN.principalName(), response);
+        require(repository.publishDocument(ADMIN, request(work), RepositoryReadControl.NONE).equals(response),
+                "library exact retry returns the same committed receipt");
+        try {
+            repository.publishDocument(ADMIN, request(work).toBuilder().clearPayloads().build(), RepositoryReadControl.NONE);
+            throw new AssertionError("Library replay accepted incomplete uploads");
+        } catch (IllegalArgumentException expected) { /* Input coverage checked before receipt delivery. */ }
+        var credential = new RepositoryCredentialBinding("library-fixture", UUID.randomUUID(), 1);
+        credentialAdministration(tx, credential, "register");
+        var scoped = new RepositoryCaller(ADMIN.principalName(), false, Set.of(work.command.intent().getAccountId()),
+                Set.of(), Optional.of(credential));
+        require(repository.publishDocument(scoped, request(work), RepositoryReadControl.NONE).equals(response),
+                "scoped library replay preserves the receipt");
+        credentialAdministration(tx, credential, "revoke");
+        expectRepositoryCode(RepositoryException.Code.UNAUTHENTICATED,
+                () -> repository.publishDocument(scoped, request(work), RepositoryReadControl.NONE));
+        System.out.println("MANAGED_PUBLICATION_LIBRARY_REPLAY_OK");
+        return response.getCommitted();
     }
 
     /** Invoke the internal authority for fixture setup without creating a public provisioning API. */

@@ -1,11 +1,5 @@
 package ai.protomolt.proto.repo.container.ledger;
 
-import ai.protomolt.proto.actions.Caller;
-import ai.protomolt.proto.authz.AuthenticatedCaller;
-import ai.protomolt.proto.authz.AuthenticatedCallerResolver;
-import ai.protomolt.proto.authz.CallerResolver;
-import ai.protomolt.proto.authz.CredentialBinding;
-import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionPolicy;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.blob.s3.S3BackendIdentity;
@@ -18,7 +12,6 @@ import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.codec.PartLayouts;
 import ai.protomolt.proto.repo.codec.PartObject;
 import ai.protomolt.proto.repo.container.blob.DocumentIds;
-import ai.protomolt.proto.repo.service.DocumentPublicationGrpcService;
 import ai.protomolt.proto.repo.spi.DocumentPublicationCommand;
 import ai.protomolt.proto.repo.spi.DocumentPublicationInput;
 import ai.protomolt.proto.repo.spi.DocumentPublicationRepository;
@@ -30,14 +23,6 @@ import ai.protomolt.proto.repo.v1.*;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.StringValue;
-import io.grpc.ManagedChannel;
-import io.grpc.Metadata;
-import io.grpc.Server;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.inprocess.InProcessServerBuilder;
-import io.grpc.stub.MetadataUtils;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -50,7 +35,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -59,8 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Scoped publication authorization parity driver on the production JAR host:
- * one scenario driver exercised through the library facade and an authenticated
- * in-process gRPC channel in front of the same production publisher, against
+ * one scenario driver exercised through the library facade against
  * real PostgreSQL and versioned S3. Provisioning uses the internal process-only
  * credential and grant ports; scoped calls never use the operator token or
  * process authority. Every scoped invocation is checked at the repository boundary
@@ -111,17 +94,16 @@ public final class ScopedPublicationProbe {
                 contractViolationIsNotAuthorization(env, bundle, via);
                 substitutedBindingIsDetected(env, bundle, via);
             }
-            transportFailuresFailClosed(env, bundle);
             for (var via : Invocation.values()) {
                 for (String ordering : new String[]{"revoked", "held-live", "expired"}) {
                     finalGrantCheckWaitsForRevokerOutcome(env, bundle, via, ordering);
                 }
             }
         }
-        System.out.println("SCOPED_PUBLICATION_PARITY_OK");
+        System.out.println("SCOPED_PUBLICATION_LIBRARY_OK");
     }
 
-    enum Invocation { LIBRARY, GRPC }
+    enum Invocation { LIBRARY }
 
     @FunctionalInterface private interface Call { Object run() throws Exception; }
 
@@ -140,27 +122,9 @@ public final class ScopedPublicationProbe {
     }
 
     private static RepositoryException.Code codeOf(Invocation via, Throwable failure) {
-        if (via == Invocation.LIBRARY) {
-            if (failure instanceof RepositoryException repository) return repository.code();
-            if (failure instanceof IllegalArgumentException) return RepositoryException.Code.INVALID_ARGUMENT;
-            return RepositoryException.Code.INTERNAL;
-        }
-        if (!(failure instanceof StatusRuntimeException status)) return RepositoryException.Code.INTERNAL;
-        return switch (status.getStatus().getCode()) {
-            case NOT_FOUND -> RepositoryException.Code.NOT_FOUND;
-            case PERMISSION_DENIED -> RepositoryException.Code.PERMISSION_DENIED;
-            case UNAUTHENTICATED -> RepositoryException.Code.UNAUTHENTICATED;
-            case INVALID_ARGUMENT -> RepositoryException.Code.INVALID_ARGUMENT;
-            case FAILED_PRECONDITION -> RepositoryException.Code.FAILED_PRECONDITION;
-            case ABORTED -> RepositoryException.Code.CONFLICT;
-            case UNAVAILABLE -> RepositoryException.Code.UNAVAILABLE;
-            case RESOURCE_EXHAUSTED -> RepositoryException.Code.RESOURCE_EXHAUSTED;
-            case DATA_LOSS -> RepositoryException.Code.DATA_LOSS;
-            case CANCELLED -> RepositoryException.Code.CANCELLED;
-            case DEADLINE_EXCEEDED -> RepositoryException.Code.DEADLINE_EXCEEDED;
-            case UNIMPLEMENTED -> RepositoryException.Code.UNSUPPORTED;
-            default -> RepositoryException.Code.INTERNAL;
-        };
+        if (failure instanceof RepositoryException repository) return repository.code();
+        if (failure instanceof IllegalArgumentException) return RepositoryException.Code.INVALID_ARGUMENT;
+        return RepositoryException.Code.INTERNAL;
     }
 
     private static void requireRefusal(Host host, Invocation via, RepositoryException.Code code, Call call, String message) throws Exception {
@@ -177,13 +141,12 @@ public final class ScopedPublicationProbe {
         return command.intent().getMembers(0).getDestination().getAddress();
     }
 
-    // ---------- scenarios (matrix rows; each runs on both invocation paths) ----------
+    // ---------- library scenarios; retired publication transport cases are removed ----------
 
     /** Valid scoped initial publication, exact grant, valid typed content: committed revision, matching receipt, retained schema, exact replay. */
     private static void validTypedPublication(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, true)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -195,8 +158,6 @@ public final class ScopedPublicationProbe {
             requireEquals(1, host.schemaResolutions.get(), "typed schema resolutions");
             host.requireExactReadback(host.libraryCaller(key, "principal"), response.getCommitted().getMembers(0), host.bodies(), true);
             requireEquals(response, host.publish(via, key, "principal", host.request()), "same-path typed replay");
-            var other = via == Invocation.LIBRARY ? Invocation.GRPC : Invocation.LIBRARY;
-            requireEquals(response, host.publish(other, key, "principal", host.request()), "cross-path typed replay");
             requireEquals(1L, host.successRows(host.command()), "typed replay added no success row");
             requireEquals((long) host.bodies().size(), host.recordedVersions(host.command()), "typed replay added no recorded versions");
             requireEquals(1, host.schemaResolutions.get(), "typed replay resolved no schemas");
@@ -209,7 +170,6 @@ public final class ScopedPublicationProbe {
     private static void validOpaquePublication(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -226,8 +186,6 @@ public final class ScopedPublicationProbe {
             require(invalid instanceof RepositoryException failure
                             && failure.code() == RepositoryException.Code.FAILED_PRECONDITION,
                     "opaque member has no retained typed admission: " + invalid);
-            var other = via == Invocation.LIBRARY ? Invocation.GRPC : Invocation.LIBRARY;
-            requireEquals(response, host.publish(other, key, "principal", host.request()), "cross-path opaque replay");
             requireEquals(1L, host.successRows(host.command()), "opaque replay added no success row");
             host.requireScopedCallersOnly("principal");
         }
@@ -238,7 +196,6 @@ public final class ScopedPublicationProbe {
     private static void samePrincipalDifferentKey(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var keyA = host.registerKey("principal");
             var keyB = host.registerKey("principal");
             require(!keyB.binding().credentialId().equals(keyA.binding().credentialId()),
@@ -268,7 +225,6 @@ public final class ScopedPublicationProbe {
     private static void rotatedCredentialRefusals(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var keyV1 = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(keyV1, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -288,7 +244,6 @@ public final class ScopedPublicationProbe {
     private static void unboundPrincipalRefused(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -306,7 +261,6 @@ public final class ScopedPublicationProbe {
     private static void wrongAccountRefused(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
             host.grantAccounts("principal", Set.of("elsewhere-" + UUID.randomUUID()));
@@ -323,7 +277,6 @@ public final class ScopedPublicationProbe {
     private static void changedCommandRefused(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -350,7 +303,6 @@ public final class ScopedPublicationProbe {
             var seedPolicy = targetWrite ? PUBLIC_READ : DocumentSecurity.getDefaultInstance();
             try (var host = Host.prepare(env, bundle, false)) {
                 host.openRuntime();
-                host.openTransport(4);
                 // Seed the denied source/existing target through the real publisher with process authority.
                 var seeded = uploadCommand(host.account, host.drive, false, "seed-" + UUID.randomUUID(), seedPolicy);
                 var seedResponse = host.publishAsOperator(seeded.request());
@@ -432,60 +384,10 @@ public final class ScopedPublicationProbe {
         return List.copyOf(parts);
     }
 
-    /** Missing/wrong tokens, resolver outage without fallthrough, and identity-dropping host mappers all fail closed. */
-    private static void transportFailuresFailClosed(Environment env, Path bundle) throws Exception {
-        try (var host = Host.prepare(env, bundle, false)) {
-            host.openRuntime();
-            host.openTransport(4);
-            var key = host.registerKey("principal");
-            host.grantAccounts("principal");
-            host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
-            int reached = host.received.size();
-            var writes = host.writes.snapshot();
-            var missing = outcome(() -> host.plainStub().publishDocument(host.request()));
-            require(missing instanceof StatusRuntimeException failure
-                            && failure.getStatus().getCode() == Status.Code.UNAUTHENTICATED,
-                    "missing token must be UNAUTHENTICATED: " + missing);
-            var forged = outcome(() -> host.stubFor("forged-" + UUID.randomUUID()).publishDocument(host.request()));
-            require(forged instanceof StatusRuntimeException failure
-                            && failure.getStatus().getCode() == Status.Code.UNAUTHENTICATED,
-                    "wrong token must be UNAUTHENTICATED: " + forged);
-            requireEquals(reached, host.received.size(), "token refusals never reached the repository");
-            host.replaceResolver(token -> { throw new IllegalStateException("credential store unreachable"); });
-            var outage = outcome(() -> host.stubFor(key.token()).publishDocument(host.request()));
-            require(outage instanceof StatusRuntimeException failure
-                            && failure.getStatus().getCode() != Status.Code.OK
-                            && failure.getStatus().getCode() != Status.Code.UNAUTHENTICATED,
-                    "resolver outage is not a bad-credential verdict: " + outage);
-            var chain = (AuthenticatedCallerResolver) CallerResolver.chain(List.of(
-                    (AuthenticatedCallerResolver) token -> { throw new IllegalStateException("first store down"); },
-                    (AuthenticatedCallerResolver) token -> host.authenticationFor(key.token())));
-            host.replaceResolver(chain);
-            var fallthrough = outcome(() -> host.stubFor(key.token()).publishDocument(host.request()));
-            require(fallthrough instanceof StatusRuntimeException failure
-                            && failure.getStatus().getCode() != Status.Code.OK
-                            && failure.getStatus().getCode() != Status.Code.UNAUTHENTICATED,
-                    "resolver failure must not fall through to another authority: " + fallthrough);
-            requireEquals(reached, host.received.size(), "resolver failures never reached the repository");
-            host.restoreResolver();
-            host.dropBindings(true);
-            var dropped = outcome(() -> host.stubFor(key.token()).publishDocument(host.request()));
-            require(dropped instanceof StatusRuntimeException failure
-                            && failure.getStatus().getCode() == Status.Code.PERMISSION_DENIED,
-                    "a binding-dropping host mapper fails closed: " + dropped);
-            host.dropBindings(false);
-            requireEquals(reached, host.received.size(), "identity refusals never reached the repository");
-            requireEquals(writes, host.writes.snapshot(), "transport refusals make no provider write calls");
-            host.requireCommitted(host.publish(Invocation.GRPC, key, "principal", host.request()), host.command(), "principal");
-        }
-        System.out.println("SCOPED_PUBLICATION_TRANSPORT_FAIL_CLOSED_OK");
-    }
-
     /** Grant-only revocation blocks unfinished creation but never erases a committed receipt; replay needs the live key. */
     private static void grantRevocationSemantics(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             var unfinished = host.anotherUploadCommand(false, "doc-" + UUID.randomUUID());
@@ -510,11 +412,9 @@ public final class ScopedPublicationProbe {
         System.out.println("SCOPED_PUBLICATION_GRANT_REVOCATION_" + via + "_OK");
     }
 
-    /** Grant expiry is evaluated on the database clock; an expired grant blocks unfinished creation. */
     private static void grantExpiryBlocksCreation(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             var grant = host.installGrant(key, "principal", host.command(), env.dbNowMicros() + TimeUnit.SECONDS.toMicros(3));
@@ -534,7 +434,6 @@ public final class ScopedPublicationProbe {
     private static void rotationRefusesCommittedReplay(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var keyV1 = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(keyV1, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -552,12 +451,11 @@ public final class ScopedPublicationProbe {
 
     /**
      * Current READ revoked after commit blocks receipt replay over this invocation path; the raw historical
-     * content read is checked through the library on both paths. The durable receipt is provenance.
+     * content read is checked through the library on the library path. The durable receipt is provenance.
      */
     private static void readRevocationBlocksDelivery(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -589,7 +487,6 @@ public final class ScopedPublicationProbe {
         var held = new HeldFirstPutStore(env.opened.store());
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime(env.tx, held);
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             var grant = host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -624,7 +521,6 @@ public final class ScopedPublicationProbe {
         try (var barrier = new CommitBarrier(env.database.dataSource(), host.command().operationId());
                 var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             host.openRuntime(barrier.tx(), null);
-            host.openTransport(4);
             try {
                 var key = host.registerKey("principal");
                 host.grantAccounts("principal");
@@ -658,7 +554,6 @@ public final class ScopedPublicationProbe {
         try (var host = Host.prepare(env, bundle, false)) {
             // The host bounds lock waits; this scenario's holds are long, so its SQL timeouts must exceed them.
             host.openRuntime(env.tx, held, new SqlTimeouts(Duration.ofSeconds(30), Duration.ofSeconds(60)));
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             long lifetime = ordering.equals("expired") ? TimeUnit.SECONDS.toMicros(20) : GRANT_LIFETIME_MICROS;
@@ -722,7 +617,6 @@ public final class ScopedPublicationProbe {
         try (var barrier = new CommitBarrier(env.database.dataSource(), host.command().operationId());
                 var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             host.openRuntime(barrier.tx(), null);
-            host.openTransport(4);
             try {
                 var key = host.registerKey("principal");
                 host.grantAccounts("principal");
@@ -757,7 +651,6 @@ public final class ScopedPublicationProbe {
     private static void exactRetryIdentity(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -783,7 +676,6 @@ public final class ScopedPublicationProbe {
     private static void contractViolationIsNotAuthorization(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var key = host.registerKey("principal");
             host.grantAccounts("principal");
             host.installGrant(key, "principal", host.command(), env.dbNowMicros() + GRANT_LIFETIME_MICROS);
@@ -812,7 +704,6 @@ public final class ScopedPublicationProbe {
     private static void substitutedBindingIsDetected(Environment env, Path bundle, Invocation via) throws Exception {
         try (var host = Host.prepare(env, bundle, false)) {
             host.openRuntime();
-            host.openTransport(4);
             var keyA = host.registerKey("principal");
             var keyB = host.registerKey("principal");
             host.grantAccounts("principal");
@@ -852,22 +743,7 @@ public final class ScopedPublicationProbe {
             require(outcome(() -> { Host.requireIdentity(new RepositoryCaller("principal", true), "principal", Optional.of(b)); return null; })
                     instanceof IdentityMismatch, "process authority fails the identity check");
 
-            if (via == Invocation.GRPC) {
-                int reached = host.received.size();
-                var writes = host.writes.snapshot();
-                host.substituteInMapper(keyA.binding());
-                Object remapped;
-                try {
-                    remapped = outcome(() -> host.stubFor(keyB.token()).publishDocument(host.request()));
-                } finally {
-                    host.substituteInMapper(null);
-                }
-                require(remapped instanceof StatusRuntimeException failure
-                                && failure.getStatus().getCode() == Status.Code.PERMISSION_DENIED,
-                        "a binding-substituting host mapper fails closed: " + remapped);
-                requireEquals(reached, host.received.size(), "the remapped call never reached the repository");
-                requireEquals(writes, host.writes.snapshot(), "the remapped call made no provider write calls");
-            }
+
         }
         System.out.println("SCOPED_PUBLICATION_IDENTITY_SUBSTITUTION_" + via + "_OK");
     }
@@ -1177,7 +1053,7 @@ public final class ScopedPublicationProbe {
         @Override public void headObject(String bucket, String key) { delegate.headObject(bucket, key); }
     }
 
-    /** One account and journaled host with authenticated in-process transport and synthetic tokens. */
+    /** One account and journaled host with provisioned credential identities. */
     static final class Host implements AutoCloseable {
         final Environment env;
         final Path bundle;
@@ -1193,13 +1069,8 @@ public final class ScopedPublicationProbe {
         private final Set<Integer> verified = java.util.concurrent.ConcurrentHashMap.newKeySet();
         /** Injected host defects: a token or library key presenting another key's binding. */
         private final Map<String, RepositoryCredentialBinding> substitutions = new java.util.concurrent.ConcurrentHashMap<>();
-        /** Injected host defect: a transport mapper replacing the authenticated binding. */
-        private final AtomicReference<RepositoryCredentialBinding> mapperSubstitution = new AtomicReference<>();
         final AtomicInteger schemaResolutions = new AtomicInteger();
-        private final Map<String, AuthenticatedCaller> tokens = Collections.synchronizedMap(new HashMap<>());
         private final Map<String, Set<String>> hostAccounts = Collections.synchronizedMap(new HashMap<>());
-        private final AtomicReference<AuthenticatedCallerResolver> resolverDelegate;
-        private final AtomicBoolean dropBindings = new AtomicBoolean();
         private ObservedStore writes;
         private PayloadBudget budget;
         private DocumentReadLedger reads;
@@ -1207,10 +1078,6 @@ public final class ScopedPublicationProbe {
         private DocumentPublicationRuntime runtime;
         private DocumentPublicationRepository facade;
         private DocumentPublicationRepository recording;
-        private Server server;
-        private ManagedChannel channel;
-        private ExecutorService executor;
-        private DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub plainStub;
         private boolean closed;
 
         private Host(Environment env, Path bundle, boolean typed, String account, DriveRecord drive, CommandSpec spec) {
@@ -1218,7 +1085,6 @@ public final class ScopedPublicationProbe {
             var sampled = DocumentUploadPlan.Placement.sample(drive, GENERATION, env.profile);
             this.placements = Map.of(drive.driveId, sampled);
             this.runtimePlacements = Map.of(drive.driveId, new DocumentPublicationRuntime.Placement(drive, GENERATION, env.profile));
-            this.resolverDelegate = new AtomicReference<>(this::resolve);
         }
 
         static Host prepare(Environment env, Path bundle, boolean typed) {
@@ -1291,50 +1157,14 @@ public final class ScopedPublicationProbe {
                     });
         }
 
-        void openTransport(int maxConcurrentCalls) throws java.io.IOException {
-            var service = new DocumentPublicationGrpcService(recording, this::bind, new PayloadBudget(64_000_000), maxConcurrentCalls);
-            this.executor = Executors.newVirtualThreadPerTaskExecutor();
-            String name = InProcessServerBuilder.generateName();
-            AuthenticatedCallerResolver resolver = token -> resolverDelegate.get().resolveAuthenticated(token);
-            this.server = InProcessServerBuilder.forName(name).executor(executor)
-                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
-                    .intercept(new ApiTokenServerInterceptor("scoped-operator-fixture-" + UUID.randomUUID(), resolver))
-                    .addService(service).build().start();
-            this.channel = InProcessChannelBuilder.forName(name).build();
-            this.plainStub = DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(60, TimeUnit.SECONDS);
-        }
-
-        private RepositoryCaller bind(AuthenticatedCaller authentication) {
-            var accounts = hostAccounts.getOrDefault(authentication.caller().name(), Set.of());
-            var binding = dropBindings.get() ? Optional.<RepositoryCredentialBinding>empty()
-                    : authentication.binding().map(b -> new RepositoryCredentialBinding(b.issuer(), b.credentialId(), b.generation()));
-            if (mapperSubstitution.get() != null && binding.isPresent()) binding = Optional.of(mapperSubstitution.get());
-            return new RepositoryCaller(authentication.caller().name(), authentication.caller().unrestricted(),
-                    authentication.caller().unrestricted() ? Set.of() : accounts, Set.of(), binding);
-        }
-
         void grantAccounts(String principal) { hostAccounts.put(principal, Set.of(account)); }
         void grantAccounts(String principal, Set<String> accounts) { hostAccounts.put(principal, accounts); }
-        void dropBindings(boolean drop) { dropBindings.set(drop); }
-        void replaceResolver(AuthenticatedCallerResolver replacement) { resolverDelegate.set(replacement); }
-        void restoreResolver() { resolverDelegate.set(this::resolve); }
-
-        /** The fixture token table, unless a deliberate substitution makes the token present another key's binding. */
-        private Optional<AuthenticatedCaller> resolve(String token) {
-            var authentication = Optional.ofNullable(tokens.get(token));
-            var substituted = substitutions.get(token);
-            if (substituted == null) return authentication;
-            return authentication.map(found -> new AuthenticatedCaller(found.caller(), Optional.of(
-                    new CredentialBinding(substituted.issuer(), substituted.credentialId(), substituted.generation()))));
-        }
-
         /** Make {@code key}'s invocations present {@code replacement}'s binding on both paths; {@code null} clears it. */
         void substitute(ScopedKey key, RepositoryCredentialBinding replacement) {
             if (replacement == null) substitutions.remove(key.token());
             else substitutions.put(key.token(), replacement);
         }
 
-        void substituteInMapper(RepositoryCredentialBinding replacement) { mapperSubstitution.set(replacement); }
 
         /** Register a live credential through the process-only authority and mint its synthetic token. */
         ScopedKey registerKey(String principal) {
@@ -1346,15 +1176,12 @@ public final class ScopedPublicationProbe {
         /** Mint another synthetic token for an already registered identity (e.g. after rotation). */
         ScopedKey retoken(String principal, RepositoryCredentialBinding binding) {
             var token = "scoped-token-" + UUID.randomUUID();
-            tokens.put(token, new AuthenticatedCaller(Caller.scoped(principal, Set.of()),
-                    Optional.of(new CredentialBinding(binding.issuer(), binding.credentialId(), binding.generation()))));
             return new ScopedKey(binding, token);
         }
 
         /** A principal-only token with no provisioned key identity; no durable authority is registered. */
         ScopedKey mintUnbound(String principal) {
             var token = "unbound-token-" + UUID.randomUUID();
-            tokens.put(token, new AuthenticatedCaller(Caller.scoped(principal, Set.of()), Optional.empty()));
             return new ScopedKey(null, token);
         }
 
@@ -1404,13 +1231,10 @@ public final class ScopedPublicationProbe {
         }
 
         private PublishDocumentResponse invoke(Invocation via, ScopedKey key, String principal, PublishDocumentRequest request) {
-            if (via == Invocation.LIBRARY) {
                 var binding = key == null ? null : substitutions.getOrDefault(key.token(), key.binding());
                 return recording.publishDocument(new RepositoryCaller(principal, false,
                         hostAccounts.getOrDefault(principal, Set.of()), Set.of(),
                         Optional.ofNullable(binding)), request, RepositoryReadControl.NONE);
-            }
-            return stubFor(key.token()).publishDocument(request);
         }
 
         /** Exactly one repository call for this invocation's operation since {@code from}, carrying the expected identity. */
@@ -1448,15 +1272,6 @@ public final class ScopedPublicationProbe {
             return facade.publishDocument(ADMIN, request, RepositoryReadControl.NONE);
         }
 
-        DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub stubFor(String token) {
-            var headers = new Metadata();
-            headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
-            return plainStub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
-        }
-
-        DocumentPublicationServiceGrpc.DocumentPublicationServiceBlockingStub plainStub() { return plainStub; }
-
-        Optional<AuthenticatedCaller> authenticationFor(String token) { return Optional.ofNullable(tokens.get(token)); }
 
         RepositoryCaller libraryCaller(ScopedKey key, String principal) {
             return new RepositoryCaller(principal, false, hostAccounts.getOrDefault(principal, Set.of()), Set.of(),
@@ -1552,15 +1367,6 @@ public final class ScopedPublicationProbe {
             if (closed) return;
             closed = true;
             Throwable failure = null;
-            if (channel != null) {
-                channel.shutdownNow();
-                if (!channel.awaitTermination(10, TimeUnit.SECONDS)) failure = new AssertionError("publication channel did not stop");
-            }
-            if (server != null) {
-                server.shutdownNow();
-                if (!server.awaitTermination(10, TimeUnit.SECONDS)) failure = new AssertionError("publication server did not stop");
-            }
-            if (executor != null) executor.close();
             if (runtime != null) {
                 boolean stopped = false;
                 for (int pass = 0; pass < 3 && !stopped; pass++) stopped = runtime.shutdownStep(Duration.ofSeconds(5));

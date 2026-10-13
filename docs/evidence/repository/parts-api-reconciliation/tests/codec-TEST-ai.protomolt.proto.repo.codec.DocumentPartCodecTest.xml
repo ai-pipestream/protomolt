@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-13T18:36:00.777Z" hostname="krick" time="0.069">
+  <properties/>
+  <testcase name="split_fullDocument_fragmentsAreValidDocumentsCarryingOnlyTheirPart()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.013"/>
+  <testcase name="objectKey_mapsEachPartToItsPath()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.002"/>
+  <testcase name="roundTrip_coreOnlyDocument_isByteIdentical()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.002"/>
+  <testcase name="roundTrip_fullDocument_isByteIdentical()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.002"/>
+  <testcase name="rootChecksum_isStableAndMatchesManifestDerivation()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.005"/>
+  <testcase name="chunkFileName_isSafeAndCollisionFree()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.002"/>
+  <testcase name="roundTrip_documentWithoutSearchMetadata_doesNotMaterializeIt()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.0"/>
+  <testcase name="rootChecksum_changesWhenAChunkChanges()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.001"/>
+  <testcase name="manifestJson_roundTrips()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.034"/>
+  <testcase name="split_blobsOnlyLayout_leavesEverythingElseInCore()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.002"/>
+  <testcase name="layout_rejectsUnknownFieldsAndBadPaths()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.001"/>
+  <testcase name="roundTrip_blankResultIds_groupAsSingletonRuns()" classname="ai.protomolt.proto.repo.codec.DocumentPartCodecTest" time="0.001"/>
+</testsuite>

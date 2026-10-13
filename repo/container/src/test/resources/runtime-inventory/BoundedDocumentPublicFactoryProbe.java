@@ -41,7 +41,6 @@ public final class BoundedDocumentPublicFactoryProbe {
                 var caller=new RepositoryCaller("operator",true);
                 var publication=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
                         (account,principal,operation) -> caller);
-                if (rpc) publication=publication.withTransport(new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
                 phase(mode, "factory-ready", started);
                 try {
                     phase(mode, "consumer-start", started);

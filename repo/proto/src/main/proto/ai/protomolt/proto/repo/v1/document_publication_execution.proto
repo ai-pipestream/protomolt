@@ -10,13 +10,8 @@ import "ai/protomolt/proto/validate/v1/validate.proto";
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.repo.v1";
 
-// Staged contract. No host mounts this service until shared execution, authenticated
-// transport, resource limits and shutdown pass the implementation acceptance gates.
-service DocumentPublicationService {
-  // Atomic complete-revision publication. Retry the same operation and inputs after
-  // an ambiguous error; errors do not prove rollback. No partial success result.
-  rpc PublishDocument(PublishDocumentRequest) returns (PublishDocumentResponse);
-}
+// Internal command and outcome envelopes for retained execution and recovery.
+// DocumentService is the sole public document-write service.
 
 // Explicit admission behavior, subject to current host schema policy.
 enum DocumentPublicationMode {
@@ -46,10 +41,10 @@ message DocumentPublicationPayload {
   bytes content = 3 [(ai.protomolt.proto.validate.v1.field).bytes.max_len = 8388608];
 }
 
-// Hosts reject unknown fields and cap the serialized envelope at 10 MiB before
-// parsing. The shared boundary separately enforces the 1 MiB canonical intent
-// limit, checked aggregate payload capacity, duplicate keys, exact upload coverage,
-// declared lengths and checksums. Annotation validity does not authorize execution.
+// Buffered internal execution input, not a document-size contract for DocumentService.
+// The existing shared boundary checks intent capacity, aggregate payload capacity,
+// duplicate keys, exact upload coverage, declared lengths and checksums.
+// Annotation validity does not authorize execution.
 message PublishDocumentRequest {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "publication-request-modes"

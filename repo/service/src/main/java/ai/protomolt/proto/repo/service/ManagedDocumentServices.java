@@ -21,7 +21,6 @@ import java.util.Optional;
 final class ManagedDocumentServices {
     final DocumentPublicationRuntime publication;
     final ai.protomolt.proto.repo.spi.DocumentPublicationRepository publicationRepository;
-    final DocumentPublicationGrpcService publicationService;
     final ai.protomolt.proto.repo.engine.DocumentHistoricalOperations history;
     final DocumentHistoryGrpcService historyService;
     final DocumentHistoryMaterializationGrpcService materializationService;
@@ -29,19 +28,15 @@ final class ManagedDocumentServices {
     private final boolean managedDrain;
 
     record Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
-            DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport,
+            DocumentPublicationRuntime.RecoveryAuthority recovery,
             Optional<ManagedPublicationOptions.Historical> historical) {
         Journaled {
             Objects.requireNonNull(assessments); Objects.requireNonNull(authority); Objects.requireNonNull(historical);
             if (historical.isPresent()) Objects.requireNonNull(recovery, "Historical recovery authority");
         }
         Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
-                DocumentPublicationRuntime.RecoveryAuthority recovery, ManagedPublicationOptions.Transport transport) {
-            this(assessments,authority,recovery,transport,Optional.empty());
-        }
-        Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority,
                 DocumentPublicationRuntime.RecoveryAuthority recovery) {
-            this(assessments,authority,recovery,null);
+            this(assessments,authority,recovery,Optional.empty());
         }
         Journaled(DocumentPublicationRuntime.Assessments assessments, DocumentPublicationRuntime.DrainAuthority authority) {
             this(assessments,authority,null);
@@ -91,11 +86,6 @@ final class ManagedDocumentServices {
             throw new IllegalStateException("Original document backend profile is not bound");
         var selection=journaled==null ? null : new ManagedPublicationSelection(
                 new DriveLedger(bounded,drives::validateBackend),profiles,generation,profile,schemas);
-        // Construct transport state before acquiring native worker/lifecycle resources.
-        // This composition is not exposed until publicationRepository is assigned.
-        var transport=journaled==null ? null : journaled.transport();
-        publicationService=transport==null ? null : new DocumentPublicationGrpcService(this::publish,
-                transport.bindings(),new PayloadBudget(transport.deliveryBudgetBytes()),transport.maxConcurrentCalls());
         var budget = new PayloadBudget(boundedDocuments == null ? 64L * 1024 * 1024 : boundedDocuments.payloadBudgetBytes());
         var reader = new DocumentPartReader((original, selected) -> {
             requireOriginal(generation, profile, original, selected);
@@ -148,7 +138,6 @@ final class ManagedDocumentServices {
         } catch (RuntimeException | Error failure) {
             // Nothing has been exposed: no calls, batches or provider workers can exist.
             try {
-                if (publicationService != null) publicationService.close();
                 boolean drained;
                 if (constructed == null) drained = new DocumentReadLifecycle(ledger, reader, 100).shutdownStep(Duration.ofSeconds(5));
                 else {
@@ -174,23 +163,6 @@ final class ManagedDocumentServices {
                     "Original document backend is unavailable");
     }
 
-    private ai.protomolt.proto.repo.v1.PublishDocumentResponse publish(
-            ai.protomolt.proto.repo.spi.RepositoryCaller caller, ai.protomolt.proto.repo.v1.PublishDocumentRequest request,
-            ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
-        return publicationRepository.publishDocument(caller,request,control);
-    }
-
-    void awaitTransportIdle(Duration timeout) {
-        try {
-            if (publicationService!=null && !publicationService.awaitIdle(timeout))
-                throw new RepositoryDrainTimeoutException(RepositoryDrainTimeoutException.Phase.PUBLICATION_RPC,
-                        "Publication RPCs still active; shared resources retained");
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Publication RPC drain interrupted; shared resources retained",interrupted);
-        }
-    }
-
     void drain(Duration timeout) {
         long budget = timeout.toNanos(), start = System.nanoTime();
         try {
@@ -207,7 +179,6 @@ final class ManagedDocumentServices {
     }
 
     void closeAdmission() {
-        if (publicationService!=null) publicationService.close();
         publication.close();
         if (!managedDrain && schemas != null) schemas.close();
     }

@@ -98,8 +98,7 @@ final class RehearsalFixture {
     static ManagedPublicationOptions publicationOptions(Path bundle) {
         var operator = operator();
         return new ManagedPublicationOptions(bundle, Duration.ofMinutes(5), Duration.ofSeconds(5),
-                (account, principal, operation) -> operator)
-                .withTransport(new ManagedPublicationOptions.Transport(auth -> operator, 32L * 1024 * 1024, 2));
+                (account, principal, operation) -> operator);
     }
 
     /** Dynamic type with retained imports (timestamp, validate) and a CEL rule that must actually run. */

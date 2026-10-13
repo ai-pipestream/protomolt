@@ -2074,89 +2074,26 @@ preserves SQL state and the session. See the
 Transport authentication, provider workers, existing-document operations without
 creation grants and concurrent authority changes at commit remain unqualified.
 
-## Managed publication transport boundary
+## Internal publication input and replay requirements
 
-Status: contract design for the next implementation stage. No endpoint is mounted.
-Keep `DocumentService.SaveDocument` semantics unchanged. Add a separate managed
-publication operation using the existing `DocumentPublicationIntent`,
-`DocumentPublicationResult` and `DocumentPublicationRejection`. Host configuration
-must explicitly enable it after authentication and lifecycle qualification.
+The separate public publication transport is removed. The canonical document API
+is DocumentService; the following internal mechanisms remain relevant to recovery.
+They do not establish typed admission on every DocumentService call.
 
-The request carries the intent, one explicit TYPED or OPAQUE choice per member,
-and payload bytes indexed by member ID and full revision ordinal. Ordinals include
-empty and reused slots; only upload declarations receive bytes. Zero-length upload
-content is valid and differs from an absent payload. Check exact upload coverage,
-duplicates, declaration lengths and actual SHA-256 before any storage side effect.
-The intent remains the canonical command; mode choices retain their existing
-immutable journal binding. A changed mode is not a new spelling of the same retry.
+Internal buffered inputs check exact upload coverage, slot identity, duplicate
+entries, lengths, hashes and explicit typed/opaque modes before side effects.
+Backend selection and schema resolution remain host-authorized. Clients cannot
+supply credentials or executable schema implementations through content fields.
 
-No request field chooses provider coordinates, credentials, process authority,
-owner generations, retry reservations or descriptor implementations. The host
-samples placements through the existing drive/backend identity path and opens
-schema scopes through configured, authorized registry access. Existing member
-schema conditions retain type name and descriptor fingerprint checks. Do not add
-a second raw-descriptor or executable-code upload route. Container definitions
-remain a host policy decision.
+A terminal receipt must match its command, account, principal and member set under
+current authority. A timeout is not proof of rollback. Retrying or observing an
+existing operation must not renew an owner, create another execution or guess
+missing mode evidence. Missing journal evidence is an explicit error.
 
-Use a bounded unary operation for the existing buffered publication path. Preserve
-the 1 MiB intent limit, the host's 8 MiB document assembly limit and the existing
-10 MiB transport envelope ceiling. Establish a checked aggregate upload budget
-before allocating copies; per-field bounds alone cannot bound the request. Test
-empty, exact-limit and oversized envelopes and limit admission before expensive
-validation. This operation does not claim support for unbounded upload streaming.
-Large-payload transport needs a separate resource and cancellation contract rather
-than silently buffering arbitrary content or weakening provider limits.
-
-A completed response contains exactly one existing committed or rejected receipt.
-Only durable terminal rejection uses the rejected alternative. Authentication,
-capacity, timeout, cancellation, operation-key conflicts and transient provider errors remain
-transport errors. An ambiguous timeout does not establish rollback: retry the same
-operation ID, command, mode choices and complete uploads under current authority.
-Validate receipt shape and exact request/account/principal/member binding before
-delivery, reusing the shared codecs; a valid protobuf alone is not commit proof.
-
-The reusable Java publication interface belongs above byte storage and below the
-transport. Both direct calls and the gRPC adapter must use the same bounded input
-validation, current authorization, backend selection and execution facade. Keep
-SQL/provider SDK dependencies out of that interface. The adapter translates
-request/response and cancellation; it must not implement recovery or admission.
-
-Acceptance requires real PostgreSQL and object storage on both invocation paths:
-valid publication, typed rejection, opaque mode, receipt replay, altered retry,
-missing/extra payloads, checksum mismatch, revoked credentials/grants/ACLs,
-deadlines before and after commit, and shutdown with accepted calls. The host must
-stop new transport admission while accepted publication calls retain their schema,
-provider and SQL resources until completion or separately proven disposal.
-Successful local calls do not qualify public transport availability.
-
-Transport review refinements: a verified revision-precondition failure can be a
-durable rejection, so use the recorded outcome rather than exception category.
-Add a lost-final-reply test returning the original committed receipt. Upload
-attributes must be fixed or host-derived, never new client metadata outside the
-canonical intent. A host-owned selector for the container definition and immutable
-drive/profile snapshots is required before mounting typed publication; occurrence
-schema scopes alone do not supply those inputs.
-
-Require complete indexed upload bodies on every Publish call, including receipt
-retries. Validate coverage, aggregate size and checksums in the shared facade
-before calling execution. The current runtime can return terminal receipts before
-checking supplied modes or bodies; it does not establish this new facade's rule.
-The facade must also compare mode choices against the retained journal for an
-existing operation, under current authority, before terminal delivery. Missing
-mode evidence must not trigger guessed defaults or a new write. A later explicit
-receipt-query operation may omit upload bodies, but Publish does not.
-
-The 10 MiB limit is the transport's per-message parser ceiling. Shared admission
-can limit accepted requests and retained bytes but cannot retroactively prevent
-protobuf parsing. Keep parser, intent, payload, assembly and response budgets
-separate and test each boundary. This staged contract is not service availability.
-
-The terminal-mode comparison needs a read-only journal operation tied to immutable
-preparation/mode records, exact command identity and authorized receipt replay.
-The existing live-owner mode check is not suitable after lease expiry. Validating
-terminal delivery must not renew an owner or reserve another execution. This
-comparison is a prerequisite for mounting the staged service. Sol reviewed the
-unmounted contract and identified this implementation requirement.
+Parser, control-record, payload and assembly budgets are distinct. The retired
+buffered transport's limits are not global document-size requirements. Preserve
+resource ownership through cancellation and shutdown, including accepted provider
+and schema work. Qualify these internal paths with real storage and authorization.
 
 ### Terminal mode binding implementation
 
@@ -2204,8 +2141,8 @@ mode-aware durable receipt, covering a concurrent commit after the first check.
 
 V1 can use a precomputed definition of the built-in Document descriptor for its
 container. Any occurrence resolution remains caller-authorized registry work.
-The service-owned drive/profile selector, RPC handler and client are still to be
-connected and qualified. This factory alone does not mount a publication API.
+The internal factory requires host-owned selection and lifecycle qualification.
+It does not prescribe a separate public publication transport.
 
 ### Service-owned publication selection
 
@@ -2224,54 +2161,6 @@ checking any returned backend; mixed owned/foreign and owned/missing sets must
 have the same result. The target query count is one configured-profile query plus
 one drive batch query, regardless of the number of distinct drives in a request.
 This reduces database round trips; throughput still requires measurement.
-
-### Publication transport checkpoint
-
-DocumentPublicationGrpcService delegates to the shared repository, requires an
-explicit authenticated context and preserves the host-bound principal, process
-authority and credential issuer/ID/generation. It validates request annotations
-and receipt correspondence without duplicating durable publication logic.
-Cancellation and close retain application byte allowances until the producer
-also exits. Unexpected runtime failures receive a generic INTERNAL status.
-
-Real PostgreSQL, versioned LocalStack and Git-backed integration checks now cover
-fresh in-process publication, exact library/transport replay, registered scoped
-credentials and revocation, malformed receipt faults and active-producer
-cancellation. Loopback Netty replay and oversized-request rejection establish the
-configured 10 MiB parser limit before SPI invocation. Evidence is retained in
-`docs/evidence/repository/2026-10-06-publication-transport/`.
-
-This adapter is not yet mounted by RepoServices. Public journaled composition
-must expose explicit lifecycle/assessment/recovery configuration and authenticated
-bindings, mount independently of historical reads, enforce parser limits and
-require authentication on built-in transports. Recovery startup, listener failure
-and shutdown must use the same managed resource lifetime. No publication API is
-advertised as available through current host defaults.
-
-### Explicit public host composition
-
-The subsequent ManagedPublicationOptions checkpoint implements that opt-in.
-The public builder accepts the existing schema lifecycle component, local
-assessment bundle/windows and required drain authority. Recovery authority and
-transport access are independent optional choices. Public signatures depend on
-service/SPI types rather than SQL implementation classes.
-
-Transport access supplies trusted authenticated caller bindings, a delivery byte
-budget sufficient for one maximum call and a concurrent-call bound. Account and
-credential identities are host policy, not request grants. Built-in listeners
-require the operator token when publication is mounted. The service mounts without
-historical reads. External embedding hosts must install authentication and enforce
-the same 10 MiB parser limit.
-
-Close first rejects new adapter calls and runtime work. It then waits for accepted
-publication producers and transport deliveries before closing listeners. A timeout
-retains listeners, SQL and provider resources for a later close attempt. The real
-managed-host fixture verifies an accepted typed publication completing after a
-timeout, refusal of new calls and successful final resource release. See
-`docs/evidence/repository/2026-10-06-publication-host/`.
-
-These APIs are available through explicit composition. They are not enabled in
-default builders, deployed by this change or qualified for horizontal throughput.
 
 ### Next latency change: compose paired renewal transactions
 

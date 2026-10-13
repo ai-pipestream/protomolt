@@ -23,7 +23,6 @@ dependencies {
     implementation 'ai.pipestream:protomolt-repo-engine'
     implementation 'ai.pipestream:protomolt-repo-blob-s3'
     implementation 'ai.pipestream:protomolt-repo-history-grpc'
-    implementation 'ai.pipestream:protomolt-repo-publication-grpc'
     implementation 'ai.pipestream:protomolt-repo-schema-registry'
     implementation 'ai.pipestream:protomolt-schema-registry-git'
     implementation 'ai.pipestream:protomolt-protobuf-validation'

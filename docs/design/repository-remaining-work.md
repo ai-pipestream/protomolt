@@ -257,8 +257,9 @@ performance qualification must not displace these requirements.
    abandoned load capacity through provider completion. Managed-host composition
    now accepts an explicit host-bound schema scope and lifecycle component. Keep provider
    timeout/allocation and shutdown ownership explicit at that boundary.
-   `ManagedDocumentServices` owns a native runtime. `RepoServices.publicationRepository()`
-   is public, and explicit journaled composition can mount the publication RPC.
+   `ManagedDocumentServices` owns a native runtime. Internal publication machinery
+   remains; the separate public publication RPC is removed. DocumentService is
+   the canonical parts API, whose admission integration requires its own evidence.
    Public historical dispatch remains gated. `ManagedSchemaAccess`
    supplies optional scope composition and shutdown ownership without a production
    dependency on the registry adapter. Scopes receive the actual caller and member

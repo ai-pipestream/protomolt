@@ -29,15 +29,14 @@ class DocumentAssessmentStorageRuntimeTest {
     }
 
     @Test void managedHistoricalHostBinding() throws Exception {
-        boundedPublicHostBinding("ManagedHistoricalHostProbe", "MANAGED_HISTORICAL_ENABLED_LIBRARY_OK", "MANAGED_HISTORICAL_ENABLED_RPC_OK",
-                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK", "MANAGED_HISTORICAL_DISABLED_RPC_OK",
-                "MANAGED_HISTORICAL_UNAVAILABLE_LIBRARY_OK", "MANAGED_HISTORICAL_UNAVAILABLE_RPC_OK");
+        boundedPublicHostBinding("ManagedHistoricalHostProbe", "MANAGED_HISTORICAL_ENABLED_LIBRARY_OK",
+                "MANAGED_HISTORICAL_DISABLED_LIBRARY_OK",
+                "MANAGED_HISTORICAL_UNAVAILABLE_LIBRARY_OK");
     }
 
     @Test void managedHistoricalShutdown() throws Exception {
-        boundedPublicHostBinding("ManagedHistoricalShutdownProbe", "MANAGED_HISTORICAL_HELD_PUT_LIBRARY_OK",
-                "MANAGED_HISTORICAL_HELD_PUT_RPC_OK", "MANAGED_HISTORICAL_HELD_GET_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_GET_RPC_OK",
-                "MANAGED_HISTORICAL_HELD_SCHEMA_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_SCHEMA_RPC_OK");
+        boundedPublicHostBinding("ManagedHistoricalShutdownProbe", "MANAGED_HISTORICAL_HELD_PUT_LIBRARY_OK", "MANAGED_HISTORICAL_HELD_GET_LIBRARY_OK",
+                "MANAGED_HISTORICAL_HELD_SCHEMA_LIBRARY_OK");
     }
 
     private void boundedPublicHostBinding(String probe, String... markers) throws Exception {
@@ -220,7 +219,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 // Preserve every existing marker assertion across both mandatory hosts.
                 String result = Files.readString(log) + "\n" + replayResult + "\n" + schemaRevisionResult;
                 assertThat(process.exitValue()).as(result).isZero();
-                assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_TRANSPORT_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK","BOUNDED_DOCUMENT_TYPED_REJECTION_OK","BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK","BOUNDED_PUBLICATION_RPC_CANCELLATION_OK","BOUNDED_PUBLICATION_SCHEMA_SHUTDOWN_OK","BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK","BOUNDED_PUBLIC_CONSUMER_RPC_OK");
+                assertThat(result).contains("OBSERVED_SQL_HOST_OK","BOUNDED_DOCUMENT_HOST_STARTUP_OK","BOUNDED_DOCUMENT_PUBLICATION_HISTORY_OK","BOUNDED_DOCUMENT_LIBRARY_LIMITS_OK","BOUNDED_DOCUMENT_HISTORY_TRANSPORT_OK","BOUNDED_DOCUMENT_READ_SHUTDOWN_OK","BOUNDED_DOCUMENT_DELAYED_REQUEST_OK","BOUNDED_DOCUMENT_TYPED_REJECTION_OK","BOUNDED_PUBLICATION_PUT_SHUTDOWN_OK","BOUNDED_PUBLICATION_SCHEMA_SHUTDOWN_OK","BOUNDED_PUBLIC_CONSUMER_LIBRARY_OK", "BOUNDED_PUBLIC_CONSUMER_RPC_OK");
                 assertThat(result).contains("JOURNALED_SUCCESSOR_PUBLICATION_OK", "FENCED_SCHEMA_WORKER_DRAIN_OK");
                 assertThat(result).contains("BOUNDED_HOSTED_CONSUMER_LIBRARY_OK", "BOUNDED_HOSTED_CONSUMER_RPC_OK");
                 assertThat(result).contains("RECOVERY_OWNER_TERMINAL_DISPOSAL_OK");
@@ -230,9 +229,7 @@ class DocumentAssessmentStorageRuntimeTest {
                 assertThat(result).contains("ASSESSMENT_PROVIDER_READS_OK");
                 assertThat(result).contains("JOURNALED_RESTORATION_DRAIN_OK");
                 assertThat(result).contains("MANAGED_JOURNALED_SCHEMA_DRAIN_OK");
-                assertThat(result).contains("MANAGED_PUBLICATION_TRANSPORT_PARITY_OK");
-                assertThat(result).contains("MANAGED_PUBLICATION_HOST_DRAIN_OK");
-                assertThat(result).contains("MANAGED_RECOVERY_ACCEPTED_PUBLICATION_DRAIN_OK");
+                assertThat(result).contains("MANAGED_PUBLICATION_LIBRARY_REPLAY_OK");
                 assertThat(result).contains("MANAGED_EXPIRED_PUBLICATION_RECOVERY_OK");
                 assertThat(result).contains("CLAIMED_HISTORICAL_PUBLICATION_LOST_ACK_OK");
                 assertThat(result).contains("CLAIMED_HISTORICAL_PUBLICATION_EXPIRED_OK");

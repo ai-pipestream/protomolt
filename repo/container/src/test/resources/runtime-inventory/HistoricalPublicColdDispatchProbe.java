@@ -88,7 +88,7 @@ final class HistoricalPublicColdDispatchProbe {
                         HistoricalPublicReplayRefusalProbe.refuse(repository, caller, request.build(), RepositoryException.Code.DATA_LOSS,
                                 "Private preparation integrity check failed");
                         corruption.requireNoPublication();
-                        HistoricalPublicDispatchProbe.transportRefusal(repository, caller, request.build(), RepositoryException.Code.DATA_LOSS,
+                        HistoricalPublicDispatchProbe.libraryRefusal(repository, caller, request.build(), RepositoryException.Code.DATA_LOSS,
                                 "Private preparation integrity check failed");
                         corruption.requireNoPublication();
                         require(selections.get() == 0 && resolutions.get() == 0 && providerReads.get() == 0 && uploadBackends.get() == 0,
@@ -96,7 +96,7 @@ final class HistoricalPublicColdDispatchProbe {
                     }
                     System.out.println("HISTORICAL_PUBLIC_COLD_CORRUPT_PREPARATION_OK");
                 }
-                HistoricalPublicDispatchProbe.transport(repository, caller, request.build(), selections, resolutions, false);
+                HistoricalPublicDispatchProbe.libraryReplay(repository, caller, request.build(), selections, resolutions, false);
                 require(providerReads.get() > 0, "fresh process reads actual historical provider bytes");
                 require(resolutions.get() == 1 && selections.get() == 1, "only upload resolves a fresh schema");
                 var replay = repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
@@ -116,7 +116,7 @@ final class HistoricalPublicColdDispatchProbe {
             }
         }
         require(reads.outstandingReads() == 0 && budget.reservedBytes() == baseline, "fresh runtime releases reads and bytes");
-        System.out.println("HISTORICAL_PUBLIC_COLD_DISPATCH_GRPC_OK");
+        System.out.println("HISTORICAL_PUBLIC_COLD_DISPATCH_LIBRARY_OK");
     }
 
     static void verifyPublished(Tx tx, AssessmentProviderProbe provider, DocumentReadLedger reads, RepositoryCaller caller,

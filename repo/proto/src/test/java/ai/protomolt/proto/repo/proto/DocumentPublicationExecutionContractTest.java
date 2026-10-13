@@ -8,8 +8,16 @@ import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Staged transport shape only; no mounted handler or durable outcome claim. */
-class DocumentPublicationTransportContractTest {
+/** Internal execution envelopes retain validation without exposing a second document service. */
+class DocumentPublicationExecutionContractTest {
+    @Test void publicationEnvelopesDoNotDeclareAPublicService() {
+        assertThat(PublishDocumentRequest.getDescriptor().getFile().getServices()).isEmpty();
+        var documentService = SaveDocumentRequest.getDescriptor().getFile().findServiceByName("DocumentService");
+        assertThat(documentService).isNotNull();
+        assertThat(documentService.findMethodByName("SaveDocument")).isNotNull();
+        assertThat(documentService.findMethodByName("GetDocument")).isNotNull();
+    }
+
     private static final ProtoValidator VALIDATOR=ProtoValidator.create();
     private static final String ID="10000000-0000-4000-8000-000000000001";
 

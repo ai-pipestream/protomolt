@@ -28,8 +28,7 @@ public final class BoundedDocumentRestartProbe {
             public boolean awaitIdle(Duration timeout) { return true; }
         };
         var options=new ManagedPublicationOptions(Path.of(args[0]),Duration.ofMinutes(5),Duration.ofSeconds(5),
-                (account,principal,operation) -> caller).withTransport(
-                new ManagedPublicationOptions.Transport(auth -> caller,32L*1024*1024,2));
+                (account,principal,operation) -> caller);
         try (var database=new ai.protomolt.proto.repo.container.ledger.LedgerDatabase(config.ledger());
              var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.discover(),
                 new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),offline,null,options.journaled(),

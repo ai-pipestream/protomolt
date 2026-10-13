@@ -1,5 +1,11 @@
 # Historical revision restore
 
+> Reconciliation note: references below to DocumentPublicationService, its
+> remote client or transport composition describe the former public API. That
+> transport is removed. Internal admission, receipts and recovery are retained;
+> this historical record does not establish their integration into every parts
+> operation. The [current guide](../repo/publication.md) owns public API guidance.
+
 Status: contract design; no restore API is available. This is a bounded document
 revision operation, separate from interrupted-execution recovery and optional JCR
 version restoration.
@@ -949,12 +955,10 @@ refuse wrong callers or altered commands before disclosing busy state.
 
 #### End-to-end acceptance
 
-The facade enables the historical branch only for the internal qualification
-factory. `RemoteDocumentPublicationRepository` validates the envelope and response
-but leaves execution capability decisions to the authenticated server. Qualify
-the complete historical branch through both the shared library and that client
-before exposing host configuration. Keep guards on ordinary-only internals;
-removing every occurrence would bypass their distinct historical ownership path.
+Qualify the complete historical branch through the shared internal library.
+Keep guards on ordinary-only internals; removing every occurrence would bypass
+their distinct historical ownership path. This does not prescribe a new public
+transport or establish integration with DocumentService.
 
 For synchronous dispatch, the facade's existing accepted call is sufficient.
 `shutdownStep` waits for those calls before closing and detaching historical

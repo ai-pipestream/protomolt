@@ -13,7 +13,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Public library and authenticated gRPC dispatch against the fixture's real SQL and storage. */
+/** Public library dispatch against the fixture's real SQL and storage. */
 final class HistoricalPublicDispatchProbe {
     static void run(Tx tx, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source,
@@ -28,26 +28,23 @@ final class HistoricalPublicDispatchProbe {
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "takeover");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cancel");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "shutdown");
-        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-cancel");
-        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-deadline");
-        run(tx, provider, caller, original, placement, source, fragments, budget, null, "rpc-close");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup");
         run(tx, provider, caller, original, placement, source, fragments, budget, null, "cleanup-sql");
-        for (String phase : List.of("credential-library", "credential-grpc")) {
+        for (String phase : List.of("credential-library")) {
             var binding = new RepositoryCredentialBinding("public-revocation", UUID.randomUUID(), 1);
             new RepositoryCredentialAuthorities(tx).register(new RepositoryCaller("operator", true), binding, caller.principalName());
             var scoped = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), caller.identities(), Optional.of(binding));
             run(tx, provider, scoped, original, placement, source, fragments, budget, null, phase);
         }
-        for (String phase : List.of("read-library", "read-grpc", "write-library", "write-grpc", "policy-library", "policy-grpc"))
+        for (String phase : List.of("read-library", "write-library", "policy-library"))
             run(tx, provider, caller, original, placement, source, fragments, budget, null, phase);
     }
 
     static void runWinners(Tx observer, AssessmentProviderProbe provider, RepositoryCaller caller, DocumentPublicationCommand original,
             DocumentUploadPlan.Placement placement, DocumentPublishedRevision source, Map<Integer, ByteString> fragments,
             PayloadBudget budget, javax.sql.DataSource database) throws Exception {
-        for (String phase : List.of("winner-read-library", "winner-read-grpc", "winner-write-library", "winner-write-grpc",
-                "winner-credential-library", "winner-credential-grpc", "winner-policy-library", "winner-policy-grpc")) {
+        for (String phase : List.of("winner-read-library", "winner-write-library",
+                "winner-credential-library", "winner-policy-library")) {
             var binding = new RepositoryCredentialBinding("public-commit-winner", UUID.randomUUID(), 1);
             new RepositoryCredentialAuthorities(observer).register(new RepositoryCaller("operator", true), binding, caller.principalName());
             var scoped = new RepositoryCaller(caller.principalName(), false, caller.accountIds(), caller.identities(), Optional.of(binding));
@@ -79,7 +76,7 @@ final class HistoricalPublicDispatchProbe {
             Map<Integer, ByteString> fragments, PayloadBudget budget, HistoricalCreateCommitFault fault, String phase,
             HistoricalAuthorizationCommitGate gate, Tx observer, HistoricalObservedWriter updater) throws Exception {
         long baseline = budget.reservedBytes();
-        boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown") || phase.startsWith("rpc-")
+        boolean stoppingCase = phase.equals("cancel") || phase.equals("shutdown")
                 || phase.startsWith("credential-") || phase.startsWith("read-") || phase.startsWith("write-") || phase.startsWith("policy-")
                 || phase.startsWith("winner-") || phase.startsWith("recovery-");
         var readerId = UUID.randomUUID();
@@ -160,7 +157,7 @@ final class HistoricalPublicDispatchProbe {
                         });
             });
             try {
-                for (boolean remote : fault == null && !stoppingCase ? List.of(false, true) : List.of(false)) {
+                for (boolean remote : List.of(false)) {
                     var current = new DocumentLedger(tx).findByNodeId(
                             ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress())).orElseThrow();
                     var member = original.intent().getMembers(0);
@@ -186,7 +183,7 @@ final class HistoricalPublicDispatchProbe {
                     }
                     if (phase.equals("start")) {
                         replayRefusals(repository, caller, request.build(), selections, resolutions, takeover, true);
-                        System.out.println("HISTORICAL_PUBLIC_PENDING_REPLAY_REFUSALS_LIBRARY_GRPC_OK");
+                        System.out.println("HISTORICAL_PUBLIC_PENDING_REPLAY_REFUSALS_LIBRARY_OK");
                     }
                     byte[] durableBytes = phase.equals("publication") ? tx.readOnly(em ->
                             (byte[]) em.createNativeQuery("SELECT result_bytes FROM repository_operation_success"
@@ -204,53 +201,31 @@ final class HistoricalPublicDispatchProbe {
                                     repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
                         } else if (gate != null) {
                             var node = ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress());
-                            if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
-                                    (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicCommitWinnerProbe.run(
-                                            observer, gate, remoteRepository, caller, request.build(), node, phase.split("-")[1], updater));
-                            else HistoricalPublicCommitWinnerProbe.run(observer, gate, repository, caller, request.build(), node, phase.split("-")[1], updater);
+                            HistoricalPublicCommitWinnerProbe.run(observer, gate, repository, caller, request.build(), node, phase.split("-")[1], updater);
                         }
                         else if (phase.endsWith("-library")) HistoricalPublicAuthorizationProbe.run(tx, takeover, runtime, reads,
                                 repository, caller, request.build(), selections, resolutions, phase.split("-")[0],
                                 ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress()));
-                        else if (phase.endsWith("-grpc")) withTransport(repository, caller, 2,
-                                (remoteRepository, service, delivery, serverCancelled) -> HistoricalPublicAuthorizationProbe.run(
-                                        tx, takeover, runtime, reads, remoteRepository, caller, request.build(), selections, resolutions,
-                                        phase.split("-")[0], ai.protomolt.proto.repo.container.blob.DocumentIds.nodeId(source.getAddress())));
-                        else if (phase.equals("rpc-cancel") || phase.equals("rpc-deadline")) withTransport(repository, caller, 1,
-                                phase.equals("rpc-deadline") ? Duration.ofSeconds(10) : Duration.ofSeconds(60),
-                                (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseRemoteCancellation(
-                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery, serverCancelled,
-                                        phase.equals("rpc-deadline")));
-                        else if (phase.equals("rpc-close")) withTransport(repository, caller, 1,
-                                (remoteRepository, service, delivery, serverCancelled) -> takeover.exerciseTransportClose(
-                                        tx, runtime, reads, remoteRepository, caller, request.build(), service, delivery));
                         else takeover.exerciseStop(tx, runtime, reads, repository, caller, request.build(), phase.equals("cancel"));
                         continue;
                     } else if (phase.equals("takeover") && !remote) {
                         takeover.exercise(tx, runtime, repository, caller, request.build(), selections, resolutions);
                         HistoricalPublicColdDispatchProbe.verifyPublished(tx, provider, reads, caller, command, fragments,
                                 repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).getCommitted());
-                    } else if (remote) transport(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
-                    else exercise(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
+                    } else exercise(repository, caller, request.build(), selections, resolutions, phase.equals("reject"));
                     if (phase.equals("create")) require(resolvedBeforeRetry > 0 && resolutions.get() == resolvedBeforeRetry,
                             "public CREATE retry reuses retained assessment without schema resolution");
                     if (phase.equals("normal") && !remote) {
                         replayRefusals(repository, caller, request.build(), selections, resolutions, takeover, false);
-                        System.out.println("HISTORICAL_PUBLIC_REPLAY_REFUSALS_LIBRARY_GRPC_OK");
+                        System.out.println("HISTORICAL_PUBLIC_REPLAY_REFUSALS_LIBRARY_OK");
                     }
                     if (phase.equals("publication")) {
                         require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE)
                                         .getCommitted().equals(durablePublication), "library receipt equals the original SQL commit receipt");
-                        withTransport(repository, caller, 2, (remoteRepository, service, delivery, serverCancelled) -> {
-                            var received = remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE);
-                            require(received.getCommitted().equals(durablePublication), "gRPC receipt equals the original SQL commit receipt");
-                            require(remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(received),
-                                    "gRPC exact replay preserves the original SQL receipt");
-                        });
                         require(putsBeforeRetry == 1 && takeover.completedPuts() == putsBeforeRetry
                                         && selectedBeforeRetry == selections.get() && resolvedBeforeRetry > 0
                                         && resolvedBeforeRetry == resolutions.get(),
-                                "lost publication reply replays through library and gRPC without provider or schema work");
+                                "lost publication reply replays through the library without provider or schema work");
                         for (String table : List.of("repository_operation_success", "document_revision_commits", "document_assessment_owners"))
                             require(tx.readOnly(em -> ((Number) em.createNativeQuery("SELECT count(*) FROM " + table
                                             + " WHERE account_id=:a AND principal=:p AND operation_id=:o")
@@ -267,7 +242,6 @@ final class HistoricalPublicDispatchProbe {
                         try {
                             require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
                                     "authorized receipt delivery does not require cleanup authority");
-                            transport(repository, caller, request.build(), selections, resolutions, false);
                             try {
                                 runtime.tick();
                                 throw new AssertionError("Cleanup authority failure was swallowed");
@@ -299,9 +273,6 @@ final class HistoricalPublicDispatchProbe {
                                     "SQL rollback retains generation, read lifetimes and bytes");
                             require(repository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
                                     "failed pin release preserves exact committed receipt");
-                            withTransport(repository, caller, 2, (remoteRepository, service, delivery, serverCancelled) ->
-                                    require(remoteRepository.publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(committed),
-                                            "gRPC returns same receipt while SQL cleanup is failing"));
                             require(puts == takeover.completedPuts() && selected == selections.get() && resolved == resolutions.get(),
                                     "SQL cleanup failure and terminal replay add no provider PUT or schema work");
                         }
@@ -327,8 +298,8 @@ final class HistoricalPublicDispatchProbe {
                 : phase.equals("cleanup") ? "HISTORICAL_PUBLIC_CLEANUP_RETRY_OK"
                 : stoppingCase ? "HISTORICAL_PUBLIC_" + phase.replace('-', '_').toUpperCase(java.util.Locale.ROOT) + "_DRAIN_OK"
                 : phase.equals("takeover") ? "HISTORICAL_PUBLIC_CONCURRENT_TAKEOVER_OK"
-                : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_GRPC_OK"
-                : fault == null ? "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_GRPC_OK"
+                : phase.equals("reject") ? "HISTORICAL_PUBLIC_REJECTION_LIBRARY_OK"
+                : fault == null ? "HISTORICAL_PUBLIC_DISPATCH_LIBRARY_OK"
                 : "HISTORICAL_PUBLIC_" + phase.toUpperCase(java.util.Locale.ROOT) + "_ACK_RECOVERY_OK");
     }
 
@@ -346,81 +317,23 @@ final class HistoricalPublicDispatchProbe {
             AtomicInteger selections, AtomicInteger resolutions, HistoricalPublicTakeoverProbe provider, boolean pending) throws Exception {
         int selected = selections.get(), resolved = resolutions.get(), puts = provider.completedPuts();
         HistoricalPublicReplayRefusalProbe.intent(repository, caller, request, pending);
-        withTransport(repository, caller, 4, (remoteRepository, service, delivery, serverCancelled) ->
-                HistoricalPublicReplayRefusalProbe.intent(remoteRepository, caller, request, pending));
         for (var unauthorized : HistoricalPublicReplayRefusalProbe.unauthorized(caller)) {
             HistoricalPublicReplayRefusalProbe.refuse(repository, unauthorized.caller(), request, unauthorized.code());
-            withTransport(repository, unauthorized.caller(), 2, (remoteRepository, service, delivery, serverCancelled) ->
-                    HistoricalPublicReplayRefusalProbe.refuse(remoteRepository, unauthorized.caller(), request, unauthorized.code()));
         }
         require(selected == selections.get() && resolved == resolutions.get() && puts == provider.completedPuts(),
                 "negative public replays perform no selection, schema resolution or PUT");
     }
 
-    static void transport(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
-            AtomicInteger selections, AtomicInteger resolutions, boolean rejected) throws Exception {
-        withTransport(repository, caller, 2, (remote, service, delivery, serverCancelled) ->
-                exercise(remote, caller, request, selections, resolutions, rejected));
+    static void libraryReplay(DocumentPublicationRepository repository, RepositoryCaller caller, PublishDocumentRequest request,
+            AtomicInteger selections, AtomicInteger resolutions, boolean rejected) {
+        exercise(repository, caller, request, selections, resolutions, rejected);
     }
 
-    @FunctionalInterface
-    private interface TransportAction {
-        void run(DocumentPublicationRepository remote, ai.protomolt.proto.repo.service.DocumentPublicationGrpcService service,
-                PayloadBudget delivery, java.util.concurrent.CountDownLatch serverCancelled) throws Exception;
+    static void libraryRefusal(DocumentPublicationRepository repository, RepositoryCaller caller,
+            PublishDocumentRequest request, RepositoryException.Code code, String message) {
+        var failure = HistoricalPublicReplayRefusalProbe.refuse(repository, caller, request, code);
+        require(message.equals(failure.getMessage()), "library preserves the exact failure message");
     }
 
-    static void transportRefusal(DocumentPublicationRepository repository, RepositoryCaller caller,
-            PublishDocumentRequest request, RepositoryException.Code code, String message) throws Exception {
-        withTransport(repository, caller, 2, (remote, service, delivery, serverCancelled) -> {
-            var failure = HistoricalPublicReplayRefusalProbe.refuse(remote, caller, request, code);
-            var status = io.grpc.Status.fromThrowable(failure);
-            require(status.getCode().name().equals(code.name()) && message.equals(status.getDescription()),
-                    "transport preserves the exact refusal status and description");
-        });
-    }
-
-    private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
-            int transportCapacity, TransportAction action) throws Exception {
-        withTransport(repository, caller, transportCapacity, Duration.ofSeconds(60), action);
-    }
-
-    private static void withTransport(DocumentPublicationRepository repository, RepositoryCaller caller,
-            int transportCapacity, Duration timeout, TransportAction action) throws Exception {
-        String token = "historical-fixture-" + UUID.randomUUID();
-        var credential = caller.credentialBinding().orElseThrow();
-        var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(
-                ai.protomolt.proto.actions.Caller.scoped(caller.principalName(), Set.of()),
-                Optional.of(new ai.protomolt.proto.authz.CredentialBinding(credential.issuer(), credential.credentialId(), credential.generation())));
-        var delivery = new PayloadBudget(64_000_000);
-        var clientBudget = new PayloadBudget(64_000_000);
-        var serverCancelled = new java.util.concurrent.CountDownLatch(1);
-        try (var service = new ai.protomolt.proto.repo.service.DocumentPublicationGrpcService(repository, actual -> {
-            require(actual.equals(authentication), "transport binds authenticated fixture identity");
-            io.grpc.Context.current().addListener(context -> serverCancelled.countDown(), Runnable::run);
-            return caller;
-        }, delivery, transportCapacity); var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            String name = io.grpc.inprocess.InProcessServerBuilder.generateName();
-            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).executor(executor)
-                    .maxInboundMessageSize(DocumentPublicationInput.MAX_ENVELOPE_BYTES)
-                    .intercept(new ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor("operator-fixture-" + UUID.randomUUID(),
-                            (ai.protomolt.proto.authz.AuthenticatedCallerResolver) value -> token.equals(value)
-                                    ? Optional.of(authentication) : Optional.empty()))
-                    .addService(service).build().start();
-            var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-            try {
-                var headers = new io.grpc.Metadata();
-                headers.put(io.grpc.Metadata.Key.of("authorization", io.grpc.Metadata.ASCII_STRING_MARSHALLER), "Bearer " + token);
-                var stub = DocumentPublicationServiceGrpc.newFutureStub(channel)
-                        .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
-                var remote = new ai.protomolt.proto.repo.publication.grpc.RemoteDocumentPublicationRepository(
-                        caller, stub, clientBudget, timeout, 2);
-                action.run(remote, service, delivery, serverCancelled);
-            } finally {
-                channel.shutdownNow(); require(channel.awaitTermination(10, TimeUnit.SECONDS), "historical channel drains");
-                server.shutdownNow(); require(server.awaitTermination(10, TimeUnit.SECONDS), "historical server drains");
-            }
-        }
-        require(clientBudget.reservedBytes() == 0 && delivery.reservedBytes() == 0, "transport budgets released");
-    }
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
 }

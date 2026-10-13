@@ -56,20 +56,6 @@ final class BoundedDocumentRejectionProbe {
         int beforePuts=puts.get(),beforeReads=reads.get();
         require(host.publicationRepository().publishDocument(caller,request,RepositoryReadControl.NONE).equals(expected),
                 "local rejection replay after resolver close");
-        String name="bounded-rejection-"+UUID.randomUUID();
-        host.startInProcess(name,"bounded-rejection-token",null);
-        var channel=io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-        try {
-            var headers=new io.grpc.Metadata();
-            headers.put(io.grpc.Metadata.Key.of("api_token",io.grpc.Metadata.ASCII_STRING_MARSHALLER),"bounded-rejection-token");
-            var client=DocumentPublicationServiceGrpc.newBlockingStub(channel)
-                    .withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
-            require(client.withDeadlineAfter(10,TimeUnit.SECONDS).publishDocument(request).equals(expected),
-                    "authenticated rejection replay after resolver close");
-        } finally {
-            channel.shutdownNow();
-            require(channel.awaitTermination(10,TimeUnit.SECONDS),"rejection channel stopped");
-        }
         require(puts.get()==beforePuts && reads.get()==beforeReads,"replay performs no provider upload or read");
         requireNoCurrent(host,tx,request);
         requireOneRejection(tx,request);

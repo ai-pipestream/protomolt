@@ -6,6 +6,10 @@ streaming HTTP upload route) — no framework, blocking style, virtual threads.
 
 ## What it is
 
+The canonical public API is the parts-based `DocumentService`. See the
+[current document guide](../docs/repo/publication.md). The separate publication
+transport is removed; internal publication and recovery components remain.
+
 When any part of the pipeline needs to persist a `Document` (the platform's
 core document protobuf), it comes here. The service writes the document body
 to S3-compatible object storage and records a row in Postgres that points at

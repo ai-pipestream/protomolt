@@ -57,42 +57,18 @@ final class ManagedHistoricalColdDispatchProbe {
                 public boolean awaitIdle(Duration timeout) throws InterruptedException { return resolver.awaitLoads(timeout); }
             };
             try {
-            var credential = caller.credentialBinding().orElseThrow();
-            var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(
-                    ai.protomolt.proto.actions.Caller.scoped(caller.principalName(), Set.of()),
-                    Optional.of(new ai.protomolt.proto.authz.CredentialBinding(credential.issuer(), credential.credentialId(), credential.generation())));
             var options = new ManagedPublicationOptions(Path.of(System.getenv("PROTOMOLT_TEST_RUNTIME_BUNDLE")),
-                    Duration.ofMinutes(5), Duration.ofSeconds(5), authority).withRecovery(authority).withHistoricalPublication(2)
-                    .withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                        require(auth.equals(authentication), "transport preserves the independently bound scoped test credential");
-                        // Synthetic authentication fixture; the live credential row is independently checked by the runtime.
-                        return caller;
-                    }, 32L * 1024 * 1024, 2));
+                    Duration.ofMinutes(5), Duration.ofSeconds(5), authority).withRecovery(authority).withHistoricalPublication(2);
                 try (var host = RepoServices.buildHosted(config, BridgeEngine.standard(), null, schemas, options, identity)) {
                     var retained = new ManagedBackendLedger(tx).find("assessment-s3").orElseThrow();
                     require(retained.equals(provider.profile()), "managed provider profile equals the immutable source binding");
-                    String token = "managed-cold-token-" + UUID.randomUUID();
-                    String name = "managed-cold-" + UUID.randomUUID();
-                    host.startInProcess(name, "operator-" + UUID.randomUUID(),
-                            (ai.protomolt.proto.authz.AuthenticatedCallerResolver) supplied -> supplied.equals(token)
-                                    ? Optional.of(authentication) : Optional.empty());
-                    var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
-                    try {
-                        var plain = DocumentPublicationServiceGrpc.newBlockingStub(channel).withDeadlineAfter(30, TimeUnit.SECONDS);
-                        try { plain.publishDocument(request.build()); throw new AssertionError("Unauthenticated cold recovery accepted"); }
-                        catch (StatusRuntimeException failure) { require(failure.getStatus().getCode() == Status.Code.UNAUTHENTICATED, "cold recovery requires authentication"); }
-                        require(resolutions.get() == 0, "unauthenticated request does not resolve schema");
-                        var headers = new Metadata();
-                        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
-                        var stub = plain.withInterceptors(io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor(headers));
                         if (ManagedHistoricalUnavailableUploadProbe.enabled()) {
-                            ManagedHistoricalUnavailableUploadProbe.run(tx, provider, caller, command, request.build(), host, stub, resolutions);
+                            ManagedHistoricalUnavailableUploadProbe.run(tx, provider, caller, command, request.build(), host, resolutions);
                         } else {
-                        var result = stub.publishDocument(request.build());
+                        var result = host.publicationRepository().publishDocument(caller, request.build(), RepositoryReadControl.NONE);
                         require(result.hasCommitted(), "managed cold recovery commits");
                         require(resolutions.get() == 1, "only resubmitted upload resolves a fresh schema");
-                        require(host.publicationRepository().publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(result)
-                                && stub.publishDocument(request.build()).equals(result), "managed library and RPC recover exact durable receipt");
+                        require(host.publicationRepository().publishDocument(caller, request.build(), RepositoryReadControl.NONE).equals(result), "managed library recovers exact durable receipt");
                         require(new DocumentPublicationReplay(tx).observe(caller, command).result().orElseThrow().equals(result.getCommitted()),
                                 "managed receipt equals persisted operation result");
                         require(resolutions.get() == 1, "managed replay performs no live schema work");
@@ -109,7 +85,6 @@ final class ManagedHistoricalColdDispatchProbe {
                             read.authorizeDelivery(RepositoryReadControl.NONE);
                         }
                         }
-                    } finally { channel.shutdownNow(); require(channel.awaitTermination(5, TimeUnit.SECONDS), "managed cold channel drained"); }
                 }
                 require(closes.get() == 1, "managed cold host closes owned schema admission once");
                 var states = tx.readOnly(em -> em.createNativeQuery("""
@@ -127,7 +102,7 @@ final class ManagedHistoricalColdDispatchProbe {
             try (var paths = Files.walk(directory)) { for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
         System.out.println(ManagedHistoricalUnavailableUploadProbe.enabled()
-                ? "HISTORICAL_MANAGED_COLD_UNAVAILABLE_UPLOAD_OK" : "HISTORICAL_MANAGED_COLD_DISPATCH_GRPC_OK");
+                ? "HISTORICAL_MANAGED_COLD_UNAVAILABLE_UPLOAD_OK" : "HISTORICAL_MANAGED_COLD_DISPATCH_LIBRARY_OK");
     }
 
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }

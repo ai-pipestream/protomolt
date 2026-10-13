@@ -34,7 +34,7 @@ repositories {
 }
 
 java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
-sourceSets { grpcClient; publicationClient; providerDiscovery; redisConsumer; brokenDiscoveryProbe }
+sourceSets { grpcClient; providerDiscovery; redisConsumer; brokenDiscoveryProbe }
 configurations {
     blobSpiOnly; repositorySpiOnly; codecOnly; spiPlusCodec
     s3Only; redisOnly; cacheOnly; cacheWithRedis; grpcOnly
@@ -43,7 +43,6 @@ dependencies {
     repositorySpiOnly "ai.pipestream:protomolt-repo-spi:${candidateVersion}"
     implementation "ai.pipestream:protomolt-repo-spi:${candidateVersion}"
     grpcClientImplementation "ai.pipestream:protomolt-repo-blob-grpc:${candidateVersion}"
-    publicationClientImplementation "ai.pipestream:protomolt-repo-publication-grpc:${candidateVersion}"
     providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-spi:${candidateVersion}"
     providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-s3:${candidateVersion}"
     providerDiscoveryImplementation "ai.pipestream:protomolt-repo-blob-redis:${candidateVersion}"
@@ -125,7 +124,6 @@ def boundaryRows = [
     'cache-alone':                             [classpath: { configurations.cacheOnly }, allowed: [] as Set],
     'cache-with-selected-redis-provider':      [classpath: { configurations.cacheWithRedis }, allowed: ['redis-sdk'] as Set],
     'blob-grpc-client-alone':                  [classpath: { configurations.grpcOnly }, allowed: [] as Set],
-    'publication-grpc-client-alone':           [classpath: { configurations.publicationClientRuntimeClasspath }, allowed: [] as Set],
     'composite-consumer-main':                 [classpath: { configurations.runtimeClasspath }, allowed: [] as Set],
     'blob-grpc-consumer-sourceset':            [classpath: { configurations.grpcClientRuntimeClasspath }, allowed: [] as Set],
     'provider-discovery-probe':                [classpath: { configurations.providerDiscoveryRuntimeClasspath }, allowed: ['aws-sdk', 'redis-sdk'] as Set],
@@ -145,9 +143,6 @@ tasks.register('verifyConsumerBoundaries') {
             throw new GradleException('Byte SPI must be JDK-only: ' + spiModules)
         }
         boundaryRows.each { row, spec -> assertBoundary(row, spec.classpath(), spec.allowed) }
-        def publication = resolvedModules(configurations.publicationClientRuntimeClasspath)
-        logger.lifecycle('Published publication client runtime (' + metadataMode + '): '
-                + publication.collect { "${it.group}:${it.name}:${it.version}" }.sort())
     }
 }
 
@@ -160,7 +155,7 @@ stagedJar = { Configuration config, String artifactPrefix ->
 }
 
 tasks.register('verifyConsumer', JavaExec) {
-    dependsOn classes, grpcClientClasses, publicationClientClasses
+    dependsOn classes, grpcClientClasses
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'RepositoryConsumer'
     inputs.property('metadataMode', metadataMode)
@@ -317,9 +312,6 @@ tasks.register('inspectPublishedMetadata') {
                                  'compile:com.google.protobuf:protobuf-java',
                                  'runtime:ai.pipestream:protomolt-descriptors',
                                  'runtime:com.google.protobuf:protobuf-java-util'],
-        'protomolt-repo-publication-grpc': ['compile:ai.pipestream:protomolt-repo-spi',
-                                            'compile:ai.pipestream:protomolt-repo-proto',
-                                            'compile:ai.pipestream:protomolt-repo-blob-spi'],
     ]
     doLast {
         def report = []

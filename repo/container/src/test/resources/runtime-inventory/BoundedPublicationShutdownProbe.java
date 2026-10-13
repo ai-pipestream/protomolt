@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.*;
 
 /** Separate bounded hosts qualify provider and schema worker lifetime during cancellation. */
 public final class BoundedPublicationShutdownProbe {
-    private enum Mode { LIBRARY, RPC, SCHEMA }
+    private enum Mode { LIBRARY, SCHEMA }
     public static void run(Path bundle) throws Exception {
         for (var mode:Mode.values()) run(bundle,mode);
     }
@@ -59,21 +59,10 @@ public final class BoundedPublicationShutdownProbe {
             var caller=new RepositoryCaller("operator",true);
             var options=new ManagedPublicationOptions(bundle,Duration.ofMinutes(5),Duration.ofSeconds(5),
                     (account,principal,operation) -> caller);
-            var serverCancelled=new CountDownLatch(1);
-            var observeFirst=new AtomicBoolean(true);
-            if (mode==Mode.RPC) options=options.withTransport(new ManagedPublicationOptions.Transport(auth -> {
-                if (observeFirst.compareAndSet(true,false))
-                    io.grpc.Context.current().addListener(context -> serverCancelled.countDown(),Runnable::run);
-                return caller;
-            },32L*1024*1024,1));
             try (var host=new RepoServices(config,BridgeEngine.standard(),BlobStores.of(List.of(provider)),
                     new HistoricalReadAccess(auth -> caller,32L*1024*1024,2),schemas,null,options.journaled(),
                     new BoundedDocumentProfile(1024*1024,64L*1024*1024))) {
                 var tx=new Tx(database.entityManagerFactory());
-                if (mode==Mode.RPC) {
-                    BoundedPublicationRpcCancellationProbe.run(host,tx,gate,closes,serverCancelled);
-                    return;
-                }
                 if (mode==Mode.SCHEMA) {
                     schemaGate.run(host,tx,caller,resolver,gate,closes);
                     return;

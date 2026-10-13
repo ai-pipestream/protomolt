@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-13T18:36:00.981Z" hostname="krick" time="0.034">
+  <properties/>
+  <testcase name="[1] TYPE_INT32" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.007"/>
+  <testcase name="[2] TYPE_FIXED64" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.001"/>
+  <testcase name="[3] TYPE_FIXED32" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.0"/>
+  <testcase name="nestedUnknownGroupsCannotHideValuesBelowTheDepthLimit()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.001"/>
+  <testcase name="invalidLengthsInsideKnownMessagesAreRejected()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.0"/>
+  <testcase name="wrongWireKnownFieldsAndOpaqueUnknownBytesMatchParserBehavior()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.002"/>
+  <testcase name="unknownGroupsAndDuplicateSingularValuesShareTheBudget()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.001"/>
+  <testcase name="cancellationIsCheckedInsidePackedVarints()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.001"/>
+  <testcase name="malformedPackedFieldsAndGroupsCannotPassPreflight()" classname="ai.protomolt.proto.repo.codec.DocumentWireBudgetTest" time="0.0"/>
+</testsuite>
