@@ -85,11 +85,13 @@ public final class S3BlobStoreProvider implements BlobStoreProvider {
             acquired = builder.build();
             S3Client client = acquired;
             var capabilities = EnumSet.of(BlobCapability.BOUNDED_READ, BlobCapability.LIST, BlobCapability.SERVER_SIDE_COPY,
-                    BlobCapability.STREAMING_WRITE, BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION);
+                    BlobCapability.STREAMING_WRITE, BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION,
+                    BlobCapability.EXACT_VERSION_RECLAMATION);
             if (conditional) capabilities.addAll(Set.of(BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
                     BlobCapability.ATOMIC_CONDITIONAL_WRITE));
             return new OpenedBlobStore(new S3BlobStore(client, conditional),
-                    () -> close(client, credentials), capabilities, new S3NamespaceProvisioner(client), new S3ObjectReclaimer(client));
+                    () -> close(client, credentials), capabilities, new S3NamespaceProvisioner(client),
+                    new S3ObjectReclaimer(client), new S3ExactVersionReclaimer(client));
         } catch (RuntimeException | Error failure) {
             try { close(acquired, credentials); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
             throw failure;

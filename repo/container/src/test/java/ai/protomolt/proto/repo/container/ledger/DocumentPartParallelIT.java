@@ -81,7 +81,7 @@ class DocumentPartParallelIT {
                     try { return after.apply(method.getName(), args, method.invoke(opened.store(), args)); }
                     catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                 });
-        return new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+        return new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
     }
     private static void await(CountDownLatch latch) throws InterruptedException {
         assertThat(latch.await(20, TimeUnit.SECONDS)).isTrue();

@@ -112,7 +112,7 @@ class BoundedArchiveHostIT {
                             return result;
                         });
                 return new OpenedBlobStore(store, () -> { closes.incrementAndGet(); actual.close(); },
-                        actual.capabilities(), actual::ensureNamespace, actual.reclaimer());
+                        actual.capabilities(), actual::ensureNamespace, actual.reclaimer(), actual.exactVersionReclaimer());
             }
         };
         var budget = new PayloadBudget(8192);
@@ -187,7 +187,7 @@ class BoundedArchiveHostIT {
                 assertThat(options.get("write-policy")).isEqualTo("create-only");
                 var opened = actual.open(options);
                 return new OpenedBlobStore(opened.store(), () -> { closes.incrementAndGet(); opened.close(); },
-                        opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+                        opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
             }
         };
         var selected = BlobStores.of(List.of(observed));
@@ -215,7 +215,7 @@ class BoundedArchiveHostIT {
                 var capabilities = new java.util.HashSet<>(opened.capabilities());
                 capabilities.remove(BlobCapability.NON_EXPIRING_WRITES);
                 return new OpenedBlobStore(opened.store(), () -> { closes.incrementAndGet(); opened.close(); },
-                        capabilities, opened::ensureNamespace, opened.reclaimer());
+                        capabilities, opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
             }
         };
         var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), new PayloadBudget(8192), 1);

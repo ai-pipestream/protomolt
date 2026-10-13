@@ -292,7 +292,7 @@ class ManagedRawDocumentIT {
         var budget = new PayloadBudget(1024 * 1024);
         var reader = new DocumentPartReader((generation, retained) -> racing, 4, 1024 * 1024, budget);
         // Borrow the real provider lifetime; this wrapper only injects the race.
-        var intercepted = new OpenedBlobStore(racing, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+        var intercepted = new OpenedBlobStore(racing, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
         var writer = new DocumentAttemptWriter(tx, drives, BACKEND, profile.identity(), intercepted, budget);
         var operations = new DocumentOperations(documents, drives, tx, racing, new PartStorage(),
                 new JdbcPurgeQueue(tx), null, BACKEND, reader, writer);

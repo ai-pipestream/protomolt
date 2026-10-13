@@ -81,7 +81,7 @@ class DocumentPartStagerIT {
                 new DocumentPartAttemptLedger.Location(node, "account", generation, NAMESPACE), 0, Map.of(), objects), parts);
     }
     private static OpenedBlobStore borrowed(BlobStore store) {
-        return new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+        return new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
     }
     @FunctionalInterface interface AfterCall { Object apply(String method, Object[] arguments, Object result) throws Exception; }
     private static BlobStore intercept(AfterCall after) {
@@ -193,7 +193,7 @@ class DocumentPartStagerIT {
         var capabilities = new java.util.HashSet<>(opened.capabilities());
         capabilities.remove(ai.protomolt.proto.repo.blob.spi.BlobCapability.BOUNDED_READ);
         var unsupported = new OpenedBlobStore(opened.store(), () -> {}, capabilities,
-                opened::ensureNamespace, opened.reclaimer());
+                opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
         assertThatThrownBy(() -> serialStager(tx, GENERATION, identity, unsupported))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("bounded reads");
     }
