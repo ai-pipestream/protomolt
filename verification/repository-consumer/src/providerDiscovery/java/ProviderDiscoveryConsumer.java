@@ -68,7 +68,8 @@ public final class ProviderDiscoveryConsumer {
             require(opened.capabilities().equals(EnumSet.of(
                     BlobCapability.BOUNDED_READ, BlobCapability.LIST, BlobCapability.SERVER_SIDE_COPY,
                     BlobCapability.STREAMING_WRITE, BlobCapability.NON_EXPIRING_WRITES,
-                    BlobCapability.PHYSICAL_RECLAMATION, BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
+                    BlobCapability.PHYSICAL_RECLAMATION, BlobCapability.EXACT_VERSION_RECLAMATION,
+                    BlobCapability.AUTHORITATIVE_CONDITIONAL_READ,
                     BlobCapability.ATOMIC_CONDITIONAL_WRITE)),
                     "unexpected S3 capabilities: " + opened.capabilities());
         }
@@ -92,6 +93,14 @@ public final class ProviderDiscoveryConsumer {
                 BlobCapability.AUTHORITATIVE_CONDITIONAL_READ, BlobCapability.PHYSICAL_RECLAMATION,
                 BlobCapability.ATOMIC_CONDITIONAL_WRITE, BlobCapability.NON_EXPIRING_WRITES)),
                 "unexpected Redis capabilities: " + redis.capabilities());
+        require(!redis.capabilities().contains(BlobCapability.EXACT_VERSION_RECLAMATION),
+                "Redis has no immutable-version mechanism and must not claim exact-version reclamation");
+        try {
+            redis.exactVersionReclaimer().reclaim("bucket", "key", "version");
+            throw new AssertionError("Redis exact-version port must be unsupported");
+        } catch (UnsupportedOperationException expected) {
+            // no immutable-version mechanism: explicit refusal, never a fallback
+        }
         redis.close();
         redis.close();
         try {

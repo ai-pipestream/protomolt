@@ -72,7 +72,7 @@ class ManagedArchiveReadShutdownIT {
                             catch (InvocationTargetException failure) { throw failure.getCause(); }
                         });
                 return new OpenedBlobStore(blocked, () -> { providerClosed.set(true); backing.close(); },
-                        backing.capabilities(), backing::ensureNamespace, backing.reclaimer());
+                        backing.capabilities(), backing::ensureNamespace, backing.reclaimer(), backing.exactVersionReclaimer());
             }
         }));
         var config = new RepoServiceConfig(0,

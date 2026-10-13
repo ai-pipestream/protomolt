@@ -48,7 +48,7 @@ final class NativeMixedTrafficProbe {
         try (var transactions=telemetry.transactions(originalTx,dataSource)) {
         var tx=transactions.tx();
         var measuredStore = telemetry.wrap(provider.store());
-        var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer());
+        var measuredProvider = new OpenedBlobStore(measuredStore, provider, provider.capabilities(), provider::ensureNamespace, provider.reclaimer(), provider.exactVersionReclaimer());
         long budgetBytes = Long.parseLong(System.getenv("PROTOMOLT_NATIVE_BUDGET_BYTES"));
         if (budgetBytes < 1 || budgetBytes > 384_000_000) throw new IllegalArgumentException("Invalid payload budget");
         var budget = new PayloadBudget(budgetBytes);

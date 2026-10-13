@@ -46,7 +46,7 @@ class DocumentStagingBenchmarkIT {
             var identity = S3BackendIdentity.of(S3.getEndpoint().toString(), S3.getRegion(), true);
             new ManagedBackendLedger(tx).bind("benchmark", new ManagedBackendLedger.Profile(identity, "benchmark"));
             var counts = new Counts(opened.store());
-            var borrowed = new OpenedBlobStore(counts.store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+            var borrowed = new OpenedBlobStore(counts.store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
             var serial = new DocumentPartStager(tx, "benchmark", identity, borrowed, 256L * 1024 * 1024, 1);
             var parallel = new DocumentPartStager(tx, "benchmark", identity, borrowed, 256L * 1024 * 1024, 4);
             var csv = new StringBuilder("parts,bytes_per_part,path,sample,elapsed_nanos,puts,gets,cumulative_put_nanos,cumulative_get_nanos\n");

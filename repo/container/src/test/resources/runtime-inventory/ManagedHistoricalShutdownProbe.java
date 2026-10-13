@@ -36,7 +36,7 @@ public final class ManagedHistoricalShutdownProbe {
             public OpenedBlobStore open(Map<String, String> options) {
                 var actual = real.open(options);
                 return new OpenedBlobStore(gate.wrap(actual.store()), () -> { actual.close(); closes.incrementAndGet(); },
-                        actual.capabilities(), actual::ensureNamespace, actual.reclaimer());
+                        actual.capabilities(), actual::ensureNamespace, actual.reclaimer(), actual.exactVersionReclaimer());
             }
         };
         var config = new RepoServiceConfig(0, new LedgerConfig(System.getenv("PROTOMOLT_TEST_JDBC"),

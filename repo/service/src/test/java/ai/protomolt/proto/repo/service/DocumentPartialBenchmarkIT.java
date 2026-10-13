@@ -63,7 +63,7 @@ class DocumentPartialBenchmarkIT {
                             return result;
                         } catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
                     });
-            var borrowed = new OpenedBlobStore(measured, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+            var borrowed = new OpenedBlobStore(measured, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
             var reader = new DocumentPartReader((g, p) -> measured, 4, 64L * 1024 * 1024, budget);
             var writer = new DocumentAttemptWriter(tx, drives, "benchmark", profile.identity(), borrowed, budget);
             var engine = new DocumentOperations(documents, drives, tx, measured, new PartStorage(),
