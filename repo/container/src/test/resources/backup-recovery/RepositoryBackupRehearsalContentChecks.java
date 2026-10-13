@@ -233,5 +233,11 @@ final class RepositoryBackupRehearsalContentChecks {
         catch (Exception failure) { return failure.getClass().getSimpleName() + ": " + failure.getMessage(); }
     }
 
+    /** The failure an action raised, for typed-code and causal-chain assertions; null when it completed. */
+    static Exception thrown(Action action) {
+        try { action.run(); return null; }
+        catch (Exception failure) { return failure; }
+    }
+
     static ByteString bytes(byte[] value) { return ByteString.copyFrom(value); }
 }

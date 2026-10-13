@@ -1,10 +1,12 @@
 package ai.protomolt.proto.repo.container.ledger;
 
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
+import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.service.RepoServices;
 import ai.protomolt.proto.repo.spi.HistoricalMaterializationRepository;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.spi.RepositoryReadControl;
 import ai.protomolt.proto.repo.v1.*;
 import java.nio.file.Files;
@@ -72,6 +74,42 @@ public final class RepositoryBackupRehearsalRecoveredHost {
         var result = new TreeMap<String, Long>();
         values.forEach((key, value) -> result.put(key, value instanceof Number n ? n.longValue() : Long.parseLong(value.toString())));
         return result;
+    }
+
+    /**
+     * The typed refusal of a historical read that reached the provider and failed there: the
+     * repository code and constant public message, the retained provider failure with its own
+     * code, and the provider's HTTP status and error code as the root cause. Anything less
+     * specific — a pre-provider refusal, a substituted read, a missing cause — returns false.
+     */
+    private static boolean providerRefusal(Throwable failure, RepositoryException.Code code, String message,
+            BlobStoreException.Code providerCode, int providerStatus, String providerError) {
+        if (!(failure instanceof RepositoryException repository) || repository.code() != code || !message.equals(repository.getMessage())) return false;
+        if (!(repository.getCause() instanceof BlobStoreException provider) || provider.code() != providerCode
+                || !"Object provider rejected the read".equals(provider.getMessage())) return false;
+        for (Throwable cause = provider; cause != null; cause = cause.getCause())
+            if (cause instanceof software.amazon.awssdk.services.s3.model.S3Exception s3)
+                return s3.statusCode() == providerStatus && s3.awsErrorDetails() != null && providerError.equals(s3.awsErrorDetails().errorCode());
+        return false;
+    }
+
+    /**
+     * Causal evidence of one refusal: each link's type with its typed code, and the provider's
+     * status and error code at the root. Provider messages are not copied so request detail
+     * cannot leak endpoint or credential material into the markers.
+     */
+    private static String chain(Throwable failure) {
+        if (failure == null) return "OK";
+        var links = new ArrayList<String>();
+        for (Throwable cause = failure; cause != null && links.size() < 8; cause = cause.getCause()) {
+            var link = new StringBuilder(cause.getClass().getSimpleName());
+            if (cause instanceof RepositoryException repository) link.append('(').append(repository.code()).append(": ").append(repository.getMessage()).append(')');
+            else if (cause instanceof BlobStoreException provider) link.append('(').append(provider.code()).append(": ").append(provider.getMessage()).append(')');
+            else if (cause instanceof software.amazon.awssdk.services.s3.model.S3Exception s3)
+                link.append('(').append(s3.statusCode()).append(' ').append(s3.awsErrorDetails() == null ? "?" : s3.awsErrorDetails().errorCode()).append(')');
+            links.add(link.toString());
+        }
+        return String.join(" <- ", links);
     }
 
     private static void verify(RepositoryBackupRehearsalChecks checks, RepoServiceConfig config, RepositoryBackupRehearsalFixture.SwitchableSchemas offline,
@@ -338,16 +376,27 @@ public final class RepositoryBackupRehearsalRecoveredHost {
         }
         // Composition binds the backend identity from the ledger without a provider call, so the host starts;
         // the first provider read is where the credential is refused. Both facts are asserted, not just recorded.
+        // The refusal is the typed historical-read translation (RepositoryErrors.historicalProvider): the member's
+        // authorization already passed, so the provider's 403 is FAILED_PRECONDITION with the PERMISSION_DENIED
+        // provider failure on the cause chain, never a caller authorization code and never a substitute read.
         try (var host = open(config, offline, bundle)) {
             checks.pass("wrong-credentials.host", "host composition with the wrong provider secret succeeds (no provider call at composition)");
             var content = new RepositoryBackupRehearsalContentChecks(host, checks, identities, record);
             for (var revision : content.revisions()) {
                 String tag = RepositoryBackupRehearsalJson.string(revision, "tag");
                 String account = RepositoryBackupRehearsalJson.string(revision, "account");
+                var member = RepositoryBackupRehearsalFixture.member(account);
+                var address = RepositoryBackupRehearsalFixture.address(account);
                 var id = UUID.fromString(RepositoryBackupRehearsalJson.string(revision, "revisionId"));
-                String raw = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readRaw(RepositoryBackupRehearsalFixture.member(account),
-                        RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                checks.require(raw.startsWith("BlobStoreException") && raw.contains("rejected the read"), "wrong-credentials.history_refused." + tag, "readRaw -> " + raw);
+                var raw = RepositoryBackupRehearsalContentChecks.thrown(() -> host.historicalRepository().readRaw(member, address, id, NONE).close());
+                var validated = RepositoryBackupRehearsalContentChecks.thrown(() -> host.historicalRepository().readValidated(member, address, id, NONE).close());
+                checks.require(providerRefusal(raw, RepositoryException.Code.FAILED_PRECONDITION, "Original document backend refused the historical read",
+                        BlobStoreException.Code.PERMISSION_DENIED, 403, "SignatureDoesNotMatch")
+                        && providerRefusal(validated, RepositoryException.Code.FAILED_PRECONDITION, "Original document backend refused the historical read",
+                        BlobStoreException.Code.PERMISSION_DENIED, 403, "SignatureDoesNotMatch"),
+                        "wrong-credentials.history_refused." + tag,
+                        "readRaw -> " + chain(raw) + "; readValidated -> " + chain(validated)
+                        + "; no fallback storage, alternate credential or cached success: the provider's signature refusal reaches the caller typed, with its cause retained");
             }
         }
     }
@@ -358,13 +407,20 @@ public final class RepositoryBackupRehearsalRecoveredHost {
         var objects = RepositoryBackupRehearsalJson.list(record, "documentObjects");
         try (var client = RepositoryBackupRehearsalFixture.s3(endpoint)) {
             int absent = 0;
+            var kinds = new ArrayList<String>();
             for (var object : objects) {
                 String outcome = RepositoryBackupRehearsalContentChecks.outcome(() -> client.getObjectAsBytes(builder -> builder.bucket(RepositoryBackupRehearsalJson.string(object, "namespace"))
                         .key(RepositoryBackupRehearsalJson.string(object, "key")).versionId(RepositoryBackupRehearsalJson.string(object, "providerVersion"))));
-                if (outcome.startsWith("NoSuchKeyException") || outcome.startsWith("NoSuchVersionException") || outcome.startsWith("NoSuchBucketException")) absent++;
+                if (outcome.startsWith("NoSuchKeyException") || outcome.startsWith("NoSuchVersionException") || outcome.startsWith("NoSuchBucketException")) {
+                    absent++;
+                    kinds.add(outcome.substring(0, outcome.indexOf(':') < 0 ? outcome.length() : outcome.indexOf(':')));
+                }
                 else throw new RepositoryBackupRehearsalFailure("Unexpected provider outcome for a recorded version: " + outcome);
             }
-            checks.require(absent == objects.size(), "inconsistent-snapshot.provider_versions_absent", absent + "/" + objects.size() + " recorded versions absent from the other capture's provider");
+            // The seed qualifies bucket names per capture, so the other capture's volume has no such namespace.
+            checks.require(absent == objects.size() && kinds.stream().allMatch("NoSuchBucketException"::equals),
+                    "inconsistent-snapshot.provider_versions_absent", absent + "/" + objects.size()
+                    + " recorded versions absent from the other capture's provider; GET by exact recorded version -> " + kinds);
         }
         try (var database = new LedgerDatabase(config.ledger()); var host = open(config, offline, bundle)) {
             var content = new RepositoryBackupRehearsalContentChecks(host, checks, identities, record);
@@ -372,12 +428,20 @@ public final class RepositoryBackupRehearsalRecoveredHost {
                 String tag = RepositoryBackupRehearsalJson.string(revision, "tag");
                 String account = RepositoryBackupRehearsalJson.string(revision, "account");
                 var id = UUID.fromString(RepositoryBackupRehearsalJson.string(revision, "revisionId"));
-                String raw = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readRaw(RepositoryBackupRehearsalFixture.member(account),
+                // The version-exact read reaches the provider and fails there: NoSuchBucket maps to blob
+                // FAILED_PRECONDITION, whose historical translation stays FAILED_PRECONDITION. Neither read
+                // returns the other capture's current bytes or any substitute for the missing exact version.
+                var raw = RepositoryBackupRehearsalContentChecks.thrown(() -> host.historicalRepository().readRaw(RepositoryBackupRehearsalFixture.member(account),
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                String validated = RepositoryBackupRehearsalContentChecks.outcome(() -> host.historicalRepository().readValidated(RepositoryBackupRehearsalFixture.member(account),
+                var validated = RepositoryBackupRehearsalContentChecks.thrown(() -> host.historicalRepository().readValidated(RepositoryBackupRehearsalFixture.member(account),
                         RepositoryBackupRehearsalFixture.address(account), id, NONE).close());
-                checks.require(raw.startsWith("BlobStoreException") && raw.contains("rejected the read") && validated.startsWith("BlobStoreException"),
-                        "inconsistent-snapshot.history_refused." + tag, "readRaw -> " + raw + "; readValidated -> " + validated);
+                checks.require(providerRefusal(raw, RepositoryException.Code.FAILED_PRECONDITION, "Original document backend cannot serve the retained revision",
+                        BlobStoreException.Code.FAILED_PRECONDITION, 404, "NoSuchBucket")
+                        && providerRefusal(validated, RepositoryException.Code.FAILED_PRECONDITION, "Original document backend cannot serve the retained revision",
+                        BlobStoreException.Code.FAILED_PRECONDITION, 404, "NoSuchBucket"),
+                        "inconsistent-snapshot.history_refused." + tag,
+                        "readRaw -> " + chain(raw) + "; readValidated -> " + chain(validated)
+                        + "; exact recorded versions are absent from the other capture's namespace and no substitute bytes are served");
             }
             // SQL-only evidence is still the catalog's own: receipts replay from the ledger, the pending chain is intact.
             content.verifyReplay("inconsistent-snapshot");

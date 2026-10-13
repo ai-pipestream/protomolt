@@ -1,0 +1,19 @@
+RustFS behavior probe, 2026-10-12, pinned image rustfs/rustfs:1.0.0-beta.11-preview.1
+(throwaway container on 127.0.0.1:19091, aws CLI, versioning enabled):
+
+PUT documents/k1 -> VersionId 98a635be-7f55-4257-8dd7-11b67d5a205b
+GET no-such-bucket-xyz/documents/k1?versionId=<uuid>  -> NoSuchBucket (404 "The specified bucket does not exist")
+GET probe-bucket/documents/absent?versionId=<uuid>    -> NoSuchKey    ("The specified key does not exist.")
+GET probe-bucket/documents/k1?versionId=<unknown-uuid> -> NoSuchKey   ("The specified key does not exist.")
+
+Consequences for the rehearsal negatives:
+- inconsistent-snapshot: seed buckets are per-capture qualified (rehearsal-<account>-<suffix>),
+  so the substituted provider volume has no such namespace -> NoSuchBucket (404, not NoSuchVersion)
+  -> S3ObjectReads maps to BlobStoreException(FAILED_PRECONDITION, "Object provider rejected the read")
+  -> RepositoryErrors.historicalProvider -> RepositoryException(FAILED_PRECONDITION,
+     "Original document backend cannot serve the retained revision").
+- wrong-credentials: 403 SignatureDoesNotMatch
+  -> BlobStoreException(PERMISSION_DENIED, "Object provider rejected the read")
+  -> RepositoryException(FAILED_PRECONDITION, "Original document backend refused the historical read").
+- missing-version (passing, unchanged): the namespace exists and the exact version was deleted
+  -> NoSuchKey -> BlobNotFoundException -> DocumentPartReader.readPart -> DATA_LOSS.
