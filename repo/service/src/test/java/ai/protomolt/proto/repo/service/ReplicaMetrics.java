@@ -39,7 +39,7 @@ final class ReplicaMetrics {
                                 finally { record("provider_" + id() + "_" + method.getName(), System.nanoTime() - start, failed); }
                             });
                     // Preserve the opened handle's provisioning, reclamation and lifetime.
-                    return new OpenedBlobStore(measured, opened, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+                    return new OpenedBlobStore(measured, opened, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
                 } catch (RuntimeException | Error failure) {
                     try { opened.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
                     throw failure;

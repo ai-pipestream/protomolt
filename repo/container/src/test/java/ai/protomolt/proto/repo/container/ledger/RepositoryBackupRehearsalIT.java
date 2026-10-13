@@ -171,19 +171,19 @@ class RepositoryBackupRehearsalIT {
             String artifact = attachmentArtifact(record);
             try (var catalog = catalog(restored.postgres())) {
                 var constraint = new String[1];
-                catalog.query("SELECT conname FROM pg_constraint WHERE conrelid = 'repository_schema_artifacts'::regclass AND contype = 'c' "
-                        + "AND pg_get_constraintdef(oid) LIKE '%sha256(artifact_bytes)%'", List.of(), result -> constraint[0] = result.getString(1));
+                catalog.query("SELECT conname FROM pg_constraint WHERE conrelid = 'repository_schema_artifact_payloads'::regclass AND contype = 'c' "
+                        + "AND pg_get_constraintdef(oid) LIKE '%sha256(payload_bytes)%'", List.of(), result -> constraint[0] = result.getString(1));
                 assertThat(constraint[0]).isNotNull();
-                // Explicit isolated catalog corruption outside the immutable writer: the digest check and immutability guard are
+                // Explicit isolated payload corruption outside the immutable writer: the digest check and immutability guard are
                 // removed on this disposable copy only, so the retained bytes no longer match their recorded identity.
-                catalog.execute("ALTER TABLE repository_schema_artifacts DROP CONSTRAINT " + constraint[0]);
-                catalog.execute("ALTER TABLE repository_schema_artifacts DISABLE TRIGGER ALL");
-                catalog.execute("UPDATE repository_schema_artifacts SET artifact_bytes = artifact_bytes || '\\x00'::bytea WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
-                catalog.execute("ALTER TABLE repository_schema_artifacts ENABLE TRIGGER ALL");
+                catalog.execute("ALTER TABLE repository_schema_artifact_payloads DROP CONSTRAINT " + constraint[0]);
+                catalog.execute("ALTER TABLE repository_schema_artifact_payloads DISABLE TRIGGER ALL");
+                catalog.execute("UPDATE repository_schema_artifact_payloads SET payload_bytes = payload_bytes || '\\x00'::bytea WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
+                catalog.execute("ALTER TABLE repository_schema_artifact_payloads ENABLE TRIGGER ALL");
                 var sizes = new ArrayList<Long>();
-                catalog.query("SELECT octet_length(artifact_bytes) FROM repository_schema_artifacts WHERE encode(artifact_sha256,'hex') = '" + artifact + "'", List.of(), result -> sizes.add(result.getLong(1)));
+                catalog.query("SELECT octet_length(payload_bytes) FROM repository_schema_artifact_payloads WHERE encode(artifact_sha256,'hex') = '" + artifact + "'", List.of(), result -> sizes.add(result.getLong(1)));
                 assertThat(sizes).hasSize(2);
-                run.shell().note("corrupt-descriptor: artifact " + artifact + " bytes damaged in both accounts' catalog rows (digest check dropped on the disposable copy)");
+                run.shell().note("corrupt-descriptor: artifact " + artifact + " bytes damaged in both accounts' payload rows (digest check dropped on the disposable copy)");
             }
             record.put("injectedArtifact", artifact);
             run.log().pass("corrupt-descriptor.injected", "retained attachment descriptor " + artifact + " damaged on the disposable restored ledger");
@@ -195,11 +195,11 @@ class RepositoryBackupRehearsalIT {
         negativeRestore("missing-descriptor", null, (run, restored, record) -> {
             String artifact = attachmentArtifact(record);
             try (var catalog = catalog(restored.postgres())) {
-                catalog.execute("ALTER TABLE repository_schema_artifacts DISABLE TRIGGER ALL");
-                catalog.execute("DELETE FROM repository_schema_artifacts WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
-                catalog.execute("ALTER TABLE repository_schema_artifacts ENABLE TRIGGER ALL");
+                catalog.execute("ALTER TABLE repository_schema_artifact_payloads DISABLE TRIGGER ALL");
+                catalog.execute("DELETE FROM repository_schema_artifact_payloads WHERE encode(artifact_sha256,'hex') = '" + artifact + "'");
+                catalog.execute("ALTER TABLE repository_schema_artifact_payloads ENABLE TRIGGER ALL");
                 var remaining = new ArrayList<Long>();
-                catalog.query("SELECT count(*) FROM repository_schema_artifacts WHERE encode(artifact_sha256,'hex') = '" + artifact + "'", List.of(), result -> remaining.add(result.getLong(1)));
+                catalog.query("SELECT count(*) FROM repository_schema_artifact_payloads WHERE encode(artifact_sha256,'hex') = '" + artifact + "'", List.of(), result -> remaining.add(result.getLong(1)));
                 assertThat(remaining).containsExactly(0L);
                 run.shell().note("missing-descriptor: artifact " + artifact + " rows deleted with referential and immutability triggers disabled on the disposable copy");
             }
@@ -343,7 +343,7 @@ class RepositoryBackupRehearsalIT {
                         + " (the pending operation's journal rows are durable state, not process activity)");
                 fingerprints = catalog.tableFingerprints(); sequences = catalog.sequences(); counts = catalog.rowCounts(); level = catalog.migrationLevel();
                 maxXid = catalog.maxStoredXid(); xidColumns = catalog.xidColumns(); invariants = catalog.coverageInvariants(); schemaCatalog = catalog.schemaCatalog();
-                assertThat(level).isEqualTo(119);
+                assertThat(level).isEqualTo(120);
                 for (String key : List.of("certifiedAndUnresolved", "lineageAndUnresolved", "certifiedAndLineage", "certificateDiffersFromPreparation",
                         "certificateDiffersFromSealedHeader", "lineageDiffersFromInstallEdge", "lineageDiffersFromCertifiedAnchor",
                         "lineageDepthOrPredecessorInvalid", "preparationNotInExactlyOneState", "installXidNotBelowCurrent", "successorExecutions"))

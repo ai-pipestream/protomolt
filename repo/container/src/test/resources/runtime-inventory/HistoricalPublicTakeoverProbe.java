@@ -30,7 +30,7 @@ final class HistoricalPublicTakeoverProbe implements AutoCloseable {
                     }
                     return result;
                 });
-        observed = new OpenedBlobStore(store, () -> {}, backend.capabilities(), backend::ensureNamespace, backend.reclaimer());
+        observed = new OpenedBlobStore(store, () -> {}, backend.capabilities(), backend::ensureNamespace, backend.reclaimer(), backend.exactVersionReclaimer());
     }
 
     OpenedBlobStore opened() { return observed; }

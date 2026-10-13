@@ -1252,7 +1252,7 @@ public final class ScopedPublicationProbe {
                     throw new IllegalStateException("Publication selected an unconfigured backend");
                 return new DocumentPublicationRuntime.Backend(env.profile.identity(),
                         new OpenedBlobStore(writes, () -> {}, env.opened.capabilities(),
-                                env.opened::ensureNamespace, env.opened.reclaimer()));
+                                env.opened::ensureNamespace, env.opened.reclaimer(), env.opened.exactVersionReclaimer()));
             };
             this.reader = new ai.protomolt.proto.repo.engine.DocumentPartReader(
                     (generation, selected) -> env.opened.store(), 4, 1_000_000, budget);

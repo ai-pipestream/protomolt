@@ -133,7 +133,7 @@ public final class RepositoryBackupRehearsalRecoveredHost {
             var catalog = ledger.schemaCatalog();
             checks.require(catalog.equals(toLongs(RepositoryBackupRehearsalJson.object(record, "schemaCatalog"))), "restore.schema_catalog", "catalog digests=" + catalog.size());
             checks.require(ledger.migrationLevel() == RepositoryBackupRehearsalJson.number(RepositoryBackupRehearsalJson.object(manifest, "database"), "migrationLevel")
-                    && ledger.migrationLevel() == 119, "restore.migration_level", "flyway level V" + ledger.migrationLevel());
+                    && ledger.migrationLevel() == 120, "restore.migration_level", "flyway level V" + ledger.migrationLevel());
             checks.require(ledger.currentXid() > ledger.maxStoredXid(), "restore.xid_past_stored", "current=" + ledger.currentXid() + " maxStored=" + ledger.maxStoredXid());
         }
         try (var database = new LedgerDatabase(config.ledger()); var host = open(config, offline, bundle)) {

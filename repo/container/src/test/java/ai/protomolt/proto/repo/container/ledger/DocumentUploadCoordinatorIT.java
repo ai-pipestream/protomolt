@@ -1257,7 +1257,7 @@ class DocumentUploadCoordinatorIT {
 
     private static DocumentUploadCoordinator coordinator(BlobStore store, PayloadBudget budget, Duration age, int parallelism) {
         // A fault-injecting wrapper delegates to the real adapter; the underlying handle remains borrowed.
-        var borrowed = new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+        var borrowed = new OpenedBlobStore(store, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
         return new DocumentUploadCoordinator(tx, new DriveLedger(tx), budget, (generation, retained) -> {
             assertThat(generation).isEqualTo(GENERATION);
             assertThat(retained).isEqualTo(profile);

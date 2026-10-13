@@ -1194,7 +1194,7 @@ class DocumentPublicationCommitIT {
                     // Fault injection removes a real retained asset, not provider bytes.
                     tx.inTransaction(em->{
                         em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
-                        em.createNativeQuery("DELETE FROM repository_schema_artifacts WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
+                        em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
                                 .setParameter("account",fixture.command.intent().getAccountId())
                                 .setParameter("sha",proof.artifacts().keySet().iterator().next()).executeUpdate();
                     });
@@ -1288,7 +1288,7 @@ class DocumentPublicationCommitIT {
         // A second fresh JVM cannot use an earlier JVM's resolved descriptors.
         tx.inTransaction(em->{
             em.createNativeQuery("SET LOCAL session_replication_role='replica'").executeUpdate();
-            int removed=em.createNativeQuery("DELETE FROM repository_schema_artifacts WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
+            int removed=em.createNativeQuery("DELETE FROM repository_schema_artifact_payloads WHERE account_id=:account AND artifact_sha256=decode(:sha,'hex')")
                     .setParameter("account",fixture.command.intent().getAccountId()).setParameter("sha",customDescriptor).executeUpdate();
             assertThat(removed).isEqualTo(1);
         });
@@ -1336,7 +1336,7 @@ class DocumentPublicationCommitIT {
         try {
             artifactBlocker.getTransaction().begin();
             artifactBlocker.createNativeQuery("SET LOCAL lock_timeout='10s'").executeUpdate();
-            artifactBlocker.createNativeQuery("LOCK TABLE repository_schema_artifacts IN ACCESS EXCLUSIVE MODE").executeUpdate();
+            artifactBlocker.createNativeQuery("LOCK TABLE repository_schema_artifact_payloads IN ACCESS EXCLUSIVE MODE").executeUpdate();
             int artifactPid=((Number)artifactBlocker.createNativeQuery("SELECT pg_backend_pid()").getSingleResult()).intValue();
             var replay=new ai.protomolt.proto.repo.engine.DocumentHistoricalReader(parts,budget);
             var reading=executor.submit(()->{

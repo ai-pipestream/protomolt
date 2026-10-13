@@ -46,7 +46,7 @@ public final class DocumentCrashWorker {
                         if (mode.equals("put") && method.getName().equals("put")) Runtime.getRuntime().halt(71);
                         return result;
                     });
-            var borrowed = new OpenedBlobStore(intercepted, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer());
+            var borrowed = new OpenedBlobStore(intercepted, () -> {}, opened.capabilities(), opened::ensureNamespace, opened.reclaimer(), opened.exactVersionReclaimer());
             try (var stager = new DocumentPartStager(tx, generation, identity, borrowed, 256L * 1024 * 1024, 1)) {
                 stager.stage(plan, parts, Duration.ofSeconds(1), Map.of());
             }

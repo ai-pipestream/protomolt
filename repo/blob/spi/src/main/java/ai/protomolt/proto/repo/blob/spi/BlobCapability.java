@@ -16,5 +16,14 @@ public enum BlobCapability {
      */
     NON_EXPIRING_WRITES,
     /** Exact-key physical reclamation includes all historical versions and markers. */
-    PHYSICAL_RECLAMATION
+    PHYSICAL_RECLAMATION,
+    /**
+     * Deletion of exactly one immutable provider version of one object, never
+     * the whole key. Distinct from {@link #PHYSICAL_RECLAMATION}: whole-key
+     * availability never implies exact-version support. A handle advertises this
+     * only with a wired {@link ExactVersionReclaimer} port; re-wrapping a handle
+     * must explicitly forward the port or explicitly omit this capability.
+     * Constructors refuse an advertised capability without its port.
+     */
+    EXACT_VERSION_RECLAMATION
 }
