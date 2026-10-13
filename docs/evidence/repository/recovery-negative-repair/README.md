@@ -6,8 +6,9 @@
 `agent/recovery-negative-tests`.
 
 - Base: `8f79765942e03712599f9171968357ec53630428` (Forgejo/GitHub main when the
-  worktree was created; the branch tip at fix time).
-- Head: filled in at commit time (see the PR).
+  worktree was created; unchanged at submission).
+- Head: `b60d9f94ccc502813068f82a52ec562e70692df3` (the fix commit; this record
+  rides along on the branch tip).
 - Prior preserved baseline (read-only, copied with provenance):
   `/work/worktrees/protomolt/schema-payload-separation/docs/evidence/repository/2026-10-12-schema-payload-rehearsal-baseline/`
   documented the identical two failures on base `bed8cf29` and on schema branch
