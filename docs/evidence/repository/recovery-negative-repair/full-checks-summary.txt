@@ -1,0 +1,15 @@
+Full class run, fixed head, 2026-10-13T00-11-03Z run root repo/container/build/backup-rehearsal/2026-10-13T00-11-03.743108692Z
+JUnit: tests=12 skipped=0 failures=0 errors=0 (fixed-full-RepositoryBackupRehearsalIT.xml)
+
+run-1 -> PASS
+run-2 -> PASS
+negative-preflight -> PASS
+negative-inconsistent-snapshot -> PASS
+negative-missing-version -> PASS
+negative-corrupt-descriptor -> PASS
+negative-missing-descriptor -> PASS
+negative-wrong-endpoint -> PASS
+negative-new-generation -> PASS
+negative-wrong-credentials -> PASS
+negative-wrong-database-credentials -> PASS
+identity-gap -> PASS

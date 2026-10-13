@@ -1,0 +1,10 @@
+java.version=25.0.3
+java.vm.name=OpenJDK 64-Bit Server VM
+os=Linux 7.0.0-38-generic amd64
+docker.server=29.9.0
+postgres.image=postgres:18-alpine sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+rustfs.image=rustfs/rustfs:1.0.0-beta.11-preview.1 sha256:ea50257bc5e281e83170f49b84a109432d930f93bf5051c77d09105c5a62746b
+git.head=8f79765942e03712599f9171968357ec53630428
+git.status=M src/test/resources/backup-recovery/RepositoryBackupRehearsalContentChecks.java; M src/test/resources/backup-recovery/RepositoryBackupRehearsalRecoveredHost.java;?? ../../INSTRUCTIONS.md
+load.average=3.12 3.09 3.31 4/9039 81349
+bundle=/work/worktrees/protomolt/kimi-recovery-negative-tests/repo/container/build/admission-transport-runtime
