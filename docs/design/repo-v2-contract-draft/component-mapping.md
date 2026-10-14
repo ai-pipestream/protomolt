@@ -25,6 +25,7 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
 | D6 | Offset units allowed | UTF-8 byte, UTF-16 code unit, code point | These cover Java, Python and Rust. Unspecified is rejected. |
 | D7 | Catalog persistence library | **Open.** JDBC/HikariCP/Flyway is a candidate, not approved replacement work. | JDK-first does not by itself decide an existing persistence dependency. Demonstrate transaction semantics and dependency benefit before replacing it. |
 | D8 | v1 conditional-blob RPCs (`PutBlob`, `GetBlobForUpdate`, `CompareAndPutBlob`, `DeleteBlob`) | **Removed** | They contradict write-once stacks. If a caller depends on them, that has to be found before deletion. |
+| D10 | Persisted request metadata in retry identity | **Open.** Current draft includes it, requiring identical metadata on retries. | Exclusion would mean first committed metadata wins and retry metadata is ignored. Tracing belongs outside persisted document intent. |
 | D9 | Upload shape | One raw blob or encoded part per UploadDocument stream; the header names the same save operation. | Both use the canonical handler. This closes the structured-part transport gap without another storage API. General multi-payload streaming remains a review decision. |
 
 ## 2. What the contract does, in short
@@ -44,7 +45,7 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
   - Content in `document` for any part not listed as PUT is rejected, never dropped.
   - `sources` takes parts from exact revisions of other documents.
   - Everything else carries forward from the expected revision.
-- **Intent.** SHA-256 over versioned binary SaveIntent, including write actions and reasons, content identity, sources, metadata, provenance, drive selection, validation mode and exact schema selections. The encoding rules below are required; a list of fields alone is not a canonical encoding.
+- **Intent.** SHA-256 over versioned binary SaveIntent, including write actions and reasons, content identity, sources, metadata, provenance, drive selection, validation mode (metadata inclusion awaits D10). The encoding rules below are required; a list of fields alone is not a canonical encoding.
 - **Public manifest.** It lists every part with its state, size, SHA-256, the revision that wrote it, `segmentation_digest`, `opaque` and `content_included`. Stack references are internal (`StoredManifest` and `StackRef`).
 
 ### Error table
@@ -60,7 +61,7 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
 | `NOT_FOUND` | none | Exact revision, blob or document doesn't exist | n/a |
 | `DATA_LOSS` | none | Stored bytes fail their SHA-256 check | n/a |
 
-In `SaveDocuments`, the same code and detail arrive per item as `SaveError`.
+In `SaveDocuments`, the same code and detail arrive per item as `ItemError`.
 
 **Question.** Recording validation rejections as outcomes means a retry with fixed content must use a **new operation ID**. That follows from §7 ("a recorded failure such as a validation rejection"), but please confirm it's what you want.
 
@@ -293,7 +294,8 @@ implementation or introduce another normative requirements copy.
 
 SaveIntent covers the resolved address, expected revision, validation mode, ordered
 writes (including deletion reason and payload identity), sources, named drive,
-provenance, request metadata and explicit schema bindings. The account/operation ID
+provenance and request metadata (pending D10). Schema selections are server-owned
+revision evidence, not client inputs or intent fields. The account/operation ID
 is the lookup key; operation_kind prevents cross-operation reuse. Delete/purge must
 likewise bind their reasons and target in domain-separated binary intent before
 implementation; a save digest must never be compared to a delete digest.
@@ -301,8 +303,7 @@ implementation; a save digest must never be compared to a delete digest.
 For encoding version 1, use ascending field-number protobuf emission and deterministic
 serialization with an explicitly tested map-key order. Intent metadata entries sort
 by unsigned UTF-8 key bytes; duplicate keys are invalid. Writes/sources keep their
-request order because composition order is observable. Schema selections sort by
-canonical typed occurrence locator, with duplicates rejected. Normalize unspecified
+request order because composition order is observable. Normalize unspecified
 validation mode to TYPED. No JSON round trip. Reject unsupported unknown command
 fields before hashing instead of ignoring potentially meaningful new intent; this
 rule does not authorize dropping unknown fields in stored document payloads.
@@ -339,7 +340,7 @@ half-open ranges, actual substring/text correspondence and segment IDs.
   items. Durable operation lookup remains the save recovery mechanism.
 - UploadDocument accepts one raw blob OR encoded codec fragment, selected in its
   header. For encoded-part upload, the matching PUT's bytes are absent from the
-  inline Document; its header carries the retained fragment schema. All other PUTs
+  inline Document; the server obtains the fragment schema from its part layout. All other PUTs
   use the normal Document body. Both routes converge on the same composed validation
   and accession commit. Header-only metadata must not become a second content source.
 - Upload frames are one header, contiguous ordered data, then client half-close.
@@ -409,3 +410,68 @@ false/zero values, event revision kinds and CEL numeric types), same-type-URL
 occurrence bindings, equivalent-upload replay, source-text changes under the same
 field path, and distinct purge marked/completed deliveries. Compilation is not
 proof of those behaviors.
+
+### Review response: annotation and scope corrections
+
+The three field-level required annotations inside oneofs were incorrect and are
+removed; the oneofs remain required. Event operation IDs are required by CEL only
+for accession/tombstone events. The reviewer exercised these patterns with upstream
+Protovalidate; that is not a run of this draft through ProtoMolt’s validator.
+Client schema bindings and StreamedPart.schema are removed. Retained server-selected
+occurrence and fragment identities remain on RevisionValidation. Bulk errors now
+use ItemError. D7 and D10 await the user’s decision; this draft is not ready to push.
+
+Do not treat the proposed purge algorithm as qualified: a read of a purged flag
+alone cannot exclude a concurrent reference insertion. The catalog implementation
+must demonstrate a common transactional conflict point for commit and purge, with
+reference eligibility checked under the selected isolation semantics. Conditional
+SQL updates can acquire database row locks; there is no lock-free claim here.
+
+One UploadDocument stream commits one accession. Sequential uploads or SaveDocuments
+do not provide atomic multi-payload upload and must not be described as doing so.
+A neutral semantic-message package is a candidate for avoiding circular imports;
+it does not introduce a second service. Purge outcome lookup remains a contract
+review item, not implemented behavior. Move agreed handler rules into the sole
+requirements document once D7/D10 and the remaining contract decisions settle,
+then remove their duplicate draft prose.
+
+### Supplemental class dispositions from review
+
+This supplements §4 and overrides its broad retirement labels where they conflict.
+Paths below are module roots; class names identify the source files under src/main.
+These are design dispositions based on declarations, dependencies and selected bodies,
+not end-to-end qualification or permission to delete. Each adaptation still needs
+caller/test tracing before implementation.
+
+| Module / classes | Disposition and behavior to preserve |
+|---|---|
+| container/ledger: `DocumentAdmissionAuthorization`, `DocumentCreationAuthorization` | Adapt. Preserve authenticated account, current policy, creation, source and replay authorization. Remove coupling to publication owners only after these checks exist on canonical save/read/outcome paths. |
+| container/ledger: `DocumentUploadAuthority`, `RepositoryCreationGrants` | Replace lifecycle-specific representations. Current grants bind an exact publication command; do not blindly carry owner/attempt authority into the new catalog. Preserve explicit creation authority and deny-by-default provider access. |
+| container/ledger: `RepositoryCredentialAuthorities`; spi: `RepositoryCredentialBinding` | Keep/adapt credential identity and revocation checks. Credential generation is a security identity, not automatically a removable operation-owner generation. |
+| container/blob: `PartStorage` | Adapt descriptor-driven part fan-out and selection. Current split produces PartObject byte arrays, and methods take bucket/version-oriented parameters. This is not yet the streaming stack implementation; preserve parallelism and replace buffered payload ownership. |
+| container/ledger: `DocumentUploadCoordinator`, `DocumentUploadPlan`, `DocumentUploadPayloads`, `DocumentOperationUploadAdmission` | Fold useful placement, content matching, cancellation and provider completion behavior into the canonical upload/save operation. Replace command-member leases and buffered payload snapshots; no second upload lifecycle. |
+| container/ledger: `DocumentRecord`, `DocumentRowKind`, `DocumentStatus`, `RawObjectRecord` | Replace storage representations with catalog rows and protobuf manifests. Preserve address identity, ownership and raw claim checks. Existing DocumentRecord JSON manifest/security paths are not reusable persistence. |
+| container/ledger: `ListDocumentsFilter`, `ListDocumentsResult` | Adapt filtering, pagination and result roles to the new revision/catalog model; do not remove listing behavior with its old row type. |
+| container/ledger: `LedgerException` | Adapt typed failure translation and causes; check all callers before replacement. |
+| container/ledger: `DocumentSchemaPolicies` | Adapt host-selected policy reads and stale-policy rejection into the commit boundary; no client schema-selection authority. |
+| container/ledger: `DocumentSchemaRetention` | Adapt transactionally retained descriptor/provenance associations. Keep atomic linkage with the accession; remove command-member and attempt dependencies. |
+| container/ledger: `DocumentSchemaManifest` | Replace JSON encoding of retention sets with typed protobuf/catalog relations. Preserve complete expected-set checks. |
+| container/ledger: `DocumentSchemaBatch`, `DocumentSchemaUnion` | Adapt complete descriptor closure collection, identity conflict detection and resource accounting to one composed candidate. Do not inherit operation-wide constants as document size ceilings. |
+| container/ledger: `DocumentSchemaAdmissionBinding` | Replace pre-write operation-owner binding. Preserve the link between accepted candidate, policy and exact retained schema evidence on the accession. |
+| admission: `DocumentSchemaAssetCodec` | Keep/adapt binary provenance metadata encoding. Its checks do not authenticate compiler claims or establish source retention by themselves. |
+| container/ledger: `DocumentAdmissionSnapshot`, `DocumentDriveSnapshot`, `DocumentSourceSnapshot` | Replace lifecycle snapshots with explicit candidate/reference/catalog inputs. Preserve exact source identity and authorization; DocumentSourceSnapshot currently parses JSON manifests and records provider versions. |
+| container/ledger: `DocumentCommandContent`, `DocumentOperationCommands`, `DocumentOperationSelection` | Retire old restart-command and selection-attempt representations after canonical intent/outcome recovery is covered. DocumentOperationCommands already reads binary commands; retirement is about lifecycle, not a claim that every old helper used JSON. DocumentOperationSelection does encode internal Struct/JSON. |
+| container/ledger: `DocumentObservationFlusher`, `DocumentRecoveryPayloads` | Retire attempt observation queue and recovery payload clone lifecycle. Preserve cancellation/resource cleanup tests; cloned PartObject arrays are not a large-object strategy. |
+| container/ledger: `DocumentReuseAdmission` | Replace its JSON selection batching and publication fences. Preserve exact-reference eligibility, source authorization and atomic shared-reference publication in the catalog. |
+| container/ledger: `DocumentRetainedReader`, `DocumentRetainedReadPlan` | Adapt exact source, digest/length verification and cancellation behavior. Current port takes a pinned plan and returns buffered PartObject batches; it cannot be kept unchanged as the new streaming reader. |
+| container/ledger: `DocumentRetainedManifestEntries` | Replace JSON manifest extraction/batching with typed retained entries. Preserve complete requested-key matching and provenance by exact revision. |
+| container/ledger: `DocumentRuntimeArtifact`, `DocumentRuntimeClasspath`, `DocumentRuntimeInventory` | Preserve local provenance verification as candidate helpers, adapting their use only if retained validation provenance requires it. Actual caller is DocumentAssessmentRuntimeObserver; they inspect local artifacts/classpaths, not remote executable loading. They are not automatically part of document admission. |
+| history/grpc: `HistoricalOccurrenceClient` | Retire the separate history transport client after callers move. Preserve verified retained-schema decoding in canonical historical reads; history itself is not retired. |
+| service: `ManagedArchiveServices` | Frozen with the archive subsystem. Dependencies used here cannot be deleted merely because document code no longer needs them. |
+| blob/redis: `RedisBlobStore`, `RedisBlobStoreProvider`, `RedisBlobStoreConfig` | Provider decision remains open. If retained, adapt to stack capabilities and explicitly report provider limits, buffering, expiry and persistence requirements; none becomes a platform document ceiling. |
+| blob/redis: `RedisObjectKeys`, `RedisWriteMetadata` | Candidate reuse for injective key encoding and bounded metadata encoding, after checking compatibility with stack identity. |
+| blob/redis: `RedisObjectScripts`, `RedisWritePolicy`, `RedisBackendIdentity` | Adapt only if Redis is retained. Replace incompatible overwrite/version identity semantics; retain actual atomic operation guarantees without claiming script rollback or archival durability. |
+
+This explicitly covers the review's named classes and expands its unnamed Redis
+sub-classes. It does not certify the review's aggregate count of 48, or claim the
+entire module inventory has now passed call-path qualification.
