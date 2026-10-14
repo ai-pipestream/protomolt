@@ -2,9 +2,12 @@
 
 ## Start here: reuse and scope control
 
-- Removed repository design docs and evidence (tag docs-archive/2026-10-14) are
-  superseded. Do not restore or cite them;
+- Removed repository design docs and evidence (tag docs-archive/2026-10-14) are not
+  normative. Do not restore them. Old tests and evidence may be consulted only for
+  failure cases worth preserving.
   docs/design/parts-based-repository-requirements.md is the only repository design source.
+- Protomolt is JDK-first with minimal dependencies. No application framework (no
+  Quarkus, no Spring).
 - Before implementation, read the current user authorization and these three
   documents: [repository requirements](docs/design/parts-based-repository-requirements.md),
   [toolkit audit](docs/design/protobuf-toolkit-audit.md), and the relevant entries
