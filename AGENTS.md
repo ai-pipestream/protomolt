@@ -66,6 +66,11 @@
 - JSON is permitted at actual external boundaries and for metadata lookup
   projections in SQL. A projection must not replace authoritative protobuf
   content, erase unknown fields, or become a JSON round trip for validation.
+- JSON front ends (REST gateway, MCP, ACP, A2A) are edge adapters generated
+  from proto descriptors, never transports between our own services. A2A streams
+  well but is JSON-RPC over HTTP with JSON payloads by design; its gRPC binding
+  is newer and less widely used. Internal calls stay protobuf over gRPC. Any
+  internal doc for a JSON-facing surface repeats this boundary.
 - Preserve parts, field presence, unknown fields, exact numeric values, retained
   schema identities, Any bytes and validation annotations. Opaque storage does
   not establish typed validation. Do not silently use a newer schema for history.

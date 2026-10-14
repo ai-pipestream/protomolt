@@ -5,6 +5,18 @@ whose types are only known at runtime through a schema registry: with
 OpenAPI generated from the same registrations. The gateway itself is
 framework-agnostic; thin host modules bind it to an HTTP stack.
 
+## JSON boundary
+
+This surface is a JSON edge adapter generated from proto descriptors. It is
+not an internal transport. Services inside ProtoMolt talk to each other in
+protobuf over gRPC, and the protobuf message stays the source of truth behind
+every JSON request and response. The same rule applies to A2A (Agent2Agent).
+A2A streams well: `message/stream` sends task status and artifact updates over
+server-sent events, and push notifications cover long-running tasks. But it is
+JSON-RPC over HTTP with JSON payloads by design, and its gRPC binding is newer
+and less widely used. Expose A2A only as an outward-facing adapter generated
+from our proto definitions, never as a transport between our own services.
+
 ## JSON transcoding
 
 `ProtobufJsonTranscoder` (`protomolt-http-json`) converts between protobuf
