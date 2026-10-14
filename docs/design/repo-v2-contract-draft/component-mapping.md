@@ -2,9 +2,9 @@
 
 For Argon review only. These two draft files are committed on
 `reconcile/parts-based-repository`; no production contract or implementation is changed.
-Requirements v2.2 remain normative; this is their proposed contract mapping.
+Requirements v2.3 remain normative; this is their proposed contract mapping.
 
-- **Implements:** requirements v2.2 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
+- **Implements:** requirements v2.3 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
 - **Contract:** [document_service_v2_draft.proto](document_service_v2_draft.proto). It compiles with protoc against the v1 protos.
 
 > **Source caveat.** The original class inventory came from GitHub main and Javadoc
@@ -23,9 +23,9 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
 | D4 | Purge events | **Two events:** `PurgeMarked` when references are marked, `PurgeCompleted` when bytes are deleted. | This matches v1's requested/purged pair and lets compliance see when bytes are actually gone. |
 | D5 | Where segmentations live in `Document` | **New fields** `SearchMetadata.segmentations = 16` and `embedding_sets = 17`. Field 13 is reserved after the consumers move. | Additive, but it waits on the §16.2 consumer inventory. |
 | D6 | Offset units allowed | UTF-8 byte, UTF-16 code unit, code point | These cover Java, Python and Rust. Unspecified is rejected. |
-| D7 | Catalog persistence library | **Open.** JDBC/HikariCP/Flyway is a candidate, not approved replacement work. | JDK-first does not by itself decide an existing persistence dependency. Demonstrate transaction semantics and dependency benefit before replacing it. |
+| D7 | Catalog persistence library | **Decided:** JDBC + HikariCP + Flyway. | User selected this stack; preserve transaction semantics when implementation is authorized. |
 | D8 | v1 conditional-blob RPCs (`PutBlob`, `GetBlobForUpdate`, `CompareAndPutBlob`, `DeleteBlob`) | **Removed** | They contradict write-once stacks. If a caller depends on them, that has to be found before deletion. |
-| D10 | Persisted request metadata in retry identity | **Open.** Current draft includes it, requiring identical metadata on retries. | Exclusion would mean first committed metadata wins and retry metadata is ignored. Tracing belongs outside persisted document intent. |
+| D10 | Persisted request metadata in retry identity | **Decided:** persisted metadata is included and identical on retries. | Transport tracing stays outside durable intent. |
 | D9 | Upload shape | One raw blob or encoded part per UploadDocument stream; the header names the same save operation. | Both use the canonical handler. This closes the structured-part transport gap without another storage API. General multi-payload streaming remains a review decision. |
 
 ## 2. What the contract does, in short
@@ -45,7 +45,7 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
   - Content in `document` for any part not listed as PUT is rejected, never dropped.
   - `sources` takes parts from exact revisions of other documents.
   - Everything else carries forward from the expected revision.
-- **Intent.** SHA-256 over versioned binary SaveIntent, including write actions and reasons, content identity, sources, metadata, provenance, drive selection, validation mode (metadata inclusion awaits D10). The encoding rules below are required; a list of fields alone is not a canonical encoding.
+- **Intent.** SHA-256 over versioned binary SaveIntent, including write actions and reasons, content identity, sources, metadata, provenance, drive selection, validation mode and owner/opaque attestations. The requirements §7 encoding rules are required; a list of fields alone is not a canonical encoding.
 - **Public manifest.** It lists every part with its state, size, SHA-256, the revision that wrote it, `segmentation_digest`, `opaque` and `content_included`. Stack references are internal (`StoredManifest` and `StackRef`).
 
 ### Error table
@@ -55,7 +55,7 @@ Requirements v2.2 remain normative; this is their proposed contract mapping.
 | `ABORTED` | `RevisionConflict` (current revision, tombstone flag) | Stale expected revision, after the same-ID outcome re-read | No |
 | `ALREADY_EXISTS` | `OperationReuse` | Same operation ID, different intent | No |
 | `INVALID_ARGUMENT` | `SaveRejection` (`MALFORMED_REQUEST`, `VALIDATION_FAILED`, `INVALID_BYTES`, `UPLOAD_MISMATCH`) | Request structure or the composed candidate fails | Yes, for validation failures |
-| `FAILED_PRECONDITION` | `SaveRejection` (`SCHEMA_MISSING`, `SOURCE_PURGED`, `SOURCE_NOT_FOUND`, `SEGMENTATION_MISMATCH`) | The world isn't as the request assumes | Yes |
+| `FAILED_PRECONDITION` | `SaveRejection` (`SCHEMA_MISSING`, `SOURCE_PURGED`, `SOURCE_NOT_FOUND`, `SEGMENTATION_MISMATCH`, `OPAQUE_UNOWNED`, `OWNER_UNKNOWN`) | The world isn't as the request assumes | Yes |
 | `PERMISSION_DENIED` | `SaveRejection` (`OPAQUE_NOT_ALLOWED`) | Opaque mode requested, but host policy refuses it | Yes |
 | `UNAVAILABLE` | none | Registry or catalog unreachable | Never |
 | `NOT_FOUND` | none | Exact revision, blob or document doesn't exist | n/a |
@@ -71,7 +71,7 @@ In `SaveDocuments`, the same code and detail arrive per item as `ItemError`.
 repo/proto       canonical DocumentService (final package is open)
 repo/codec       parts codec: CORE/BLOBS/PARSED + CHUNKS per segmentation + EMBEDDINGS per set
 repo/stack       Stack interface (was blob/spi) + s3, redis, cache providers
-repo/catalog     proposed catalog boundary; PostgreSQL first, library choice open
+repo/catalog     proposed catalog boundary; PostgreSQL first, JDBC + HikariCP + Flyway
 repo/validation  composed-candidate validation, opaque handling, retained schemas (was admission)
 repo/engine      DocumentSaves, DocumentReads, Purges: orchestrates codec + stack + catalog + validation
 repo/service     DocumentService gRPC, HTTP upload route, DriveService, wiring/main
@@ -157,11 +157,11 @@ Legend: **keep** = candidate reuse, **adapt** = known change needed, **replace**
 
 | Class | Verdict | Change |
 |-------|---------|--------|
-| `JdbcEventOutbox`, `EventRelay` | adapt | Preserve caller-transaction enqueue and binary events. Persistence-library replacement waits for D7. |
+| `JdbcEventOutbox`, `EventRelay` | adapt | Preserve caller-transaction enqueue and binary events. Use the selected JDBC transaction boundary. |
 | `DocumentEventFactory`, `DocumentEventRecord` | adapt | One event per accession, listing changed parts. |
 | `DocumentIds` | keep | Deterministic call-number UUIDs. |
 | `LedgerDatabase`, `LedgerConfig`, `SqlTimeouts` | adapt | Pool, then the fresh baseline with its refuse guard. |
-| `Tx` | verify/adapt | Preserve rollback/isolation behavior; replacement depends on D7. |
+| `Tx` | verify/adapt | Preserve rollback/isolation behavior; adapt to the selected JDBC transaction boundary. |
 | `DocumentLedger` (578 lines) | replace | Becomes `PostgresCatalog`, with the commit transaction above. |
 | `RepositorySchemaArtifacts` | adapt | Schema artifact IDs stored on the revision. |
 | `DriveLedger`, `DriveRecord`, `DriveKeys` | keep | A drive resolves to the current stack ID. |
@@ -258,8 +258,8 @@ Legend: **keep** = candidate reuse, **adapt** = known change needed, **replace**
 
 ## 6. Correction record and required handler behavior (2026-10-14)
 
-This revision addresses the coordinator's seven review findings. It changes only
-these two draft files. It does not restore retired design documents, start an
+This revision addresses the coordinator's seven review findings. Its initial revision changed only
+the two draft files; the ownership revision also updates the sole requirements. It does not restore retired design documents, start an
 implementation or introduce another normative requirements copy.
 
 ### Validation and schemas
@@ -290,76 +290,12 @@ implementation or introduce another normative requirements copy.
   candidate never becomes typed-valid. Failed typed admission cannot retry internally
   as opaque. Registry outage and absent schema remain different failures.
 
-### Canonical intent and segmentation binding
+### Handler rules
 
-SaveIntent covers the resolved address, expected revision, validation mode, ordered
-writes (including deletion reason and payload identity), sources, named drive,
-provenance and request metadata (pending D10). Schema selections are server-owned
-revision evidence, not client inputs or intent fields. The account/operation ID
-is the lookup key; operation_kind prevents cross-operation reuse. Delete/purge must
-likewise bind their reasons and target in domain-separated binary intent before
-implementation; a save digest must never be compared to a delete digest.
-
-For encoding version 1, use ascending field-number protobuf emission and deterministic
-serialization with an explicitly tested map-key order. Intent metadata entries sort
-by unsigned UTF-8 key bytes; duplicate keys are invalid. Writes/sources keep their
-request order because composition order is observable. Normalize unspecified
-validation mode to TYPED. No JSON round trip. Reject unsupported unknown command
-fields before hashing instead of ignoring potentially meaningful new intent; this
-rule does not authorize dropping unknown fields in stored document payloads.
-
-Payload identities hash exact accepted part bytes. For streamed raw uploads, bind
-raw digest/length and supplied blob metadata, not the server-generated storage key;
-otherwise two equivalent uploads would falsely conflict. Physical object placement
-and incidental upload keys are excluded; the caller's named drive is included.
-Exact byte identity, not arbitrary semantic equivalence across re-encodings, is
-promised. Hashing must stream and must not impose whole-document buffering.
-
-A replay checks the stored operation before validating against changed live state.
-A same-ID race must resolve the competing transaction with a fresh snapshot before
-returning a stale-revision error. Success and recorded terminal rejection compete
-for the same account/operation uniqueness. Transient infrastructure failures are not
-immutable rejections. An authorized recorded rejection requires a new operation ID
-when the caller changes its intent.
-
-Segmentation identity remains ID plus digest; changing the content in a later
-accession does not require inventing another ID. TextSource now binds the resolved
-UTF-8 text's digest and length. Recompute/verify it against the composed candidate;
-changing the field contents while retaining the path cannot preserve old embeddings.
-SegmentationDigestInput uses the same versioned deterministic encoding rules and
-ordered segments. Include each segment's metadata in that input; exclude only
-segmentation-level lineage/metadata as documented. Verify the declared offset unit,
-half-open ranges, actual substring/text correspondence and segment IDs.
-
-### Streaming and events
-
-- ReadDocuments is a bidirectional bulk read on the same service. Each request_id
-  is unique within the stream; its manifest/parts/completion or error are correlated.
-  SaveDocuments also has a separate request_id, so concurrent same-operation retries
-  do not become ambiguous. Transport failure cannot promise outcomes for unfinished
-  items. Durable operation lookup remains the save recovery mechanism.
-- UploadDocument accepts one raw blob OR encoded codec fragment, selected in its
-  header. For encoded-part upload, the matching PUT's bytes are absent from the
-  inline Document; the server obtains the fragment schema from its part layout. All other PUTs
-  use the normal Document body. Both routes converge on the same composed validation
-  and accession commit. Header-only metadata must not become a second content source.
-- Upload frames are one header, contiguous ordered data, then client half-close.
-  Reject later headers, absent alternatives, negative lengths and checksum/length
-  mismatch; optional declared_length preserves zero versus absent. Do not commit on
-  cancellation or transport error. Host frame/buffer admission is separate from
-  document size. General multi-part streamed uploads remain an explicit review item.
-- A document read emits manifest first and completion only after all selected parts
-  pass retained digest/length checks. Each `last` flag is emitted after verification,
-  including an explicit final frame for an empty payload. Clients must not treat a
-  prefix or missing completion as success. Full blob success requires verified bytes
-  and RPC OK. Range reads must document whether they verify the whole retained object
-  or only return a range; do not label an unchecked range as full-object verification.
-- Stream transport does not make whole-message CEL evaluation constant-memory.
-  Describe any necessary decoded materialization and measure it. Raw-file streaming
-  must not depend on decoding the file or buffering it into a Document message.
-- All event deliveries deduplicate by event_id. PurgeMarked and PurgeCompleted use
-  different IDs; purge_id is their shared correlation identity. Accession consumers
-  may additionally deduplicate by address/revision.
+Requirements §§5–11 now own retry identity, ownership, opaque carry-forward,
+stream framing, event deduplication and concurrency semantics. This mapping does
+not maintain a second normative copy. Canonical intent fixtures and runtime
+validation remain unexecuted design acceptance work.
 
 ### Source checks and remaining review boundaries
 
@@ -381,8 +317,7 @@ a lifecycle does not automatically remove reusable validation, authorization,
 recovery or provider behavior in a class with a similar name.
 
 Argon review still needs to settle package/shared-message placement (avoid circular
-imports when v1 Document references new semantic types), persistence-library choice,
-semantic consumer mapping, exact canonical encoding fixtures, full annotation and
+imports when v1 Document references new semantic types), semantic consumer mapping, exact canonical encoding fixtures, full annotation and
 handler coverage, multi-payload streaming scope, and purge concurrency/progress
 lookup details. Neither v2 package naming nor this draft authorizes two public
 repository services. Retain the original aggregate/parts API concept.
@@ -419,21 +354,12 @@ for accession/tombstone events. The reviewer exercised these patterns with upstr
 Protovalidate; that is not a run of this draft through ProtoMolt’s validator.
 Client schema bindings and StreamedPart.schema are removed. Retained server-selected
 occurrence and fragment identities remain on RevisionValidation. Bulk errors now
-use ItemError. D7 and D10 await the user’s decision; this draft is not ready to push.
+use ItemError. D7 and D10 are now decided and recorded in requirements v2.3.
+No push or implementation is authorized.
 
-Do not treat the proposed purge algorithm as qualified: a read of a purged flag
-alone cannot exclude a concurrent reference insertion. The catalog implementation
-must demonstrate a common transactional conflict point for commit and purge, with
-reference eligibility checked under the selected isolation semantics. Conditional
-SQL updates can acquire database row locks; there is no lock-free claim here.
-
-One UploadDocument stream commits one accession. Sequential uploads or SaveDocuments
-do not provide atomic multi-payload upload and must not be described as doing so.
-A neutral semantic-message package is a candidate for avoiding circular imports;
-it does not introduce a second service. Purge outcome lookup remains a contract
-review item, not implemented behavior. Move agreed handler rules into the sole
-requirements document once D7/D10 and the remaining contract decisions settle,
-then remove their duplicate draft prose.
+Purge conflict handling and streaming limitations are specified in requirements
+§§7 and 11. Composite references remain a later proposal (§13), not a replacement
+for StackRef in this draft.
 
 ### Supplemental class dispositions from review
 
@@ -475,3 +401,51 @@ caller/test tracing before implementation.
 This explicitly covers the review's named classes and expands its unnamed Redis
 sub-classes. It does not certify the review's aggregate count of 48, or claim the
 entire module inventory has now passed call-path qualification.
+
+### Ownership and registry source inventory (2026-10-14)
+
+Checked on reconciliation base c75756ea4; this is source inspection, not runtime proof.
+
+- repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document.proto:
+  OwnershipContext already carries account, datasource, optional connector, security
+  and source owner. Reuse it for document ownership; SaveOwner describes the writer.
+- repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/manifest.proto:
+  WriteProvenance already carries module_id, node_id, graph_id and int64 graph_version.
+  Its existing documentation allows unknown attribution. The new handler must enforce
+  complete provenance for a step owner; importing it does not add those constraints.
+- repo/spi/src/main/java/ai/protomolt/proto/repo/spi/RepositoryCaller.java:
+  trusted-host caller identity includes account IDs, ACL identities and optional
+  credential binding. Request-supplied owner fields cannot manufacture that identity.
+- repo/spi/src/main/java/ai/protomolt/proto/repo/spi/DocumentAccessPolicy.java:
+  existing tenant/ACL checks distinguish READ/WRITE and reject unresolved inherited
+  policy. Its administrative processAuthority is explicit, not proof of step authority.
+- repo/container/src/main/java/ai/protomolt/proto/repo/container/ledger/DocumentAdmissionAuthorization.java:
+  requireCaller checks account/principal; authorizeReplay checks current read policy
+  separately from old write preconditions. Adapt these guarantees without importing
+  the old operation-owner/attempt lifecycle.
+- mesh/cluster/src/main/proto/ai/protomolt/proto/mesh/cluster/v1/cluster_directory_service.proto:
+  ClusterDirectoryService registers/discovers cluster nodes. A cluster machine node
+  is not established as a workflow step or authorized output producer by this API.
+- surface/grpc/workflow/src/main/proto/ai/protomolt/proto/grpc/workflow/v1/grpc_workflow.proto:
+  WorkflowStep names a dependency/method or structured generation target;
+  VersionedWorkflow contains an immutable slug version and workflow_fingerprint.
+  This is a useful definition/descriptor source, but its string version is not
+  WriteProvenance's numeric graph_version. No coercion or invented correspondence.
+- mesh/proto/src/main/proto/ai/protomolt/proto/mesh/v1/entity.proto:
+  ProfileReference provides name/version/fingerprint, not caller delegation to a step.
+
+**Missing verified connection:** no inspected API establishes all of exact graph
+version lookup, graph-node-to-module membership, authorized caller-to-step binding,
+and explicit allowed opaque output type URLs. An RPC response descriptor alone does
+not declare every possible Any payload type. Before implementation, map the existing
+versioned workflow/profile sources to this check, identify the actual authority
+provider, and define its unavailable/not-found/denied behavior. Only add a narrow
+library resolver/authorization interface if existing interfaces cannot supply it.
+Do not introduce a second public repository API or guess that the mesh does this.
+
+The draft records graph-definition digests on validation evidence and opaque owners,
+uses exact source revision/occurrence for opaque carry-forward, and binds normalized
+attestations plus owner/lineage/metadata into SaveIntent. New/changed opaque payloads
+on edits remain forbidden. Initial opaque creation requires a verified producing
+step, including when intake submits on that step's behalf. This is handler work,
+not a claim that protobuf annotations can authenticate provenance.

@@ -1,7 +1,7 @@
 // DRAFT FOR REVIEW ONLY. Committed documentation; not built into any module.
 // Compile qualification and remaining runtime checks are in component-mapping.md.
 //
-// Concrete contract for docs/design/parts-based-repository-requirements.md (v2.2).
+// Concrete contract for docs/design/parts-based-repository-requirements.md (v2.3).
 // Section references (§n) point at that document.
 //
 // Package choice is OPEN. repo.v2 isolates this review draft from production.
@@ -215,7 +215,43 @@ enum ValidationMode {
   VALIDATION_MODE_OPAQUE_ALLOWED = 2;
 }
 
+// Save attribution is checked against trusted caller identity, not self-authorized.
+message IntakeOrigin {
+  string datasource_id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string connector_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+message SaveOwner {
+  oneof owner {
+    option (buf.validate.oneof).required = true;
+    IntakeOrigin intake = 1;
+    ai.protomolt.proto.repo.v1.WriteProvenance step = 2;
+  }
+  // Step fields, exact registration and caller delegation are handler checks (§5).
+}
+message SourceRevision {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
+  int64 revision = 2 [(buf.validate.field).int64.gt = 0];
+}
+message OpaqueSource {
+  SourceRevision source = 1 [(buf.validate.field).required = true];
+  OccurrenceLocator occurrence = 2 [(buf.validate.field).required = true];
+}
+message OpaqueAttestation {
+  OccurrenceLocator occurrence = 1 [(buf.validate.field).required = true];
+  string type_url = 2 [(buf.validate.field).string.min_len = 1];
+  // Omitted means the save's step owner. Intake cannot be an opaque producer.
+  ai.protomolt.proto.repo.v1.WriteProvenance owner = 3;
+  // Required on edits; absent only for an initial opaque creation.
+  // Effective owner on carry-forward must equal retained producer attribution.
+  OpaqueSource carried_from = 4;
+}
+
 message SaveDocumentRequest {
+  option (buf.validate.message).cel = {
+    id: "explicit-opaque-mode"
+    message: "opaque attestations require OPAQUE_ALLOWED"
+    expression: "size(this.opaque_attestations) == 0 || this.validation_mode == 2"
+  };
   // Client-chosen, unique per account (the account of the target call number).
   // Required. The server records the outcome under (account_id, operation_id).
   string operation_id = 1 [(buf.validate.field).string.min_len = 1];
@@ -241,9 +277,9 @@ message SaveDocumentRequest {
   // configured for that drive; the stack ID is recorded, never exposed (§6).
   string drive = 8;
 
-  // v1 cluster_id / graph_id / crawl_id move here (graph_id already exists;
-  // crawl_id and cluster_id would be added to WriteProvenance).
-  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 9;
+  SaveOwner owner = 9 [(buf.validate.field).required = true];
+  repeated OpaqueAttestation opaque_attestations = 10;
+  repeated SourceRevision derived_from = 11;
 
   // Schema resolution is server-owned; retained bindings are output evidence.
   map<string, string> metadata = 99;
@@ -257,7 +293,7 @@ message SaveDocumentRequest {
 
 // Intent is SHA-256 of the versioned canonical protobuf SaveIntent below.
 // Handler rules for canonical ordering, unknown fields and upload normalization
-// are specified in component-mapping.md. No JSON or physical-key hashing.
+// are specified in requirements §7. No JSON or physical-key hashing.
 message IntentMetadata { string key = 1; string value = 2; }
 message IntentWrite {
   PartWrite write = 1;
@@ -272,13 +308,20 @@ message SaveIntent {
   repeated IntentWrite writes = 5;
   repeated PartSource sources = 6;
   string drive = 7;
-  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 8;
-  repeated IntentMetadata metadata = 9;
+  SaveOwner owner = 8 [(buf.validate.field).required = true];
+  repeated IntentMetadata metadata = 9; // Persisted metadata, never transport tracing.
+  repeated OpaqueAttestation opaque_attestations = 10;
+  repeated SourceRevision derived_from = 12;
   // Domain separation: save/delete/purge must not share an intent namespace.
   string operation_kind = 11 [(buf.validate.field).string.const = "save"];
 }
 
 message Accession {
+  option (buf.validate.message).cel = {
+    id: "save-owner-present"
+    message: "save accessions require an owner"
+    expression: "this.tombstone || has(this.owner)"
+  };
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
   int64 revision = 2 [(buf.validate.field).int64.gt = 0];
   int64 previous_revision = 3 [(buf.validate.field).int64.gte = 0];  // 0 when the document is new
@@ -286,6 +329,8 @@ message Accession {
   DocumentManifest manifest = 5 [(buf.validate.field).required = true];
   RevisionValidation validation = 6 [(buf.validate.field).required = true];
   bool tombstone = 7;
+  SaveOwner owner = 8; // Required for saves; delete remains an authenticated tombstone.
+  repeated SourceRevision derived_from = 9;
 }
 
 message SaveDocumentResponse {
@@ -509,7 +554,7 @@ message RevisionSummary {
   int64 previous_revision = 2 [(buf.validate.field).int64.gte = 0];
   google.protobuf.Timestamp committed_at = 3;
   string operation_id = 4 [(buf.validate.field).string.min_len = 1];
-  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 5;
+  SaveOwner owner = 5; // Present for save revisions; preserves intake or step attribution.
   bool tombstone = 6;
   ValidationStatus validation_status = 7 [(buf.validate.field).enum = {defined_only: true, not_in: 0}];
   repeated PartChange changes = 8;
@@ -558,7 +603,7 @@ message PartManifestEntry {
   int64 size_bytes = 3 [(buf.validate.field).int64.gte = 0];
   string sha256 = 4 [(buf.validate.field).string.pattern = "^([0-9a-f]{64})?$"];
   int64 written_in_revision = 5 [(buf.validate.field).int64.gt = 0];  // the accession that wrote these bytes
-  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 6;
+  SaveOwner owner = 6 [(buf.validate.field).required = true];
   string deleted_reason = 7;
   // CHUNKS: the segmentation's digest. EMBEDDINGS: the digest it is bound to.
   string segmentation_digest = 8 [(buf.validate.field).string.pattern = "^([0-9a-f]{64})?$"];
@@ -607,9 +652,12 @@ message PartSchemaBinding {
 message OpaqueOccurrence {
   OccurrenceLocator occurrence = 1 [(buf.validate.field).required = true];
   reserved 2; // No ambiguous text path as authoritative identity.
-  string type_url = 3;
+  string type_url = 3 [(buf.validate.field).string.min_len = 1];
   string sha256 = 4 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   int64 length = 5 [(buf.validate.field).int64.gte = 0];
+  ai.protomolt.proto.repo.v1.WriteProvenance owner = 6 [(buf.validate.field).required = true];
+  OpaqueSource carried_from = 7; // Server-verified source, not a client success flag.
+  string owner_definition_sha256 = 8 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
 }
 
 enum RuleResultState {
@@ -640,6 +688,8 @@ message RevisionValidation {
   string candidate_sha256 = 6 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string policy_sha256 = 7 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string validator_profile = 8 [(buf.validate.field).string.min_len = 1];
+  // Required for step-owned saves; absent for intake. Handler verifies the definition.
+  optional string owner_definition_sha256 = 9 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
 }
 
 // ============================================================================
@@ -670,6 +720,8 @@ enum RejectionReason {
   REJECTION_REASON_SOURCE_NOT_FOUND = 7;       // PartSource revision/part does not exist
   REJECTION_REASON_SEGMENTATION_MISMATCH = 8;  // embedding set bound to a changed segmentation
   REJECTION_REASON_UPLOAD_MISMATCH = 9;        // declared length or SHA-256 differs
+  REJECTION_REASON_OPAQUE_UNOWNED = 10;
+  REJECTION_REASON_OWNER_UNKNOWN = 11;
 }
 
 message FieldViolation {
@@ -924,6 +976,11 @@ message StoredPartEntry {
 // What the catalog stores per accession. Replaces today's JSON manifest,
 // security and history metadata.
 message StoredManifest {
+  option (buf.validate.message).cel = {
+    id: "save-owner-present"
+    message: "save accessions require an owner"
+    expression: "this.tombstone || has(this.owner)"
+  };
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
   int64 revision = 2 [(buf.validate.field).int64.gt = 0];
   int64 previous_revision = 3 [(buf.validate.field).int64.gte = 0];
@@ -932,4 +989,6 @@ message StoredManifest {
   RevisionValidation validation = 6 [(buf.validate.field).required = true];
   string operation_id = 7 [(buf.validate.field).string.min_len = 1];
   string intent_sha256 = 8 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  SaveOwner owner = 9; // Required for save accessions, not delete tombstones.
+  repeated SourceRevision derived_from = 10;
 }

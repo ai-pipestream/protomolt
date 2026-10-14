@@ -1,6 +1,6 @@
 # Parts-based repository requirements
 
-**Draft v2.2, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
+**Draft v2.3, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
 `reviews/parts-requirements-review.md`, "Decisions agreed with Kristian"). It replaces v1
 at `docs/design/parts-based-repository-requirements.md`. This is the only repository
 design source. Removed design docs and evidence (tag `docs-archive/2026-10-14`) are
@@ -45,6 +45,8 @@ bulk streaming; swappable stacks and catalog; typed validation; Kafka events.
 **Runtime:** protomolt is JDK-first with minimal dependencies. The repository service
 uses no application framework (no Quarkus, no Spring), as `repo/README.md` states.
 Quarkus was the pipestream standard, not protomolt's.
+The PostgreSQL catalog uses JDBC + HikariCP + Flyway (selected by Kristian).
+This decision does not authorize implementation in the current documentation review.
 
 ## 4. Use cases
 
@@ -91,6 +93,13 @@ A document may hold many segmentations. Example: sentences, embedded with model2
 semantic chunks derived from those sentence vectors over normalized text, then embedded
 with several models.
 
+The source text binding records the SHA-256 and UTF-8 length of the actual resolved
+text, not only its field path. Recompute it against the composed candidate. The
+segmentation digest includes kind, source binding, offset unit and ordered segments
+including segment metadata; it excludes top-level lineage/metadata. Verify ranges,
+text correspondence and exact segment/vector coverage; transport validation alone
+cannot establish these relationships.
+
 ### Identities
 - **Call number** (`NodeAddress`): the logical document.
 - **Revision:** a per-document revision number. Used for history, exact reads and expected-revision checks.
@@ -98,6 +107,32 @@ with several models.
 - **Part and segmentation/embedding-set selectors.**
 
 Stack references and backend details are internal, not public identities.
+
+### Save ownership and provenance
+
+Every save has a required SaveOwner: intake origin or producing step. Document
+ownership remains the existing OwnershipContext; save ownership identifies the
+writer, not a transfer of tenancy or ACLs. Intake datasource and optional connector
+must match the document's ownership and authenticated caller's authority. A step
+reuses WriteProvenance (module, node, graph ID, exact graph version). The host must
+verify both node membership in that immutable graph version and caller authority
+to act for that step. Registration alone is not authorization.
+
+Authorized intake and steps may create documents. A step creating a derived document
+records exact source document/revision lineage; PartSource remains a separate choice
+about reusing bytes, not a mandatory copy operation. Non-derived step creation still
+requires explicit creation authority. There is no intake-only creation restriction.
+Changed parts record the SaveOwner; unchanged parts preserve their original writer.
+The accession records its save owner and source lineage, including metadata-only saves.
+
+Missing owner is INVALID_ARGUMENT/MALFORMED_REQUEST; an unknown registered step is
+FAILED_PRECONDITION/OWNER_UNKNOWN; caller impersonation or denied access is
+PERMISSION_DENIED. Registry unavailability is UNAVAILABLE, never a recorded terminal
+rejection. Authorization failures must not reserve another caller's operation ID.
+Persist the verified graph definition digest with revision validation evidence so an
+accepted attribution is not dependent on a mutable name lookup. The existing mesh
+and workflow APIs have not yet been shown to supply the full verification boundary;
+see the component mapping's source inventory before implementing it.
 
 ## 6. Stacks
 
@@ -159,6 +194,30 @@ states:
   request may still commit later;
 - **lookup unavailable**, when the catalog cannot be reached.
 
+**Retry identity.** Persisted request metadata, SaveOwner, exact source lineage and
+opaque attestations are part of the intent. They must remain identical on retries.
+Trace IDs, connection details and transport diagnostics belong in request context,
+not persisted request metadata, and do not affect the intent. An authorized replay
+returns the recorded result without re-resolving its original graph definition or
+re-validating content against changed live schemas. Current access is still checked.
+
+Canonical intent encoding is versioned binary protobuf with operation-kind domain
+separation. Emit fields in field-number order, sort metadata by unsigned UTF-8 key,
+and normalize unspecified validation mode to TYPED. Preserve write/source order;
+reject duplicate selectors. Normalize omitted attestation owner to SaveOwner and
+sort attestations by their typed occurrence locator; duplicate locators are invalid.
+Bind exact content SHA-256 and length, never generated storage keys or piece layout.
+Reject unsupported command fields rather than silently omitting them from identity;
+this does not authorize dropping unknown fields from document content. Canonical
+encoding requires cross-language fixtures before implementation approval.
+Concurrent outcome rereads require a fresh transaction snapshot after the winner
+resolves. A failed transaction's snapshot is not proof that no outcome exists.
+
+**Purge concurrency.** Commit and purge must share a transactional conflict point
+that prevents new references to an object selected for deletion. A plain read of a
+purged flag is insufficient. Specify and test the isolation/conflict behavior for
+each catalog. Conditional SQL updates can take row locks; do not call this lock-free.
+
 **Portability.** The commit uses only operations every supported catalog provides. A
 store-specific feature such as row locks may improve performance but may not be needed
 for correctness.
@@ -191,16 +250,33 @@ Shared database indexes, connections and storage still contend, and are measured
 - Historical reads decode with the schema retained at save time.
 - **Typed by default.** An `Any` that cannot be resolved fails the save, with distinct
   errors for missing schema, registry outage and invalid bytes.
-- **Opaque mode.** An explicit per-request choice, allowed only by host policy. The
-  unresolved `Any` is stored like raw bytes: type URL plus the exact bytes, hashed, never
-  decoded. A failed typed attempt never falls back to opaque. A typed read of an opaque
-  payload fails clearly.
-  - Everything except the payload's contents is still checked: request structure,
-    ownership and access, references, and envelope rules.
-  - The revision records which occurrences are opaque, as well as an overall status.
-  - A required rule that needs an opaque payload's contents is recorded as not
-    evaluated, so the revision is never reported as typed-valid. It is never silently
-    skipped or counted as passed.
+- **Explicit opaque occurrences.** OPAQUE_ALLOWED plus host policy permits only
+  specifically attested occurrences. Other Any values written by the save remain
+  typed. Store the terminal opaque Any's exact type URL and value bytes, SHA-256 and
+  length without decoding its value. Failed typed validation never falls back to opaque.
+- On initial creation, each new opaque occurrence requires a producing step owner
+  authorized for the caller and a declaration of that type URL in that step's exact
+  output contract. Intake ownership alone cannot attest opaque content. Intake may
+  supply a distinct producing-step attestation only when authorized to do so; otherwise
+  the content must be typed. This permits responsible attribution without pretending
+  that an output-type declaration validates the payload.
+- On edits, only previously recorded opaque occurrences may remain opaque, unchanged.
+  New or changed Any values must be typed. Each carried occurrence records its exact
+  source address, revision and occurrence, with the same type URL and value digest/
+  length. The server checks authorized retained evidence and byte identity; a client
+  flag or digest claim is insufficient. Opaque content may move within a changed part
+  only with that explicit source binding. Purged or missing sources cannot qualify it.
+- Whole unchanged parts keep their references without re-decoding just to establish
+  carry-forward. Typed sibling content may still be decoded if a cross-part rule needs
+  it. Opaque payload bytes are never decoded, including for cross-part validation.
+- Structure, envelope, ownership, source access and references are still validated.
+  Missing or mismatched opaque ownership fails FAILED_PRECONDITION/OPAQUE_UNOWNED.
+  Registry outages remain UNAVAILABLE and are not terminal recorded outcomes.
+- Record the effective owner and graph-definition digest with each opaque occurrence.
+  Carried occurrences preserve the original producer attribution. The revision is
+  OPAQUE_ACCEPTED, never TYPED_VALID. A rule needing opaque contents is explicitly
+  NOT_EVALUATED. Typed reads refuse opaque content unless the caller explicitly asks
+  for its opaque representation; that representation makes no typed-valid claim.
 
 ## 10. Data formats and events
 
@@ -217,7 +293,9 @@ Shared database indexes, connections and storage still contend, and are measured
 - **Events.** Every accession writes exactly one durable outbox event, a registered
   protobuf `DocumentEvent`, in the commit transaction. It carries the call number, revision, previous revision, and the changed parts,
   segmentations and embedding sets. Delivery is at-least-once, so the
-  same event may arrive more than once; consumers deduplicate by call number plus revision. Tombstones and purges emit their own events.
+  same event may arrive more than once; consumers deduplicate by call number plus revision. Tombstones and purges emit their own events. All events have a stable event_id for
+  delivery deduplication. PurgeMarked and PurgeCompleted have distinct event IDs and
+  share a purge_id for correlation; purge_id alone is not a deduplication key.
 
 ## 11. Size and streaming
 
@@ -231,6 +309,17 @@ Shared database indexes, connections and storage still contend, and are measured
   are surfaces onto the same upload operation, with the same claim check, validation and
   accession behaviour.
 - Stack limits, such as Redis's value cap, never become platform limits.
+
+A single UploadDocument stream supplies one raw blob or one encoded codec fragment:
+exactly one header, ordered data, then client half-close. The server derives the
+fragment schema from the part layout. Reject duplicate headers, mismatched digest/
+length, and incomplete uploads. Other PUTs use the inline Document. Sequential uploads
+and SaveDocuments are separate accessions, not atomic multi-payload streaming.
+ReadDocument emits a manifest, verified part frames, and a completion frame. A prefix
+is not success. Full blob success requires verified bytes and successful RPC completion;
+a range is not whole-object integrity proof unless the implementation verifies it.
+Streaming transport does not make whole-message CEL evaluation constant-memory;
+measure decoded materialization separately from frame buffers.
 
 ## 12. Surfaces
 
@@ -248,6 +337,11 @@ The separate history and publication gRPC services are removed. History lives on
 - **Retention.** Delete in-between revisions, keeping the newest and optionally the
   original. It must be an offline job that deletes a part's bytes only when no kept
   revision references them.
+- **Composite object references (proposal, not approved for slice 1).** Ordered pieces
+  on immutable stack identities, per-piece and whole-object digests, piece-level shared
+  reference accounting, and range mapping require a separate reviewed extension.
+  StackRef remains single-object in this contract. Do not silently accept multi-piece
+  references or claim sequential uploads provide this feature.
 - **MongoDB catalog.**
 - **Azure stacks.**
 - **A2A and GraphQL surfaces.**
@@ -310,7 +404,8 @@ correctness and RustFS for performance measurements.
 9. Each accession writes one outbox event listing what changed. An outbox relay retry
    produces duplicate delivery but no duplicate catalog event.
 10. A 600 MB raw file streams in and out through both gRPC and HTTP with bounded heap,
-    including a slow reader and cancellation mid-stream.
+    testing upload and download separately, each with backpressure/slow consumption
+    and cancellation mid-stream.
 
 **Recovery cases:**
 
@@ -325,6 +420,16 @@ correctness and RustFS for performance measurements.
 16. Purging one document leaves an object it shares with another document readable.
 17. An outcome lookup for a cancelled request that never committed returns "no recorded
     outcome".
+
+18. Missing owner, unauthorized step impersonation, unknown graph version and registry
+    outage are distinct failures; unauthorized attempts cannot claim an operation ID.
+19. Explicit opaque creation checks producer output declaration; edits preserve only
+    verified prior opaque bytes. Changed/new opaque attempts fail, and no typed failure
+    is converted to opaque success. Retained attribution survives registry changes.
+20. Persisted metadata/owner/lineage changes conflict on retry; a different transport
+    trace ID does not. Authorized replay needs no live graph lookup.
+21. Save/purge races on shared objects cannot commit a reference to deleted bytes.
+    Exercise both transaction orderings, not just sequential flag checks.
 
 ## 16. Open questions
 
