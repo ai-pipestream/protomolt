@@ -1,6 +1,6 @@
 # Parts-based repository requirements
 
-**Draft v2.3, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
+**Draft v2.4, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
 `reviews/parts-requirements-review.md`, "Decisions agreed with Kristian"). It replaces v1
 at `docs/design/parts-based-repository-requirements.md`. This is the only repository
 design source. Removed design docs and evidence (tag `docs-archive/2026-10-14`) are
@@ -114,9 +114,43 @@ Every save has a required SaveOwner: intake origin or producing step. Document
 ownership remains the existing OwnershipContext; save ownership identifies the
 writer, not a transfer of tenancy or ACLs. Intake datasource and optional connector
 must match the document's ownership and authenticated caller's authority. A step
-reuses WriteProvenance (module, node, graph ID, exact graph version). The host must
-verify both node membership in that immutable graph version and caller authority
-to act for that step. Registration alone is not authorization.
+reuses WriteProvenance for recorded attribution. Module ID is required; node, graph
+ID and graph version may be supplied but graph membership/version is not verified
+in slice 1. A graph registry is not a prerequisite and no numeric/string workflow
+version conversion is implied.
+
+**Writer grants (W1).** A trusted administrator provisions an immutable WriterGrant
+for one account and one exact authenticated credential binding (issuer, credential
+ID and generation). It names either an intake datasource/optional connector or a
+step module/optional node. An absent node restriction covers that module's nodes;
+a present node requires an exact match. An absent connector restriction covers the
+specified datasource; when present it must match the resolved connector. Neither
+omission permits another account, datasource or module. Document ownership and
+ACL checks remain mandatory. The request cannot install a grant or supply trusted
+credential identity. Process authority is not an implicit writer grant.
+
+The grant declares whether it permits creation and its exact opaque_type_urls
+(no wildcard or prefix matching). Only step grants may list opaque types. A type
+allowance establishes authorized attribution, never payload validity. Changes to
+scope create a new grant ID; revocation is a separate monotonic catalog state.
+IDs are never reused. Provisioning requires administrator authority, outside the
+public DocumentService; no new grant-management RPC is introduced in this slice.
+
+The server selects a matching active grant for the save and, where necessary, each
+opaque producer. Multiple eligible grants are resolved by unsigned UTF-8 lexicographic grant ID,
+not database row order. Grant selection is server evidence, not caller intent.
+Every grant authorizing the new write (not historical producer evidence) is rechecked in the commit transaction against
+revocation and credential validity. Commit and revocation must share an enforceable
+transactional conflict boundary: revocation committed first prevents the save;
+a save committed first remains valid historical evidence. A pre-upload check or
+cached grant alone is insufficient. Do not hold this transaction during upload.
+
+Retain the exact binary WriterGrant snapshot plus its SHA-256, ID and retained
+schema artifact reference as evaluated.
+The digest covers snapshot bytes, not mutable revocation state. Immutable snapshots
+may be normalized by identity/digest, but revisions must retain their associations.
+Historical verification uses retained evidence, not a live grant lookup. Revocation
+does not delete prior evidence or rewrite producer ownership.
 
 Authorized intake and steps may create documents. A step creating a derived document
 records exact source document/revision lineage; PartSource remains a separate choice
@@ -125,14 +159,12 @@ requires explicit creation authority. There is no intake-only creation restricti
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
 The accession records its save owner and source lineage, including metadata-only saves.
 
-Missing owner is INVALID_ARGUMENT/MALFORMED_REQUEST; an unknown registered step is
-FAILED_PRECONDITION/OWNER_UNKNOWN; caller impersonation or denied access is
-PERMISSION_DENIED. Registry unavailability is UNAVAILABLE, never a recorded terminal
-rejection. Authorization failures must not reserve another caller's operation ID.
-Persist the verified graph definition digest with revision validation evidence so an
-accepted attribution is not dependent on a mutable name lookup. The existing mesh
-and workflow APIs have not yet been shown to supply the full verification boundary;
-see the component mapping's source inventory before implementing it.
+Missing owner is INVALID_ARGUMENT/MALFORMED_REQUEST. An owner with no grant in the
+account is FAILED_PRECONDITION/OWNER_UNKNOWN; a revoked grant, invalid credential,
+or caller without a matching grant is PERMISSION_DENIED. Error details must not
+expose another credential's grants. Unavailable grant/catalog authority is
+UNAVAILABLE, never a recorded terminal rejection. Authorization failures do not
+reserve operation IDs. Schema-registry failures remain separate from grant lookup.
 
 ## 6. Stacks
 
@@ -198,8 +230,8 @@ states:
 opaque attestations are part of the intent. They must remain identical on retries.
 Trace IDs, connection details and transport diagnostics belong in request context,
 not persisted request metadata, and do not affect the intent. An authorized replay
-returns the recorded result without re-resolving its original graph definition or
-re-validating content against changed live schemas. Current access is still checked.
+returns the recorded result without requiring the original writer grant to remain
+active or re-resolving historical authority, and without re-validating content against changed live schemas. Current access is still checked.
 
 Canonical intent encoding is versioned binary protobuf with operation-kind domain
 separation. Emit fields in field-number order, sort metadata by unsigned UTF-8 key,
@@ -255,11 +287,11 @@ Shared database indexes, connections and storage still contend, and are measured
   typed. Store the terminal opaque Any's exact type URL and value bytes, SHA-256 and
   length without decoding its value. Failed typed validation never falls back to opaque.
 - On initial creation, each new opaque occurrence requires a producing step owner
-  authorized for the caller and a declaration of that type URL in that step's exact
-  output contract. Intake ownership alone cannot attest opaque content. Intake may
+  authorized for the caller by an active step WriterGrant whose opaque_type_urls
+  contains that exact type URL. Intake ownership alone cannot attest opaque content. Intake may
   supply a distinct producing-step attestation only when authorized to do so; otherwise
   the content must be typed. This permits responsible attribution without pretending
-  that an output-type declaration validates the payload.
+  that a grant validates the payload.
 - On edits, only previously recorded opaque occurrences may remain opaque, unchanged.
   New or changed Any values must be typed. Each carried occurrence records its exact
   source address, revision and occurrence, with the same type URL and value digest/
@@ -271,10 +303,14 @@ Shared database indexes, connections and storage still contend, and are measured
   it. Opaque payload bytes are never decoded, including for cross-part validation.
 - Structure, envelope, ownership, source access and references are still validated.
   Missing or mismatched opaque ownership fails FAILED_PRECONDITION/OPAQUE_UNOWNED.
-  Registry outages remain UNAVAILABLE and are not terminal recorded outcomes.
-- Record the effective owner and graph-definition digest with each opaque occurrence.
-  Carried occurrences preserve the original producer attribution. The revision is
-  OPAQUE_ACCEPTED, never TYPED_VALID. A rule needing opaque contents is explicitly
+  Grant/catalog or schema-registry outages remain UNAVAILABLE and are not terminal
+  recorded outcomes.
+- Record the effective owner and evaluated WriterGrant evidence with each opaque occurrence.
+  Carried occurrences preserve the original producer attribution and grant snapshot.
+  A revoked original producer grant does not prevent authorized reuse of previously
+  committed opaque content; the new save still needs its own active writer grant,
+  current source access and opaque host policy. No re-attestation as newly produced
+  content is allowed. The revision is OPAQUE_ACCEPTED, never TYPED_VALID. A rule needing opaque contents is explicitly
   NOT_EVALUATED. Typed reads refuse opaque content unless the caller explicitly asks
   for its opaque representation; that representation makes no typed-valid claim.
 
@@ -421,15 +457,22 @@ correctness and RustFS for performance measurements.
 17. An outcome lookup for a cancelled request that never committed returns "no recorded
     outcome".
 
-18. Missing owner, unauthorized step impersonation, unknown graph version and registry
-    outage are distinct failures; unauthorized attempts cannot claim an operation ID.
-19. Explicit opaque creation checks producer output declaration; edits preserve only
+18. Missing owner, no matching owner grant, credential mismatch, revoked grant and
+    grant-authority outage are distinct failures; unauthorized attempts cannot claim
+    an operation ID. Exercise commit/revocation in both orderings after a long upload.
+19. Explicit opaque creation checks producer grant type allowance; edits preserve only
     verified prior opaque bytes. Changed/new opaque attempts fail, and no typed failure
-    is converted to opaque success. Retained attribution survives registry changes.
+    is converted to opaque success. Retained attribution survives grant revocation and live grant unavailability.
 20. Persisted metadata/owner/lineage changes conflict on retry; a different transport
-    trace ID does not. Authorized replay needs no live graph lookup.
+    trace ID does not. Authorized replay does not require the original write grant; current read access
+    and caller authentication still apply.
 21. Save/purge races on shared objects cannot commit a reference to deleted bytes.
     Exercise both transaction orderings, not just sequential flag checks.
+
+22. Retained grant snapshot digest/ID mismatches fail as DATA_LOSS, without live
+    substitution. Replacing a credential generation grants no access implicitly.
+23. Overlapping grants select deterministically; intake cannot attest opaque content
+    without an eligible step grant for its authenticated credential.
 
 ## 16. Open questions
 

@@ -1,7 +1,7 @@
 // DRAFT FOR REVIEW ONLY. Committed documentation; not built into any module.
 // Compile qualification and remaining runtime checks are in component-mapping.md.
 //
-// Concrete contract for docs/design/parts-based-repository-requirements.md (v2.3).
+// Concrete contract for docs/design/parts-based-repository-requirements.md (v2.4).
 // Section references (§n) point at that document.
 //
 // Package choice is OPEN. repo.v2 isolates this review draft from production.
@@ -226,8 +226,47 @@ message SaveOwner {
     IntakeOrigin intake = 1;
     ai.protomolt.proto.repo.v1.WriteProvenance step = 2;
   }
-  // Step fields, exact registration and caller delegation are handler checks (§5).
+  // Step fields and exact credential/grant matching are handler checks (§5).
 }
+// Administrative catalog records and retained evidence, never save-request authority.
+message WriterCredential {
+  string issuer = 1 [(buf.validate.field).string.min_len = 1];
+  string credential_id = 2 [(buf.validate.field).string.uuid = true];
+  int64 generation = 3 [(buf.validate.field).int64.gt = 0];
+}
+message StepWriterScope {
+  string module_id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string node_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+message WriterGrant {
+  option (buf.validate.message).cel = {
+    id: "opaque-step-grant"
+    message: "only step grants may authorize opaque types"
+    expression: "size(this.opaque_type_urls) == 0 || has(this.step)"
+  };
+  string grant_id = 1 [(buf.validate.field).string.min_len = 1];
+  string account_id = 2 [(buf.validate.field).string.min_len = 1];
+  WriterCredential credential = 3 [(buf.validate.field).required = true];
+  oneof scope {
+    option (buf.validate.oneof).required = true;
+    IntakeOrigin intake = 4;
+    StepWriterScope step = 5;
+  }
+  bool allow_create = 6;
+  repeated string opaque_type_urls = 7 [(buf.validate.field).repeated = {
+    unique: true, items: {string: {min_len: 1}}
+  }];
+  // Immutable. Revocation is separate catalog state, checked atomically at commit.
+}
+message WriterGrantEvidence {
+  string writer_grant_id = 1 [(buf.validate.field).string.min_len = 1];
+  string writer_grant_sha256 = 2 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Exact serialized WriterGrant bytes, preserved without re-encoding. Handler
+  // decodes with its retained descriptor, validates and matches ID/account/scope.
+  bytes grant_snapshot = 3 [(buf.validate.field).bytes.min_len = 1];
+  ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference snapshot_schema = 4 [(buf.validate.field).required = true];
+}
+
 message SourceRevision {
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
   int64 revision = 2 [(buf.validate.field).int64.gt = 0];
@@ -657,7 +696,7 @@ message OpaqueOccurrence {
   int64 length = 5 [(buf.validate.field).int64.gte = 0];
   ai.protomolt.proto.repo.v1.WriteProvenance owner = 6 [(buf.validate.field).required = true];
   OpaqueSource carried_from = 7; // Server-verified source, not a client success flag.
-  string owner_definition_sha256 = 8 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  WriterGrantEvidence writer_grant = 8 [(buf.validate.field).required = true];
 }
 
 enum RuleResultState {
@@ -688,8 +727,9 @@ message RevisionValidation {
   string candidate_sha256 = 6 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string policy_sha256 = 7 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string validator_profile = 8 [(buf.validate.field).string.min_len = 1];
-  // Required for step-owned saves; absent for intake. Handler verifies the definition.
-  optional string owner_definition_sha256 = 9 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  // Required for every save, including intake. Tombstones use their existing
+  // authenticated delete boundary. Handler checks context and retained snapshot.
+  WriterGrantEvidence writer_grant = 9;
 }
 
 // ============================================================================

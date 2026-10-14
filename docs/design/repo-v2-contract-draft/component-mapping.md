@@ -2,9 +2,9 @@
 
 For Argon review only. These two draft files are committed on
 `reconcile/parts-based-repository`; no production contract or implementation is changed.
-Requirements v2.3 remain normative; this is their proposed contract mapping.
+Requirements v2.4 remain normative; this is their proposed contract mapping.
 
-- **Implements:** requirements v2.3 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
+- **Implements:** requirements v2.4 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
 - **Contract:** [document_service_v2_draft.proto](document_service_v2_draft.proto). It compiles with protoc against the v1 protos.
 
 > **Source caveat.** The original class inventory came from GitHub main and Javadoc
@@ -354,7 +354,7 @@ for accession/tombstone events. The reviewer exercised these patterns with upstr
 Protovalidate; that is not a run of this draft through ProtoMolt’s validator.
 Client schema bindings and StreamedPart.schema are removed. Retained server-selected
 occurrence and fragment identities remain on RevisionValidation. Bulk errors now
-use ItemError. D7 and D10 are now decided and recorded in requirements v2.3.
+use ItemError. D7 and D10 are now decided and recorded in requirements v2.4.
 No push or implementation is authorized.
 
 Purge conflict handling and streaming limitations are specified in requirements
@@ -434,18 +434,58 @@ Checked on reconciliation base c75756ea4; this is source inspection, not runtime
 - mesh/proto/src/main/proto/ai/protomolt/proto/mesh/v1/entity.proto:
   ProfileReference provides name/version/fingerprint, not caller delegation to a step.
 
-**Missing verified connection:** no inspected API establishes all of exact graph
-version lookup, graph-node-to-module membership, authorized caller-to-step binding,
-and explicit allowed opaque output type URLs. An RPC response descriptor alone does
-not declare every possible Any payload type. Before implementation, map the existing
-versioned workflow/profile sources to this check, identify the actual authority
-provider, and define its unavailable/not-found/denied behavior. Only add a narrow
-library resolver/authorization interface if existing interfaces cannot supply it.
-Do not introduce a second public repository API or guess that the mesh does this.
+**W1 decision:** graph-registry verification is removed from the first slice.
+The inventory above records existing capabilities, not a requirement to invent a
+registry. Graph versions remain unverified provenance. VersionedWorkflow may help
+an administrator generate grants later; no correspondence is assumed today.
 
-The draft records graph-definition digests on validation evidence and opaque owners,
-uses exact source revision/occurrence for opaque carry-forward, and binds normalized
-attestations plus owner/lineage/metadata into SaveIntent. New/changed opaque payloads
-on edits remain forbidden. Initial opaque creation requires a verified producing
-step, including when intake submits on that step's behalf. This is handler work,
-not a claim that protobuf annotations can authenticate provenance.
+Reuse RepositoryCredentialBinding for trusted issuer/UUID/generation identity,
+RepositoryCredentialAuthorities for existing revocation-check semantics, and
+DocumentAccessPolicy for tenant/ACL enforcement. RepositoryCreationGrants currently
+binds publication commands and placement; it is not the proposed owner-scoped
+WriterGrant. Adapt the reusable authority checks to the selected JDBC catalog,
+without carrying forward the removed command-owner lifecycle. No runtime writer-grant
+implementation or administrative provisioning path is claimed complete here.
+
+WriterGrant and WriterGrantEvidence are draft catalog/evidence messages only.
+Requirements §§5, 7 and 9 define matching, commit-time revocation, retained binary
+snapshots, replay and carried-opaque semantics. SaveIntent binds the claimed owner
+and attestations, not a server-selected grant ID or its current revocation state.
+
+### Fable review checklist for the W1 revision
+
+Please check these before recommending implementation or push:
+
+1. Authority: account, issuer, credential UUID/generation and owner scope all match;
+   optional node/connector scope cannot widen account/module/datasource authority.
+   Process authority does not implicitly become a producer grant. Provisioning is
+   administrative and cannot be reached through SaveDocument payloads.
+2. Race: specify a real JDBC transaction conflict between save and revocation; a
+   second read alone is insufficient. Both commit orderings and credential revocation
+   during upload need tests. No database transaction spans the streamed upload.
+3. Evidence: retained binary grant bytes, ID and digest agree; snapshots survive
+   revocation and are not replaced by current grants. Check where their schema
+   descriptor is retained for archival decoding. No JSON serialization is involved.
+4. Replay: changed owner/metadata/attestation conflicts; a fresh trace ID does not.
+   Current read access is checked, but revocation of the original write grant alone
+   does not destroy idempotent access to a committed outcome.
+5. Opaque reuse: prior source bytes/type/occurrence and producer evidence are verified;
+   only the new writer needs an active save grant. A revoked historical producer
+   cannot create new opaque bytes through a carry-forward claim. Intake producing
+   new opaque data needs a separate eligible step grant. Review this distinction.
+6. Annotation dialect/runtime: run valid and invalid fixtures through ProtoMolt's
+   own ProtoValidator, not only upstream Protovalidate. Exercise absent oneofs,
+   optional empty node/connector, UUIDs, missing grant snapshots, forbidden intake
+   opaque permissions, and save versus tombstone response envelopes. Existing
+   native annotations and buf.validate coexist in imports; verify both execute.
+7. Retained metadata: ensure all owner, lineage, metadata and evidence needed by the
+   contract have durable protobuf fields/associations and survive read/restart.
+8. Grant selection and errors: overlapping matching grants select deterministically;
+   distinguish missing owner, revoked/mismatched authority, and unavailable catalog.
+   Check failure details do not reveal other principals or poison operation IDs.
+9. Keep prior unresolved items visible: semantic consumer migration, archive freeze,
+   exact canonical encoding fixtures, purge/reference race proof and actual large
+   payload memory measurements. Composite pieces stay out of slice 1.
+
+The draft compiles with imports; this revision has no runtime validator qualification,
+transaction tests or implementation. Review findings are not authority to push.
