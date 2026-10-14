@@ -1,1 +1,0 @@
-UPDATE archive_object_uploads SET state='LIVE' WHERE object_id=$1

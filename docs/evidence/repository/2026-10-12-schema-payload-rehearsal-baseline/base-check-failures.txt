@@ -1,2 +1,0 @@
-CHECK_FAILED inconsistent-snapshot.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION; readValidated -> FAILED_PRECONDITION
-CHECK_FAILED wrong-credentials.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION

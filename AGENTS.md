@@ -2,8 +2,11 @@
 
 ## Start here: reuse and scope control
 
+- Removed repository design docs and evidence (tag docs-archive/2026-10-14) are
+  superseded. Do not restore or cite them;
+  docs/design/parts-based-repository-requirements.md is the only repository design source.
 - Before implementation, read the current user authorization and these three
-  documents: [reconciliation plan](docs/design/parts-service-reconciliation.md),
+  documents: [repository requirements](docs/design/parts-based-repository-requirements.md),
   [toolkit audit](docs/design/protobuf-toolkit-audit.md), and the relevant entries
   in the [source index](docs/design/protobuf-toolkit-source-index.md).
   Verify their findings against the checkout; they are not proof that fixes landed.

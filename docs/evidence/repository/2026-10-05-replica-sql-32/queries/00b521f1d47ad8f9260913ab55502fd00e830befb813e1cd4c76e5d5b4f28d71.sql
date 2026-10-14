@@ -1,1 +1,0 @@
-SELECT * FROM acquire_archive_read_pin($1,$2,$3,$4,$5)

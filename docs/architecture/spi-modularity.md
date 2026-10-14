@@ -101,7 +101,7 @@ Existing byte-fidelity and edge-case tests move with the implementation. A runti
 dependency gate rejects repository implementations and storage/database SDKs.
 
 The remaining repository composition work is tracked in
-[the design](../design/repository-composition.md); this extraction does not add
+[the repository requirements](../design/parts-based-repository-requirements.md); this extraction does not add
 authorization, typed admission or progressive hydration.
 
 The service creates an S3 client only for S3 and S3-with-cache modes. Drive

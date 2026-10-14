@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-13T18:36:00.248Z" hostname="krick" time="0.676">
-  <properties/>
-  <testcase name="sequenceAlsoRejectsUnownedContent()" classname="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" time="0.09"/>
-  <testcase name="nameAllocatorMatchesLegacyFirstUnusedRuleAcrossCollisions()" classname="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" time="0.558"/>
-  <testcase name="rejectsSplitRunsMixedRunsAndWrongNames()" classname="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" time="0.005"/>
-  <testcase name="splitOutputWithSuffixAndGeneratedNameCollisionsIsAccepted()" classname="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" time="0.01"/>
-  <testcase name="blankNamesUseGlobalElementPositionsAndBoundsAreAggregate()" classname="ai.protomolt.proto.repo.codec.DocumentChunkSequenceTest" time="0.002"/>
-</testsuite>

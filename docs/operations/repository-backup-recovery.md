@@ -5,9 +5,7 @@ offline backup of one repository deployment (PostgreSQL ledger plus one pinned
 RustFS volume) and its restore into new resources, verified by a fresh
 production-JAR host. It is a rehearsal harness and the tested procedure behind
 it. It is not an online backup service, not a public restore API, not a
-provider migration and not a JCR or claimed-historical-execution feature. The
-design and the backup boundary are in
-[repository-backup-recovery.md](../design/repository-backup-recovery.md).
+provider migration and not a JCR or claimed-historical-execution feature.
 
 ## Supported scope
 
@@ -142,5 +140,4 @@ Each run directory holds `commands.log` (every external command with its exit
 code, secrets redacted), `seed-host.log`, `recovered-host.log`, `markers.log`,
 `results.xml`, the Docker logs of each container, the sealed backup set and the
 restore directory. `summary.json` at the output root lists the outcome of every
-run and negative case. The dated evidence folder under `docs/evidence/repository/`
-archives these for the qualified runs.
+run and negative case.

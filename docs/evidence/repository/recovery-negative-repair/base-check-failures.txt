@@ -1,8 +1,0 @@
-Baseline run on branch base 8f79765942e03712599f9171968357ec53630428 (this worktree, 2026-10-12T23-57-33Z): 4 tests, 2 failed
-
-CHECK_OK inconsistent-snapshot.provider_versions_absent :: 3/3 recorded versions absent from the other capture's provider
-CHECK_FAILED inconsistent-snapshot.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION; readValidated -> FAILED_PRECONDITION
-
-CHECK_OK wrong-credentials.provider_refuses :: direct GET with the wrong secret -> S3Exception: The request signature we calculated does not match the signature you provided. Check your key and signing method. (Service: S3, Status Code: 403, Request ID: null) (SDK Attempt Count: 1)
-CHECK_OK wrong-credentials.host :: host composition with the wrong provider secret succeeds (no provider call at composition)
-CHECK_FAILED wrong-credentials.history_refused.alpha-v1 :: readRaw -> FAILED_PRECONDITION

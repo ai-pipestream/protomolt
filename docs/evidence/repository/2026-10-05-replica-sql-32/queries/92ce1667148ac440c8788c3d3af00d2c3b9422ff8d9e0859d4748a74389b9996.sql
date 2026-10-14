@@ -1,1 +1,0 @@
-SELECT release_archive_read_pin($1,$2,$3)

@@ -1,7 +1,7 @@
 # The archive: entries, renditions, and retained versions
 
-The proposed [repository composition and typed admission design](repository-composition.md)
-records the next storage-module boundaries, schema enforcement, ownership checks
+The [repository requirements](parts-based-repository-requirements.md)
+record the next storage-module boundaries, schema enforcement, ownership checks
 and metadata-versioning work. It distinguishes existing behavior from additions;
 those additions are not yet available APIs.
 

@@ -5,11 +5,8 @@ This guide covers exactly what `RepositoryBackupRehearsalIT` qualifies: an offli
 volume, and its restore into new, disposable stores verified by a fresh production-JAR
 host. It is a rehearsal harness and the tested procedure behind it. It is not an online
 backup service, not a public restore API, not a provider migration and not a statement of
-production backup readiness. The design obligations it checks are in
-[repository-composition.md](../design/repository-composition.md) ("Backups must preserve
-the revision sequence state along with rows") and
-[repository-revision-pruning.md](../design/repository-revision-pruning.md) (V118/V119
-coverage states). The procedure and backup-set layout descend from the draft harness on
+production backup readiness. It checks that backups preserve the revision sequence
+state along with rows, and the V118/V119 coverage states. The procedure and backup-set layout descend from the draft harness on
 GitHub PR #413 (`agent/repository-backup-restore`, head `610eb15c2`, base
 `refactor/repository-composition`), which predated V112 through V119 when this harness
 was written; it was re-implemented inside the ledger test package rather than

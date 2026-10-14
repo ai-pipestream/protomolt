@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-13T18:35:59.342Z" hostname="krick" time="0.045">
-  <properties/>
-  <testcase name="libraryOptionsDoNotInferRecoveryAuthority()" classname="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" time="0.029"/>
-  <testcase name="historicalPublicationRequiresExplicitCapacityAndRecoveryAuthority()" classname="ai.protomolt.proto.repo.service.ManagedPublicationOptionsTest" time="0.006"/>
-</testsuite>
