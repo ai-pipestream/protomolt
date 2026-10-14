@@ -1,6 +1,6 @@
 # Parts-based repository requirements
 
-**Draft v2.4, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
+**Draft v2.5, 2026-10-14.** This rewrite folds in the decisions agreed in review (see
 `reviews/parts-requirements-review.md`, "Decisions agreed with Kristian"). It replaces v1
 at `docs/design/parts-based-repository-requirements.md`. This is the only repository
 design source. Removed design docs and evidence (tag `docs-archive/2026-10-14`) are
@@ -120,14 +120,14 @@ in slice 1. A graph registry is not a prerequisite and no numeric/string workflo
 version conversion is implied.
 
 **Writer grants (W1).** A trusted administrator provisions an immutable WriterGrant
-for one account and one exact authenticated credential binding (issuer, credential
-ID and generation). It names either an intake datasource/optional connector or a
+for one account and one credential (issuer and credential ID). Grants do not name a
+generation, so they survive key rotation. It names either an intake datasource/optional connector or a
 step module/optional node. An absent node restriction covers that module's nodes;
 a present node requires an exact match. An absent connector restriction covers the
 specified datasource; when present it must match the resolved connector. Neither
 omission permits another account, datasource or module. Document ownership and
 ACL checks remain mandatory. The request cannot install a grant or supply trusted
-credential identity. Process authority is not an implicit writer grant.
+credential identity. Process authority is not a writer grant. A process-authority caller carries no credential binding, so no grant matches it. It may save only with an intake owner, which must match the document's ownership as for any intake save. It may not claim a step owner or submit opaque attestations, new or carried. The revision records process-authority evidence (the principal) in place of grant evidence.
 
 The grant declares whether it permits creation and its exact opaque_type_urls
 (no wildcard or prefix matching). Only step grants may list opaque types. A type
@@ -140,7 +140,7 @@ The server selects a matching active grant for the save and, where necessary, ea
 opaque producer. Multiple eligible grants are resolved by unsigned UTF-8 lexicographic grant ID,
 not database row order. Grant selection is server evidence, not caller intent.
 Every grant authorizing the new write (not historical producer evidence) is rechecked in the commit transaction against
-revocation and credential validity. Commit and revocation must share an enforceable
+revocation and credential validity. Credential validity means the caller's presented generation is the credential's current, unrevoked generation. A rotation or revocation committed before the save denies it. The evidence records the generation used. The generation is evidence, not retry identity. Commit and revocation must share an enforceable
 transactional conflict boundary: revocation committed first prevents the save;
 a save committed first remains valid historical evidence. A pre-upload check or
 cached grant alone is insufficient. Do not hold this transaction during upload.
@@ -231,7 +231,7 @@ opaque attestations are part of the intent. They must remain identical on retrie
 Trace IDs, connection details and transport diagnostics belong in request context,
 not persisted request metadata, and do not affect the intent. An authorized replay
 returns the recorded result without requiring the original writer grant to remain
-active or re-resolving historical authority, and without re-validating content against changed live schemas. Current access is still checked.
+active or re-resolving historical authority, and without re-validating content against changed live schemas. Current access is still checked. The grant-free replay path applies only when an outcome is already recorded; when no outcome is recorded, the request is authorized in full as a fresh save.
 
 Canonical intent encoding is versioned binary protobuf with operation-kind domain
 separation. Emit fields in field-number order, sort metadata by unsigned UTF-8 key,
@@ -470,9 +470,10 @@ correctness and RustFS for performance measurements.
     Exercise both transaction orderings, not just sequential flag checks.
 
 22. Retained grant snapshot digest/ID mismatches fail as DATA_LOSS, without live
-    substitution. Replacing a credential generation grants no access implicitly.
+    substitution. Rotation keeps the credential's grants, and the new generation writes under them. An old or revoked generation is denied at commit, including when rotation or revocation commits during a long upload.
 23. Overlapping grants select deterministically; intake cannot attest opaque content
     without an eligible step grant for its authenticated credential.
+24. A process-authority intake save succeeds and records process-authority evidence. A process-authority save naming a step owner, or carrying any opaque attestation, is denied and does not reserve the operation ID.
 
 ## 16. Open questions
 

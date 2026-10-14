@@ -2,9 +2,9 @@
 
 For Argon review only. These two draft files are committed on
 `reconcile/parts-based-repository`; no production contract or implementation is changed.
-Requirements v2.4 remain normative; this is their proposed contract mapping.
+Requirements v2.5 remain normative; this is their proposed contract mapping.
 
-- **Implements:** requirements v2.4 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
+- **Implements:** requirements v2.5 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
 - **Contract:** [document_service_v2_draft.proto](document_service_v2_draft.proto). It compiles with protoc against the v1 protos.
 
 > **Source caveat.** The original class inventory came from GitHub main and Javadoc
@@ -354,7 +354,7 @@ for accession/tombstone events. The reviewer exercised these patterns with upstr
 Protovalidate; that is not a run of this draft through ProtoMolt’s validator.
 Client schema bindings and StreamedPart.schema are removed. Retained server-selected
 occurrence and fragment identities remain on RevisionValidation. Bulk errors now
-use ItemError. D7 and D10 are now decided and recorded in requirements v2.4.
+use ItemError. D7 and D10 are now decided and recorded in requirements v2.5.
 No push or implementation is authorized.
 
 Purge conflict handling and streaming limitations are specified in requirements
@@ -440,7 +440,7 @@ registry. Graph versions remain unverified provenance. VersionedWorkflow may hel
 an administrator generate grants later; no correspondence is assumed today.
 
 Reuse RepositoryCredentialBinding for trusted issuer/UUID/generation identity,
-RepositoryCredentialAuthorities for existing revocation-check semantics, and
+RepositoryCredentialAuthorities for existing revocation-check semantics (including `requireLive`'s current-generation check, run inside the commit transaction), and
 DocumentAccessPolicy for tenant/ACL enforcement. RepositoryCreationGrants currently
 binds publication commands and placement; it is not the proposed owner-scoped
 WriterGrant. Adapt the reusable authority checks to the selected JDBC catalog,
@@ -456,7 +456,7 @@ and attestations, not a server-selected grant ID or its current revocation state
 
 Please check these before recommending implementation or push:
 
-1. Authority: account, issuer, credential UUID/generation and owner scope all match;
+1. Authority: account, issuer, credential UUID and owner scope match; the generation is checked live at commit;
    optional node/connector scope cannot widen account/module/datasource authority.
    Process authority does not implicitly become a producer grant. Provisioning is
    administrative and cannot be reached through SaveDocument payloads.

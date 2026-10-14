@@ -232,7 +232,9 @@ message SaveOwner {
 message WriterCredential {
   string issuer = 1 [(buf.validate.field).string.min_len = 1];
   string credential_id = 2 [(buf.validate.field).string.uuid = true];
-  int64 generation = 3 [(buf.validate.field).int64.gt = 0];
+  // Grants survive key rotation: no generation here. The commit transaction checks the
+  // presented generation is current and unrevoked, and evidence records it.
+  reserved 3;
 }
 message StepWriterScope {
   string module_id = 1 [(buf.validate.field).string.min_len = 1];
@@ -265,6 +267,8 @@ message WriterGrantEvidence {
   // decodes with its retained descriptor, validates and matches ID/account/scope.
   bytes grant_snapshot = 3 [(buf.validate.field).bytes.min_len = 1];
   ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference snapshot_schema = 4 [(buf.validate.field).required = true];
+  // Credential generation the caller presented, checked live in the commit transaction.
+  int64 credential_generation = 5 [(buf.validate.field).int64.gt = 0];
 }
 
 message SourceRevision {
@@ -361,6 +365,11 @@ message Accession {
     message: "save accessions require an owner"
     expression: "this.tombstone || has(this.owner)"
   };
+  option (buf.validate.message).cel = {
+    id: "save-authority-present"
+    message: "save accessions require grant or process-authority evidence"
+    expression: "this.tombstone || has(this.validation.writer_grant) || has(this.validation.process_authority)"
+  };
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
   int64 revision = 2 [(buf.validate.field).int64.gt = 0];
   int64 previous_revision = 3 [(buf.validate.field).int64.gte = 0];  // 0 when the document is new
@@ -373,6 +382,11 @@ message Accession {
 }
 
 message SaveDocumentResponse {
+  option (buf.validate.message).cel = {
+    id: "save-response-not-tombstone"
+    message: "a save response never carries a tombstone"
+    expression: "!this.accession.tombstone"
+  };
   string operation_id = 1 [(buf.validate.field).string.min_len = 1];
   Accession accession = 2 [(buf.validate.field).required = true];
   // True when this response is a recorded outcome returned for a retry,
@@ -443,6 +457,11 @@ message DeleteDocumentRequest {
 }
 
 message DeleteDocumentResponse {
+  option (buf.validate.message).cel = {
+    id: "delete-response-tombstone"
+    message: "a delete response always carries a tombstone"
+    expression: "this.accession.tombstone"
+  };
   string operation_id = 1 [(buf.validate.field).string.min_len = 1];
   Accession accession = 2 [(buf.validate.field).required = true];  // tombstone = true
   bool replayed = 3;
@@ -727,9 +746,17 @@ message RevisionValidation {
   string candidate_sha256 = 6 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string policy_sha256 = 7 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
   string validator_profile = 8 [(buf.validate.field).string.min_len = 1];
-  // Required for every save, including intake. Tombstones use their existing
-  // authenticated delete boundary. Handler checks context and retained snapshot.
-  WriterGrantEvidence writer_grant = 9;
+  // One is required for every save (CEL on Accession and StoredManifest). Tombstones
+  // use their existing authenticated delete boundary.
+  oneof write_authority {
+    WriterGrantEvidence writer_grant = 9;
+    // Process authority carries no credential, so it never matches a grant. It may
+    // save only as an intake owner, with no opaque attestations (new or carried).
+    ProcessAuthorityEvidence process_authority = 10;
+  }
+}
+message ProcessAuthorityEvidence {
+  string principal = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // ============================================================================
@@ -1020,6 +1047,11 @@ message StoredManifest {
     id: "save-owner-present"
     message: "save accessions require an owner"
     expression: "this.tombstone || has(this.owner)"
+  };
+  option (buf.validate.message).cel = {
+    id: "save-authority-present"
+    message: "save accessions require grant or process-authority evidence"
+    expression: "this.tombstone || has(this.validation.writer_grant) || has(this.validation.process_authority)"
   };
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(buf.validate.field).required = true];
   int64 revision = 2 [(buf.validate.field).int64.gt = 0];
