@@ -42,6 +42,10 @@ bulk streaming; swappable stacks and catalog; typed validation; Kafka events.
 - A new search system.
 - Retention or pruning of old revisions (later feature, §13).
 
+**Runtime:** protomolt is JDK-first with minimal dependencies. The repository service
+uses no application framework (no Quarkus, no Spring), as `repo/README.md` states.
+Quarkus was the pipestream standard, not protomolt's.
+
 ## 4. Use cases
 
 1. Bulk saves and reads through gRPC streams, with one correlated outcome per document.
@@ -324,12 +328,10 @@ correctness and RustFS for performance measurements.
 
 ## 16. Open questions
 
-1. **Framework.** `repo/README.md` says "No framework. No Quarkus". The platform standard
-   is Quarkus. Should the repository service move to Quarkus?
-2. **Archive subsystem.** `ArchiveLedger` and its migrations form a second storage model
+1. **Archive subsystem.** `ArchiveLedger` and its migrations form a second storage model
    with its own versions and renditions. Fold raw-file archival into documents, or keep it
    separate and frozen?
-3. **Consumers of the semantic shape.** Replacing `SemanticProcessingResult` (including
+2. **Consumers of the semantic shape.** Replacing `SemanticProcessingResult` (including
    `embedding_config_id`) needs an inventory of its consumers first: the chunker,
    embedders, search indexers, the Qdrant point mapper and Kafka Connect.
 
