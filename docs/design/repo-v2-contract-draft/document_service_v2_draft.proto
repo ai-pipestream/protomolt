@@ -1,0 +1,793 @@
+// DRAFT FOR REVIEW ONLY. Not on any branch, not compiled, not implemented.
+//
+// Concrete contract for docs/design/parts-based-repository-requirements.md (v2.2).
+// Section references (§n) point at that document.
+//
+// Package choice: a new `repo.v2` package so the retired v1 shapes (publication,
+// history service, conditional blobs, SemanticProcessingResult) cannot be mixed in
+// by accident. v1 stays until v2 passes §15, then v1 is deleted (§14 sequencing).
+// Messages that do not change (NodeAddress, Document, OwnershipContext, Blob,
+// WriteProvenance) are imported from v1 rather than copied.
+//
+// This draft is one file for reading. When implemented it splits into
+// document_service.proto, manifest.proto, semantic.proto, events.proto,
+// errors.proto and catalog_internal.proto.
+
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";   // NodeAddress (call number)
+import "ai/protomolt/proto/repo/v1/document.proto";  // Document, Blob
+import "ai/protomolt/proto/repo/v1/manifest.proto";  // WriteProvenance
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// Service
+// ============================================================================
+
+// The only public repository contract (§12). History lives here; the separate
+// history, history-materialization and publication services are removed.
+service DocumentService {
+  // --- Writes (§7) ---------------------------------------------------------
+
+  // Commit one accession. Returns the outcome, or a gRPC error:
+  //   ABORTED             stale expected revision; details = RevisionConflict
+  //   ALREADY_EXISTS      operation ID reused with different intent; details = OperationReuse
+  //   INVALID_ARGUMENT    request structure or composed-candidate validation failed;
+  //                       details = SaveRejection (the rejection is also recorded as
+  //                       the operation's outcome)
+  //   FAILED_PRECONDITION schema missing, carried-forward object purged, or embedding
+  //                       set bound to a changed segmentation; details = SaveRejection
+  //   UNAVAILABLE         schema registry or catalog unreachable (never recorded)
+  rpc SaveDocument(SaveDocumentRequest) returns (SaveDocumentResponse);
+
+  // Bulk saves (§4.1). Each request yields exactly one SaveDocumentsResponse,
+  // correlated by operation_id. Responses may arrive out of request order.
+  // One document's failure never fails the stream; transport failures do.
+  rpc SaveDocuments(stream SaveDocumentRequest) returns (stream SaveDocumentsResponse);
+
+  // Streamed raw-file upload (§11). The first frame is the header, then bytes.
+  // Bytes go to the stacks, the blob gets its claim check, then the same commit
+  // as SaveDocument runs. The HTTP upload route is a surface onto this operation.
+  rpc UploadDocument(stream UploadDocumentRequest) returns (SaveDocumentResponse);
+
+  // Tombstone (§6). Itself an accession: it gets a revision, takes
+  // expected_revision and operation_id, and emits a Tombstoned event.
+  // No bytes are removed.
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+
+  // Admin purge (§6). Marks the document's references purged in one catalog
+  // transaction; bytes are deleted afterwards only for objects with no unpurged
+  // reference from any document. Idempotent by purge_id.
+  rpc PurgeDocument(PurgeDocumentRequest) returns (PurgeDocumentResponse);
+
+  // Three-state outcome lookup (§7 Cancellation).
+  // "Lookup unavailable" is the gRPC status UNAVAILABLE, never an empty answer.
+  rpc GetOperationOutcome(GetOperationOutcomeRequest) returns (GetOperationOutcomeResponse);
+
+  // --- Reads (§8) ----------------------------------------------------------
+
+  // Unary read of a whole or partial document, for results that fit one message.
+  // An exact revision that does not exist is NOT_FOUND, never the current one.
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+
+  // Streamed read for large documents: the manifest frame first (pinned to one
+  // revision for the whole stream), then the selected parts' serialized bytes.
+  rpc ReadDocument(ReadDocumentRequest) returns (stream ReadDocumentResponse);
+
+  // Streamed raw-file read with optional byte range (§11). A full read ends with a
+  // SHA-256 check; a mismatch ends the stream with DATA_LOSS, never valid-looking bytes.
+  rpc ReadBlob(ReadBlobRequest) returns (stream ReadBlobResponse);
+
+  // Manifest only. Fetches no payloads.
+  rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
+
+  // Revision history, newest first, paginated (§4.3, §8).
+  rpc ListRevisions(ListRevisionsRequest) returns (ListRevisionsResponse);
+
+  // Current documents in a scope. Kept from v1, reshaped to the v2 manifest.
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+
+  // Removed from v1: GetDocumentByReference, PutBlob, GetBlob (now ReadBlob),
+  // GetBlobForUpdate, CompareAndPutBlob, DeleteBlob, GetDocumentManifest (now
+  // GetManifest). The conditional-blob RPCs contradict write-once stacks (§6).
+}
+
+// ============================================================================
+// Selectors and identities (§5)
+// ============================================================================
+
+enum DocumentPart {
+  DOCUMENT_PART_UNSPECIFIED = 0;
+  DOCUMENT_PART_CORE = 1;
+  DOCUMENT_PART_BLOBS = 2;
+  DOCUMENT_PART_CHUNKS = 3;      // one object per segmentation; select by segmentation_id
+  DOCUMENT_PART_PARSED = 4;
+  DOCUMENT_PART_EMBEDDINGS = 5;  // one object per embedding set; select by EmbeddingSetKey
+}
+
+message EmbeddingSetKey {
+  string segmentation_id = 1;
+  string embedding_set_id = 2;
+}
+
+// Names exactly one stored object of a document.
+// CORE, BLOBS and PARSED are selected by `part`. CHUNKS and EMBEDDINGS are always
+// selected by their ID, never by `part`. A request that names the same selector
+// twice, or names a selector in two contradicting ways, is rejected (§5).
+message PartSelector {
+  oneof selector {
+    DocumentPart part = 1;
+    string segmentation_id = 2;
+    EmbeddingSetKey embedding_set = 3;
+  }
+}
+
+// Read selection. Empty = every part. `all_segmentations` / `all_embedding_sets`
+// avoid listing IDs the caller does not know yet.
+message PartSelection {
+  repeated PartSelector selectors = 1;
+  bool all_segmentations = 2;
+  bool all_embedding_sets = 3;
+}
+
+// Which revision a read resolves. Unset = current, resolved once per call.
+message RevisionSelector {
+  oneof selector {
+    bool current = 1;
+    int64 revision = 2;
+  }
+}
+
+// The caller's view of the document's current revision (§7 step 2).
+// There is deliberately no "unconditional" option: v1's force_save is removed.
+message ExpectedRevision {
+  oneof expected {
+    bool none = 1;       // the document must not exist yet
+    int64 revision = 2;  // the current revision must equal this
+  }
+}
+
+// How the call number is chosen. Same rules as v1 SaveDocumentRequest, collected.
+message DocumentTarget {
+  oneof target {
+    ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+    // Derive the call number from document.doc_id + ownership, as v1 does.
+    string use_datasource_id = 2;
+    string graph_location_id = 3;
+  }
+}
+
+// ============================================================================
+// Save (§7, §9)
+// ============================================================================
+
+enum WriteAction {
+  WRITE_ACTION_UNSPECIFIED = 0;
+  WRITE_ACTION_PUT = 1;     // content comes from SaveDocumentRequest.document
+  WRITE_ACTION_EMPTY = 2;   // part present, intentionally empty
+  WRITE_ACTION_DELETE = 3;  // part marked DELETED from this revision on
+}
+
+message PartWrite {
+  PartSelector selector = 1;
+  WriteAction action = 2;
+  string deleted_reason = 3;  // DELETE only
+}
+
+// Carry a part from an exact revision of another (or the same) document (§4.5).
+// The new accession references the same stack object; nothing is copied.
+message PartSource {
+  PartSelector selector = 1;
+  ai.protomolt.proto.repo.v1.NodeAddress from_address = 2;
+  int64 from_revision = 3;  // required; exact revisions only
+}
+
+enum ValidationMode {
+  VALIDATION_MODE_UNSPECIFIED = 0;  // = TYPED
+  VALIDATION_MODE_TYPED = 1;
+  // Unresolvable Any values are stored as type URL + exact bytes, never decoded.
+  // Refused with PERMISSION_DENIED unless host policy allows it (§9).
+  VALIDATION_MODE_OPAQUE_ALLOWED = 2;
+}
+
+message SaveDocumentRequest {
+  // Client-chosen, unique per account (the account of the target call number).
+  // Required. The server records the outcome under (account_id, operation_id).
+  string operation_id = 1;
+
+  DocumentTarget target = 2;
+  ExpectedRevision expected = 3;
+
+  // Content for every PUT in `writes`, and nothing else. Content present for a
+  // part that is not listed as PUT is rejected, never silently dropped.
+  // CHUNKS/EMBEDDINGS content goes in the new segmentation fields (see the
+  // "Document placement" note in the semantic section).
+  ai.protomolt.proto.repo.v1.Document document = 4;
+
+  repeated PartWrite writes = 5;
+
+  // Parts taken from other revisions. Every part neither written nor listed here
+  // carries forward from `expected` (same document). For a new document they are absent.
+  repeated PartSource sources = 6;
+
+  ValidationMode validation_mode = 7;
+
+  // Named storage selection for new objects. Resolves to the stack currently
+  // configured for that drive; the stack ID is recorded, never exposed (§6).
+  string drive = 8;
+
+  // v1 cluster_id / graph_id / crawl_id move here (graph_id already exists;
+  // crawl_id and cluster_id would be added to WriteProvenance).
+  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 9;
+
+  map<string, string> metadata = 99;
+
+  // Removed from v1: force_save (no unconditional writes), parts_written and
+  // chunk_sets_written (replaced by `writes`), copy_unwritten_parts_from
+  // (replaced by `sources`), delete_source_blobs_on_settle and
+  // source_blob_delete_reason (bytes are kept; removal is an admin purge),
+  // connector_id (already carried in Document.ownership).
+}
+
+// "Intent" for operation-ID replay (§7) is the SHA-256 of: the resolved call number,
+// expected revision, validation mode, every write's selector + action + content
+// SHA-256, and every source. It is computed after upload and stored with the
+// outcome. Same ID + same intent = recorded outcome; different intent = ALREADY_EXISTS.
+
+message Accession {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  int64 revision = 2;
+  int64 previous_revision = 3;  // 0 when the document is new
+  google.protobuf.Timestamp committed_at = 4;
+  DocumentManifest manifest = 5;
+  RevisionValidation validation = 6;
+  bool tombstone = 7;
+}
+
+message SaveDocumentResponse {
+  string operation_id = 1;
+  Accession accession = 2;
+  // True when this response is a recorded outcome returned for a retry,
+  // including the concurrent same-ID case (§7).
+  bool replayed = 3;
+}
+
+message SaveDocumentsResponse {
+  string operation_id = 1;
+  oneof result {
+    SaveDocumentResponse saved = 2;
+    SaveError error = 3;
+  }
+}
+
+// ============================================================================
+// Upload (§11)
+// ============================================================================
+
+message UploadHeader {
+  // The save this upload commits. Its document carries the blob's metadata
+  // (Blob with blob_id, mime_type, filename, no data/storage_ref); the server fills
+  // the claim check once the bytes are in the stacks. `writes` must include BLOBS PUT.
+  SaveDocumentRequest save = 1;
+  string blob_id = 2;
+  // Optional. If set, a mismatch fails the upload and nothing commits.
+  int64 declared_length = 3;
+  string expected_sha256 = 4;
+}
+
+message UploadDocumentRequest {
+  oneof frame {
+    UploadHeader header = 1;  // first frame, exactly once
+    bytes data = 2;           // any number of frames
+  }
+}
+
+// ============================================================================
+// Delete, purge, outcomes
+// ============================================================================
+
+message DeleteDocumentRequest {
+  string operation_id = 1;
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2;
+  ExpectedRevision expected = 3;
+  string reason = 4;
+}
+
+message DeleteDocumentResponse {
+  string operation_id = 1;
+  Accession accession = 2;  // tombstone = true
+  bool replayed = 3;
+}
+
+message PurgeDocumentRequest {
+  string purge_id = 1;  // idempotency key for the purge
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2;
+  string reason = 3;
+}
+
+message PurgeDocumentResponse {
+  string purge_id = 1;
+  int64 references_purged = 2;
+  // Objects whose bytes are now eligible for deletion (no unpurged reference left).
+  int64 objects_to_delete = 3;
+  // Objects kept because another document still references them (§15.16).
+  int64 objects_retained_shared = 4;
+}
+
+message GetOperationOutcomeRequest {
+  string account_id = 1;
+  string operation_id = 2;
+}
+
+message RecordedOutcome {
+  oneof result {
+    Accession accession = 1;       // committed success
+    SaveRejection rejection = 2;   // committed failure, e.g. validation rejection
+  }
+  google.protobuf.Timestamp recorded_at = 3;
+}
+
+// No outcome recorded. This does NOT mean the request failed: an outstanding
+// request may still commit later.
+message NoRecordedOutcome {}
+
+message GetOperationOutcomeResponse {
+  oneof state {
+    RecordedOutcome committed = 1;
+    NoRecordedOutcome none = 2;
+  }
+}
+
+// ============================================================================
+// Reads (§8)
+// ============================================================================
+
+message GetDocumentRequest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  RevisionSelector revision = 2;
+  PartSelection selection = 3;
+  // Default false: an opaque payload fails a typed read clearly (§9).
+  bool allow_opaque = 4;
+}
+
+message GetDocumentResponse {
+  // Assembled from the selected parts only.
+  ai.protomolt.proto.repo.v1.Document document = 1;
+  DocumentManifest manifest = 2;  // entries mark which content was included
+  RevisionValidation validation = 3;
+}
+
+message ReadDocumentRequest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  RevisionSelector revision = 2;
+  PartSelection selection = 3;
+  bool allow_opaque = 4;
+}
+
+// Each part's bytes are that part's serialized protobuf fragment, as stored.
+// The Java client assembles a Document with the parts codec when it fits.
+message PartData {
+  PartSelector selector = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  bool last = 4;  // last frame of this part; its SHA-256 was verified server-side
+}
+
+message ReadDocumentResponse {
+  oneof frame {
+    DocumentManifest manifest = 1;  // first frame
+    PartData part_data = 2;
+  }
+}
+
+message ReadBlobRequest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  RevisionSelector revision = 2;
+  string blob_id = 3;
+  int64 offset = 4;   // 0 = start
+  int64 length = 5;   // 0 = to end
+}
+
+message BlobHeader {
+  int64 revision = 1;
+  int64 total_length = 2;
+  string sha256 = 3;  // of the whole object
+  string mime_type = 4;
+  string filename = 5;
+}
+
+message ReadBlobResponse {
+  oneof frame {
+    BlobHeader header = 1;  // first frame
+    bytes data = 2;
+  }
+}
+
+message GetManifestRequest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  RevisionSelector revision = 2;
+}
+
+message GetManifestResponse {
+  DocumentManifest manifest = 1;
+  RevisionValidation validation = 2;
+}
+
+message ListRevisionsRequest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message RevisionSummary {
+  int64 revision = 1;
+  int64 previous_revision = 2;
+  google.protobuf.Timestamp committed_at = 3;
+  string operation_id = 4;
+  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 5;
+  bool tombstone = 6;
+  ValidationStatus validation_status = 7;
+  repeated PartChange changes = 8;
+}
+
+message ListRevisionsResponse {
+  repeated RevisionSummary revisions = 1;  // revision descending
+  string next_page_token = 2;
+}
+
+message ListDocumentsRequest {
+  string account_id = 1;
+  string graph_address_id = 2;  // optional scope
+  string graph_id = 3;          // optional scope
+  bool include_tombstoned = 4;
+  int32 page_size = 5;
+  string page_token = 6;
+}
+
+message DocumentSummary {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  int64 revision = 2;
+  google.protobuf.Timestamp committed_at = 3;
+  bool tombstone = 4;
+}
+
+message ListDocumentsResponse {
+  repeated DocumentSummary documents = 1;
+  string next_page_token = 2;
+}
+
+// ============================================================================
+// Manifest (§5, §8) — public shape; stack references are not exposed
+// ============================================================================
+
+enum PartState {
+  PART_STATE_UNSPECIFIED = 0;
+  PART_STATE_PRESENT = 1;
+  PART_STATE_EMPTY = 2;
+  PART_STATE_DELETED = 3;
+}
+
+message PartManifestEntry {
+  PartSelector selector = 1;
+  PartState state = 2;
+  int64 size_bytes = 3;
+  string sha256 = 4;
+  int64 written_in_revision = 5;  // the accession that wrote these bytes
+  ai.protomolt.proto.repo.v1.WriteProvenance written_by = 6;
+  string deleted_reason = 7;
+  // CHUNKS: the segmentation's digest. EMBEDDINGS: the digest it is bound to.
+  string segmentation_digest = 8;
+  bool opaque = 9;            // holds opaque Any occurrences
+  bool content_included = 10; // false = not requested, independent of state
+}
+
+// Every part the revision has is listed, requested or not, in codec order.
+// A part never written is absent from the list; absent, EMPTY and DELETED differ.
+message DocumentManifest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  int64 revision = 2;
+  bool tombstone = 3;
+  repeated PartManifestEntry parts = 4;
+}
+
+// ============================================================================
+// Validation record (§9)
+// ============================================================================
+
+enum ValidationStatus {
+  VALIDATION_STATUS_UNSPECIFIED = 0;
+  VALIDATION_STATUS_TYPED_VALID = 1;     // every rule evaluated and passed
+  // Accepted with opaque occurrences; at least one rule is NOT_EVALUATED or
+  // opaque content exists. Never reported as typed-valid.
+  VALIDATION_STATUS_OPAQUE_ACCEPTED = 2;
+}
+
+message OpaqueOccurrence {
+  PartSelector part = 1;
+  string field_path = 2;
+  string type_url = 3;
+  string sha256 = 4;
+  int64 length = 5;
+}
+
+enum RuleResultState {
+  RULE_RESULT_STATE_UNSPECIFIED = 0;
+  RULE_RESULT_STATE_NOT_EVALUATED = 1;  // needed opaque contents
+}
+
+message RuleResult {
+  string rule_id = 1;
+  string field_path = 2;
+  RuleResultState state = 3;
+}
+
+message RevisionValidation {
+  ValidationStatus status = 1;
+  // Schema artifacts used at save time. Historical reads decode with these, never
+  // with whatever the live registry holds now.
+  repeated string schema_artifact_ids = 2;
+  repeated OpaqueOccurrence opaque_occurrences = 3;
+  // Only non-passing results are listed (a failed rule means no accession).
+  repeated RuleResult rule_results = 4;
+}
+
+// ============================================================================
+// Errors (carried in gRPC status details, and per item in bulk streams)
+// ============================================================================
+
+message RevisionConflict {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  ExpectedRevision expected = 2;
+  int64 current_revision = 3;  // 0 = document does not exist
+  bool current_is_tombstone = 4;
+}
+
+message OperationReuse {
+  string operation_id = 1;
+  string recorded_intent_sha256 = 2;
+  string request_intent_sha256 = 3;
+}
+
+enum RejectionReason {
+  REJECTION_REASON_UNSPECIFIED = 0;
+  REJECTION_REASON_MALFORMED_REQUEST = 1;      // duplicate/contradicting selectors, stray content
+  REJECTION_REASON_VALIDATION_FAILED = 2;      // composed candidate failed a rule
+  REJECTION_REASON_SCHEMA_MISSING = 3;         // Any type not registered
+  REJECTION_REASON_INVALID_BYTES = 4;          // Any bytes do not decode as their type
+  REJECTION_REASON_OPAQUE_NOT_ALLOWED = 5;     // opaque requested, host policy refuses
+  REJECTION_REASON_SOURCE_PURGED = 6;          // carried-forward object is purged
+  REJECTION_REASON_SOURCE_NOT_FOUND = 7;       // PartSource revision/part does not exist
+  REJECTION_REASON_SEGMENTATION_MISMATCH = 8;  // embedding set bound to a changed segmentation
+  REJECTION_REASON_UPLOAD_MISMATCH = 9;        // declared length or SHA-256 differs
+}
+
+message FieldViolation {
+  PartSelector part = 1;
+  string field_path = 2;
+  string rule_id = 3;
+  string message = 4;
+}
+
+message SaveRejection {
+  RejectionReason reason = 1;
+  string message = 2;
+  repeated FieldViolation violations = 3;
+}
+
+// Per-item error in SaveDocuments. `code` is the gRPC status code the unary
+// SaveDocument would have returned, with the same detail message.
+message SaveError {
+  int32 code = 1;
+  string message = 2;
+  oneof detail {
+    RevisionConflict conflict = 3;
+    OperationReuse reuse = 4;
+    SaveRejection rejection = 5;
+  }
+}
+
+// ============================================================================
+// Semantic results (§5) — replaces SemanticProcessingResult / SemanticChunk /
+// ChunkEmbedding
+// ============================================================================
+//
+// Document placement (pending the §16.2 consumer inventory): two new fields on
+// v1 SearchMetadata, `repeated Segmentation segmentations = 16` and
+// `repeated EmbeddingSet embedding_sets = 17` (v2 types). The codec maps each
+// segmentation to one CHUNKS object and each embedding set to one EMBEDDINGS
+// object. Field 13 (semantic_results) is reserved once consumers have moved.
+
+enum SegmentationKind {
+  SEGMENTATION_KIND_UNSPECIFIED = 0;
+  SEGMENTATION_KIND_SENTENCE = 1;
+  SEGMENTATION_KIND_TOKEN_WINDOW = 2;
+  SEGMENTATION_KIND_PARAGRAPH = 3;
+  SEGMENTATION_KIND_SEMANTIC_BOUNDARY = 4;
+}
+
+// The allowed offset units. Offsets are half-open [start, end).
+enum OffsetUnit {
+  OFFSET_UNIT_UNSPECIFIED = 0;  // rejected
+  OFFSET_UNIT_UTF8_BYTE = 1;
+  OFFSET_UNIT_UTF16_CODE_UNIT = 2;  // Java String index
+  OFFSET_UNIT_CODE_POINT = 3;       // Python str index
+}
+
+// Text that is not a field of the document, e.g. normalized text that semantic
+// chunks are cut from. Stored inside the segmentation's CHUNKS object.
+message DerivedText {
+  string derivation_id = 1;  // e.g. the normalizer config
+  string text = 2;
+}
+
+message TextSource {
+  oneof source {
+    string field_path = 1;      // e.g. "search_metadata.body"
+    DerivedText derived = 2;
+  }
+}
+
+message Segment {
+  string segment_id = 1;  // stable; embedding vectors key on it
+  int32 ordinal = 2;
+  string text = 3;
+  int64 start = 4;
+  int64 end = 5;
+  map<string, string> metadata = 99;
+}
+
+message Lineage {
+  string producer_id = 1;        // module/step that produced it
+  string producer_version = 2;
+  string config_id = 3;          // chunker or embedder config
+  repeated string derived_from_segmentation_ids = 4;
+  repeated EmbeddingSetKey derived_from_embedding_sets = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// Immutable once committed. Identity = segmentation_id + content_digest.
+message Segmentation {
+  string segmentation_id = 1;
+  // Server-computed SHA-256 over kind, source, offset_unit and segments
+  // (lineage and metadata excluded). If the client sets it, it must match.
+  // Rewriting an existing segmentation_id with a different digest is rejected;
+  // changed text or boundaries need a new segmentation_id.
+  string content_digest = 2;
+  SegmentationKind kind = 3;
+  TextSource source = 4;
+  OffsetUnit offset_unit = 5;
+  repeated Segment segments = 6;
+  Lineage lineage = 7;
+  map<string, string> metadata = 99;
+}
+
+enum Similarity {
+  SIMILARITY_UNSPECIFIED = 0;
+  SIMILARITY_COSINE = 1;
+  SIMILARITY_DOT_PRODUCT = 2;
+  SIMILARITY_EUCLIDEAN = 3;
+}
+
+message SegmentVector {
+  string segment_id = 1;
+  repeated float values = 2;  // length = EmbeddingSet.dimensions
+}
+
+// One model's vectors over one segmentation.
+message EmbeddingSet {
+  string embedding_set_id = 1;
+  string segmentation_id = 2;
+  // Must equal the segmentation's content_digest in the composed candidate, or
+  // the save fails with SEGMENTATION_MISMATCH. Vectors are never reattached.
+  string segmentation_digest = 3;
+  string model = 4;
+  int32 dimensions = 5;
+  Similarity similarity = 6;
+  // Exactly one vector per segment ID of the bound segmentation.
+  repeated SegmentVector vectors = 7;
+  Lineage lineage = 8;
+  map<string, string> metadata = 99;
+}
+
+// ============================================================================
+// Events (§10) — one per accession, written in the commit transaction
+// ============================================================================
+
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_ADDED = 1;
+  CHANGE_KIND_REPLACED = 2;
+  CHANGE_KIND_EMPTIED = 3;
+  CHANGE_KIND_DELETED = 4;
+  CHANGE_KIND_SOURCED = 5;  // taken from another document's revision
+}
+
+message PartChange {
+  PartSelector selector = 1;
+  ChangeKind kind = 2;
+  string sha256 = 3;
+}
+
+message Accessioned {
+  repeated PartChange changes = 1;  // carried-forward-unchanged parts are not listed
+  ValidationStatus validation_status = 2;
+}
+
+message Tombstoned {
+  string reason = 1;
+}
+
+// References marked purged. Not an accession; dedupe by purge_id.
+message PurgeMarked {
+  string purge_id = 1;
+  int64 references_purged = 2;
+}
+
+// Bytes deleted for this purge (objects still shared elsewhere are kept).
+message PurgeCompleted {
+  string purge_id = 1;
+  int64 objects_deleted = 2;
+  int64 objects_retained_shared = 3;
+}
+
+// Delivered at least once. Consumers dedupe accession and tombstone events by
+// (address, revision); purge events by purge_id.
+message DocumentEvent {
+  string event_id = 1;
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2;
+  int64 revision = 3;           // 0 for purge events
+  int64 previous_revision = 4;
+  string operation_id = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  oneof kind {
+    Accessioned accessioned = 10;
+    Tombstoned tombstoned = 11;
+    PurgeMarked purge_marked = 12;
+    PurgeCompleted purge_completed = 13;
+  }
+  map<string, string> metadata = 99;
+}
+
+// ============================================================================
+// Catalog-internal (not on the public API) — stored as binary protobuf (§10)
+// ============================================================================
+
+// A catalog record naming one configured storage namespace. Repointing
+// configuration creates a new stack ID (§6).
+message StackRecord {
+  string stack_id = 1;
+  string provider = 2;   // s3, redis, azure, ...
+  string endpoint = 3;
+  string namespace = 4;  // bucket or container + prefix
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message StackRef {
+  string stack_id = 1;
+  string key = 2;     // write-once, never reused
+  string sha256 = 3;
+  int64 length = 4;
+}
+
+message StoredPartEntry {
+  PartManifestEntry entry = 1;  // content_included unused in storage
+  StackRef ref = 2;             // unset for EMPTY / DELETED
+}
+
+// What the catalog stores per accession. Replaces today's JSON manifest,
+// security and history metadata.
+message StoredManifest {
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+  int64 revision = 2;
+  int64 previous_revision = 3;
+  bool tombstone = 4;
+  repeated StoredPartEntry parts = 5;
+  RevisionValidation validation = 6;
+  string operation_id = 7;
+  string intent_sha256 = 8;
+}
