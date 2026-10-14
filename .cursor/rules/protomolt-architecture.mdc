@@ -1,0 +1,19 @@
+---
+description: Preserve ProtoMolt architecture and reuse its protobuf toolkit
+alwaysApply: true
+---
+
+Read root AGENTS.md, especially "Start here: reuse and scope control", before
+editing or delegating. It is the canonical policy for every module.
+
+Read docs/design/protobuf-toolkit-audit.md and relevant source-index entries.
+Verify current branch and authorization. Main and ai-slop-archive-by-astra are
+protected during reconciliation. Audit completion does not authorize repairs.
+
+Use existing descriptor mapping, CEL, validation, parts and receipt machinery.
+For example, inspect ProtoFieldMapper and ProtoValidator instead of converting
+a typed message through JSON or Struct to manipulate or validate its fields.
+
+Never introduce a second public document API, authoritative JSON representation,
+arbitrary document ceiling or weakened validation as an implementation shortcut.
+Follow AGENTS.md for design changes, evidence and worker handoffs.

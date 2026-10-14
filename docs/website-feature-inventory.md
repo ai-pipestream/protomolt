@@ -7,16 +7,21 @@ unwired, or planned, that is stated. The
 [README](../README.md) is the module-level source of truth; this document is
 the marketing-facing distillation plus a fact-check of the founder's summary.
 
+October 13 source-audit update: use the [toolkit overview](README.md#protobuf-toolkit-overview)
+for the reusable layers and the [audit](design/protobuf-toolkit-audit.md) for current
+limitations on the reconciliation branch. September status labels below are
+historical claims, not newly rerun qualification or proof of repository integration.
+
 ## 1. Architecture overview
 
 ProtoMolt is a Java toolkit and platform whose organizing idea is:
 **the protobuf descriptor is the semantic layer.** A message declares its
 validation rules, index mapping, vector configuration, projection provenance,
 metric membership, LLM prompt shape, metadata, and quality dimensions once, as
-descriptor options, and every subsystem reads those declarations. All code
-operates on descriptors (`Descriptor`/`FileDescriptor`), never generated
-classes, so the same paths serve runtime-resolved `DynamicMessage`s and
-compiled-in types.
+descriptor options. The toolkit uses descriptors (`Descriptor`/`FileDescriptor`)
+alongside generated messages and runtime-resolved `DynamicMessage`s. Individual
+subsystems must explicitly consume the relevant options; descriptor support alone
+does not prove an application's storage or validation path preserves them.
 
 The tree splits into three tiers (140 Gradle modules):
 
@@ -74,7 +79,7 @@ Status vocabulary: **shipped** (exercised by tests/CI), **working, pre-release**
 | protovalidate compatibility | Schemas annotated with `(buf.validate.field)` / `(buf.validate.message)` options in `.proto` files — including predefined-rule extensions — validate end-to-end through the same `ProtoValidator`; the module vendors `buf/validate/validate.proto` (pinned v1.2.2) and re-parses descriptors built without the extension registry so the options are never silently dropped. **Passes buf's full protovalidate conformance suite, 2872 of 2872 cases, no skip list, enforced in CI on every push.** The same options also feed JSON Schema generation through the neutral constraint model | Teams already on buf validate | Shipped |
 | Breaking-change detection | Typed schema diff (33 stable rule ids) plus the seven Confluent compatibility policies | Registry operators, CI | Shipped |
 | Code generation, no protoc | protoc's own generators bundled as one WebAssembly module: java, kotlin, grpc-java, python, cpp, csharp, ruby, php, objc; works inside the native-image CLI | Polyglot consumers | Shipped |
-| JSON Schema / OpenAPI generation | JSON Schema 2020-12 folding in validation rules; OpenAPI 3.0.3 from service descriptors | API publishers | Shipped (OpenAPI does not read validation rules) |
+| JSON Schema / OpenAPI generation | JSON Schema 2020-12 and OpenAPI 3.0.3 translate supported validation constraints from descriptors; runtime-only constraints still require validation | API publishers | Source confirmed: `ProtoOpenApiGenerator` uses `ProtoJsonSchemaGenerator.fieldValidationSchema` and `OpenApiValidation`; not a claim of complete runtime-rule equivalence |
 | String format parsers | RFC-accurate email/hostname/IP/URI/date/GTIN parsers, zero dependencies, no `java.util.regex` | Validation internals, reusable standalone | Shipped |
 | Schema inference | Reverse-engineer a proto definition from JSON samples (`infer-schema`) | Migration/onboarding | Shipped |
 | Joins & derived shapes | Synthesized envelope/projection/tagged-union types emitted as real `.proto` source, so a join's output is a governed schema | Data modeling teams | Shipped |

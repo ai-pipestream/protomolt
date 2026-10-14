@@ -1,5 +1,49 @@
 # AGENTS.md
 
+## Start here: reuse and scope control
+
+- Before implementation, read the current user authorization and these three
+  documents: [reconciliation plan](docs/design/parts-service-reconciliation.md),
+  [toolkit audit](docs/design/protobuf-toolkit-audit.md), and the relevant entries
+  in the [source index](docs/design/protobuf-toolkit-source-index.md).
+  Verify their findings against the checkout; they are not proof that fixes landed.
+- Identify the branch, worktree, starting commit and existing local changes.
+  During this reconciliation, work only in `reconcile/parts-based-repository`.
+  Leave `main` and `ai-slop-archive-by-astra` untouched. Do not resume old goals,
+  automations or repair branches as implied authorization.
+- For each implementation slice, record the required behavior, existing classes
+  reused, entry-to-storage/read call path, and acceptance assertions before edits.
+  Search callers and tests before inventing a mapper, validator, schema resolver,
+  codec, receipt format, persistence layer or service. If an existing component
+  is insufficient, name the specific missing behavior; do not silently bypass it.
+- Use descriptor/Message/Builder APIs, the existing CEL mapper/projection tools,
+  ProtoValidator, parts layout and retained schema/receipt primitives. Internal
+  protobuf -> JSON/Struct -> protobuf is not a convenience implementation of
+  those capabilities. An intentional Struct field or external JSON boundary is
+  not a license to convert an unrelated typed message into it.
+- Stop the affected slice and explain the concrete tradeoff before changing an
+  approved architecture: another public document API, new authoritative format,
+  document size ceiling, weaker validation, changed part semantics, or loss of
+  retained identity. Obtain explicit user agreement for such a design change.
+  Ordinary implementation choices within the approved design do not need approval.
+- Existing broken behavior is not precedent. Do not copy a JSON persistence path,
+  swallowed exception, implicit schema/provider fallback or buffered size limit
+  merely because another module uses it. Preserve causes and distinguish missing,
+  unavailable, invalid and opaque data. Never turn one into successful validation.
+- Evidence must exercise the actual public path being changed. Assert fidelity,
+  invalid-input refusal and failure/recovery outcomes, not just successful returns.
+  Use real providers for claims about provider identity, transactions and durability;
+  mocks cannot establish those claims. Do not weaken tests, skip failures or substitute
+  a narrower path to obtain green. Report pre-existing failures separately.
+- At each completed slice, report behavior changed, reused components, meaningful
+  checks and remaining limitations. Distinguish local edits, commit, push, merge
+  and deployment. Keep the scope small enough to review before starting another.
+- Every delegated handoff or restart must carry these rules, exact branch/base,
+  owned files, exclusions and exit criteria. A worker report is evidence to review,
+  not approval to merge. Do not hand the user an unbounded review burden.
+- The current audit/planning authorization does not authorize implementing R1-R9.
+  Wait for a subsequent implementation instruction; this file does not grant it.
+
 ## Repository architecture and data integrity
 
 - `DocumentService` is the canonical public document API. Preserve selected-part
