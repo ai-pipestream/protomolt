@@ -63,6 +63,39 @@ public final class S3BlobStore implements BlobStore {
     }
 
     @Override
+    public InputStream openStream(String bucket, String key, long offset, long length) {
+        if (offset < 0) throw new IllegalArgumentException("Read offset must not be negative");
+        var request = GetObjectRequest.builder().bucket(bucket).key(key);
+        if (length == 0) return InputStream.nullInputStream();
+        if (length > 0) request.range("bytes=" + offset + "-" + Math.addExact(offset, length - 1));
+        else if (offset > 0) request.range("bytes=" + offset + "-");
+        final ResponseInputStream<GetObjectResponse> stream;
+        try {
+            stream = client.getObject(request.build());
+        } catch (NoSuchKeyException nsk) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
+        }
+        return new java.io.FilterInputStream(stream) {
+            private boolean ended;
+            @Override public int read() throws IOException {
+                int value = super.read();
+                if (value < 0) ended = true;
+                return value;
+            }
+            @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+                int count = super.read(buffer, offset, length);
+                if (count < 0) ended = true;
+                return count;
+            }
+            @Override public void close() throws IOException {
+                // Closing an unfinished SDK stream drains the rest of the body; abandon it instead.
+                if (!ended) stream.abort();
+                super.close();
+            }
+        };
+    }
+
+    @Override
     public GetResult getForUpdate(String bucket, String key) {
         requireConditionalSupport();
         // Keep bytes and the ETag from one authoritative GET. Do not use getObjectAsBytes:
