@@ -525,3 +525,70 @@ messages). `buf lint` and `scripts/check-proto-compatibility.sh` against
 `reconcile/parts-based-repository` pass. Codec, admission and search-proto tests
 pass with the new `SearchMetadata` fields. The `inspect_only`, JSON Schema and
 canonical intent cross-language fixtures are not done.
+
+## 8. Slice 1 as built (2026-10-15)
+
+Slice 1 follows the change map's §9 proposal on `reconcile/repo-v2-slice-1`. It is
+exercised through the engine and an in-process gRPC server; `RepoServices` mounts
+none of it, so v1 remains the only deployed DocumentService.
+
+**Modules.**
+- `repo/stack` (`Stack`, `BlobStoreStack`): every put writes a new random key under a
+  prefix and returns a `StackRef` whose SHA-256 and length the stack computed while
+  writing. Reads stream through a verifier that fails with `StackDataLoss` on a
+  missing, truncated or changed object. `BlobStore` gained a streamed `openStream`
+  (S3 implementation abandons, rather than drains, an unfinished body).
+- `repo/catalog` (`PostgresCatalog`, `CatalogBaseline`): the fresh baseline
+  `db/repo-catalog/V1__catalog_baseline.sql` with its own history table
+  `repo_catalog_schema_history`. It refuses any schema holding tables, sequences,
+  functions or types it did not create, including a migrated V1-V120 ledger.
+  Revisions, part references, outcomes, grants and artifacts are immutable by
+  trigger. The credential authority table and its `FOR SHARE` lock function are
+  re-created from V99; writer-grant revocation uses the same lock pattern.
+- `repo/accession` (`DocumentSaves`, `DocumentReads`, `AccessionGrpcService`,
+  `OutboxRelay`): the save steps S1-S15 and read steps R1-R7 of the change map.
+- `repo/admission` gained `DocumentCandidateAdmission`, a new entry over the
+  written fragments of a candidate that reuses the engine (fragment confinement,
+  the known-Any walk, ProtoValidator, `DocumentAnyRootInventory`,
+  `DocumentPayloadCheck`), and `DocumentSchemaRetention` for retaining a contract
+  definition such as the WriterGrant snapshot schema.
+
+**Commit.** One READ COMMITTED transaction: outcome lookup; grant and credential
+recheck under share locks; compare-and-set of `catalog_documents.current_revision`
+(an INSERT for "none", a conditional UPDATE otherwise); share-locked purge check of
+carried objects; then objects, schema artifacts, the revision with its binary
+`StoredManifest`, part references, the outcome and the outbox event. A conflict or
+a concurrent same-ID unique violation rereads the outcome in a fresh transaction.
+
+**Decisions taken in the slice.**
+- Typed admission validates written (and sourced) parts only and reads no carried
+  part, as change map S11 found no rule spans parts. Carried parts keep their
+  validation entries (gap 9).
+- Creation needs a CORE PUT with ownership. A grant with `allow_create`, a step
+  grant with `derived_from` lineage, or process authority may create. On updates,
+  only process authority may change ownership or security.
+- Failures before the writer is authorized are not recorded. Validation, schema
+  and source failures after it are recorded outcomes.
+- Sources must come from a document with the same `doc_id`, because part fragments
+  carry the identity field and confinement requires it.
+- Segmentations, embedding sets and legacy `semantic_results` are refused as
+  unsupported, so nothing new lands in CORE. Opaque mode is refused by host policy.
+- Unknown fields in document content are refused by typed admission
+  (`requireKnownDocument`), not stored. Requirements §15.7 asks for them to
+  survive; that conflict is open.
+
+**Acceptance covered** (`DocumentSavesIT`, `AccessionGrpcIT`, `CatalogOutageIT`,
+`CatalogLedgerRefusalIT`, `CatalogBaselineIT`; PostgreSQL 18 and LocalStack 3.8):
+§15.1 on PARSED, 3, 4, 5, 7 (content and int64; unknown fields as above), 8, 9
+(relay retry against an in-memory publisher), 11, 12, 13, 17, 18 (including both
+revocation orderings around an upload and a catalog outage), 20, 22 (rotation
+during upload) and 24.
+
+**Not in slice 1.** Segmentations and embedding sets (§15.2, 15), opaque content
+(6, 19), large streaming and the HTTP route (10), retained-schema outage and
+decoding a revision saved under another Document schema (14; such a read is refused
+with FAILED_PRECONDITION), purge (16, 21), overlapping-grant and snapshot-digest
+fixtures (22, 23 beyond rotation), the bulk, upload, streamed-read, blob, delete and
+listing RPCs (UNIMPLEMENTED), a Kafka publisher for the relay, cross-language
+canonical-intent fixtures, RustFS performance measurements and any deletion of v1
+code.
