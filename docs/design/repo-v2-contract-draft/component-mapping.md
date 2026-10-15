@@ -1,11 +1,14 @@
-# Repo service: contract and component mapping (draft for review)
+# Repo service: contract and component mapping
 
-For Argon review only. These two draft files are committed on
-`reconcile/parts-based-repository`; no production contract or implementation is changed.
-Requirements v2.5 remain normative; this is their proposed contract mapping.
+The v2 contract is built and compiled; this document maps it onto existing
+components. Requirements v2.5 remain normative. Section 7 records what changed
+between the reviewed draft and the built contract; the draft proto is deleted.
 
-- **Implements:** requirements v2.5 (`docs/design/parts-based-repository-requirements.md`, branch `reconcile/parts-based-repository`).
-- **Contract:** [document_service_v2_draft.proto](document_service_v2_draft.proto). It compiles with protoc against the v1 protos.
+- **Implements:** requirements v2.5 (`docs/design/parts-based-repository-requirements.md`).
+- **Contract:** `repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/` (`document_service.proto`,
+  `manifest.proto`, `events.proto`, `errors.proto`, `catalog_internal.proto`) and
+  `repo/proto/src/main/proto/ai/protomolt/proto/repo/semantic/v1/semantic.proto`, compiled by
+  `:protomolt-repo-proto` against the v1 protos.
 
 > **Source caveat.** The original class inventory came from GitHub main and Javadoc
 > summaries, not full call-path review. The 2026-10-14 correction checks specific
@@ -17,11 +20,11 @@ Requirements v2.5 remain normative; this is their proposed contract mapping.
 
 | # | Decision | Draft default | Why |
 |---|----------|---------------|-----|
-| D1 | Final protobuf package/shared messages | **Open.** `repo.v2` isolates this review draft only. | One public DocumentService remains required. No authorization to deploy v1/v2 side by side or delete imported shared v1 messages. |
+| D1 | Final protobuf package/shared messages | **Decided (working name):** `ai.protomolt.proto.repo.v2`; semantic types in `ai.protomolt.proto.repo.semantic.v1` (§7). | One public DocumentService remains required. v2 replaces v1 after §15; it is not deployed beside it. Shared v1 messages stay imported. |
 | D2 | Expected revisions and content dedupe | Every save names an expected revision or "none". | v1 `force_save` bypasses content deduplication, not concurrency. Removing it is a separate dedupe-policy decision; do not claim it was an unconditional-write switch. |
 | D3 | Is a tombstone a revision? | **Yes.** It gets a revision, an operation ID and an expected revision. | History shows the delete. A later save over it is an ordinary CAS. |
 | D4 | Purge events | **Two events:** `PurgeMarked` when references are marked, `PurgeCompleted` when bytes are deleted. | This matches v1's requested/purged pair and lets compliance see when bytes are actually gone. |
-| D5 | Where segmentations live in `Document` | **New fields** `SearchMetadata.segmentations = 16` and `embedding_sets = 17`. Field 13 is reserved after the consumers move. | Additive, but it waits on the §16.2 consumer inventory. |
+| D5 | Where segmentations live in `Document` | **Done:** `SearchMetadata.segmentations = 16` and `embedding_sets = 17`. Field 13 is reserved after the consumers move. | Additive. The change map's §6 found only `QdrantPointMapper` reads field 13 in this repo. The parts layout does not yet store them as CHUNKS/EMBEDDINGS. |
 | D6 | Offset units allowed | UTF-8 byte, UTF-16 code unit, code point | These cover Java, Python and Rust. Unspecified is rejected. |
 | D7 | Catalog persistence library | **Decided:** JDBC + HikariCP + Flyway. | User selected this stack; preserve transaction semantics when implementation is authorized. |
 | D8 | v1 conditional-blob RPCs (`PutBlob`, `GetBlobForUpdate`, `CompareAndPutBlob`, `DeleteBlob`) | **Removed** | They contradict write-once stacks. If a caller depends on them, that has to be found before deletion. |
@@ -264,7 +267,7 @@ implementation or introduce another normative requirements copy.
 
 ### Validation and schemas
 
-- Buf-compatible annotations now express required alternatives/messages/IDs,
+- Validation annotations (house validate.v1 since §7) express required alternatives/messages/IDs,
   allowed part selectors, revision/length bounds, digest syntax and enum values.
   CEL rules cover offset ordering, vector dimensions, deletion reasons and the
   incompatibility of typed-valid with opaque/unevaluated occurrences. Execute them
@@ -322,29 +325,10 @@ handler coverage, multi-payload streaming scope, and purge concurrency/progress
 lookup details. Neither v2 package naming nor this draft authorizes two public
 repository services. Retain the original aggregate/parts API concept.
 
-### Verification of this documentation revision
+### Verification
 
-The updated draft compiles with `libprotoc 25.1` and its complete imports on this
-branch. Reproduce from the repository root (output stays outside the checkout):
-
-```bash
-proto_args=()
-while IFS= read -r proto_root; do
-  proto_args+=("-I$proto_root")
-done < <(rg --files -g '*.proto' | sed -n 's@\(.*src/main/proto\)/.*@\1@p' | sort -u)
-protoc "${proto_args[@]}" -Idocs/design/repo-v2-contract-draft \
-  --include_imports --descriptor_set_out=/tmp/repo-v2-argon-review.pb \
-  docs/design/repo-v2-contract-draft/document_service_v2_draft.proto
-```
-
-`git diff --check` also passes. No production module was built or changed. No
-runtime validator fixtures, CEL execution, integration tests or performance tests
-were run for this documentation revision. These are still required before approval
-for implementation: valid/invalid annotation fixtures (especially oneof presence,
-false/zero values, event revision kinds and CEL numeric types), same-type-URL
-occurrence bindings, equivalent-upload replay, source-text changes under the same
-field path, and distinct purge marked/completed deliveries. Compilation is not
-proof of those behaviors.
+Superseded by §7: the contract now compiles in the Gradle build and its house
+validate.v1 rules run in `RepositoryV2ContractTest`.
 
 ### Review response: annotation and scope corrections
 
@@ -355,7 +339,6 @@ Protovalidate; that is not a run of this draft through ProtoMolt’s validator.
 Client schema bindings and StreamedPart.schema are removed. Retained server-selected
 occurrence and fragment identities remain on RevisionValidation. Bulk errors now
 use ItemError. D7 and D10 are now decided and recorded in requirements v2.5.
-No push or implementation is authorized.
 
 Purge conflict handling and streaming limitations are specified in requirements
 §§7 and 11. Composite references remain a later proposal (§13), not a replacement
@@ -476,8 +459,8 @@ Please check these before recommending implementation or push:
 6. Annotation dialect/runtime: run valid and invalid fixtures through ProtoMolt's
    own ProtoValidator, not only upstream Protovalidate. Exercise absent oneofs,
    optional empty node/connector, UUIDs, missing grant snapshots, forbidden intake
-   opaque permissions, and save versus tombstone response envelopes. Existing
-   native annotations and buf.validate coexist in imports; verify both execute.
+   opaque permissions, and save versus tombstone response envelopes. The contract
+   uses only the house dialect (§7).
 7. Retained metadata: ensure all owner, lineage, metadata and evidence needed by the
    contract have durable protobuf fields/associations and survive read/restart.
 8. Grant selection and errors: overlapping matching grants select deterministically;
@@ -487,5 +470,58 @@ Please check these before recommending implementation or push:
    exact canonical encoding fixtures, purge/reference race proof and actual large
    payload memory measurements. Composite pieces stay out of slice 1.
 
-The draft compiles with imports; this revision has no runtime validator qualification,
-transaction tests or implementation. Review findings are not authority to push.
+Runtime validator fixtures now exist (§7); transaction tests and the implementation
+belong to slice 1.
+
+## 7. The contract as built (2026-10-15)
+
+Built on `reconcile/repo-v2-slice-1`. These are the differences from the reviewed
+draft, with the reason for each.
+
+**Decisions applied.**
+- The `graph_location_id` target arm is removed; pipeline saves send a full
+  `NodeAddress` (change map gap 2). A target address needs four non-blank components.
+- A blank `doc_id` is rejected, never minted (gap 1). The `use_datasource_id` arm
+  takes `doc_id` and ownership from `document`, which is CORE content, so it also
+  requires a CORE PUT. Partial intake saves send the full address.
+- Package `ai.protomolt.proto.repo.v2`, as a working name (D1).
+- Validation uses the house `ai.protomolt.proto.validate.v1` dialect, not
+  `buf.validate`. Required oneofs became message CEL rules (`has(a) || has(b)`).
+  House string rules run on empty implicit strings, so optional digests carry
+  `ignore_if_zero`; scalar `gt` bounds that must hold carry `required`.
+- Gap 9: a carried part's validation entries are copied from the expected
+  revision's record; this carries retained schema identity, not a verdict
+  (documented on `RevisionValidation`).
+- Gap 10: no account schema policy in v2. `RevisionValidation.policy_sha256`
+  (field 7) is reserved; `validator_profile` names the validator and host policy.
+
+**Layout.**
+- The six files the draft named, with one move: the semantic types live in
+  `repo/semantic/v1/semantic.proto` (package `ai.protomolt.proto.repo.semantic.v1`).
+  v1 `document.proto` imports them for D5 and `repo.v2` imports v1, so in `repo.v2`
+  the two packages would import each other, which `buf lint` rejects
+  (`PACKAGE_NO_IMPORT_CYCLE`).
+- `manifest.proto` holds selectors, ownership, the manifest, the validation record
+  and `Accession`. `catalog_internal.proto` holds stack records and references, the
+  stored manifest, writer grants, `SaveIntent` and the candidate digest input. It
+  ships in the contract jar but no RPC carries its messages.
+- Every file sets `java_outer_classname`.
+
+**Shape changes.**
+- `UploadDocument` returns `UploadDocumentResponse` (wrapping `SaveDocumentResponse`)
+  to satisfy buf's standard response naming.
+- `REJECTION_REASON_WRITE_DENIED` added for PERMISSION_DENIED writer failures (§5).
+  `errors.proto` states which reasons are recorded outcomes: failures before the
+  writer is authorized (MALFORMED_REQUEST, OWNER_UNKNOWN, WRITE_DENIED) are not.
+- `StoredManifest` adds `ownership` (access checks read it, not a JSON column),
+  `committed_at` and persisted `metadata`.
+- `CandidateDigestInput` defines `RevisionValidation.candidate_sha256`.
+- Timestamps on accessions, events, outcomes and summaries are required.
+- Vector components must be finite (house `float.finite`).
+
+**Checks run.** `:protomolt-repo-proto` builds and its tests pass, including
+`RepositoryV2ContractTest` (valid and invalid fixtures on generated and dynamic
+messages). `buf lint` and `scripts/check-proto-compatibility.sh` against
+`reconcile/parts-based-repository` pass. Codec, admission and search-proto tests
+pass with the new `SearchMetadata` fields. The `inspect_only`, JSON Schema and
+canonical intent cross-language fixtures are not done.
