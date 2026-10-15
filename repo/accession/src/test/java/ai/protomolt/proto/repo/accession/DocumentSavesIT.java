@@ -161,15 +161,21 @@ class DocumentSavesIT {
         }
     }
 
-    // §15.7: typed admission cannot validate unknown fields, so it refuses them instead of dropping them.
-    @Test void unknownFieldsAreRefusedByTypedAdmissionNotDropped() {
+    // §15.7, decision 29: a field outside this server's schema is refused unrecorded, so the
+    // same operation ID can retry once the field is within a schema the server accepts.
+    @Test void unknownFieldsAreRefusedBeforeAuthorizationAndNotRecorded() {
         var address = address(account, "doc-unknown");
         var unknown = UnknownFieldSet.newBuilder().addField(4000, UnknownFieldSet.Field.newBuilder().addVarint(7).build()).build();
         var document = document(account, "doc-unknown", "u").toBuilder().setSearchMetadata(
                 SearchMetadata.newBuilder().setTitle("u").setUnknownFields(unknown)).build();
         assertRejected(() -> f.saves.save(processAuthority(), create("op-u", address, document).build()),
-                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
         assertThat(f.catalog.current(address)).isEmpty();
+        assertThat(f.catalog.outcome(account, "op-u")).isEmpty();
+        assertThat(f.stack.puts.get()).isZero();
+        var retried = f.saves.save(processAuthority(), create("op-u", address, document(account, "doc-unknown", "u")).build());
+        assertThat(retried.getReplayed()).isFalse();
+        assertThat(retried.getAccession().getRevision()).isEqualTo(1);
     }
 
     // §15.8

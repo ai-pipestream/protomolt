@@ -37,10 +37,9 @@ final class WriterAuthority {
     /**
      * @param connector the document's resolved connector, if any
      * @param creating the save creates the document
-     * @param derived the save names exact source lineage
      */
     Authorized authorize(RepositoryCaller caller, SaveOwner owner, String accountId, Optional<String> connector,
-            boolean creating, boolean derived) {
+            boolean creating) {
         if (caller.processAuthority()) {
             if (!owner.hasIntake())
                 throw denied("Process authority may save only as an intake owner");
@@ -56,7 +55,8 @@ final class WriterAuthority {
             throw denied("The caller's credential generation is not current");
         for (var grant : catalog.grants(accountId, binding.issuer(), binding.credentialId())) {
             if (grant.revoked() || !covers(grant.grant(), owner, connector)) continue;
-            if (creating && !grant.grant().getAllowCreate() && !(owner.hasStep() && derived)) continue;
+            // Decision 31: creation needs allow_create; derived_from is lineage, not authority.
+            if (creating && !grant.grant().getAllowCreate()) continue;
             var evidence = WriterGrantEvidence.newBuilder().setWriterGrantId(grant.grant().getGrantId())
                     .setWriterGrantSha256(grant.snapshotSha256()).setGrantSnapshot(grant.snapshot())
                     .setSnapshotSchema(grantSchema.reference()).setCredentialGeneration(binding.generation()).build();

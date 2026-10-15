@@ -564,9 +564,11 @@ a concurrent same-ID unique violation rereads the outcome in a fresh transaction
 - Typed admission validates written (and sourced) parts only and reads no carried
   part, as change map S11 found no rule spans parts. Carried parts keep their
   validation entries (gap 9).
-- Creation needs a CORE PUT with ownership. A grant with `allow_create`, a step
-  grant with `derived_from` lineage, or process authority may create. On updates,
-  only process authority may change ownership or security.
+- Creation needs a CORE PUT with ownership. A grant with `allow_create`, or process
+  authority, may create; `derived_from` is lineage only (decision 31). On updates,
+  a document's account, datasource and connector are fixed for every caller, process
+  authority included; any authorized writer, intake or step, may change its security
+  and source owner, subject to the write check under the current ACL (decision 30).
 - Failures before the writer is authorized are not recorded. Validation, schema
   and source failures after it are recorded outcomes.
 - Fragments are re-encoded with deterministic serialization (map entries sorted by
@@ -583,10 +585,12 @@ a concurrent same-ID unique violation rereads the outcome in a fresh transaction
   carry the identity field and confinement requires it.
 - Segmentations, embedding sets and legacy `semantic_results` are refused as
   unsupported, so nothing new lands in CORE. Opaque mode is refused by host policy.
-- Slice 1 decodes against the compiled `Document` schema only and refuses unknown
-  fields (`requireKnownDocument`), the safe subset of §15.7. Decoding against the
-  latest registered `Document` version, with the subject's compatibility mode
-  deciding what can be registered, is a follow-up.
+- Slice 1 decodes against the compiled `Document` schema only. A request document
+  with a field outside that schema is refused in the request-structure step as
+  MALFORMED_REQUEST, unrecorded, so the operation ID stays usable (decision 29).
+  Decoding with a registered `Document` version and recording it on the revision,
+  with the subject's compatibility mode deciding what can be registered, is a
+  follow-up.
 
 **Acceptance covered** (`DocumentSavesIT`, `AccessionGrpcIT`, `CatalogOutageIT`,
 `CatalogLedgerRefusalIT`, `CatalogBaselineIT`; PostgreSQL 18 and LocalStack 3.8):
@@ -603,3 +607,146 @@ fixtures (22, 23 beyond rotation), the bulk, upload, streamed-read, blob, delete
 listing RPCs (UNIMPLEMENTED), a Kafka publisher for the relay, cross-language
 canonical-intent fixtures, RustFS performance measurements and any deletion of v1
 code.
+
+## 9. First-slice call-path and change review (2026-10-15)
+
+This is a review map, not implementation authorization or another requirements source.
+Snapshot: reconciliation HEAD `1a240b18f`. Sections 7–8 and the real v2 proto now
+supersede the old draft-only state. Slice 1 already has committed implementation;
+this map describes what exists and what must be reviewed before accepting it.
+PR #313 status and Argon's four findings are reported by the user, not independently
+verified here. Obtain the exact review and head before declaring those findings closed.
+
+There are concurrent uncommitted changes in DocumentSaves, DocumentReads,
+DocumentCandidateAdmission, DocumentPartCodec, Stack, BlobStoreStack and
+AccessionFixture, plus new tests. Those are another editor's work, not reviewed or
+accepted by this map. The untracked call-path-change-map.md is preserved untouched.
+Its earlier main snapshot and file-size comparisons are not proof of equality with
+this checkout. Follow the committed source paths below for this review.
+
+### Save path: one canonical handler
+
+1. `repo/accession/.../AccessionGrpcService.saveDocument` calls `caller()` then
+   `DocumentSaves.save`. Reuse CallerContexts, AuthenticatedCaller,
+   RepositoryCaller and RepositoryCredentialBinding. The binding verifies principal,
+   authority and credential identity; account/ACL checks remain separate. Change the
+   deployment mount only at cutover, not by exposing another document service now.
+2. `DocumentSaves.saveChecked` runs the existing ProtoValidator, checks command
+   fields and selectors, normalizes the Document, resolves NodeAddress and checks
+   account scope. Reuse descriptor validation and original address vocabulary.
+   Review blank identity and unsupported content refusal; nothing may be dropped
+   because a selector or current schema cannot represent it.
+3. `DocumentSaves.split` uses `DocumentPartCodec`/`PartLayouts` and builds content
+   identities for `SaveIntents`. Reuse descriptor-based field partitioning. Change
+   only the required confinement/fidelity behavior; do not add JSON intermediates.
+   Current fragments are materialized ByteStrings/byte arrays, not large-stream proof.
+4. `SaveIntents.intent/sha256` produces the binary retry identity;
+   `PostgresCatalog.outcome` is checked before stale revision checks. Replay uses
+   current access checks. Review persisted metadata, owner and attestation coverage,
+   source identity and rejection replay; no successful response may hide differing intent.
+5. `WriterAuthority` and `DocumentAccessPolicy` establish writer and document access.
+   Reuse existing credential and ACL semantics; the new writer-grant model is catalog
+   work, not a graph registry. Review the v2.5 process-authority exception against
+   the actual latest decision; do not silently reapply v2.4's different rule.
+6. `DocumentSaves` builds the selected-part/reference set from current and exact
+   source manifests. Untouched references are retained, not copied. Review ownership,
+   source READ access, same-doc_id restriction and EMPTY/DELETE semantics explicitly.
+   Authorization and full source membership must survive a concurrent commit.
+7. `DocumentCandidateAdmission.check` reuses DocumentFragmentConfinement,
+   DocumentSchemaAdmission's validator, DocumentAnyRootInventory and
+   DocumentPayloadCheck. Keep those engines. The current committed caller supplies
+   written/sourced fragments, retaining carried validation entries. This is not
+   blanket proof of composed-candidate validation: establish what happens if a
+   registered container introduces a cross-part rule. Reject an unsupported rule
+   scope explicitly or load the required siblings; never assume future rules do not exist.
+8. New payloads go through `Stack.put`/`BlobStoreStack`; underlying BlobStore/S3
+   streaming and SHA-256 verification are reusable. Carried references issue no PUT.
+   Current save calls `bytes.toByteArray()` before put. Keep this limitation visible
+   until the streamed public path is qualified; do not fix it by a document ceiling.
+9. `PostgresCatalog.commit` owns the JDBC transaction for authority rechecks, CAS,
+   reference checks, retained schema assets, StoredManifest, outcome and outbox.
+   Reuse transaction guarantees and credential-lock semantics, not the old attempt
+   lifecycle. Review same-ID races, rollback, revocation ordering and source/purge
+   checks using actual transaction interleavings.
+10. `OutboxRelay` delivers the committed binary event; response replay returns the
+    stored outcome. The committed slice's in-memory publisher test does not qualify
+    Kafka delivery. A crash after commit must not create another accession/event.
+
+### Read path: exact revision and selected parts
+
+`AccessionGrpcService.getDocument` -> `DocumentReads.getDocument` -> `resolve` /
+`PostgresCatalog.manifest` -> current ownership/READ authorization -> selected
+StoredPartEntry -> `requireContainer` -> `Stack.open` / VerifyingInputStream ->
+Document assembly -> response manifest and validation evidence.
+
+Reuse current-versus-exact revision selection, retained references, digest/length
+verification, descriptor assembly and ACL checks. `getManifest` must fetch no body;
+`listRevisions` and `outcome` reuse catalog records with current authorization.
+
+The committed `requireContainer` compares retained descriptor SHA-256 to the host's
+compiled Document descriptor and refuses a difference. `getDocument` then merges
+bytes into the generated Document builder, and `read` buffers via ByteString.readFrom.
+Required changes before general use: decode with the retained descriptor closure,
+keep history independent of the latest registry, define any projection to a current
+response schema explicitly, and implement the separate streamed response path.
+Do not remove the fingerprint check without installing retained-schema decoding.
+
+### Reuse, change and deletion boundary
+
+**Reuse:** DocumentPartCodec, PartLayouts and confinement; ProtoValidator and both
+annotation readers; descriptor/Any resolution, retained artifact tools and mapper/
+projection APIs; RepositoryCaller/credential binding and DocumentAccessPolicy;
+provider SPI/S3 streaming; typed errors and verified stream reads. Reuse behavior
+with callers/tests traced, not old class names as an automatic keep list.
+
+**Already introduced, review rather than rewrite:** repo/catalog (CatalogBaseline,
+PostgresCatalog, CatalogRecords), repo/stack (Stack, BlobStoreStack,
+VerifyingInputStream), repo/accession (DocumentSaves, DocumentReads, WriterAuthority,
+SaveIntents, AccessionGrpcService, OutboxRelay), and the candidate-admission adapter.
+These must converge on one implementation; do not create another competing engine
+because review finds a defect.
+
+**Change next:** resolve Argon's four exact findings; retained Document decode;
+composed-validation dependency handling; then the missing public operations and
+streamed ownership of buffers. Each change needs one named behavior and its acceptance
+assertions. Do not count an UNIMPLEMENTED RPC or buffered path as delivered capability.
+
+**Delete in the first slice: no additional production classes.** The service is not
+mounted and legacy callers still exist. Deleting their engine now would break them.
+At the single-service cutover, remove legacy DocumentGrpcService registration and
+its document-save/read routes through DocumentOperations/SaveResolution, then remove
+unreferenced document-only helpers after a caller inventory. Conditional-blob,
+publication/history transports and attempt/lease/pin machinery remain deletion
+candidates subject to that inventory. Archive, drive, credential and outbox users
+can retain shared dependencies. Do not delete Tx, LedgerDatabase, provider adapters
+or an entire ledger directory based on a wildcard or line-count estimate.
+
+Exit evidence for accepting this slice: selected-part changes preserve sibling
+references and bytes; typed invalid candidates refuse; exact history and outcome
+replay work; revoked authority cannot win after revocation; content, ownership,
+unknown fields and retained schema identity survive the supported path; crashes do
+not produce partial commits. Unsupported schema versions/operations remain explicit
+limitations, not production-ready acceptance of the entire requirements document.
+
+### Scheduling recommendations for review
+
+- Retained-schema Document decoding before semantic shape changes: yes. Registry
+  FULL_TRANSITIVE compatibility controls registration, not historical decoding.
+  Use the exact retained schema for history; do not equate "latest compatible" with
+  exact retained identity. Changing document.proto can change the fingerprint and
+  trigger refusal; not every textual edit necessarily changes its descriptor.
+- Opaque content: retain its contract and storage slots now; implement after retained
+  schema identity and writer grants. No demonstrated dependency requires waiting
+  for HTTP upload or purge implementation. Prioritize it earlier if an intended
+  producer needs it. All non-enabled hosts must refuse it explicitly meanwhile.
+- No two public service mounts: agree. Exercise the new handler in an isolated host
+  against its fresh catalog before cutover. Isolation is not side-by-side production
+  APIs. Require supported operations and RustFS evidence before the one public mount
+  switches. Freeze archive separately and declare a supported provider set rather
+  than letting undecided optional Redis/remote support block every usable deployment.
+- Use Forgejo for issues/milestone/PRs. AGENTS.md still identifies GitHub Actions as
+  the build of record. Correct that statement in the proposed project plan.
+- Blocking review findings belong in PR #313 before merge, not merely in follow-up
+  issues. Deferred enhancements may have issues with explicit unsupported behavior.
+  The actual project-plan file and review cards were not available locally; this is
+  not an approval of its 8 decision issues, 20 slices or dependency graph.

@@ -109,6 +109,82 @@ class ReviewFixesIT {
                 .startsWith("type.googleapis.com/");
     }
 
+    // Decision 30: any authorized writer may change the ACL; account, datasource and connector are fixed.
+    @Test void anyAuthorizedWriterMayChangeTheAclButNotTheDocumentIdentity() {
+        var credential = UUID.randomUUID();
+        f.catalog.registerCredential(ISSUER, credential, "crawler");
+        f.intakeGrant(account, credential, "ds-1", true);
+        f.stepGrant(account, credential, "enricher", false);
+        var crawler = writer(account, "crawler", credential, 1);
+        var address = address(account, "doc-acl");
+        var first = f.saves.save(crawler, create("op-1", address, document(account, "doc-acl", "v1", "crawler")).build());
+        assertThat(first.getAccession().getRevision()).isEqualTo(1);
+
+        var widened = f.saves.save(crawler, corePut("op-2", address, 1, ownership(account, "crawler", "reader")));
+        assertThat(widened.getAccession().getRevision()).isEqualTo(2);
+        var stepped = f.saves.save(crawler, corePut("op-3", address, 2, ownership(account, "crawler", "reader", "auditor"))
+                .toBuilder().setOwner(stepOwner("enricher")).build());
+        assertThat(stepped.getAccession().getRevision()).isEqualTo(3);
+        assertThat(f.catalog.manifest(address, 3).orElseThrow().getOwnership().getSecurity().getPermissionsCount()).isEqualTo(6);
+        assertThat(f.catalog.manifest(address, 1).orElseThrow().getOwnership().getSecurity().getPermissionsCount()).isEqualTo(2);
+        var reader = new ai.protomolt.proto.repo.spi.RepositoryCaller("reader", false, java.util.Set.of(account),
+                java.util.Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder().setIdentityType("service")
+                        .setIdentity("reader").build()));
+        assertThat(f.reads.getManifest(reader, ai.protomolt.proto.repo.v2.GetManifestRequest.newBuilder()
+                .setAddress(address).build()).getManifest().getRevision()).isEqualTo(3);
+
+        var otherDatasource = ownership(account, "crawler").toBuilder().setDatasourceId("ds-2").build();
+        var withConnector = ownership(account, "crawler").toBuilder().setConnectorId("s3").build();
+        for (var caller : new ai.protomolt.proto.repo.spi.RepositoryCaller[]{crawler, processAuthority()}) {
+            for (var changed : new ai.protomolt.proto.repo.v1.OwnershipContext[]{otherDatasource, withConnector}) {
+                assertThatThrownBy(() -> f.saves.save(caller, corePut("op-x", address, 3, changed)))
+                        .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                            assertThat(failure.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                            assertThat(((ai.protomolt.proto.repo.v2.SaveRejection) failure.detail().orElseThrow()).getReason())
+                                    .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+                        });
+            }
+        }
+        assertThat(f.catalog.outcome(account, "op-x")).isEmpty();
+        assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(3);
+    }
+
+    // Decision 31: creation needs allow_create; derived_from is lineage only.
+    @Test void derivedFromGrantsNoCreationAuthority() {
+        var credential = UUID.randomUUID();
+        f.catalog.registerCredential(ISSUER, credential, "summarizer");
+        var caller = writer(account, "summarizer", credential, 1);
+        var source = address(account, "doc-source");
+        f.saves.save(processAuthority(), create("op-0", source, document(account, "doc-source", "s", "summarizer")).build());
+        var derived = address(account, "doc-derived");
+        var request = create("op-1", derived, document(account, "doc-derived", "d", "summarizer"))
+                .setOwner(stepOwner("summarizer"))
+                .addDerivedFrom(ai.protomolt.proto.repo.v2.SourceRevision.newBuilder().setAddress(source).setRevision(1)).build();
+
+        f.stepGrant(account, credential, "summarizer", false);
+        assertThatThrownBy(() -> f.saves.save(caller, request)).isInstanceOfSatisfying(AccessionException.class, failure -> {
+            assertThat(failure.code()).isEqualTo(Status.Code.PERMISSION_DENIED);
+            assertThat(((ai.protomolt.proto.repo.v2.SaveRejection) failure.detail().orElseThrow()).getReason())
+                    .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_WRITE_DENIED);
+        });
+        assertThat(f.catalog.outcome(account, "op-1")).isEmpty();
+
+        var creator = f.stepGrant(account, credential, "summarizer", true);
+        var saved = f.saves.save(caller, request);
+        assertThat(saved.getAccession().getValidation().getWriterGrant().getWriterGrantId()).isEqualTo(creator.getGrantId());
+        assertThat(saved.getAccession().getDerivedFromList()).singleElement()
+                .satisfies(lineage -> assertThat(lineage.getRevision()).isEqualTo(1));
+    }
+
+    private static SaveDocumentRequest corePut(String operation, ai.protomolt.proto.repo.v1.NodeAddress address,
+            long expected, ai.protomolt.proto.repo.v1.OwnershipContext ownership) {
+        var core = Document.newBuilder().setDocId(address.getDocId()).setOwnership(ownership)
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle("acl " + operation)).build();
+        return SaveDocumentRequest.newBuilder().setOperationId(operation)
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(expected)).setDocument(core)
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).setOwner(intakeOwner()).build();
+    }
+
     private static ai.protomolt.proto.repo.v2.PartSchemaBinding binding(
             java.util.List<ai.protomolt.proto.repo.v2.PartSchemaBinding> bindings, DocumentPart part) {
         return bindings.stream().filter(b -> b.getPart().getPart() == part).findFirst().orElseThrow();

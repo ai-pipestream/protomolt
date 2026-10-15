@@ -273,6 +273,22 @@ public final class DocumentCandidateAdmission {
         }
     }
 
+    /**
+     * Refuses a request document that carries fields outside this server's Document
+     * schema, at any depth, or an Any at a location the layout does not allow. For
+     * the request-structure step, before any outcome can be recorded; the same walk
+     * runs again inside {@link #check} as a backstop.
+     *
+     * @throws ContentRefused when the document is not entirely within the schema
+     */
+    public static void requireKnownFields(Document document) {
+        try {
+            DocumentSchemaAdmission.requireKnownDocument(document, "", 0, new int[1], () -> {});
+        } catch (IllegalArgumentException refused) {
+            throw new ContentRefused(refused.getMessage(), refused);
+        }
+    }
+
     /** A resolver's answer is host state: a bad one is a host failure, not a content refusal. */
     private static DocumentSchemaAssetBinding select(DocumentSchemaDefinitions definitions,
             DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Selection selection) {

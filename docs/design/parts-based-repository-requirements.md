@@ -441,7 +441,8 @@ correctness and RustFS for performance measurements.
    records that schema artifact ID on the revision. Fields from no registered version
    are refused with SCHEMA_MISSING. Which versions can be registered is the subject's
    compatibility mode (`core/compat`, the Confluent set); the `Document` subject uses
-   FULL_TRANSITIVE so every revision stays readable by every server.
+   the registry default, BACKWARD, which can be changed per subject. Each revision
+   records the schema version it was saved with, and reads decode with that version.
 8. History pages correctly, and exact-revision reads return the old content.
 9. Each accession writes one outbox event listing what changed. An outbox relay retry
    produces duplicate delivery but no duplicate catalog event.

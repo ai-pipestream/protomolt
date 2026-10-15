@@ -163,8 +163,7 @@ public final class DocumentSaves {
         var ownership = ownership(caller, document, address, base, writes);
         requireOwnerMatches(request.getOwner(), ownership);
         var authorized = authority.authorize(caller, request.getOwner(), account,
-                ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(),
-                creating, request.getDerivedFromCount() > 0);
+                ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
         if (caller.processAuthority() && request.getOpaqueAttestationsCount() > 0)
             throw WriterAuthority.denied("Process authority may not attest opaque content");
 
@@ -413,6 +412,15 @@ public final class DocumentSaves {
         var search = document.getSearchMetadata();
         if (search.getSemanticResultsCount() > 0 || search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0)
             throw malformedException("Semantic results, segmentations and embedding sets are not supported by this server yet");
+        // Decision 29: slice 1 decodes with the compiled Document schema only. A field this
+        // server does not know is refused before authorization and records nothing, so the
+        // operation ID stays usable once the registry-backed decode can accept the field.
+        try {
+            DocumentCandidateAdmission.requireKnownFields(document);
+        } catch (DocumentCandidateAdmission.ContentRefused refused) {
+            throw malformedException("Fields outside this server's Document schema are not supported by this server yet: "
+                    + refused.getMessage());
+        }
         if (request.getTarget().hasAddress()) {
             var docId = request.getTarget().getAddress().getDocId();
             if (!document.getDocId().isEmpty() && !document.getDocId().equals(docId))
@@ -479,8 +487,17 @@ public final class DocumentSaves {
         var ownership = corePut ? document.getOwnership() : base.get().getOwnership();
         if (!ownership.getAccountId().equals(address.getAccountId()))
             throw malformedException("Document ownership names another account");
-        if (base.isPresent() && corePut && !caller.processAuthority() && !ownership.equals(base.get().getOwnership()))
-            throw WriterAuthority.denied("Changing ownership or security needs process authority");
+        // Decision 30: the account, datasource and connector are fixed at creation for every
+        // caller, process authority included. Security and source_owner may be changed by any
+        // authorized writer; the write check under the current ACL has already run.
+        if (base.isPresent() && corePut) {
+            var fixed = base.get().getOwnership();
+            boolean sameConnector = ownership.hasConnectorId() == fixed.hasConnectorId()
+                    && (!fixed.hasConnectorId() || ownership.getConnectorId().equals(fixed.getConnectorId()));
+            if (!ownership.getAccountId().equals(fixed.getAccountId())
+                    || !ownership.getDatasourceId().equals(fixed.getDatasourceId()) || !sameConnector)
+                throw malformedException("A document's account, datasource and connector are fixed when it is created");
+        }
         return ownership;
     }
 
