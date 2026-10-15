@@ -1,0 +1,90 @@
+package ai.protomolt.proto.repo.accession;
+
+import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
+import ai.protomolt.proto.repo.catalog.CatalogRecords.CredentialCheck;
+import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
+import ai.protomolt.proto.repo.v2.RejectionReason;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.WriterGrant;
+import ai.protomolt.proto.repo.v2.WriterGrantEvidence;
+import io.grpc.Status;
+import java.util.Optional;
+
+/**
+ * Selects the write authority for one save (requirements §5, decisions 25-27).
+ * A process-authority caller writes only as an intake owner and is recorded as
+ * such. Every other caller needs its current credential generation and an
+ * active grant in the account that covers the owner; eligible grants are taken
+ * in unsigned UTF-8 grant ID order. The commit transaction rechecks both.
+ */
+final class WriterAuthority {
+    /** The evidence for the revision and what the commit must recheck. */
+    record Authorized(Optional<WriterGrantEvidence> grant, Optional<ProcessAuthorityEvidence> process,
+                      Optional<String> grantId, Optional<CredentialCheck> credential) {}
+
+    private final PostgresCatalog catalog;
+    private final DocumentSchemaRetention.Retained grantSchema;
+
+    WriterAuthority(PostgresCatalog catalog, DocumentSchemaRetention.Retained grantSchema) {
+        this.catalog = catalog;
+        this.grantSchema = grantSchema;
+    }
+
+    DocumentSchemaRetention.Retained grantSchema() { return grantSchema; }
+
+    /**
+     * @param connector the document's resolved connector, if any
+     * @param creating the save creates the document
+     * @param derived the save names exact source lineage
+     */
+    Authorized authorize(RepositoryCaller caller, SaveOwner owner, String accountId, Optional<String> connector,
+            boolean creating, boolean derived) {
+        if (caller.processAuthority()) {
+            if (!owner.hasIntake())
+                throw denied("Process authority may save only as an intake owner");
+            return new Authorized(Optional.empty(),
+                    Optional.of(ProcessAuthorityEvidence.newBuilder().setPrincipal(caller.principalName()).build()),
+                    Optional.empty(), Optional.empty());
+        }
+        var binding = caller.credentialBinding()
+                .orElseThrow(() -> denied("Saving requires a credential-bound caller or process authority"));
+        var credential = catalog.credential(binding.issuer(), binding.credentialId())
+                .orElseThrow(() -> denied("The caller's credential is not registered"));
+        if (credential.revoked() || credential.generation() != binding.generation())
+            throw denied("The caller's credential generation is not current");
+        for (var grant : catalog.grants(accountId, binding.issuer(), binding.credentialId())) {
+            if (grant.revoked() || !covers(grant.grant(), owner, connector)) continue;
+            if (creating && !grant.grant().getAllowCreate() && !(owner.hasStep() && derived)) continue;
+            var evidence = WriterGrantEvidence.newBuilder().setWriterGrantId(grant.grant().getGrantId())
+                    .setWriterGrantSha256(grant.snapshotSha256()).setGrantSnapshot(grant.snapshot())
+                    .setSnapshotSchema(grantSchema.reference()).setCredentialGeneration(binding.generation()).build();
+            return new Authorized(Optional.of(evidence), Optional.empty(), Optional.of(grant.grant().getGrantId()),
+                    Optional.of(new CredentialCheck(binding.issuer(), binding.credentialId(), binding.generation())));
+        }
+        if (!catalog.ownerKnown(accountId, grant -> covers(grant, owner, connector)))
+            throw new AccessionException(Status.Code.FAILED_PRECONDITION, "No writer grant covers this owner in the account",
+                    DocumentSaves.rejection(RejectionReason.REJECTION_REASON_OWNER_UNKNOWN,
+                            "No writer grant covers this owner in the account"));
+        throw denied(creating ? "The caller holds no active grant that may create this document"
+                : "The caller holds no active grant for this owner");
+    }
+
+    static boolean covers(WriterGrant grant, SaveOwner owner, Optional<String> connector) {
+        if (owner.hasIntake()) {
+            if (!grant.hasIntake() || !grant.getIntake().getDatasourceId().equals(owner.getIntake().getDatasourceId()))
+                return false;
+            if (owner.getIntake().hasConnectorId()
+                    && !connector.equals(Optional.of(owner.getIntake().getConnectorId()))) return false;
+            return !grant.getIntake().hasConnectorId() || connector.equals(Optional.of(grant.getIntake().getConnectorId()));
+        }
+        if (!grant.hasStep() || !grant.getStep().getModuleId().equals(owner.getStep().getModuleId())) return false;
+        return !grant.getStep().hasNodeId() || grant.getStep().getNodeId().equals(owner.getStep().getNodeId());
+    }
+
+    static AccessionException denied(String message) {
+        return new AccessionException(Status.Code.PERMISSION_DENIED, message,
+                DocumentSaves.rejection(RejectionReason.REJECTION_REASON_WRITE_DENIED, message));
+    }
+}
