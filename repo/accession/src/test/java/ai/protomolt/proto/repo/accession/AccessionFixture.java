@@ -83,6 +83,7 @@ final class AccessionFixture implements AutoCloseable {
     final String url;
     final PostgresCatalog catalog;
     final CountingStack stack;
+    final DocumentSaves.Drives drives;
     final DocumentSaves saves;
     final DocumentReads reads;
     final String prefix;
@@ -95,7 +96,7 @@ final class AccessionFixture implements AutoCloseable {
         var stackId = catalog.registerStack(StackRecord.newBuilder().setStackId("stack-" + UUID.randomUUID())
                 .setProvider("s3").setEndpoint(S3.getEndpoint().toString()).setNamespace(BUCKET + "/" + prefix).build());
         stack = new CountingStack(new BlobStoreStack(stackId, new S3BlobStore(client), BUCKET, prefix));
-        var drives = new DocumentSaves.Drives("default", Map.of("default", stack));
+        drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
         reads = new DocumentReads(catalog, drives, saves.containerSchema());
     }
@@ -108,7 +109,7 @@ final class AccessionFixture implements AutoCloseable {
         catalog = new PostgresCatalog(new CatalogConfig(url, POSTGRES.getUsername(), POSTGRES.getPassword(), 8));
         prefix = original.prefix;
         stack = new CountingStack(new BlobStoreStack(original.stack.stackId(), new S3BlobStore(client), BUCKET, prefix));
-        var drives = new DocumentSaves.Drives("default", Map.of("default", stack));
+        drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
         reads = new DocumentReads(catalog, drives, saves.containerSchema());
     }
@@ -262,6 +263,13 @@ final class AccessionFixture implements AutoCloseable {
 
         @Override public StackRef put(InputStream body, long length) throws IOException {
             var ref = delegate.put(body, length);
+            puts.incrementAndGet();
+            afterPut.run();
+            return ref;
+        }
+
+        @Override public StackRef put(byte[] body) throws IOException {
+            var ref = delegate.put(body);
             puts.incrementAndGet();
             afterPut.run();
             return ref;

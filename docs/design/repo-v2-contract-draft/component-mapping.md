@@ -569,6 +569,16 @@ a concurrent same-ID unique violation rereads the outcome in a fresh transaction
   only process authority may change ownership or security.
 - Failures before the writer is authorized are not recorded. Validation, schema
   and source failures after it are recorded outcomes.
+- Fragments are re-encoded with deterministic serialization (map entries sorted by
+  key) before hashing and storing, so a client that sends map entries in another
+  order gets the same content digest, the same intent and a replay on retry.
+  "Byte-for-byte" means the stored fragment, not the client's original bytes.
+- Content refusals and host failures are distinct in `DocumentCandidateAdmission`:
+  only `ContentRefused`, a missing schema and undecodable payload bytes become
+  recorded outcomes; a misbehaving registry, a host limit or an exhausted
+  reservation surfaces as INTERNAL or RESOURCE_EXHAUSTED and records nothing.
+- Fragments are written with the stack's array put so the S3 SDK can retry from
+  the array; a streamed put refuses to be rewound under its digest.
 - Sources must come from a document with the same `doc_id`, because part fragments
   carry the identity field and confinement requires it.
 - Segmentations, embedding sets and legacy `semantic_results` are refused as

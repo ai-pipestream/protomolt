@@ -34,11 +34,28 @@ public final class BlobStoreStack implements Stack {
 
     @Override public String stackId() { return stackId; }
 
+    @Override public StackRef put(byte[] body) throws IOException {
+        Objects.requireNonNull(body, "body");
+        var key = prefix + "/" + UUID.randomUUID();
+        try {
+            store.put(new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null), body);
+        } catch (RuntimeException failure) {
+            throw new IOException("Stack write failed", failure);
+        }
+        return StackRef.newBuilder().setStackId(stackId).setKey(key)
+                .setSha256(HexFormat.of().formatHex(VerifyingInputStream.sha256().digest(body))).setLength(body.length).build();
+    }
+
     @Override public StackRef put(InputStream body, long length) throws IOException {
         Objects.requireNonNull(body, "body");
         if (length < 0) throw new IllegalArgumentException("Length must not be negative");
         var key = prefix + "/" + UUID.randomUUID();
-        var digest = new DigestInputStream(body, VerifyingInputStream.sha256());
+        // Neither wrapper supports mark: a provider that rewound the source under
+        // the digest would resend from the start while the digest and count kept
+        // the first attempt's state. Streamed retries need multipart upload.
+        var digest = new DigestInputStream(body, VerifyingInputStream.sha256()) {
+            @Override public boolean markSupported() { return false; }
+        };
         var counted = new CountingInputStream(digest, length);
         try {
             store.put(new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null), counted, length);
@@ -75,6 +92,9 @@ public final class BlobStoreStack implements Stack {
         private final long limit;
         private long count;
         CountingInputStream(InputStream in, long limit) { super(in); this.limit = limit; }
+        @Override public boolean markSupported() { return false; }
+        @Override public void mark(int limit) {}
+        @Override public void reset() throws IOException { throw new IOException("Stack write streams cannot be rewound"); }
         @Override public int read() throws IOException {
             if (count >= limit) return -1;
             int value = super.read();

@@ -27,7 +27,6 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import io.grpc.Status;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -84,18 +83,27 @@ public final class DocumentSaves {
     private final DocumentSchemaAdmission.Limits limits;
     private final DocumentAdmissionReservations reservations;
     private final Clock clock;
+    private final DocumentSchemaAdmission.Definition containerDefinition;
     private final DocumentSchemaRetention.Retained container;
     private final WriterAuthority authority;
 
     public DocumentSaves(PostgresCatalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock) {
+        this(catalog, drives, resolver, limits, reservations, clock, BuiltinDocumentSchema.definition());
+    }
+
+    /** Seam for tests that need another container identity; production uses the compiled Document. */
+    DocumentSaves(PostgresCatalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+            DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
+            DocumentSchemaAdmission.Definition containerDefinition) {
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
         this.resolver = Objects.requireNonNull(resolver);
         this.limits = Objects.requireNonNull(limits);
         this.reservations = Objects.requireNonNull(reservations);
         this.clock = Objects.requireNonNull(clock);
-        this.container = DocumentSchemaRetention.retain(BuiltinDocumentSchema.definition());
+        this.containerDefinition = Objects.requireNonNull(containerDefinition);
+        this.container = DocumentSchemaRetention.retain(containerDefinition);
         this.authority = new WriterAuthority(catalog, DocumentSchemaRetention.retain(
                 BuiltinDocumentSchema.definition(WriterGrant.getDescriptor())));
     }
@@ -241,7 +249,7 @@ public final class DocumentSaves {
         artifacts.putAll(authority.grantSchema().artifacts());
         if (!admitted.isEmpty()) {
             try (var result = DocumentCandidateAdmission.check(
-                    new DocumentCandidateAdmission.Request(address.getDocId(), admitted, BuiltinDocumentSchema.definition()),
+                    new DocumentCandidateAdmission.Request(address.getDocId(), admitted, containerDefinition),
                     resolver, limits, reservations, clock.instant(), () -> {})) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected) {
                     var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
@@ -267,9 +275,12 @@ public final class DocumentSaves {
                         invalid.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.SchemaUnavailable unavailable) {
                 throw new AccessionException(Status.Code.UNAVAILABLE, "Schema registry unavailable", null, unavailable);
-            } catch (IllegalArgumentException | InvalidProtocolBufferException refused) {
+            } catch (DocumentCandidateAdmission.ContentRefused refused) {
                 return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                         "The composed document cannot be admitted: " + refused.getMessage(), List.of());
+            } catch (DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException host) {
+                // Not the caller's content: surface it, never as a recorded outcome against the operation ID.
+                throw new AccessionException(Status.Code.INTERNAL, "Admission host failure: " + host.getMessage(), null, host);
             }
         }
         // Gap 9: carried parts keep the expected revision's schema entries; their bytes are unchanged.
@@ -286,7 +297,7 @@ public final class DocumentSaves {
             var bytes = fragments.get(part);
             final StackRef ref;
             try {
-                ref = stack.put(new ByteArrayInputStream(bytes.toByteArray()), bytes.size());
+                ref = stack.put(bytes.toByteArray());
             } catch (IOException failure) {
                 throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
             }
@@ -308,9 +319,17 @@ public final class DocumentSaves {
             var entry = part.getEntry();
             digest.addParts(CandidatePart.newBuilder().setSelector(entry.getSelector()).setState(entry.getState())
                     .setSha256(entry.getSha256()).setLength(entry.getSizeBytes()));
-            if (entry.getState() == PartState.PART_STATE_PRESENT)
-                validation.addPartSchemas(PartSchemaBinding.newBuilder().setPart(entry.getSelector())
-                        .setFragmentSchema(container.reference()));
+            if (entry.getState() != PartState.PART_STATE_PRESENT) continue;
+            // Gap 9: a carried part keeps the binding it was admitted under; only written and
+            // sourced parts were decoded with this host's container schema.
+            var binding = carried.contains(entry.getSelector().getPart())
+                    ? base.orElseThrow().getValidation().getPartSchemasList().stream()
+                            .filter(schema -> schema.getPart().equals(entry.getSelector())).findFirst()
+                            .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS,
+                                    "Carried part has no retained schema binding", null))
+                    : PartSchemaBinding.newBuilder().setPart(entry.getSelector())
+                            .setFragmentSchema(container.reference()).build();
+            validation.addPartSchemas(binding);
         }
         validation.setCandidateSha256(sha256(digest.build().toByteString()));
         authorized.grant().ifPresent(validation::setWriterGrant);
@@ -424,7 +443,15 @@ public final class DocumentSaves {
     private static Map<DocumentPart, ByteString> split(Document document, Map<DocumentPart, WriteAction> writes) {
         var fragments = new EnumMap<DocumentPart, ByteString>(DocumentPart.class);
         var bare = Document.newBuilder().setDocId(document.getDocId()).build().toByteString();
-        for (var part : DocumentPartCodec.split(document, PartLayouts.document())) {
+        for (var split : DocumentPartCodec.split(document, PartLayouts.document())) {
+            // Deterministic bytes: a client sending map entries in another order must get
+            // the same content digest, the same intent, and a replay on retry.
+            final ai.protomolt.proto.repo.codec.PartObject part;
+            try {
+                part = DocumentPartCodec.deterministic(split, Document.getDefaultInstance());
+            } catch (InvalidProtocolBufferException impossible) {
+                throw new IllegalStateException("A freshly split fragment failed to parse", impossible);
+            }
             var selector = switch (part.part()) {
                 case DOCUMENT_PART_CORE -> DocumentPart.DOCUMENT_PART_CORE;
                 case DOCUMENT_PART_BLOBS -> DocumentPart.DOCUMENT_PART_BLOBS;

@@ -228,6 +228,7 @@ public final class DocumentReads {
             case FAILED_PRECONDITION -> Status.Code.FAILED_PRECONDITION;
             case PERMISSION_DENIED -> Status.Code.PERMISSION_DENIED;
             case CONFLICT -> Status.Code.ABORTED;
+            case RESOURCE_EXHAUSTED -> Status.Code.RESOURCE_EXHAUSTED;
             case UNAVAILABLE -> Status.Code.UNAVAILABLE;
             case DATA_LOSS -> Status.Code.DATA_LOSS;
             default -> Status.Code.INTERNAL;

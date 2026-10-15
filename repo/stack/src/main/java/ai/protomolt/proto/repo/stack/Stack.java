@@ -25,6 +25,16 @@ public interface Stack {
     StackRef put(InputStream body, long length) throws IOException;
 
     /**
+     * Writes an in-memory object. The provider may retry from the array; the
+     * digest is computed over the same array.
+     *
+     * @param body the bytes
+     * @return the new object's reference
+     * @throws IOException when the write fails
+     */
+    StackRef put(byte[] body) throws IOException;
+
+    /**
      * Opens a streamed read of the whole object. The stream verifies length and
      * SHA-256 against the reference when it reaches the end, and throws
      * {@link StackDataLoss} instead of returning the end of a mismatched object.

@@ -108,6 +108,25 @@ public final class DocumentCandidateAdmission {
     }
 
     /**
+     * The caller's content cannot be admitted: a fragment does not parse, is
+     * not confined to its part, exceeds a structural bound, or places an Any
+     * where the layout allows none. A recorded refusal is the right outcome.
+     */
+    public static final class ContentRefused extends RuntimeException {
+        public ContentRefused(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /**
+     * The host or registry misbehaved: a resolver returned the wrong asset,
+     * two definitions claim one identity, retained bytes differ from their
+     * metadata, or a host limit was hit. Not the caller's fault and not an
+     * outcome to record against its operation ID.
+     */
+    public static final class HostFailure extends RuntimeException {
+        public HostFailure(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /**
      * Admit the written fragments. The resolver returns null for an unregistered
      * type and throws {@link SchemaUnavailable} for an outage.
      */
@@ -139,20 +158,28 @@ public final class DocumentCandidateAdmission {
                 throw new IllegalArgumentException("candidate admission supports CORE, BLOBS and PARSED fragments");
             if (!seen.add(fragment.part())) throw new IllegalArgumentException("duplicate candidate fragment");
             if (fragment.bytes().size() > limits.maxFragmentBytes() - total)
-                throw new IllegalArgumentException("candidate fragments exceed byte limit");
+                throw new ContentRefused("candidate fragments exceed byte limit", null);
             total += fragment.bytes().size();
-            new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), Document.getDescriptor());
-            var input = fragment.bytes().newCodedInput();
-            input.setRecursionLimit(64);
-            var parsed = Document.parser().parseFrom(input);
-            input.checkLastTagWas(0);
-            if (input.getTotalBytesRead() != fragment.bytes().size())
-                throw new InvalidProtocolBufferException("Fragment was not completely consumed");
-            DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
-            written.mergeFrom(parsed);
+            try {
+                new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), Document.getDescriptor());
+                var input = fragment.bytes().newCodedInput();
+                input.setRecursionLimit(64);
+                var parsed = Document.parser().parseFrom(input);
+                input.checkLastTagWas(0);
+                if (input.getTotalBytesRead() != fragment.bytes().size())
+                    throw new InvalidProtocolBufferException("Fragment was not completely consumed");
+                DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
+                written.mergeFrom(parsed);
+            } catch (IllegalArgumentException | InvalidProtocolBufferException refused) {
+                throw new ContentRefused(fragment.part() + " fragment: " + refused.getMessage(), refused);
+            }
         }
         var view = written.build();
-        DocumentSchemaAdmission.requireKnownDocument(view, "", 0, new int[1], active);
+        try {
+            DocumentSchemaAdmission.requireKnownDocument(view, "", 0, new int[1], active);
+        } catch (IllegalArgumentException refused) {
+            throw new ContentRefused(refused.getMessage(), refused);
+        }
 
         var violations = new ArrayList<Violation>();
         var result = DocumentSchemaAdmission.VALIDATOR.validate(view, evaluatedAt);
@@ -163,7 +190,12 @@ public final class DocumentCandidateAdmission {
         boolean transferred = false;
         try {
             var definitions = new DocumentSchemaDefinitions(limits, resources, active);
-            var container = definitions.add(request.container());
+            final DocumentSchemaAssetBinding container;
+            try {
+                container = definitions.add(request.container());
+            } catch (IllegalArgumentException host) {
+                throw new HostFailure("container definition: " + host.getMessage(), host);
+            }
             var containerKey = new DocumentPayloadCheck.SchemaKey(request.container().metadata().getTypeUrl(),
                     request.container().metadata().getArtifactSha256());
             var occurrences = new ArrayList<Occurrence>();
@@ -172,14 +204,19 @@ public final class DocumentCandidateAdmission {
                 active.run();
                 if (fragment.part() == DocumentPart.DOCUMENT_PART_BLOBS) continue;
                 var slot = DocumentPublicationSlot.newBuilder().setPart(fragment.part()).build();
-                var inventory = DocumentAnyRootInventory.inspect(container.schema(), slot, fragment.bytes(), request.docId(),
-                        new DocumentAnyRootInventory.Limits(Integer.MAX_VALUE, 1_000_000, 64, limits.maxRoots(), 10000), active);
+                final DocumentAnyRootInventory.Result inventory;
+                try {
+                    inventory = DocumentAnyRootInventory.inspect(container.schema(), slot, fragment.bytes(), request.docId(),
+                            new DocumentAnyRootInventory.Limits(Integer.MAX_VALUE, 1_000_000, 64, limits.maxRoots(), 10000), active);
+                } catch (IllegalArgumentException refused) {
+                    throw new ContentRefused(fragment.part() + " roots: " + refused.getMessage(), refused);
+                }
                 for (var root : inventory.roots()) {
                     active.run();
-                    if (decodedRemaining < 1) throw new IllegalArgumentException("candidate decoded payload budget exhausted");
+                    if (decodedRemaining < 1) throw new ContentRefused("candidate decoded payload budget exhausted", null);
                     var locator = DocumentSchemaRootProjection.project(inventory, root, active);
                     var envelope = root.envelope();
-                    var selected = definitions.select(strict, new DocumentSchemaAdmission.Selection(0, locator,
+                    var selected = select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
                             envelope.getTypeUrl(), List.of(), DocumentSchemaOccurrences.sha256(envelope.getValue(), active),
                             envelope.getValue().size()));
                     final DocumentPayloadAssessment assessment;
@@ -187,12 +224,14 @@ public final class DocumentCandidateAdmission {
                         assessment = DocumentPayloadCheck.assessContextualAssets(selected, envelope, envelope.getTypeUrl(),
                                 DocumentSchemaAdmission.VALIDATOR,
                                 new DocumentPayloadCheck.Limits((int) decodedRemaining, 1_000_000, 64, 4096, 65536), active,
-                                nested -> definitions.select(strict, new DocumentSchemaAdmission.Selection(0, locator,
+                                nested -> select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
                                         nested.typeUrl(), DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
                                                 definitions.schemas, active), nested.valueSha256(), nested.valueSizeBytes())),
                                 DocumentSchemaOccurrences.Limits.DEFAULT, evaluatedAt);
                     } catch (InvalidProtocolBufferException invalid) {
                         throw new InvalidPayload("Any value does not decode as " + envelope.getTypeUrl(), invalid);
+                    } catch (IllegalArgumentException refused) {
+                        throw new ContentRefused("payload at " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                     }
                     List<DocumentSchemaOccurrences.Occurrence> found;
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
@@ -231,6 +270,16 @@ public final class DocumentCandidateAdmission {
             throw failed.original;
         } finally {
             if (!transferred) resources.close();
+        }
+    }
+
+    /** A resolver's answer is host state: a bad one is a host failure, not a content refusal. */
+    private static DocumentSchemaAssetBinding select(DocumentSchemaDefinitions definitions,
+            DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Selection selection) {
+        try {
+            return definitions.select(resolver, selection);
+        } catch (IllegalArgumentException host) {
+            throw new HostFailure("schema resolution for " + selection.typeUrl() + ": " + host.getMessage(), host);
         }
     }
 

@@ -206,6 +206,32 @@ public final class DocumentPartCodec {
     }
 
     /**
+     * Re-encodes a split fragment with deterministic serialization: map entries
+     * sorted by key, so equal content gives equal bytes and one SHA-256 whatever
+     * order a client sent its map entries in. Field presence, unknown fields and
+     * exact scalar values are unchanged.
+     *
+     * @param part the fragment to re-encode
+     * @param prototype a prototype of the fragment's message type
+     * @return the fragment with deterministic bytes and their SHA-256
+     * @throws InvalidProtocolBufferException when the fragment fails to parse
+     */
+    public static PartObject deterministic(PartObject part, Message prototype) throws InvalidProtocolBufferException {
+        Message parsed = prototype.newBuilderForType().mergeFrom(part.bytes()).build();
+        var out = new java.io.ByteArrayOutputStream(part.bytes().length);
+        var coded = com.google.protobuf.CodedOutputStream.newInstance(out);
+        coded.useDeterministicSerialization();
+        try {
+            parsed.writeTo(coded);
+            coded.flush();
+        } catch (java.io.IOException impossible) {
+            throw new IllegalStateException("in-memory encoding failed", impossible);
+        }
+        byte[] bytes = out.toByteArray();
+        return new PartObject(part.part(), part.subKey(), bytes, sha256Hex(bytes));
+    }
+
+    /**
      * Reassembles a document from part fragment bytes, merged in the order
      * given (which must be manifest order — CHUNKS sub-object ordering carries
      * the original repeated-field sequence).
