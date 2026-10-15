@@ -7,6 +7,16 @@
       "allowedVersions": "/^26\\.05-py3$/"
     },
     {
+      "description": "kafka-clients 4.4.0 removes org.apache.kafka.common.utils.ByteUtils, which Confluent 8.3.2's SchemaId serializer and the wire-format interop tests still reference.",
+      "matchPackageNames": ["org.apache.kafka:{/,}**"],
+      "allowedVersions": "<4.4.0"
+    },
+    {
+      "description": "maven-resolver-provider 3.10.x pulls in maven-resolver 2.x, which drops DefaultTrackingFileManager and breaks maven-resolver-supplier 1.9.x.",
+      "matchPackageNames": ["org.apache.maven:maven-resolver-provider"],
+      "allowedVersions": "<3.10.0"
+    },
+    {
       "description": "Non-major updates arrive as one pull request rather than one per dependency. Five were open at once in 2026-08, most of them a single line, and each one costs a full suite run. Majors stay ungrouped so each can be judged alone.",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
       "groupName": "non-major dependencies",

@@ -2,7 +2,7 @@
 # is supplied by the operator and never included in the starter bundle.
 services:
   kimi-init:
-    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.21}
+    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.24}
     profiles: [kimi]
     user: "0:0"
     restart: "no"

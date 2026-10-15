@@ -3,7 +3,7 @@ name: protomolt-starter
 # This file is packaged with a release-specific .env. No build context or JDK is needed.
 services:
   bootstrap:
-    image: alpine:3.21
+    image: alpine:3.24
     restart: "no"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]

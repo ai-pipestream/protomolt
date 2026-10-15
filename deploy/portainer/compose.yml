@@ -125,7 +125,7 @@ services:
     restart: unless-stopped
 
   rustfs-init:
-    image: curlimages/curl:8.22.0
+    image: curlimages/curl:8.23.0
     depends_on:
       rustfs:
         condition: service_healthy
@@ -249,7 +249,7 @@ services:
     restart: "no"
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.4
+    image: quay.io/keycloak/keycloak:26.8.1
     container_name: protomolt-keycloak
     command: ["start-dev", "--import-realm"]
     environment:

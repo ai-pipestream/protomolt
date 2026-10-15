@@ -3,7 +3,7 @@ name: protomolt-agents-starter
 # The release bundle supplies a digest-pinned .env. No application image is built here.
 services:
   bootstrap:
-    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.21}
+    image: ${PROTOMOLT_ALPINE_IMAGE:-alpine:3.24}
     user: "0:0"
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
@@ -103,7 +103,7 @@ services:
     restart: unless-stopped
 
   rustfs-init:
-    image: ${PROTOMOLT_CURL_IMAGE:-curlimages/curl:8.22.0}
+    image: ${PROTOMOLT_CURL_IMAGE:-curlimages/curl:8.23.0}
     user: "10001:10001"
     restart: "no"
     depends_on:
