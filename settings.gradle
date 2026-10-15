@@ -584,3 +584,5 @@ project(':protomolt-repo-schema-registry').projectDir = file('repo/schema/regist
 // Parts-based repository v2.
 include 'protomolt-repo-stack'
 project(':protomolt-repo-stack').projectDir = file('repo/stack')
+include 'protomolt-repo-catalog'
+project(':protomolt-repo-catalog').projectDir = file('repo/catalog')

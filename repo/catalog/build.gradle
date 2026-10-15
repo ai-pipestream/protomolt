@@ -1,0 +1,17 @@
+description = 'Parts-based repository catalog: revisions, part references, outcomes and the outbox over JDBC'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api libs.hikari
+    implementation libs.flyway.core
+    implementation libs.flyway.database.postgresql
+    implementation libs.postgresql
+    implementation libs.slf4j.api
+
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'hibernate-core', 'jedis', 'kafka-clients', 's3']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
