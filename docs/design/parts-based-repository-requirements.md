@@ -435,7 +435,13 @@ correctness and RustFS for performance measurements.
 5. An invalid composed document doesn't commit.
 6. An opaque save is accepted only when policy allows it. The opaque occurrences are
    recorded, and a rule needing their contents is recorded as not evaluated.
-7. Unknown fields and int64 values survive save, restart and read.
+7. Exact int64 values survive save, restart and read. Fields from any registered,
+   compatible `Document` version survive save, restart and read byte-for-byte: the
+   save decodes against the latest registered version of the `Document` subject and
+   records that schema artifact ID on the revision. Fields from no registered version
+   are refused with SCHEMA_MISSING. Which versions can be registered is the subject's
+   compatibility mode (`core/compat`, the Confluent set); the `Document` subject uses
+   FULL_TRANSITIVE so every revision stays readable by every server.
 8. History pages correctly, and exact-revision reads return the old content.
 9. Each accession writes one outbox event listing what changed. An outbox relay retry
    produces duplicate delivery but no duplicate catalog event.

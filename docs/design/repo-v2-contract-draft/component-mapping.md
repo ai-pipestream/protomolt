@@ -573,13 +573,14 @@ a concurrent same-ID unique violation rereads the outcome in a fresh transaction
   carry the identity field and confinement requires it.
 - Segmentations, embedding sets and legacy `semantic_results` are refused as
   unsupported, so nothing new lands in CORE. Opaque mode is refused by host policy.
-- Unknown fields in document content are refused by typed admission
-  (`requireKnownDocument`), not stored. Requirements §15.7 asks for them to
-  survive; that conflict is open.
+- Slice 1 decodes against the compiled `Document` schema only and refuses unknown
+  fields (`requireKnownDocument`), the safe subset of §15.7. Decoding against the
+  latest registered `Document` version, with the subject's compatibility mode
+  deciding what can be registered, is a follow-up.
 
 **Acceptance covered** (`DocumentSavesIT`, `AccessionGrpcIT`, `CatalogOutageIT`,
 `CatalogLedgerRefusalIT`, `CatalogBaselineIT`; PostgreSQL 18 and LocalStack 3.8):
-§15.1 on PARSED, 3, 4, 5, 7 (content and int64; unknown fields as above), 8, 9
+§15.1 on PARSED, 3, 4, 5, 7 (int64 and content; registered newer versions as above), 8, 9
 (relay retry against an in-memory publisher), 11, 12, 13, 17, 18 (including both
 revocation orderings around an upload and a catalog outage), 20, 22 (rotation
 during upload) and 24.
