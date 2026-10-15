@@ -478,7 +478,11 @@ public final class DocumentSaves {
         return fragments;
     }
 
-    /** The revision's ownership: from a CORE PUT, else carried. Only process authority may change it. */
+    /**
+     * The revision's ownership: from a CORE PUT, else carried. Its account, datasource and
+     * connector are fixed at creation; any authorized writer may change security and source
+     * owner (decision 30).
+     */
     private static OwnershipContext ownership(RepositoryCaller caller, Document document, NodeAddress address,
             Optional<StoredManifest> base, Map<DocumentPart, WriteAction> writes) {
         boolean corePut = writes.get(DocumentPart.DOCUMENT_PART_CORE) == WriteAction.WRITE_ACTION_PUT;

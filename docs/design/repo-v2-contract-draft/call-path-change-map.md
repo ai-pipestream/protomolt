@@ -1,5 +1,9 @@
 # Repo service: call paths and change map for the v2.5 contract (plan step 2)
 
+> **Status (2026-10-15).** A dated plan-step-2 trace of main 974ea302. Where it differs from
+> `parts-based-repository-requirements.md` or `component-mapping.md` §7-8, those documents win.
+> Delete this file together with the legacy code it traces (plan step 5).
+
 Kristian asked for this through the project coordinator on 2026-10-15 (plan step 2). It traces one save and
 one read end to end through today's repo service, then maps each step of the v2.5 contract onto the code
 that exists, method by method. Nothing was implemented, built or pushed, and nothing in the worktree, main
@@ -248,7 +252,7 @@ in repo/container) depend on.
 | S6 | Early outcome lookup; a replay needs only current read access (§7) | Nothing | **New:** look up (account, operation_id) and compare the intent digest before any upload. |
 | S7 | Canonical `SaveIntent` and its SHA-256 (§7) | Nothing | **New.** It needs each PUT's SHA-256 and length, so it runs after the split, or after the upload stream ends. |
 | S8 | Writer grant selection, `allow_create`, opaque type allowances (§5) | Nothing on this path. `RepositoryCreationGrants` binds an exact publication command and can't be reused as is | **New** `writer_grants` table and selection by unsigned UTF-8 grant ID. |
-| S9 | Document write policy (§5) | requireWrite (785); DocumentAccessPolicy.allows (DocumentAccessPolicy.java:15) | **Adapt:** creation no longer needs process authority (786); a grant with `allow_create`, or `derived_from` lineage, allows it (decision 24). Keep the policy-change restrictions. |
+| S9 | Document write policy (§5) | requireWrite (785); DocumentAccessPolicy.allows (DocumentAccessPolicy.java:15) | **Adapt:** creation no longer needs process authority (786); a grant with `allow_create` allows it, and `derived_from` is lineage only (decision 31). After creation the account, datasource and connector are fixed, and any authorized writer may change security (decision 30). |
 | S10 | Compose the candidate: the expected revision's parts + writes + sources + carried parts; reject content outside PUTs (§7, §9) | savePartial (396-560); combineManifests (562); DocumentPartCodec.split (72) | **Adapt:** compose from catalog part references instead of the row's JSON manifest; carry by reference (no `copyParts`); reject, don't drop, unlisted content (440-444); `PartLayout` gains segmentations and embedding sets (§7). |
 | S11 | Validate the composed candidate; typed by default; opaque rules; read carried parts only when a rule needs them (§9) | Not on this path. Only path (B) validates: DocumentAdmissionPolicy.assess (DocumentAdmissionPolicy.java:133-140) → DocumentSchemaAssessment.prepare (50-150). That first runs DocumentSchemaAdmission.checkMember (435-450): assemble the whole document from every fragment, match ownership, allow `Any` only at `structured_data` and the parser shape (490-511), and run ProtoValidator with both rule sources (23-26). Then, for the CORE and PARSED parts, it inventories `Any` roots, selects each root's schema from the registry, and decodes and validates each payload, nested `Any` included, in `DocumentPayloadCheck`. | **Adapt, keeping that engine.** Change its entry from a `DocumentPublicationMember` plus every fragment to the composed candidate. `document.proto` has no validation annotations at all, so no rule spans parts today: validate the written parts, take ownership from the catalog, and read no carried part (§9 counts such reads). Return `RevisionValidation` instead of assessment slots. Carried parts' validation entries are gap 9 (§8). |
 | S12 | Write new part bytes to the stack, write-once, verify SHA-256 and length (§6) | writePartObjects (PartStorage.java:116); reserveLegacyPartKeys (DocumentLedger.java:53); writeAttemptPrefix (1052) | **Adapt:** keep the parallel fan-out; stream through `BlobStore.put(InputStream)` (BlobStore.java:173) with the server computing SHA-256 and length; drop reservations and attempt prefixes. |
@@ -295,7 +299,7 @@ tests, and a test is ported before it is removed if it covers a failure case the
 | | `intakeGraphId` (136) | Keep. |
 | | `saveResponse` (160) | Replace. |
 | | `requireLegacyStoragePrefix` (175), `basePrefix` (186), `s3Metadata` (191), `manifestVersion` (202) | Remove after §15: stack keys and catalog revisions replace them. |
-| DocumentSaveCandidate | `build` | Replace with catalog row construction. Keep its rule that a caller without process authority never takes security policy from the request body. |
+| DocumentSaveCandidate | `build` | Replace with catalog row construction. Its rule that only process authority takes security policy from the request body is replaced by decision 30. |
 | DocumentRequests | `partsOrThrow` (26) | Adapt to selectors. |
 | | `validateAddress` (42), `hasNotFoundCause` | Keep. |
 | PartStorage | `writePartObjects` (116) | Adapt: streaming put, `StackRef`, server-computed SHA-256 and length. |
@@ -326,7 +330,7 @@ Path (B) and history (none of it mounted in production):
 | DocumentSchemaAssessment | `prepare` (50-150) | Keep: it is the typed validation loop. Its output becomes `RevisionValidation` (resolved occurrences, part schemas) instead of assessment evidence. |
 | DocumentPayloadCheck | `assessContextualAssets` (115), `scan` (214) | Keep: it decodes and validates each `Any` payload, nested ones included. |
 | DocumentAdmissionPolicy | `assess` (133-140) | Adapt: host policy for opaque mode (as the component mapping says), with the new entry. |
-| DocumentAdmissionAuthorization | `lockAndAuthorize` (201-269), `authorizeHistory` (180) | Replace with one authorization step (S5, S8, S9). Keep its rules: creation needs a grant plus a credential binding (the shape of v2.5's `allow_create`), a credential-bound writer passes `requireLive`, and policy, drive, datasource and deletion-setting changes need process authority. That last rule is implemented twice today, here and in `requireWrite`. |
+| DocumentAdmissionAuthorization | `lockAndAuthorize` (201-269), `authorizeHistory` (180) | Replace with one authorization step (S5, S8, S9). Keep its rules: creation needs a grant plus a credential binding (the shape of v2.5's `allow_create`), and a credential-bound writer passes `requireLive`. Its rule that policy and datasource changes need process authority, implemented here and in `requireWrite`, is replaced by decision 30. |
 | RepositoryCreationGrants | `requireLive` (105), `authorizeObservation` (121), `install` (63), `revoke` (151) | Replace with `writer_grants`. A creation grant binds one exact publication command (`repository_execution_scopes`); a v2.5 writer grant doesn't. |
 | DocumentPublicationCommit, DocumentCommitWriter | `commitInternal` (79-205); `prepare` (28-123), `write` (129-168) | Replace with the JDBC commit. Borrow the revision-row shape and the order (locks, authorization, revision rows, outcome, outbox, one transaction); drop the documents overwrite and the JSON body. |
 | DocumentPartTransfer | `upload` (31-54) | Replace with the streaming put; drop the whole-object read-back and the version and ETag checks. |
@@ -385,7 +389,7 @@ becomes removable once v2 passes §15 and the v1 service retires. Nothing in pro
 retiring it breaks no production caller; its users are verification/repository-recovery,
 verification/repository-consumer and the two client modules published in the BOM.
 
-**Where this trace differs from component-mapping.md §4** (the branch copy; the older copy in /mnt/project-files/reviews/contract-draft
+**Where this trace differs from component-mapping.md §4** (the branch copy; an older draft copy
 lists the same retirements). It agrees with the mapping's retire list for the
 lease, handoff, pin, attempt, publication, historical and assessment-slot groups. It differs here:
 - **`DocumentSchemaAssessment` and `DocumentPayloadCheck` are the validation engine.** The mapping retires the
@@ -408,8 +412,9 @@ lease, handoff, pin, attempt, publication, historical and assessment-slot groups
   one only through a verified upload (raw ID plus lease token); naming storage coordinates acquires nothing
   (ManagedRawBindings.java:42-45). In v2.5 the server fills claim checks after the upload, so a client-supplied
   storage reference must be rejected or matched against objects the document already references.
-- **Policy changes need process authority** (`requireWrite`, 798-810), and the body never supplies security
-  policy for a caller without it (`DocumentSaveCandidate.build`).
+- **The account, datasource and connector stay fixed** after creation. Today's rule that only process authority
+  may change security policy (`requireWrite`, 798-810; `DocumentSaveCandidate.build`) is replaced by decision 30:
+  any authorized writer may change security, and each change is a recorded revision.
 - **Reads verify bytes** (`DocumentPartReader.readPart`); today's basic read doesn't.
 - **Uploads hash while streaming** and check a declared digest (RawIngestionOperations.java:88-104).
 - **Part I/O fans out in parallel** (PartStorage's virtual-thread pool).
