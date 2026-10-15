@@ -487,7 +487,7 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Fail on newly introduced or unknown Any locations instead of silently omitting them. */
-    private static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
+    static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
                                              int[] visited, Runnable control) {
         active(control);
         if (depth > 64 || ++visited[0] > 1_000_000)
