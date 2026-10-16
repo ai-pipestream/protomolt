@@ -1,0 +1,88 @@
+package ai.protomolt.proto.repo.accession;
+
+import static ai.protomolt.proto.repo.accession.AccessionFixture.*;
+import static org.assertj.core.api.Assertions.*;
+
+import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v1.SearchMetadata;
+import ai.protomolt.proto.repo.v2.DocumentEvent;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentTarget;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/** §10 events and §15.9: the relay drains the outbox in commit order, keyed by document. */
+class OutboxOrderIT {
+    private AccessionFixture f;
+    private String account;
+
+    @BeforeEach void open() throws Exception {
+        f = new AccessionFixture();
+        account = "acct-" + UUID.randomUUID();
+    }
+
+    @AfterEach void close() { f.close(); }
+
+    @Test void interleavedDocumentsRelayInCommitOrderWithTheirOwnKeys() throws Exception {
+        var a = address(account, "doc-a");
+        var b = address(account, "doc-b");
+        f.saves.save(processAuthority(), create("a-1", a, document(account, "doc-a", "a1")).build());
+        f.saves.save(processAuthority(), create("b-1", b, document(account, "doc-b", "b1")).build());
+        f.saves.save(processAuthority(), titleSave("a-2", a, 1, "a2"));
+        f.saves.save(processAuthority(), titleSave("b-2", b, 1, "b2"));
+        f.saves.save(processAuthority(), titleSave("a-3", a, 2, "a3"));
+
+        var delivered = new ArrayList<String>();
+        var relay = new OutboxRelay(f.catalog, (key, event) ->
+                delivered.add(key + "@" + event.getRevision() + "/" + event.getOperationId()));
+        // Pages smaller than the backlog still keep commit order across passes.
+        assertThat(relay.relayOnce(2)).isEqualTo(2);
+        assertThat(relay.relayOnce(2)).isEqualTo(2);
+        assertThat(relay.relayOnce(2)).isEqualTo(1);
+        assertThat(relay.relayOnce(2)).isZero();
+        assertThat(delivered).containsExactly("doc-a@1/a-1", "doc-b@1/b-1", "doc-a@2/a-2", "doc-b@2/b-2", "doc-a@3/a-3");
+        assertThat(f.catalog.pendingEvents(10)).isEmpty();
+    }
+
+    // Each event links to its predecessor and carries a distinct, stable ID.
+    @Test void eventsChainRevisionsAndKeepTheirIdsAcrossRedelivery() throws Exception {
+        var a = address(account, "doc-chain");
+        f.saves.save(processAuthority(), create("c-1", a, document(account, "doc-chain", "c1")).build());
+        f.saves.save(processAuthority(), titleSave("c-2", a, 1, "c2"));
+        f.saves.save(processAuthority(), titleSave("c-3", a, 2, "c3"));
+        var events = f.catalog.events(a);
+        assertThat(events).extracting(DocumentEvent::getPreviousRevision).containsExactly(0L, 1L, 2L);
+        assertThat(events).extracting(DocumentEvent::getOperationId).containsExactly("c-1", "c-2", "c-3");
+        assertThat(events).extracting(DocumentEvent::getEventId).doesNotHaveDuplicates();
+
+        var failures = new ArrayList<String>();
+        var relay = new OutboxRelay(f.catalog, (key, event) -> {
+            failures.add(event.getEventId());
+            throw new java.io.IOException("broker down");
+        });
+        assertThat(relay.relayOnce(10)).isZero();
+        assertThat(relay.relayOnce(10)).isZero();
+        var pending = f.catalog.pendingEvents(10);
+        assertThat(pending).hasSize(3).allSatisfy(event -> assertThat(event.attempts()).isEqualTo(2));
+        assertThat(pending.stream().map(event -> event.event()).toList()).isEqualTo(events);
+
+        List<String> delivered = new ArrayList<>();
+        new OutboxRelay(f.catalog, (key, event) -> delivered.add(event.getEventId())).relayOnce(10);
+        assertThat(delivered).containsExactlyElementsOf(events.stream().map(DocumentEvent::getEventId).toList());
+        assertThat(f.catalog.events(a)).isEqualTo(events);
+    }
+
+    private static SaveDocumentRequest titleSave(String operation, NodeAddress address, long expected, String title) {
+        var core = Document.newBuilder().setDocId(address.getDocId()).setOwnership(ownership(address.getAccountId()))
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle(title)).build();
+        return SaveDocumentRequest.newBuilder().setOperationId(operation)
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(expected)).setDocument(core)
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).setOwner(intakeOwner()).build();
+    }
+}
