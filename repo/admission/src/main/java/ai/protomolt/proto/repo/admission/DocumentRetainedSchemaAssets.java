@@ -17,6 +17,8 @@ import java.util.concurrent.CancellationException;
  * access on every call. No registry, latest-version lookup or compiler fallback exists.
  */
 final class DocumentRetainedSchemaAssets {
+    private static final String CONTROL = "control";
+    private static final String RETAINED_SCHEMA_BYTES_EXCEEDED = "retained schema byte count exceeds limit";
     private static final int MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 
     @FunctionalInterface
@@ -87,7 +89,7 @@ final class DocumentRetainedSchemaAssets {
      */
     DocumentSchemaAssetBinding resolve(Reference reference, Runnable control) {
         Objects.requireNonNull(reference, "reference");
-        Objects.requireNonNull(control, "control");
+        Objects.requireNonNull(control, CONTROL);
         active(control);
         requireHash(reference.descriptorSha256());
         requireHash(reference.metadataSha256());
@@ -130,7 +132,7 @@ final class DocumentRetainedSchemaAssets {
      */
     DocumentSchemaAssetBinding resolve(RepositorySchemaAsset metadata, Runnable control) {
         Objects.requireNonNull(metadata, "metadata");
-        Objects.requireNonNull(control, "control");
+        Objects.requireNonNull(control, CONTROL);
         active(control);
         var batch = new ReadBatch();
         var bound = resolve(metadata, batch, control);
@@ -171,7 +173,7 @@ final class DocumentRetainedSchemaAssets {
         boolean newlyRead = bytes == null;
         if (newlyRead) {
             if (limits.maxRetainedBytes() - retainedBytes - batch.bytes < 1)
-                throw new LimitExceeded("retained schema byte count exceeds limit");
+                throw new LimitExceeded(RETAINED_SCHEMA_BYTES_EXCEEDED);
             bytes = Objects.requireNonNull(reader.read(hash), "reader result")
                     .orElseThrow(() -> new DataLoss("required retained schema artifact is missing: " + hash));
             active(control);
@@ -183,7 +185,7 @@ final class DocumentRetainedSchemaAssets {
         }
         if (newlyRead) {
             if (bytes.size() > limits.maxRetainedBytes() - retainedBytes - batch.bytes)
-                throw new LimitExceeded("retained schema byte count exceeds limit");
+                throw new LimitExceeded(RETAINED_SCHEMA_BYTES_EXCEEDED);
             if (!DocumentSchemaOccurrences.sha256(bytes, () -> active(control)).equals(hash))
                 throw new DataLoss("retained schema artifact digest mismatch: " + hash);
             batch.artifacts.put(hash, bytes);

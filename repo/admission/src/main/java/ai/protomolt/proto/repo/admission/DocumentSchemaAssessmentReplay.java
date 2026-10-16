@@ -14,11 +14,23 @@ import java.util.concurrent.CancellationException;
 public final class DocumentSchemaAssessmentReplay {
     private DocumentSchemaAssessmentReplay() {}
 
-    /** Parsed inputs are caller-bounded, stable and authenticated separately. */
+    /**
+     * Parsed inputs are caller-bounded, stable and authenticated separately.
+     *
+     * @param candidate candidate schema admission request
+     * @param evaluatedAt evaluation timestamp
+     * @param expectedFailure expected validation failure, if any
+     */
     public record Request(DocumentSchemaAdmission.Request candidate, Instant evaluatedAt,
                           Optional<DocumentSchemaAssessment.Failure> expectedFailure) {
         public Request { Objects.requireNonNull(candidate); Objects.requireNonNull(evaluatedAt); Objects.requireNonNull(expectedFailure); }
-        /** Borrows bytes from the view and its input owner; neither may close until verification finishes. */
+
+        /**
+         * Borrows bytes from the view and its input owner; neither may close until verification finishes.
+         *
+         * @param view assessment view to reconstruct a request from
+         * @return reconstructed replay request
+         */
         public static Request from(DocumentSchemaAssessment.View view) {
             var input = view.request();
             var evidence = new HashMap<Integer, List<DocumentSchemaAdmission.EncodedEvidence>>();
@@ -36,6 +48,13 @@ public final class DocumentSchemaAssessmentReplay {
      * canonical scratch and reassessment assets/evidence and are released before
      * return. Completion reproduces a value verdict under the supplied runtime,
      * not historical runtime execution, policy authorization or publication.
+     *
+     * @param request replay request containing candidate and expected failure
+     * @param policy admission policy snapshot
+     * @param reader reader to load artifact bytes
+     * @param reservations resource reservations for scratch and evidence
+     * @param control execution cancellation check
+     * @throws InvalidProtocolBufferException if verification or decoding fails
      */
     public static void verify(Request request, DocumentAdmissionPolicy policy, DocumentSchemaAdmission.Reader reader,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
@@ -52,6 +71,15 @@ public final class DocumentSchemaAssessmentReplay {
      * The caller binds this result to its command and aggregates members in canonical
      * order. This grants no historical-runtime, authorization or publication claim.
      * Input ownership and reservation requirements are the same as {@link #verify}.
+     *
+     * @param candidate candidate schema admission request
+     * @param evaluatedAt evaluation timestamp
+     * @param policy admission policy snapshot
+     * @param reader reader to load artifact bytes
+     * @param reservations resource reservations for scratch and evidence
+     * @param control execution cancellation check
+     * @return optional containing the reproduced failure, or empty if valid
+     * @throws InvalidProtocolBufferException if verification or decoding fails
      */
     public static Optional<DocumentSchemaAssessment.Failure> replay(DocumentSchemaAdmission.Request candidate,
             Instant evaluatedAt, DocumentAdmissionPolicy policy, DocumentSchemaAdmission.Reader reader,

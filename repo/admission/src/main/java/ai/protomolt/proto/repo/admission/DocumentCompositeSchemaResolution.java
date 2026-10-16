@@ -11,6 +11,8 @@ import java.util.*;
  * Not thread-safe. Call requireComplete before using the assessment, then close.
  */
 public final class DocumentCompositeSchemaResolution implements DocumentSchemaAdmission.Resolution {
+    private static final String ORDINARY_OCCURRENCES_DIFFER = "Composite ordinary occurrences differ from resolver selections";
+
     private final DocumentPublicationMember member;
     private final List<DocumentRetainedSchemaResolution> sources;
     private final DocumentSchemaAdmission.Resolver ordinary;
@@ -33,7 +35,18 @@ public final class DocumentCompositeSchemaResolution implements DocumentSchemaAd
         this.resources = new DocumentAdmissionResources(reservations); this.control = control;
     }
 
-    /** No SQL, registry lookup or inherited verdict. Every historical ordinal needs one source route. */
+    /**
+     * No SQL, registry lookup or inherited verdict. Every historical ordinal needs one source route.
+     *
+     * @param member publication member describing document destination and parts
+     * @param sources list of retained schema resolutions for historical parts
+     * @param ordinaryContainer optional container definition for ordinary parts
+     * @param ordinary resolver for ordinary parts
+     * @param limits admission limits
+     * @param reservations resource reservations for metadata scratch
+     * @param control execution cancellation check
+     * @return the opened composite schema resolution
+     */
     public static DocumentCompositeSchemaResolution open(DocumentPublicationMember member,
             List<DocumentRetainedSchemaResolution> sources, Optional<DocumentSchemaAdmission.Definition> ordinaryContainer,
             DocumentSchemaAdmission.Resolver ordinary, DocumentSchemaAdmission.Limits limits,
@@ -94,6 +107,11 @@ public final class DocumentCompositeSchemaResolution implements DocumentSchemaAd
             throw new IllegalArgumentException("Composite container definitions differ");
     }
 
+    /**
+     * Returns the container schema definition for this composite resolution.
+     *
+     * @return the container schema definition
+     */
     public DocumentSchemaAdmission.Definition container() { active(); return container; }
 
     @Override public DocumentSchemaAdmission.Definition select(DocumentSchemaAdmission.Selection occurrence) {
@@ -157,7 +175,12 @@ public final class DocumentCompositeSchemaResolution implements DocumentSchemaAd
         artifacts.put(hash, bytes); assetBytes += bytes.size();
     }
 
-    /** Exact per-source evidence and whole-member union, not command/policy/authorization fencing. */
+    /**
+     * Exact per-source evidence and whole-member union, not command/policy/authorization fencing.
+     *
+     * @param assessment the assessment view to verify
+     * @throws com.google.protobuf.InvalidProtocolBufferException if evidence decoding fails
+     */
     public void requireComplete(DocumentSchemaAssessment.View assessment) throws com.google.protobuf.InvalidProtocolBufferException {
         active();
         if (!member.equals(assessment.request().member()) || !container.equals(assessment.request().container()))
@@ -190,14 +213,14 @@ public final class DocumentCompositeSchemaResolution implements DocumentSchemaAd
                         steps.subList(0, steps.size() - 1), boundary.getValueSha256(), boundary.getValueSizeBytes());
                 if (!actual.add(selection)) throw new IllegalArgumentException("Duplicate composite ordinary occurrence");
                 var selected = ordinarySelections.get(selection);
-                if (selected == null) throw new IllegalArgumentException("Composite ordinary occurrences differ from resolver selections");
+                if (selected == null) throw new IllegalArgumentException(ORDINARY_OCCURRENCES_DIFFER);
                 if (!boundary.hasResolved() || !boundary.getResolved().getArtifactSha256().equals(selected.metadata().getArtifactSha256())
                         || !boundary.getResolved().getSchema().equals(selected.metadata().getSchema()))
                     throw new IllegalArgumentException("Composite ordinary occurrence uses a different definition");
             }
         }
         if (!ordinarySelections.keySet().equals(actual))
-            throw new IllegalArgumentException("Composite ordinary occurrences differ from resolver selections");
+            throw new IllegalArgumentException(ORDINARY_OCCURRENCES_DIFFER);
     }
 
     private void active() {

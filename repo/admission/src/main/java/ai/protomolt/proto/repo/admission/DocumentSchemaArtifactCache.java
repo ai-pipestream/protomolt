@@ -12,6 +12,13 @@ import java.util.Optional;
  * Serialized-byte limits do not bound parsed descriptors or other JVM heap overhead.
  */
 public final class DocumentSchemaArtifactCache implements AutoCloseable {
+    /**
+     * Capacity limits for the schema artifact cache.
+     *
+     * @param maxBytes maximum total bytes stored in the cache
+     * @param maxEntries maximum number of distinct artifact entries
+     * @param maxArtifactBytes maximum size of an individual artifact
+     */
     public record Limits(long maxBytes, int maxEntries, int maxArtifactBytes) {
         public Limits {
             if (maxBytes < 1 || maxEntries < 1 || maxArtifactBytes < 1 || maxArtifactBytes > maxBytes)
@@ -19,6 +26,9 @@ public final class DocumentSchemaArtifactCache implements AutoCloseable {
         }
     }
 
+    /**
+     * Thrown when schema cache capacity is exhausted and no unpinned entries can be evicted.
+     */
     public static final class CapacityExceeded extends IllegalStateException {
         private CapacityExceeded() { super("Schema cache capacity exhausted"); }
     }
@@ -35,12 +45,27 @@ public final class DocumentSchemaArtifactCache implements AutoCloseable {
     private int pending;
     private boolean closed;
 
+    /**
+     * Constructs a new schema artifact cache with the specified limits.
+     *
+     * @param limits capacity limits for this cache instance
+     */
     public DocumentSchemaArtifactCache(Limits limits) { this.limits = Objects.requireNonNull(limits); }
 
-    /** Includes in-flight copies and pinned entries after shutdown. */
+    /**
+     * Includes in-flight copies and pinned entries after shutdown.
+     *
+     * @return current number of bytes owned by the cache
+     */
     public synchronized long ownedBytes() { return ownedBytes; }
 
-    /** Lookup is by verified artifact bytes, not type URL, registry ID or discovery grant. */
+    /**
+     * Lookup is by verified artifact bytes, not type URL, registry ID or discovery grant.
+     *
+     * @param sha256 hexadecimal SHA-256 digest of the desired artifact
+     * @param control execution cancellation check
+     * @return optional containing an acquired lease, or empty if not cached
+     */
     public Optional<Lease> acquire(String sha256, Runnable control) {
         requireDigest(sha256); Objects.requireNonNull(control).run();
         Lease lease;
@@ -65,6 +90,11 @@ public final class DocumentSchemaArtifactCache implements AutoCloseable {
      * Insertion needs twice the artifact size for the temporary array and retained
      * copy; after insertion only the retained size remains reserved. Use acquire
      * for an already selected digest instead of reinserting it at full capacity.
+     *
+     * @param sha256 hexadecimal SHA-256 digest of the artifact
+     * @param bytes serialized artifact bytes to store
+     * @param control execution cancellation check
+     * @return an acquired lease on the stored artifact
      */
     public Lease put(String sha256, ByteString bytes, Runnable control) {
         requireDigest(sha256); Objects.requireNonNull(bytes); Objects.requireNonNull(control).run();
@@ -134,6 +164,11 @@ public final class DocumentSchemaArtifactCache implements AutoCloseable {
     public final class Lease implements AutoCloseable {
         private Entry entry;
         private Lease(Entry entry) { this.entry = entry; }
+        /**
+         * Returns the pinned artifact bytes.
+         *
+         * @return artifact byte string
+         */
         public ByteString bytes() {
             synchronized (DocumentSchemaArtifactCache.this) {
                 if (entry == null) throw new IllegalStateException("Schema cache lease closed");

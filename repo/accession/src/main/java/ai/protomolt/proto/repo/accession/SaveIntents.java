@@ -25,11 +25,26 @@ import java.util.Map;
  * PUTs bind content SHA-256 and length, never a storage key.
  */
 final class SaveIntents {
+    private static final String DUPLICATE_LOCATOR = "Duplicate opaque occurrence locator";
+
     private SaveIntents() {}
 
-    /** The digest of one encoded fragment, keyed by write index. */
+    /**
+     * The digest of one encoded fragment, keyed by write index.
+     *
+     * @param sha256 the hexadecimal SHA-256 digest of the fragment content
+     * @param length the byte length of the fragment content
+     */
     record Content(String sha256, long length) {}
 
+    /**
+     * Constructs the canonical save intent for a save request.
+     *
+     * @param request the save document request
+     * @param address the target node address
+     * @param contents map of write index to fragment content metadata
+     * @return the canonical SaveIntent
+     */
     static SaveIntent intent(SaveDocumentRequest request, NodeAddress address, Map<Integer, Content> contents) {
         var intent = SaveIntent.newBuilder().setEncodingVersion(1).setAddress(address)
                 .setExpected(request.getExpected())
@@ -60,14 +75,26 @@ final class SaveIntents {
                 left.getOccurrence().toByteArray(), right.getOccurrence().toByteArray()));
         for (int i = 1; i < attestations.size(); i++)
             if (attestations.get(i).getOccurrence().equals(attestations.get(i - 1).getOccurrence()))
-                throw new AccessionException(io.grpc.Status.Code.INVALID_ARGUMENT, "Duplicate opaque occurrence locator",
-                        DocumentSaves.malformed("Duplicate opaque occurrence locator"));
+                throw new AccessionException(io.grpc.Status.Code.INVALID_ARGUMENT, DUPLICATE_LOCATOR,
+                        DocumentSaves.malformed(DUPLICATE_LOCATOR));
         intent.addAllOpaqueAttestations(attestations);
         return intent.build();
     }
 
+    /**
+     * Computes the SHA-256 fingerprint for a canonical save intent.
+     *
+     * @param intent the save intent to hash
+     * @return the hexadecimal SHA-256 fingerprint
+     */
     static String sha256(SaveIntent intent) { return ai.protomolt.proto.descriptors.MessageFingerprints.fingerprint(intent); }
 
+    /**
+     * Computes the hexadecimal SHA-256 digest for the provided bytes.
+     *
+     * @param bytes the raw bytes to hash
+     * @return the hexadecimal SHA-256 digest
+     */
     static String sha256Hex(byte[] bytes) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -76,7 +103,13 @@ final class SaveIntents {
         }
     }
 
-    /** Unsigned UTF-8 byte order, which equals code point order. */
+    /**
+     * Unsigned UTF-8 byte order, which equals code point order.
+     *
+     * @param left the first string
+     * @param right the second string
+     * @return negative if left &lt; right, zero if equal, positive if left &gt; right
+     */
     static int compareUtf8(String left, String right) {
         int i = 0, j = 0;
         while (i < left.length() && j < right.length()) {
@@ -88,6 +121,12 @@ final class SaveIntents {
         return Integer.compare(left.length() - i, right.length() - j);
     }
 
+    /**
+     * Returns a new list sorted in unsigned UTF-8 byte order.
+     *
+     * @param values the collection of strings to sort
+     * @return the sorted list of strings
+     */
     static List<String> sortedUtf8(java.util.Collection<String> values) {
         var sorted = new ArrayList<>(values);
         sorted.sort(SaveIntents::compareUtf8);

@@ -18,8 +18,11 @@ import java.util.Set;
  * The repository host must obtain this snapshot from its authoritative catalog.
  */
 public final class DocumentAdmissionPolicy {
+    /** Codec identifier for serialized document schema policy. */
     public static final String CODEC = "document-schema-policy";
+    /** Encoding version for serialized document schema policy. */
     public static final int VERSION = 1;
+    /** Maximum allowed policy byte length. */
     public static final int MAX_BYTES = 512 * 1024;
     private record Eligible(String url, PublicationSchemaCondition schema) {}
     private final DocumentSchemaPolicy policy;
@@ -39,7 +42,13 @@ public final class DocumentAdmissionPolicy {
         allowed = Set.copyOf(eligible);
     }
 
-    /** Normalize the set order; refuse duplicate, unknown, unsupported or invalid policy content. */
+    /**
+     * Normalize the set order; refuse duplicate, unknown, unsupported or invalid policy content.
+     *
+     * @param policy the policy definition to validate and canonicalize
+     * @param control execution cancellation check
+     * @return the canonical immutable admission policy
+     */
     public static DocumentAdmissionPolicy of(DocumentSchemaPolicy policy, Runnable control) {
         requireSize(DocumentSchemaEvidenceCodec.measureAndValidate(policy, control));
         var canonical = policy.toBuilder();
@@ -55,7 +64,7 @@ public final class DocumentAdmissionPolicy {
             ordered.sort((a, b) -> {
                 control.run();
                 int result = utf8.compare(a.getTypeUrlBytes(), b.getTypeUrlBytes());
-                if (result == 0) result = a.getSchema().getTypeName().compareTo(b.getSchema().getTypeName());
+                if (result == 0) result = a.getSchema().getTypeName().compareTo(a.getSchema().getTypeName());
                 if (result == 0) result = a.getSchema().getDescriptorFingerprint().compareTo(b.getSchema().getDescriptorFingerprint());
                 return result;
             });
@@ -67,7 +76,17 @@ public final class DocumentAdmissionPolicy {
         return new DocumentAdmissionPolicy(value, encoded.bytes(), encoded.sha256());
     }
 
-    /** Decode exact retained policy bytes; canonical ordering is part of the persisted identity. */
+    /**
+     * Decode exact retained policy bytes; canonical ordering is part of the persisted identity.
+     *
+     * @param codec the codec identifier
+     * @param version the format encoding version
+     * @param bytes the serialized policy bytes
+     * @param sha256 the expected hexadecimal SHA-256 digest
+     * @param control execution cancellation check
+     * @return the decoded immutable admission policy
+     * @throws InvalidProtocolBufferException if decoding fails
+     */
     public static DocumentAdmissionPolicy decode(String codec, int version, ByteString bytes, String sha256, Runnable control)
             throws InvalidProtocolBufferException {
         requireSize(Objects.requireNonNull(bytes).size());
@@ -78,18 +97,57 @@ public final class DocumentAdmissionPolicy {
         return checked;
     }
 
+    /**
+     * Returns the underlying schema policy definition.
+     *
+     * @return the protobuf schema policy
+     */
     public DocumentSchemaPolicy definition() { return policy; }
+
+    /**
+     * Returns the canonical encoded bytes of this policy.
+     *
+     * @return the byte string containing canonical policy bytes
+     */
     public ByteString bytes() { return bytes; }
+
+    /**
+     * Returns the hexadecimal SHA-256 digest of this policy's canonical bytes.
+     *
+     * @return the hexadecimal SHA-256 string
+     */
     public String sha256() { return sha256; }
+
+    /**
+     * Returns the admission limits configured by this policy.
+     *
+     * @return the admission limits
+     */
     public DocumentSchemaAdmission.Limits limits() { return limits; }
 
-    /** An explicit schema condition requires typed admission even where opaque publication is permitted. */
+    /**
+     * An explicit schema condition requires typed admission even where opaque publication is permitted.
+     *
+     * @param member the document publication member to check
+     * @return true if typed schema admission is required for this member
+     */
     public boolean requiresTyped(DocumentPublicationMember member) {
         requireAccount(member);
         return policy.getMode() == DocumentSchemaPolicyMode.DOCUMENT_SCHEMA_POLICY_MODE_TYPED_REQUIRED || member.hasStructuredSchema();
     }
 
-    /** Always a typed attempt. A failure cannot authorize an opaque retry under this method. */
+    /**
+     * Always a typed attempt. A failure cannot authorize an opaque retry under this method.
+     *
+     * @param commandSha256 SHA-256 digest of the admission command
+     * @param member publication member describing document destination and parts
+     * @param fragments map of slot ordinal to raw fragment bytes
+     * @param container container schema definition
+     * @param resolver resolver for Any schema occurrences
+     * @param control execution cancellation check
+     * @return the admitted schema proof
+     * @throws InvalidProtocolBufferException if schema decoding or validation fails
+     */
     public DocumentSchemaAdmission.Proof prepareAndCheck(ByteString commandSha256, DocumentPublicationMember member,
             Map<Integer, ByteString> fragments, DocumentSchemaAdmission.Definition container,
             DocumentSchemaAdmission.Resolver resolver, Runnable control) throws InvalidProtocolBufferException {
@@ -106,7 +164,19 @@ public final class DocumentAdmissionPolicy {
         return proof;
     }
 
-    /** Policy-bound preparation with the serialized-byte lifetime defined by PreparedProof. */
+    /**
+     * Policy-bound preparation with the serialized-byte lifetime defined by PreparedProof.
+     *
+     * @param commandSha256 SHA-256 digest of the admission command
+     * @param member publication member describing document destination and parts
+     * @param fragments map of slot ordinal to raw fragment bytes
+     * @param container container schema definition
+     * @param resolver resolver for Any schema occurrences
+     * @param reservations resource reservations for admitted schema assets
+     * @param control execution cancellation check
+     * @return the prepared proof holding reserved resources
+     * @throws InvalidProtocolBufferException if schema decoding or validation fails
+     */
     public DocumentSchemaAdmission.PreparedProof prepareAndCheck(ByteString commandSha256, DocumentPublicationMember member,
             Map<Integer, ByteString> fragments, DocumentSchemaAdmission.Definition container,
             DocumentSchemaAdmission.Resolver resolver, DocumentAdmissionReservations reservations, Runnable control)
@@ -130,7 +200,20 @@ public final class DocumentAdmissionPolicy {
         }
     }
 
-    /** Own a complete member assessment under this policy; the host still authorizes and fences its active pointer. */
+    /**
+     * Own a complete member assessment under this policy; the host still authorizes and fences its active pointer.
+     *
+     * @param commandSha256 SHA-256 digest of the admission command
+     * @param member publication member describing document destination and parts
+     * @param fragments map of slot ordinal to raw fragment bytes
+     * @param container container schema definition
+     * @param resolver resolver for Any schema occurrences
+     * @param reservations resource reservations for admitted schema assets
+     * @param evaluatedAt evaluation timestamp
+     * @param control execution cancellation check
+     * @return the completed document schema assessment
+     * @throws InvalidProtocolBufferException if schema decoding or validation fails
+     */
     public DocumentSchemaAssessment assess(ByteString commandSha256, DocumentPublicationMember member,
             Map<Integer, ByteString> fragments, DocumentSchemaAdmission.Definition container,
             DocumentSchemaAdmission.Resolver resolver, DocumentAdmissionReservations reservations,
@@ -146,12 +229,25 @@ public final class DocumentAdmissionPolicy {
         }, limits, reservations, evaluatedAt, control);
     }
 
-    /** Pure correspondence check; commit must additionally fence the authoritative policy pointer. */
+    /**
+     * Pure correspondence check; commit must additionally fence the authoritative policy pointer.
+     *
+     * @param proof the admission proof to verify
+     * @param control execution cancellation check
+     * @throws InvalidProtocolBufferException if evidence decoding fails
+     */
     public void verifyProof(DocumentSchemaAdmission.Proof proof, Runnable control) throws InvalidProtocolBufferException {
         verifyProofInternal(proof, null, control);
     }
 
-    /** Reserves only verification scratch; the caller owns the proof and this policy's bytes. */
+    /**
+     * Reserves only verification scratch; the caller owns the proof and this policy's bytes.
+     *
+     * @param proof the admission proof to verify
+     * @param reservations resource reservations for decoding scratch
+     * @param control execution cancellation check
+     * @throws InvalidProtocolBufferException if evidence decoding fails
+     */
     public void verifyProof(DocumentSchemaAdmission.Proof proof, DocumentAdmissionReservations reservations,
             Runnable control) throws InvalidProtocolBufferException {
         verifyProofInternal(proof, Objects.requireNonNull(reservations), control);

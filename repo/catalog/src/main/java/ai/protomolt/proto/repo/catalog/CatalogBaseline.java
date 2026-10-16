@@ -17,23 +17,37 @@ import org.flywaydb.core.Flyway;
 public final class CatalogBaseline {
     /** The catalog's own Flyway history table; never the ledger's flyway_schema_history. */
     public static final String HISTORY_TABLE = "repo_catalog_schema_history";
+    private static final String FLYWAY_SCHEMA_HISTORY = "flyway_schema_history";
+    private static final int FOREIGN_OBJECTS_LIMIT = 20;
     private static final String LOCATION = "classpath:db/repo-catalog";
 
     private CatalogBaseline() {}
 
     /** The schema already holds objects the catalog did not create. */
     public static final class Refused extends IllegalStateException {
+        /**
+         * Constructs a refusal exception with the specified detail message.
+         *
+         * @param message the detail message describing why the baseline was refused
+         */
         Refused(String message) { super(message); }
     }
 
+    /**
+     * Applies the catalog's Flyway baseline to the given data source.
+     *
+     * @param dataSource the data source to inspect and migrate
+     * @throws Refused if the target schema contains existing foreign objects
+     * @throws CatalogException if inspection fails due to a database access error
+     */
     public static void apply(DataSource dataSource) {
         String schema;
         try (var connection = dataSource.getConnection()) {
             schema = connection.getSchema();
             if (!hasHistory(connection)) {
                 var found = foreignObjects(connection);
-                if (hasTable(connection, "flyway_schema_history"))
-                    found.addFirst("flyway_schema_history (a repository ledger's history)");
+                if (hasTable(connection, FLYWAY_SCHEMA_HISTORY))
+                    found.addFirst(FLYWAY_SCHEMA_HISTORY + " (a repository ledger's history)");
                 connection.rollback();
                 if (!found.isEmpty())
                     throw new Refused("The repository catalog baseline applies only to an empty catalog; schema "
@@ -77,7 +91,7 @@ public final class CatalogBaseline {
                 WHERE n.nspname = current_schema() AND t.typtype IN ('e', 'd', 'r', 'm')
                    OR (n.nspname = current_schema() AND t.typtype = 'c' AND NOT EXISTS (
                        SELECT 1 FROM pg_catalog.pg_class r WHERE r.oid = t.typrelid AND r.relkind <> 'c'))
-                ORDER BY 1 LIMIT 20""")) {
+                ORDER BY 1 LIMIT """ + FOREIGN_OBJECTS_LIMIT)) {
             try (var rows = statement.executeQuery()) {
                 while (rows.next()) found.add(rows.getString(1));
             }

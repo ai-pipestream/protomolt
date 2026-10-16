@@ -14,6 +14,7 @@ import java.util.concurrent.CancellationException;
 final class DocumentRootSchemaEvidenceCodec {
     static final String CODEC = "document-root-schema-evidence";
     static final int VERSION = 1;
+    private static final String NONCANONICAL_OCCURRENCE_ORDERING = "noncanonical evidence occurrence ordering";
     private DocumentRootSchemaEvidenceCodec() {}
 
     record Encoded(ByteString bytes, String sha256) {}
@@ -97,7 +98,7 @@ final class DocumentRootSchemaEvidenceCodec {
         var evidence = DocumentSchemaEvidenceCodec.decode(CODEC, codec, version, bytes, sha256,
                 DocumentRootSchemaEvidence.getDescriptor(), DocumentRootSchemaEvidence.parser(), control);
         var canonical = encode(evidence, control);
-        if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical evidence occurrence ordering");
+        if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException(NONCANONICAL_OCCURRENCE_ORDERING);
         return evidence;
     }
 
@@ -107,7 +108,7 @@ final class DocumentRootSchemaEvidenceCodec {
         var evidence = DocumentSchemaEvidenceCodec.decode(CODEC, codec, version, bytes, sha256,
                 DocumentRootSchemaEvidence.getDescriptor(), DocumentRootSchemaEvidence.parser(), reservations, control);
         try (var canonical = encodeOwned(evidence, DocumentSchemaEvidenceCodec.MAX_BYTES, reservations, control)) {
-            if (!canonical.value().bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical evidence occurrence ordering");
+            if (!canonical.value().bytes().equals(bytes)) throw new IllegalArgumentException(NONCANONICAL_OCCURRENCE_ORDERING);
         }
         return evidence;
     }

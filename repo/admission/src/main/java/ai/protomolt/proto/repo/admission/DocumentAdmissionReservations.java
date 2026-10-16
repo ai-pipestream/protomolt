@@ -7,6 +7,9 @@ public interface DocumentAdmissionReservations {
      * Reserve before allocation, without waiting while holding another lease.
      * Refusal must throw; it must never return null or an unreserved success.
      * This does not account for parsed descriptors, builders or JVM object overhead.
+     *
+     * @param bytes the number of serialized bytes to reserve
+     * @return the acquired reservation lease
      */
     Lease reserve(long bytes);
 

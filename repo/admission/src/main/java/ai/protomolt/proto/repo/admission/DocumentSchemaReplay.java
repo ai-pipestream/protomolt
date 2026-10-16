@@ -18,6 +18,8 @@ import java.util.concurrent.CancellationException;
 
 /** Internal strict replay of one root. The host authenticates revision, metadata and policy. */
 final class DocumentSchemaReplay {
+    private static final String SCHEMA_REPLAY_EVIDENCE_EXCEEDS_LIMIT = "aggregate schema replay evidence exceeds limit";
+
     record Limits(int maxPaths, long maxEncodedBytes, long maxSteps) {
         Limits {
             if (maxPaths < 1 || maxEncodedBytes < 1 || maxSteps < 1)
@@ -66,13 +68,13 @@ final class DocumentSchemaReplay {
             // Bound aggregate input before canonical encoding allocates its output buffer.
             if (path.getSerializedSize() > limits.maxEncodedBytes() - bytes
                     || path.getStepsCount() > limits.maxSteps() - steps)
-                throw new IllegalArgumentException("aggregate schema replay evidence exceeds limit");
+                throw new IllegalArgumentException(SCHEMA_REPLAY_EVIDENCE_EXCEEDS_LIMIT);
             // Replay consumes the parsed path, not its encoded bytes or digest.
             // The codec's validated measurement enforces the same canonical wire
             // bounds without allocating an output buffer solely to count it.
             int measured = DocumentSchemaEvidenceCodec.measureAndValidate(path, () -> active(control));
             if (measured > limits.maxEncodedBytes() - bytes)
-                throw new IllegalArgumentException("aggregate schema replay evidence exceeds limit");
+                throw new IllegalArgumentException(SCHEMA_REPLAY_EVIDENCE_EXCEEDS_LIMIT);
             bytes += measured;
             steps += path.getStepsCount();
             if (!expected.add(path)) throw new IllegalArgumentException("duplicate schema replay path");

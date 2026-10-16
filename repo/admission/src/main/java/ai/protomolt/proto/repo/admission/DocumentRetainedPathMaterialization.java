@@ -16,6 +16,8 @@ import java.util.concurrent.CancellationException;
  * exact fragment/ordinal and associations, and owns all input/result lifetimes.
  */
 final class DocumentRetainedPathMaterialization {
+    private static final String GOOGLE_PROTOBUF_ANY = "google.protobuf.Any";
+
     private DocumentRetainedPathMaterialization() {}
     /** Aggregate boundary value bytes/decodes; wire values are bounded by maxBoundaries * perBoundary.maxWireValues. */
     record Limits(long maxDecodedBytes, int maxBoundaries, int maxReferences, DocumentAnyMaterialization.Limits perBoundary) {
@@ -90,7 +92,7 @@ final class DocumentRetainedPathMaterialization {
                 }
                 case FIELD_NUMBER -> {
                     var message = message(current);
-                    if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any"))
+                    if (message.getDescriptorForType().getFullName().equals(GOOGLE_PROTOBUF_ANY))
                         throw lost("Any envelope must be crossed using its recorded boundary");
                     var field = message.getDescriptorForType().findFieldByNumber(step.getFieldNumber());
                     if (field == null || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE)
@@ -150,7 +152,7 @@ final class DocumentRetainedPathMaterialization {
         var type = message.getDescriptorForType();
         var url = type.findFieldByNumber(1);
         var bytes = type.findFieldByNumber(2);
-        if (!type.getFullName().equals("google.protobuf.Any") || type.getFields().size() != 2
+        if (!type.getFullName().equals(GOOGLE_PROTOBUF_ANY) || type.getFields().size() != 2
                 || url == null || bytes == null || !url.getName().equals("type_url") || !bytes.getName().equals("value")
                 || url.getType() != FieldDescriptor.Type.STRING || bytes.getType() != FieldDescriptor.Type.BYTES
                 || url.isRepeated() || bytes.isRepeated() || url.isRequired() || bytes.isRequired()

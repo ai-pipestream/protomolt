@@ -22,6 +22,12 @@ final class DocumentSchemaEvidenceCodec {
     static final int MAX_BYTES = 4 * 1024 * 1024;
     static final int MAX_WIRE_VALUES = 16384;
     static final int MAX_DEPTH = 16;
+    private static final String CONTROL = "control";
+    private static final String NONCANONICAL_ENCODING = "noncanonical schema evidence encoding";
+    private static final String BYTE_BOUND_EXCEEDED = "schema evidence byte bound exceeded";
+    private static final String WIRE_VALUE_BOUND_EXCEEDED = "schema evidence wire value bound exceeded";
+    private static final String UNSUPPORTED_SCALAR_LAYOUT = "unsupported schema evidence scalar layout";
+    private static final String INVALID_UTF16 = "invalid schema evidence UTF-16";
     private static final ProtoValidator VALIDATOR = ProtoValidator.create(List.of(new ProtomoltRuleSource()));
 
     private DocumentSchemaEvidenceCodec() {}
@@ -83,7 +89,7 @@ final class DocumentSchemaEvidenceCodec {
 
     static int measureAndValidate(Message path, Runnable control) {
         Objects.requireNonNull(path, "path");
-        Objects.requireNonNull(control, "control");
+        Objects.requireNonNull(control, CONTROL);
         active(control);
         int size = measure(path, 0, new int[1], control);
         requireSize(size);
@@ -110,7 +116,7 @@ final class DocumentSchemaEvidenceCodec {
             com.google.protobuf.Descriptors.Descriptor descriptor, com.google.protobuf.Parser<T> parser,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         Objects.requireNonNull(bytes, "bytes");
-        Objects.requireNonNull(control, "control");
+        Objects.requireNonNull(control, CONTROL);
         active(control);
         if (!expectedCodec.equals(codec) || version != 1)
             throw new IllegalArgumentException("unsupported schema evidence encoding");
@@ -133,17 +139,17 @@ final class DocumentSchemaEvidenceCodec {
         if (input.getTotalBytesRead() != bytes.size()) throw new InvalidProtocolBufferException("incomplete schema evidence decode");
         if (reservations == null) {
             var canonical = encode(path, control);
-            if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical schema evidence encoding");
+            if (!canonical.bytes().equals(bytes)) throw new IllegalArgumentException(NONCANONICAL_ENCODING);
         } else {
             try (var canonical = encodeOwned(path, reservations, control)) {
-                if (!canonical.value().bytes().equals(bytes)) throw new IllegalArgumentException("noncanonical schema evidence encoding");
+                if (!canonical.value().bytes().equals(bytes)) throw new IllegalArgumentException(NONCANONICAL_ENCODING);
             }
         }
         return path;
     }
 
     private static void requireSize(int size) {
-        if (size < 1 || size > MAX_BYTES) throw new IllegalArgumentException("schema evidence byte bound exceeded");
+        if (size < 1 || size > MAX_BYTES) throw new IllegalArgumentException(BYTE_BOUND_EXCEEDED);
     }
 
     private static int measure(Message message, int depth, int[] values, Runnable control) {
@@ -159,7 +165,7 @@ final class DocumentSchemaEvidenceCodec {
             if (field.isMapField()) {
                 requireStringMap(field);
                 if (items.size() > MAX_WIRE_VALUES)
-                    throw new IllegalArgumentException("schema evidence wire value bound exceeded");
+                    throw new IllegalArgumentException(WIRE_VALUE_BOUND_EXCEEDED);
                 var keys = new java.util.HashSet<String>();
                 long keyBytes = 0;
                 for (var item : items) {
@@ -168,14 +174,14 @@ final class DocumentSchemaEvidenceCodec {
                     String key = mapString(mapEntry, 1);
                     keyBytes += utf8Length(key, control);
                     if (keyBytes > MAX_BYTES)
-                        throw new IllegalArgumentException("schema evidence byte bound exceeded");
+                        throw new IllegalArgumentException(BYTE_BOUND_EXCEEDED);
                     if (!keys.add(key))
                         throw new IllegalArgumentException("duplicate schema evidence map key");
                 }
             }
             for (var value : items) {
                 active(control);
-                if (++values[0] > MAX_WIRE_VALUES) throw new IllegalArgumentException("schema evidence wire value bound exceeded");
+                if (++values[0] > MAX_WIRE_VALUES) throw new IllegalArgumentException(WIRE_VALUE_BOUND_EXCEEDED);
                 int number = field.getNumber();
                 size += switch (field.getType()) {
                     case MESSAGE -> {
@@ -185,7 +191,7 @@ final class DocumentSchemaEvidenceCodec {
                             for (int n = 1; n <= 2; n++) {
                                 if (!mapEntry.hasField(mapEntry.getDescriptorForType().findFieldByNumber(n))
                                         && ++values[0] > MAX_WIRE_VALUES)
-                                    throw new IllegalArgumentException("schema evidence wire value bound exceeded");
+                                    throw new IllegalArgumentException(WIRE_VALUE_BOUND_EXCEEDED);
                             }
                             child = mapSize(mapEntry, control);
                         }
@@ -200,9 +206,9 @@ final class DocumentSchemaEvidenceCodec {
                     case UINT32 -> CodedOutputStream.computeUInt32Size(number, (Integer) value);
                     case UINT64 -> CodedOutputStream.computeUInt64Size(number, (Long) value);
                     case INT64 -> CodedOutputStream.computeInt64Size(number, (Long) value);
-                    default -> throw new IllegalArgumentException("unsupported schema evidence scalar layout");
+                    default -> throw new IllegalArgumentException(UNSUPPORTED_SCALAR_LAYOUT);
                 };
-                if (size > MAX_BYTES) throw new IllegalArgumentException("schema evidence byte bound exceeded");
+                if (size > MAX_BYTES) throw new IllegalArgumentException(BYTE_BOUND_EXCEEDED);
             }
         }
         return (int) size;
@@ -217,11 +223,11 @@ final class DocumentSchemaEvidenceCodec {
             else if (ch < 2048) size += 2;
             else if (Character.isHighSurrogate(ch)) {
                 if (++i >= text.length() || !Character.isLowSurrogate(text.charAt(i)))
-                    throw new IllegalArgumentException("invalid schema evidence UTF-16");
+                    throw new IllegalArgumentException(INVALID_UTF16);
                 size += 4;
-            } else if (Character.isLowSurrogate(ch)) throw new IllegalArgumentException("invalid schema evidence UTF-16");
+            } else if (Character.isLowSurrogate(ch)) throw new IllegalArgumentException(INVALID_UTF16);
             else size += 3;
-            if (size > MAX_BYTES) throw new IllegalArgumentException("schema evidence byte bound exceeded");
+            if (size > MAX_BYTES) throw new IllegalArgumentException(BYTE_BOUND_EXCEEDED);
         }
         return (int) size;
     }
@@ -294,7 +300,7 @@ final class DocumentSchemaEvidenceCodec {
                     case UINT32 -> output.writeUInt32(number, (Integer) value);
                     case UINT64 -> output.writeUInt64(number, (Long) value);
                     case INT64 -> output.writeInt64(number, (Long) value);
-                    default -> throw new IllegalArgumentException("unsupported schema evidence scalar layout");
+                    default -> throw new IllegalArgumentException(UNSUPPORTED_SCALAR_LAYOUT);
                 }
             }
         }

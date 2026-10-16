@@ -16,6 +16,8 @@ import java.util.concurrent.CancellationException;
  * Not thread-safe; one scope serves one assessment and is then closed.
  */
 public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdmission.Resolution {
+    private static final String REASSESSED_ROOTS_DIFFER = "reassessed roots or occurrences differ from retained evidence";
+
     private record Root(int ordinal, DocumentSchemaRootLocator locator) {}
     private record Key(int ordinal, DocumentSchemaRootLocator root, String url,
             List<RepositorySchemaOccurrenceStep> prefix, String hash, long size) {
@@ -51,6 +53,15 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
      * Call requireComplete with the new assessment before using its result.
      * Limits bound source loading; the current assessment policy bounds the destination.
      * Source ordinals cannot repeat. The host verifies destination slot and physical identity.
+     *
+     * @param source the source schema admission request
+     * @param targetToSource mapping from target ordinal to source ordinal
+     * @param reader reader to load artifact bytes by digest
+     * @param limits admission limits
+     * @param reservations resource reservations for admitted schema assets
+     * @param control execution cancellation check
+     * @return the opened retained schema resolution
+     * @throws InvalidProtocolBufferException if schema decoding fails
      */
     public static DocumentRetainedSchemaResolution open(DocumentSchemaAdmission.Request source,
             Map<Integer, Integer> targetToSource, DocumentSchemaAdmission.Reader reader,
@@ -183,17 +194,33 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
         container = definitions.get(new DocumentPayloadCheck.SchemaKey(source.container().typeUrl(), source.container().descriptorSha256()));
     }
 
-    /** Borrowed exact container definition; keep this scope and its artifact owner open. */
+    /**
+     * Borrowed exact container definition; keep this scope and its artifact owner open.
+     *
+     * @return the container schema definition
+     */
     public DocumentSchemaAdmission.Definition container() { active(); return container; }
 
-    /** Borrowed source closure for exact composite-union checking, not independent retention ownership. */
+    /**
+     * Borrowed source closure for exact composite-union checking, not independent retention ownership.
+     *
+     * @return the set of selected schema references
+     */
     public Set<DocumentSchemaAdmission.Reference> selectedReferences() { active(); return Set.copyOf(selectedReferences); }
 
-    /** Borrowed source bytes; keep the source artifact owner and this scope alive while comparing. */
-    public Map<String, ByteString> selectedArtifacts() { active(); return Map.copyOf(selectedArtifacts); }
+    /**
+     * Borrowed source bytes; keep the source artifact owner and this scope alive while comparing.
+     *
+     * @return map of artifact digest to byte content
+     */
+    Map<String, ByteString> selectedArtifacts() { active(); return Map.copyOf(selectedArtifacts); }
 
-    /** All selected destination ordinals, including parts with no Any occurrences. */
-    public Set<Integer> targetOrdinals() { active(); return Set.copyOf(targetOrdinals); }
+    /**
+     * All selected destination ordinals, including parts with no Any occurrences.
+     *
+     * @return set of selected destination ordinals
+     */
+    Set<Integer> targetOrdinals() { active(); return Set.copyOf(targetOrdinals); }
 
     @Override public DocumentSchemaAdmission.Definition select(DocumentSchemaAdmission.Selection occurrence) {
         active();
@@ -204,11 +231,15 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
         return definition;
     }
 
-    /** Verify that the new assessment used every selected occurrence and reproduced its exact evidence. */
+    /**
+     * Verify that the new assessment used every selected occurrence and reproduced its exact evidence.
+     *
+     * @param assessment the assessment view to verify
+     */
     public void requireComplete(DocumentSchemaAssessment.View assessment) {
         requireSelectedComplete(assessment);
         if (assessment.roots().size() != roots.size())
-            throw new IllegalArgumentException("reassessed roots or occurrences differ from retained evidence");
+            throw new IllegalArgumentException(REASSESSED_ROOTS_DIFFER);
         if (!new HashSet<>(assessment.references()).equals(selectedReferences)
                 || !assessment.artifacts().equals(selectedArtifacts))
             throw new IllegalArgumentException("reassessed schema assets differ from selected retained union");
@@ -219,8 +250,10 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
      * All mapped ordinals are checked, including those with no recorded Any roots.
      * Other sources' ordinals/assets are not checked here: the caller must separately
      * prove disjoint complete routing, exact container agreement and global asset union.
+     *
+     * @param assessment the assessment view to verify
      */
-    public void requireSelectedComplete(DocumentSchemaAssessment.View assessment) {
+    void requireSelectedComplete(DocumentSchemaAssessment.View assessment) {
         active();
         var actual = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
         for (var root : assessment.roots()) {
@@ -230,7 +263,7 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
                 throw new IllegalArgumentException("duplicate reassessed evidence root");
         }
         if (!used.equals(index.keySet()) || !actual.equals(roots))
-            throw new IllegalArgumentException("reassessed roots or occurrences differ from retained evidence");
+            throw new IllegalArgumentException(REASSESSED_ROOTS_DIFFER);
         var actualReferences = new HashSet<>(assessment.references());
         if (!actualReferences.containsAll(selectedReferences))
             throw new IllegalArgumentException("reassessed schema assets omit selected retained references");

@@ -13,15 +13,35 @@ import java.util.Optional;
  * must remain stable; the host owns their bytes and separately bounds concurrent parsed heap.
  */
 public final class DocumentHistoricalResponseVerifier {
+    /** Maximum allowed wire bytes for selected historical occurrence response. */
     public static final int MAX_BYTES = 8 * 1024 * 1024;
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private DocumentHistoricalResponseVerifier() {}
 
+    /**
+     * Bounded verification of selected-read wire evidence.
+     *
+     * @param request the request describing the selected occurrence
+     * @param response the response containing occurrence payload and schema evidence
+     * @param reservations resource reservations for evidence decoding scratch
+     * @param control execution cancellation check
+     * @throws InvalidProtocolBufferException if parsing or validation fails
+     */
     public static void verify(ReadHistoricalOccurrenceRequest request, ReadHistoricalOccurrenceResponse response,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         verifyBinding(request, response, reservations, control);
     }
 
+    /**
+     * Verifies the historical occurrence response and resolves its schema asset binding.
+     *
+     * @param request the request describing the selected occurrence
+     * @param response the response containing occurrence payload and schema evidence
+     * @param reservations resource reservations for evidence decoding scratch
+     * @param control execution cancellation check
+     * @return the verified document schema asset binding
+     * @throws InvalidProtocolBufferException if parsing or validation fails
+     */
     static DocumentSchemaAssetBinding verifyBinding(ReadHistoricalOccurrenceRequest request,
             ReadHistoricalOccurrenceResponse response, DocumentAdmissionReservations reservations,
             Runnable control) throws InvalidProtocolBufferException {
