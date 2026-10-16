@@ -37,7 +37,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 import javax.sql.DataSource;
 
 /**
@@ -49,7 +52,16 @@ import javax.sql.DataSource;
  */
 public final class PostgresCatalog implements Catalog {
     private static final String OUTCOME_KEY = "catalog_operation_outcomes_pkey";
+    /** Bound on the digests remembered as persisted; past it the set starts again from empty. */
+    private static final int KNOWN_ARTIFACTS = 4096;
     private final DataSource dataSource;
+    /**
+     * Schema artifact digests this process has seen committed. Rows are immutable by
+     * trigger, so a remembered digest stays persisted; the database stays the truth,
+     * and a new process starts empty and sends what it has not seen committed.
+     */
+    private final Set<String> knownArtifacts = ConcurrentHashMap.newKeySet();
+    private final LongAdder artifactsSent = new LongAdder();
     private final HikariDataSource owned;
 
     /** Opens a pool and applies the baseline. */
@@ -210,8 +222,9 @@ public final class PostgresCatalog implements Catalog {
                         connection.rollback();
                         return new SourcePurged(purged.get());
                     }
-                    writeAccession(connection, documentId.get(), commit, next);
+                    var sent = writeAccession(connection, documentId.get(), commit, next);
                     connection.commit();
+                    remember(sent);
                     return new Committed();
                 }
             } catch (SQLException failure) {
@@ -336,7 +349,16 @@ public final class PostgresCatalog implements Catalog {
         return Optional.empty();
     }
 
-    private static void writeAccession(Connection connection, long documentId, Commit commit, long revision)
+    /** Schema artifact rows sent to the database by this process; for tests and diagnostics. */
+    public long artifactsSent() { return artifactsSent.sum(); }
+
+    private void remember(List<String> digests) {
+        if (knownArtifacts.size() + digests.size() > KNOWN_ARTIFACTS) knownArtifacts.clear();
+        knownArtifacts.addAll(digests);
+    }
+
+    /** Writes the accession's rows; returns the artifact digests it sent. */
+    private List<String> writeAccession(Connection connection, long documentId, Commit commit, long revision)
             throws SQLException {
         var now = Timestamp.from(Instant.now());
         try (var insert = connection.prepareStatement("""
@@ -351,18 +373,23 @@ public final class PostgresCatalog implements Catalog {
             }
             insert.executeBatch();
         }
+        // Only artifacts this process has not seen committed are sent (#327).
+        var sent = new ArrayList<String>();
         try (var insert = connection.prepareStatement(
                 "INSERT INTO catalog_schema_artifacts (sha256, content) VALUES (?, ?) ON CONFLICT DO NOTHING")) {
             for (Map.Entry<String, ByteString> artifact : commit.artifacts().entrySet()) {
+                if (knownArtifacts.contains(artifact.getKey())) continue;
                 var bytes = artifact.getValue().toByteArray();
                 if (!sha256Hex(bytes).equals(artifact.getKey()))
                     throw new IllegalArgumentException("Schema artifact differs from its digest");
                 insert.setString(1, artifact.getKey());
                 insert.setBytes(2, bytes);
                 insert.addBatch();
+                sent.add(artifact.getKey());
             }
-            insert.executeBatch();
+            if (!sent.isEmpty()) insert.executeBatch();
         }
+        artifactsSent.add(sent.size());
         var manifest = commit.manifest();
         var manifestBytes = manifest.toByteArray();
         try (var insert = connection.prepareStatement("""
@@ -438,6 +465,7 @@ public final class PostgresCatalog implements Catalog {
             insert.setTimestamp(6, now);
             insert.executeUpdate();
         }
+        return sent;
     }
 
     // ------------------------------------------------------------------ writer authority (administration)
@@ -619,6 +647,22 @@ public final class PostgresCatalog implements Catalog {
                     WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
                     ORDER BY o.revision""")) {
                 bindAddress(select, 1, address);
+                var result = new ArrayList<DocumentEvent>();
+                try (var rows = select.executeQuery()) { while (rows.next()) result.add(parseEvent(rows.getBytes(1))); }
+                return result;
+            }
+        });
+    }
+
+    @Override public List<DocumentEvent> events(NodeAddress address, List<Long> revisions) {
+        if (revisions.isEmpty()) return List.of();
+        return inTransaction("Outbox page read", connection -> {
+            try (var select = connection.prepareStatement("""
+                    SELECT o.payload FROM catalog_outbox o JOIN catalog_documents d ON d.document_id = o.document_id
+                    WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
+                      AND o.revision = ANY(?) ORDER BY o.revision""")) {
+                bindAddress(select, 1, address);
+                select.setArray(5, connection.createArrayOf("bigint", revisions.toArray()));
                 var result = new ArrayList<DocumentEvent>();
                 try (var rows = select.executeQuery()) { while (rows.next()) result.add(parseEvent(rows.getBytes(1))); }
                 return result;
