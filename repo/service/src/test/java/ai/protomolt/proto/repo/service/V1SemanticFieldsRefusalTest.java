@@ -34,6 +34,7 @@ import ai.protomolt.proto.repo.v1.PutBlobResponse;
 import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
+import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
 import ai.protomolt.proto.repo.semantic.v1.Segmentation;
 import io.grpc.Context;
@@ -133,6 +134,19 @@ class V1SemanticFieldsRefusalTest {
             SaveDocumentResponse response = stub.saveDocument(validV1);
             assertThat(response.getNodeId()).isEqualTo("saved-doc-ok");
             assertThat(savesCalled.get()).isEqualTo(1);
+
+            SaveDocumentRequest legacySemanticResults = SaveDocumentRequest.newBuilder()
+                    .setDocument(Document.newBuilder()
+                            .setDocId("doc-legacy-sem")
+                            .setSearchMetadata(SearchMetadata.newBuilder()
+                                    .addSemanticResults(SemanticProcessingResult.newBuilder()
+                                            .setResultId("res-1")
+                                            .build())))
+                    .build();
+
+            SaveDocumentResponse legacyResponse = stub.saveDocument(legacySemanticResults);
+            assertThat(legacyResponse.getNodeId()).isEqualTo("saved-doc-legacy-sem");
+            assertThat(savesCalled.get()).isEqualTo(2);
         } finally {
             channel.shutdownNow();
             server.shutdownNow();
