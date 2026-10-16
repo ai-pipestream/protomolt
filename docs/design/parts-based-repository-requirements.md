@@ -117,7 +117,10 @@ must match the document's ownership and authenticated caller's authority. A step
 reuses WriteProvenance for recorded attribution. Module ID is required; node, graph
 ID and graph version may be supplied but graph membership/version is not verified
 in slice 1. A graph registry is not a prerequisite and no numeric/string workflow
-version conversion is implied.
+version conversion is implied. A CORE part taken from another revision through
+PartSource counts as a CORE write: its ownership becomes the revision's ownership, under
+the same checks as a CORE PUT (account, datasource and connector stay fixed; the ACL may
+change) (decision 47).
 
 **Writer grants (W1).** A trusted administrator provisions an immutable WriterGrant
 for one account and one credential (issuer and credential ID). Grants do not name a
