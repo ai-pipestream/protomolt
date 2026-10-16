@@ -249,13 +249,14 @@ final class AccessionFixture implements AutoCloseable {
         return POSTGRES.getJdbcUrl().replaceFirst("/[^/?]+(\\?|$)", "/" + name + "$1");
     }
 
-    /** Counts stack calls and lets a test act between an upload and its commit. */
+    /** Counts stack calls and lets a test act between an upload or a source read and its commit. */
     static final class CountingStack implements Stack {
         private final Stack delegate;
         final AtomicInteger puts = new AtomicInteger();
         final AtomicInteger opens = new AtomicInteger();
         final Map<String, Integer> opened = new ConcurrentHashMap<>();
         volatile ThrowingRunnable afterPut = () -> {};
+        volatile ThrowingRunnable afterOpen = () -> {};
 
         CountingStack(Stack delegate) { this.delegate = delegate; }
 
@@ -278,10 +279,12 @@ final class AccessionFixture implements AutoCloseable {
         @Override public InputStream open(StackRef ref) throws IOException {
             opens.incrementAndGet();
             opened.merge(ref.getKey(), 1, Integer::sum);
-            return delegate.open(ref);
+            var stream = delegate.open(ref);
+            afterOpen.run();
+            return stream;
         }
 
-        void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; }
+        void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; afterOpen = () -> {}; }
     }
 
     @FunctionalInterface interface ThrowingRunnable { void run() throws IOException; }
