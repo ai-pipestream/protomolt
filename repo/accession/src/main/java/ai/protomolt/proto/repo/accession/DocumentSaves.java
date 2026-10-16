@@ -524,6 +524,10 @@ public final class DocumentSaves {
     private static void requireOwnerMatches(SaveOwner owner, OwnershipContext ownership) {
         if (owner.hasIntake() && !owner.getIntake().getDatasourceId().equals(ownership.getDatasourceId()))
             throw WriterAuthority.denied("The intake owner differs from the document's datasource");
+        if (owner.hasIntake() && owner.getIntake().hasConnectorId()
+                && (!ownership.hasConnectorId()
+                    || !owner.getIntake().getConnectorId().equals(ownership.getConnectorId())))
+            throw WriterAuthority.denied("The intake owner differs from the document's connector");
     }
 
     /**
