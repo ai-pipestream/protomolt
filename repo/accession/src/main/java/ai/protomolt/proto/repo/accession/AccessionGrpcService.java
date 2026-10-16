@@ -13,8 +13,14 @@ import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
+import ai.protomolt.proto.repo.v2.ReadBlobRequest;
+import ai.protomolt.proto.repo.v2.ReadBlobResponse;
+import ai.protomolt.proto.repo.v2.ReadDocumentRequest;
+import ai.protomolt.proto.repo.v2.ReadDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.UploadDocumentRequest;
+import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -26,12 +32,13 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * gRPC adapter for the slice 1 v2 DocumentService RPCs. Refusals carry the
- * errors.proto detail message in the status details. RPCs outside slice 1
+ * gRPC adapter for the v2 DocumentService RPCs. Refusals carry the
+ * errors.proto detail message in the status details. Unimplemented RPCs
  * answer UNIMPLEMENTED. Not registered in any production server.
  */
 public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServiceImplBase {
     private final DocumentSaves saves;
+    private final DocumentUploads uploads;
     private final DocumentReads reads;
     private final Function<AuthenticatedCaller, RepositoryCaller> bindings;
 
@@ -45,7 +52,22 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
      */
     public AccessionGrpcService(DocumentSaves saves, DocumentReads reads,
             Function<AuthenticatedCaller, RepositoryCaller> bindings) {
+        this(saves, new DocumentUploads(Objects.requireNonNull(saves, "saves")), reads, bindings);
+    }
+
+    /**
+     * Constructs a new gRPC accession service with an explicit upload coordinator.
+     *
+     * @param saves the document saves coordinator
+     * @param uploads the streaming document uploads coordinator
+     * @param reads the document reads coordinator
+     * @param bindings resolves the trusted authentication result into repository
+     *        identity; it must preserve principal, authority and credential binding
+     */
+    public AccessionGrpcService(DocumentSaves saves, DocumentUploads uploads, DocumentReads reads,
+            Function<AuthenticatedCaller, RepositoryCaller> bindings) {
         this.saves = Objects.requireNonNull(saves);
+        this.uploads = Objects.requireNonNull(uploads);
         this.reads = Objects.requireNonNull(reads);
         this.bindings = Objects.requireNonNull(bindings);
     }
@@ -54,8 +76,51 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         respond(observer, () -> saves.save(caller(), request));
     }
 
+    @Override public StreamObserver<UploadDocumentRequest> uploadDocument(
+            StreamObserver<UploadDocumentResponse> observer) {
+        final RepositoryCaller resolved;
+        try {
+            resolved = caller();
+        } catch (AccessionException failure) {
+            observer.onError(toStatus(failure));
+            return noopObserver();
+        } catch (RuntimeException failure) {
+            observer.onError(Status.INTERNAL.withDescription("Repository failure").withCause(failure).asRuntimeException());
+            return noopObserver();
+        }
+        return uploads.uploadDocument(resolved, observer);
+    }
+
     @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
         respond(observer, () -> reads.getDocument(caller(), request));
+    }
+
+    @Override public void readDocument(ReadDocumentRequest request, StreamObserver<ReadDocumentResponse> observer) {
+        final RepositoryCaller resolved;
+        try {
+            resolved = caller();
+        } catch (AccessionException failure) {
+            observer.onError(toStatus(failure));
+            return;
+        } catch (RuntimeException failure) {
+            observer.onError(Status.INTERNAL.withDescription("Repository failure").withCause(failure).asRuntimeException());
+            return;
+        }
+        reads.readDocument(resolved, request, observer);
+    }
+
+    @Override public void readBlob(ReadBlobRequest request, StreamObserver<ReadBlobResponse> observer) {
+        final RepositoryCaller resolved;
+        try {
+            resolved = caller();
+        } catch (AccessionException failure) {
+            observer.onError(toStatus(failure));
+            return;
+        } catch (RuntimeException failure) {
+            observer.onError(Status.INTERNAL.withDescription("Repository failure").withCause(failure).asRuntimeException());
+            return;
+        }
+        reads.readBlob(resolved, request, observer);
     }
 
     @Override public void getManifest(GetManifestRequest request, StreamObserver<GetManifestResponse> observer) {
@@ -97,6 +162,14 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         }
         observer.onNext(response);
         observer.onCompleted();
+    }
+
+    private static <T> StreamObserver<T> noopObserver() {
+        return new StreamObserver<>() {
+            @Override public void onNext(T value) {}
+            @Override public void onError(Throwable t) {}
+            @Override public void onCompleted() {}
+        };
     }
 
     /**

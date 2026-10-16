@@ -65,9 +65,12 @@ class AccessionGrpcIT {
                 var malformed = create("op-3", address, document).clearOwner().build();
                 assertThat(detail(() -> stub.saveDocument(malformed), Status.Code.INVALID_ARGUMENT, SaveRejection.class)
                         .getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
-                assertThatThrownBy(() -> stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
-                        .hasNext()).isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
-                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+                assertThat(stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
+                        .next().getManifest().getRevision()).isEqualTo(1);
+                assertThatThrownBy(() -> stub.listDocuments(ListDocumentsRequest.newBuilder()
+                        .setAccountId(account).setPageSize(10).build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
                         .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build()).getDocument().hasBlobBag()).isTrue();

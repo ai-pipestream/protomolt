@@ -85,6 +85,7 @@ final class AccessionFixture implements AutoCloseable {
     final CountingStack stack;
     final DocumentSaves.Drives drives;
     final DocumentSaves saves;
+    final DocumentUploads uploads;
     final DocumentReads reads;
     final String prefix;
 
@@ -98,6 +99,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(stackId, new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
+        uploads = new DocumentUploads(saves);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
@@ -111,6 +113,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(original.stack.stackId(), new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
+        uploads = new DocumentUploads(saves);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
