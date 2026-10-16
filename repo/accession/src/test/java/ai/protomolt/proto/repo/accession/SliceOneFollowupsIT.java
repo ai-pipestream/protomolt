@@ -42,15 +42,26 @@ class SliceOneFollowupsIT {
             assertThat(f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address)
                     .setRevision(RevisionSelector.newBuilder().setRevision(1)).build()).getDocument()).isEqualTo(original);
             assertThat(f.stack.puts.get()).isZero();
-            for (var request : java.util.List.of(
-                    change("bad-delete", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_DELETE, ""),
-                    change("bad-empty", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_EMPTY, "reason"),
-                    change("bad-put", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_PUT, "reason"),
-                    change("empty-core", address, 3, DocumentPart.DOCUMENT_PART_CORE, WriteAction.WRITE_ACTION_EMPTY, ""),
-                    change("delete-core", address, 3, DocumentPart.DOCUMENT_PART_CORE, WriteAction.WRITE_ACTION_DELETE, "reason"))) {
+            // A PUT with a reason carries real PARSED content, so the delete-reason rule is the only fault.
+            var parsedContent = Document.newBuilder().setDocId("parts").putParserResults("tika",
+                    original.getParserResultsOrThrow("tika")).build();
+            var refusals = new java.util.LinkedHashMap<SaveDocumentRequest, String>();
+            refusals.put(change("bad-delete", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_DELETE, ""),
+                    "delete-reason");
+            refusals.put(change("bad-empty", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_EMPTY, "reason"),
+                    "delete-reason");
+            refusals.put(change("bad-put", address, 3, DocumentPart.DOCUMENT_PART_PARSED, WriteAction.WRITE_ACTION_PUT, "reason")
+                    .toBuilder().setDocument(parsedContent).build(), "delete-reason");
+            refusals.put(change("empty-core", address, 3, DocumentPart.DOCUMENT_PART_CORE, WriteAction.WRITE_ACTION_EMPTY, ""),
+                    "needs a PRESENT CORE part");
+            refusals.put(change("delete-core", address, 3, DocumentPart.DOCUMENT_PART_CORE, WriteAction.WRITE_ACTION_DELETE, "reason"),
+                    "needs a PRESENT CORE part");
+            for (var refusal : refusals.entrySet()) {
+                var request = refusal.getKey();
                 assertThatThrownBy(() -> f.saves.save(processAuthority(), request)).isInstanceOfSatisfying(AccessionException.class, e -> {
                     assertThat(e.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
                     assertThat(((SaveRejection) e.detail().orElseThrow()).getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+                    assertThat(e.getMessage()).as(request.getOperationId()).contains(refusal.getValue());
                 });
                 assertThat(f.catalog.outcome(account, request.getOperationId())).isEmpty();
                 assertThat(f.stack.puts.get()).isZero();
