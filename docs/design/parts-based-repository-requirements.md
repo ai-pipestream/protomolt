@@ -113,7 +113,10 @@ Stack references and backend details are internal, not public identities.
 Every save has a required SaveOwner: intake origin or producing step. Document
 ownership remains the existing OwnershipContext; save ownership identifies the
 writer, not a transfer of tenancy or ACLs. Intake datasource and optional connector
-must match the document's ownership and authenticated caller's authority. A step
+must match the document's ownership and authenticated caller's authority: an intake
+owner that names a connector must name the document's connector, a document without a
+connector takes no owner that names one, and an owner without a connector may write a
+document that has one. This holds for process authority exactly as for a writer grant. A step
 reuses WriteProvenance for recorded attribution. Module ID is required; node, graph
 ID and graph version may be supplied but graph membership/version is not verified
 in slice 1. A graph registry is not a prerequisite and no numeric/string workflow
@@ -360,7 +363,9 @@ Shared database indexes, connections and storage still contend, and are measured
   protobuf `DocumentEvent`, in the commit transaction. It carries the call number, revision, previous revision, and the changed parts,
   segmentations and embedding sets. Delivery is at-least-once, so the
   same event may arrive more than once; consumers deduplicate by call number plus revision. Tombstones and purges emit their own events. All events have a stable event_id for
-  delivery deduplication. PurgeMarked and PurgeCompleted have distinct event IDs and
+  delivery deduplication, derived from the call number and revision through a
+  deterministic protobuf encoding, so two call numbers never share an ID whatever
+  characters their fields hold. PurgeMarked and PurgeCompleted have distinct event IDs and
   share a purge_id for correlation; purge_id alone is not a deduplication key.
 
 ## 11. Size and streaming
@@ -369,6 +374,9 @@ Shared database indexes, connections and storage still contend, and are measured
   limit of about 2 GiB. Measure the exact boundary, including framing overhead, before
   promising a number. Larger content is split across parts or segmentations. No small
   document limit (such as the old 8 MiB buffered limit) may be imposed.
+- A host admission budget that content exceeds (fragment or decoded bytes, schema
+  bindings, retained artifacts, reservations) is RESOURCE_EXHAUSTED and never a recorded
+  outcome; the same operation ID commits on a host with room for the content.
 - Raw files of any size are stored as bytes behind claim checks and never decoded.
 - A 600 MB raw file must stream in and out with bounded memory.
 - Uploads stream through gRPC client streaming and through the HTTP upload route. Both
