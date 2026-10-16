@@ -81,6 +81,20 @@ public final class CatalogRecords {
     /** One outbox row awaiting relay. */
     public record OutboxEvent(String eventId, String key, DocumentEvent event, int attempts) {}
 
+    /**
+     * The outbox partition key of an event: every address component in canonical
+     * order (account, graph, graph address, document), each prefixed by its UTF-8
+     * length so separators inside a component stay unambiguous and two documents
+     * never share a key, whatever characters their addresses hold.
+     */
+    public static String eventKey(NodeAddress address) {
+        var key = new StringBuilder();
+        for (var component : List.of(address.getAccountId(), address.getGraphId(), address.getGraphAddressId(),
+                address.getDocId()))
+            key.append(component.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).append('/').append(component);
+        return key.toString();
+    }
+
     /** Unsigned UTF-8 byte order, which equals code point order. */
     public static int compareUtf8(String left, String right) {
         return Objects.compare(left, right, (a, b) -> {

@@ -65,9 +65,18 @@ class AccessionGrpcIT {
                 var malformed = create("op-3", address, document).clearOwner().build();
                 assertThat(detail(() -> stub.saveDocument(malformed), Status.Code.INVALID_ARGUMENT, SaveRejection.class)
                         .getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
-                assertThatThrownBy(() -> stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
-                        .hasNext()).isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
-                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+                var frames = new java.util.ArrayList<ReadDocumentResponse>();
+                stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
+                        .forEachRemaining(frames::add);
+                assertThat(frames.getFirst().hasManifest()).isTrue();
+                assertThat(frames.getLast().hasComplete()).isTrue();
+                var partFrames = frames.subList(1, frames.size() - 1);
+                assertThat(partFrames).allSatisfy(frame -> assertThat(frame.hasPartData()).isTrue());
+                assertThat(partFrames.stream().map(frame -> frame.getPartData().getSelector().getPart()).toList())
+                        .containsExactly(DocumentPart.DOCUMENT_PART_CORE, DocumentPart.DOCUMENT_PART_BLOBS,
+                                DocumentPart.DOCUMENT_PART_PARSED);
+                assertThat(partFrames.stream().map(frame -> frame.getPartData().getLast()).toList())
+                        .containsExactly(true, true, true);
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
                         .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build()).getDocument().hasBlobBag()).isTrue();

@@ -11,24 +11,42 @@ import ai.protomolt.proto.repo.v2.GetManifestRequest;
 import ai.protomolt.proto.repo.v2.GetManifestResponse;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
+import ai.protomolt.proto.repo.v2.ItemError;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
+import ai.protomolt.proto.repo.v2.OperationReuse;
+import ai.protomolt.proto.repo.v2.ReadDocumentRequest;
+import ai.protomolt.proto.repo.v2.ReadDocumentResponse;
+import ai.protomolt.proto.repo.v2.ReadDocumentsRequest;
+import ai.protomolt.proto.repo.v2.ReadDocumentsResponse;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentsRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentsResponse;
+import ai.protomolt.proto.repo.v2.SaveRejection;
 import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * gRPC adapter for the slice 1 v2 DocumentService RPCs. Refusals carry the
- * errors.proto detail message in the status details. RPCs outside slice 1
- * answer UNIMPLEMENTED. Not registered in any production server.
+ * gRPC adapter for the slice 1 v2 DocumentService RPCs and the slice 6 bulk
+ * streams. Refusals carry the errors.proto detail message in the status
+ * details; on a bulk stream the same refusal is one item's {@link ItemError},
+ * so a failed item never aborts the stream for the others. Items are answered
+ * in request order, one at a time, under a synchronized observer: in-flight
+ * concurrency is bounded at one per stream and responses correlate by
+ * request_id. Upload, delete, purge, ReadBlob and ListDocuments answer
+ * UNIMPLEMENTED. Not registered in any production server.
  */
 public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServiceImplBase {
     private final DocumentSaves saves;
@@ -71,6 +89,137 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         respond(observer, () -> reads.outcome(caller(), request));
     }
 
+    @Override public void readDocument(ReadDocumentRequest request, StreamObserver<ReadDocumentResponse> observer) {
+        var caller = streamCaller(observer);
+        if (caller == null) return;
+        try {
+            reads.readDocument(caller, request, frame -> {
+                synchronized (observer) {
+                    observer.onNext(frame);
+                }
+            });
+        } catch (AccessionException failure) {
+            observer.onError(toStatus(failure));
+            return;
+        } catch (RuntimeException failure) {
+            observer.onError(internal(failure));
+            return;
+        }
+        observer.onCompleted();
+    }
+
+    @Override public StreamObserver<SaveDocumentsRequest> saveDocuments(StreamObserver<SaveDocumentsResponse> observer) {
+        var caller = streamCaller(observer);
+        if (caller == null) return noOp();
+        return new StreamObserver<>() {
+            private final Set<String> seen = new HashSet<>();
+            private boolean terminated;
+
+            @Override public void onNext(SaveDocumentsRequest item) {
+                synchronized (observer) {
+                    if (terminated || cancelled(observer)) return;
+                    if (item.getRequestId().isBlank()) {
+                        terminate("A bulk save item needs a non-blank request_id");
+                        return;
+                    }
+                    if (!item.hasSave()) {
+                        terminate("Bulk save item " + item.getRequestId() + " carries no save");
+                        return;
+                    }
+                    if (!seen.add(item.getRequestId())) {
+                        terminate("Duplicate request_id " + item.getRequestId() + " on one bulk save stream");
+                        return;
+                    }
+                    try {
+                        var saved = saves.save(caller, item.getSave());
+                        observer.onNext(SaveDocumentsResponse.newBuilder().setRequestId(item.getRequestId())
+                                .setOperationId(saved.getOperationId()).setSaved(saved).build());
+                    } catch (AccessionException failure) {
+                        observer.onNext(SaveDocumentsResponse.newBuilder().setRequestId(item.getRequestId())
+                                .setOperationId(item.getSave().getOperationId()).setError(itemError(failure)).build());
+                    } catch (RuntimeException failure) {
+                        terminated = true;
+                        observer.onError(internal(failure));
+                    }
+                }
+            }
+
+            private void terminate(String message) {
+                terminated = true;
+                observer.onError(Status.INVALID_ARGUMENT.withDescription(message).asRuntimeException());
+            }
+
+            @Override public void onError(Throwable failure) { terminated = true; }
+
+            @Override public void onCompleted() {
+                synchronized (observer) {
+                    if (terminated) return;
+                    terminated = true;
+                    observer.onCompleted();
+                }
+            }
+        };
+    }
+
+    @Override public StreamObserver<ReadDocumentsRequest> readDocuments(StreamObserver<ReadDocumentsResponse> observer) {
+        var caller = streamCaller(observer);
+        if (caller == null) return noOp();
+        return new StreamObserver<>() {
+            private final Set<String> seen = new HashSet<>();
+            private boolean terminated;
+
+            @Override public void onNext(ReadDocumentsRequest item) {
+                synchronized (observer) {
+                    if (terminated || cancelled(observer)) return;
+                    if (item.getRequestId().isBlank()) {
+                        terminate("A bulk read item needs a non-blank request_id");
+                        return;
+                    }
+                    if (!item.hasRead()) {
+                        terminate("Bulk read item " + item.getRequestId() + " carries no read");
+                        return;
+                    }
+                    if (!seen.add(item.getRequestId())) {
+                        terminate("Duplicate request_id " + item.getRequestId() + " on one bulk read stream");
+                        return;
+                    }
+                    try {
+                        reads.readDocument(caller, item.getRead(), frame -> emit(ReadDocumentsResponse.newBuilder()
+                                .setRequestId(item.getRequestId()).setFrame(frame).build()));
+                    } catch (AccessionException failure) {
+                        emit(ReadDocumentsResponse.newBuilder().setRequestId(item.getRequestId())
+                                .setError(itemError(failure)).build());
+                    } catch (RuntimeException failure) {
+                        terminated = true;
+                        observer.onError(internal(failure));
+                    }
+                }
+            }
+
+            /** Observer emissions are serialized; the read loop re-enters this lock on the same thread. */
+            private void emit(ReadDocumentsResponse response) {
+                synchronized (observer) {
+                    if (!terminated) observer.onNext(response);
+                }
+            }
+
+            private void terminate(String message) {
+                terminated = true;
+                observer.onError(Status.INVALID_ARGUMENT.withDescription(message).asRuntimeException());
+            }
+
+            @Override public void onError(Throwable failure) { terminated = true; }
+
+            @Override public void onCompleted() {
+                synchronized (observer) {
+                    if (terminated) return;
+                    terminated = true;
+                    observer.onCompleted();
+                }
+            }
+        };
+    }
+
     private RepositoryCaller caller() {
         var caller = CallerContexts.current();
         var authentication = CallerContexts.authentication().orElseGet(() -> AuthenticatedCaller.unbound(caller));
@@ -84,6 +233,52 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         return resolved;
     }
 
+    /**
+     * The caller for a stream, captured once when the stream opens. A binding
+     * failure fails the stream before any item is read; the returned null caller
+     * means the response observer is already terminated.
+     */
+    private RepositoryCaller streamCaller(StreamObserver<?> observer) {
+        try {
+            return caller();
+        } catch (AccessionException failure) {
+            observer.onError(toStatus(failure));
+            return null;
+        } catch (RuntimeException failure) {
+            observer.onError(internal(failure));
+            return null;
+        }
+    }
+
+    /** The refusal of one bulk item: the status code and detail the unary call would carry. */
+    static ItemError itemError(AccessionException failure) {
+        var error = ItemError.newBuilder().setCode(failure.code().value())
+                .setMessage(Optional.ofNullable(failure.getMessage()).orElse(""));
+        failure.detail().ifPresent(detail -> {
+            if (detail instanceof RevisionConflict conflict) error.setConflict(conflict);
+            else if (detail instanceof OperationReuse reuse) error.setReuse(reuse);
+            else if (detail instanceof SaveRejection rejection) error.setRejection(rejection);
+        });
+        return error.build();
+    }
+
+    private static boolean cancelled(StreamObserver<?> observer) {
+        return observer instanceof ServerCallStreamObserver<?> server && server.isCancelled();
+    }
+
+    private static StatusRuntimeException internal(RuntimeException failure) {
+        return Status.INTERNAL.withDescription("Repository failure").withCause(failure).asRuntimeException();
+    }
+
+    /** The request observer of a stream that already failed: nothing more may reach it. */
+    private static <T> StreamObserver<T> noOp() {
+        return new StreamObserver<>() {
+            @Override public void onNext(T value) {}
+            @Override public void onError(Throwable failure) {}
+            @Override public void onCompleted() {}
+        };
+    }
+
     private static <T> void respond(StreamObserver<T> observer, Supplier<T> call) {
         final T response;
         try {
@@ -92,7 +287,7 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
             observer.onError(toStatus(failure));
             return;
         } catch (RuntimeException failure) {
-            observer.onError(Status.INTERNAL.withDescription("Repository failure").withCause(failure).asRuntimeException());
+            observer.onError(internal(failure));
             return;
         }
         observer.onNext(response);

@@ -46,7 +46,14 @@ class OutboxOrderIT {
         assertThat(relay.relayOnce(2)).isEqualTo(2);
         assertThat(relay.relayOnce(2)).isEqualTo(1);
         assertThat(relay.relayOnce(2)).isZero();
-        assertThat(delivered).containsExactly("doc-a@1/a-1", "doc-b@1/b-1", "doc-a@2/a-2", "doc-b@2/b-2", "doc-a@3/a-3");
+        // The key is the full canonical address, never the doc_id alone: two accounts
+        // sharing a doc_id must not interleave their revisions on one partition.
+        var keyA = ai.protomolt.proto.repo.catalog.CatalogRecords.eventKey(a);
+        var keyB = ai.protomolt.proto.repo.catalog.CatalogRecords.eventKey(b);
+        assertThat(keyA).isNotEqualTo("doc-a");
+        assertThat(keyB).isNotEqualTo("doc-b");
+        assertThat(delivered).containsExactly(keyA + "@1/a-1", keyB + "@1/b-1", keyA + "@2/a-2", keyB + "@2/b-2",
+                keyA + "@3/a-3");
         assertThat(f.catalog.pendingEvents(10)).isEmpty();
     }
 

@@ -13,7 +13,8 @@ import java.util.Objects;
  * publish is acknowledged, then the row is stamped relayed. A crash or failure
  * between the two republishes the same event, with the same event_id, on the
  * next pass: delivery is at-least-once and the catalog keeps one event per
- * accession. The Kafka publisher is a host adapter; this slice ships none.
+ * accession. The Kafka publisher is a host adapter; the test tree qualifies
+ * one against a real broker and keeps the production runtime Kafka-free.
  */
 public final class OutboxRelay {
     /** Publishes one event and returns once the broker has acknowledged it. */
