@@ -193,7 +193,7 @@ public final class DocumentSaves {
                 return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Source revision has no " + part + " part", List.of());
             var copied = entry.get().toBuilder();
-            copied.getEntryBuilder().setWrittenInRevision(revision).clearContentIncluded();
+            copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded();
             parts.put(part, copied.build());
             carried.remove(part);
             if (entry.get().hasRef()) sourced.put(part, entry.get().getRef());

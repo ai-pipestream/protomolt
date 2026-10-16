@@ -77,6 +77,35 @@ class DocumentSavesIT {
         });
     }
 
+    @Test void sourcedPartRecordsCurrentWriterWithoutReuploadingOrRewritingHistory() {
+        var address = address(account, "doc-source-owner");
+        f.saves.save(processAuthority(), create("source-create", address,
+                document(account, "doc-source-owner", "v1", "chunker")).build());
+        var original = f.catalog.manifest(address, 1).orElseThrow();
+        var credential = UUID.randomUUID();
+        f.catalog.registerCredential(ISSUER, credential, "chunker");
+        f.stepGrant(account, credential, "chunker", false);
+        var owner = stepOwner("chunker");
+        f.stack.reset();
+        var request = SaveDocumentRequest.newBuilder().setOperationId("source-copy")
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(1))
+                .setOwner(owner).addSources(PartSource.newBuilder()
+                        .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED))
+                        .setFromAddress(address).setFromRevision(1)).build();
+        var result = f.saves.save(writer(account, "chunker", credential, 1), request);
+        var stored = f.catalog.manifest(address, 2).orElseThrow();
+        var sourced = entry(stored, DocumentPart.DOCUMENT_PART_PARSED);
+        assertThat(sourced.getEntry().getOwner()).isEqualTo(owner);
+        assertThat(sourced.getEntry().getWrittenInRevision()).isEqualTo(2);
+        assertThat(sourced.getRef()).isEqualTo(entry(original, DocumentPart.DOCUMENT_PART_PARSED).getRef());
+        assertThat(f.stack.puts.get()).isZero();
+        assertThat(entry(stored, DocumentPart.DOCUMENT_PART_CORE)).isEqualTo(entry(original, DocumentPart.DOCUMENT_PART_CORE));
+        assertThat(f.catalog.manifest(address, 1).orElseThrow()).isEqualTo(original);
+        assertThat(result.getAccession().getManifest().getPartsList()).filteredOn(p ->
+                p.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED)
+                .singleElement().satisfies(p -> assertThat(p.getOwner()).isEqualTo(owner));
+    }
+
     // §15.3
     @Test void concurrentSavesWithOneExpectedRevisionCommitOnce() throws Exception {
         var address = address(account, "doc-race");
