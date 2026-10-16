@@ -31,7 +31,6 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -324,7 +323,7 @@ public final class DocumentSaves {
                         "The composed document cannot be admitted: " + refused.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
                 throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
-                        "Admission schema budget exhausted: " + budget.getMessage(), null, budget);
+                        "Admission host budget exhausted: " + budget.getMessage(), null, budget);
             } catch (DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException host) {
                 // Not the caller's content: surface it, never as a recorded outcome against the operation ID.
                 throw new AccessionException(Status.Code.INTERNAL, "Admission host failure: " + host.getMessage(), null, host);
@@ -592,6 +591,10 @@ public final class DocumentSaves {
     private static void requireOwnerMatches(SaveOwner owner, OwnershipContext ownership) {
         if (owner.hasIntake() && !owner.getIntake().getDatasourceId().equals(ownership.getDatasourceId()))
             throw WriterAuthority.denied("The intake owner differs from the document's datasource");
+        if (owner.hasIntake() && owner.getIntake().hasConnectorId()
+                && (!ownership.hasConnectorId()
+                    || !owner.getIntake().getConnectorId().equals(ownership.getConnectorId())))
+            throw WriterAuthority.denied("The intake owner differs from the document's connector");
     }
 
     /**
@@ -729,9 +732,11 @@ public final class DocumentSaves {
     }
 
     static String eventId(NodeAddress address, long revision) {
-        var name = "accession|" + address.getAccountId() + "|" + address.getGraphId() + "|"
-                + address.getGraphAddressId() + "|" + address.getDocId() + "|" + revision;
-        return UUID.nameUUIDFromBytes(name.getBytes(StandardCharsets.UTF_8)).toString();
+        // Protobuf field lengths keep separators inside address components unambiguous.
+        var identity = Accession.newBuilder().setAddress(address).setRevision(revision).build();
+        var name = ByteString.copyFromUtf8("protomolt/accession/v1\0").concat(ByteString.copyFrom(
+                ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(identity)));
+        return UUID.nameUUIDFromBytes(name.toByteArray()).toString();
     }
 
     static String sha256(ByteString bytes) { return SaveIntents.sha256Hex(bytes.toByteArray()); }

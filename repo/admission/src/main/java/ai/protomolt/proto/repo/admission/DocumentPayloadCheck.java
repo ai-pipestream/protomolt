@@ -19,6 +19,11 @@ import com.google.protobuf.Message;
 
 /** Internal candidate check under a trusted host's explicit validator and URL policy. */
 final class DocumentPayloadCheck {
+    /** A host byte budget, distinct from malformed payload or structural failures. */
+    static final class ByteBudgetExceeded extends IllegalArgumentException {
+        ByteBudgetExceeded() { super("aggregate payload bytes exceed limit"); }
+    }
+
     record SchemaKey(String typeUrl, String artifactSha256) {}
     /** Host context and immutable version selection belong to the resolver, not payload bytes. */
     record ResolutionRequest(String typeUrl, java.util.List<DocumentSchemaOccurrences.Step> prefix,
@@ -279,7 +284,7 @@ final class DocumentPayloadCheck {
             active(control);
             depth(depth);
             if (bytes.size() > limits.maxBytes() - decodedBytes)
-                throw new IllegalArgumentException("aggregate payload bytes exceed limit");
+                throw new ByteBudgetExceeded();
             if (evidence == null) return decode(schema, bytes, depth);
             evidence.boundary(url, bytes, schema, () -> active(control));
             try { return decode(schema, bytes, depth); }
@@ -291,7 +296,7 @@ final class DocumentPayloadCheck {
             active(control);
             depth(depth);
             if (bytes.size() > limits.maxBytes() - decodedBytes) {
-                throw new IllegalArgumentException("aggregate payload bytes exceed limit");
+                throw new ByteBudgetExceeded();
             }
             decodedBytes += bytes.size();
             prepare(schema.type());
@@ -346,7 +351,7 @@ final class DocumentPayloadCheck {
                 depth(depth + 1);
                 var bytes = (com.google.protobuf.ByteString) message.getField(valueField);
                 if (bytes.size() > limits.maxBytes() - decodedBytes)
-                    throw new IllegalArgumentException("aggregate payload bytes exceed limit");
+                    throw new ByteBudgetExceeded();
                 DocumentSchemaBinding binding = resolver.apply(new ResolutionRequest(url,
                         evidence == null ? java.util.List.of() : evidence.prefix(),
                         evidence == null ? "" : DocumentSchemaOccurrences.sha256(bytes, () -> active(control)), bytes.size()));
