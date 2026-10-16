@@ -139,7 +139,11 @@ message PartWrite {
 }
 
 // Take one part from an exact revision of a document. The new accession
-// references the same stack object; nothing is copied.
+// references the same stack object; nothing is copied. The source must have
+// the saving document's doc_id, or the request is malformed. It must also be
+// in the saving document's account, and the caller must be able to read the
+// source document's current revision, or the save is rejected with
+// SOURCE_NOT_FOUND.
 message PartSource {
   // The part.
   PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
@@ -218,7 +222,9 @@ message SaveDocumentRequest {
   SaveOwner owner = 9 [(ai.protomolt.proto.validate.v1.field).required = true];
   // Attribution of opaque occurrences.
   repeated OpaqueAttestation opaque_attestations = 10;
-  // Exact source revisions a derived document is created from.
+  // Exact source revisions a derived document is created from. Each must be
+  // in the saving document's account, and the caller must be able to read its
+  // document's current revision, or the save is rejected with SOURCE_NOT_FOUND.
   repeated SourceRevision derived_from = 11;
   // Persisted request metadata; part of the retry identity. Transport tracing
   // belongs in request context, not here.

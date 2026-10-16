@@ -154,7 +154,10 @@ does not delete prior evidence or rewrite producer ownership.
 
 Authorized intake and steps may create documents. A step creating a derived document
 records exact source document/revision lineage; PartSource remains a separate choice
-about reusing bytes, not a mandatory copy operation. Non-derived step creation still
+about reusing bytes, not a mandatory copy operation. Part sources and lineage must name
+a document in the saving document's account, and the caller must be able to read that
+document's current revision, as for a read; otherwise the save is rejected with
+SOURCE_NOT_FOUND (decision 37). Non-derived step creation still
 requires explicit creation authority. There is no intake-only creation restriction.
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
 The accession records its save owner and source lineage, including metadata-only saves.

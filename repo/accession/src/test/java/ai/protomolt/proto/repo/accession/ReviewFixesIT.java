@@ -232,6 +232,72 @@ class ReviewFixesIT {
                 });
     }
 
+    // Decision 37: sources and lineage stay in the saving document's account. Process authority
+    // reads both accounts, so the account check is the only refusal in play.
+    @Test void sourcesAndLineageStayInTheSavingDocumentsAccount() {
+        var otherAccount = "acct-" + UUID.randomUUID();
+        var sourceA = address(account, "doc-scope");
+        var sourceB = address(otherAccount, "doc-scope");
+        f.saves.save(processAuthority(), create("op-a-1", sourceA, document(account, "doc-scope", "a")).build());
+        f.saves.save(processAuthority(), create("op-b-1", sourceB, document(otherAccount, "doc-scope", "b")).build());
+        var sourceRef = f.catalog.manifest(sourceA, 1).orElseThrow().getPartsList().stream()
+                .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst()
+                .orElseThrow().getRef();
+        int putsBefore = f.stack.puts.get();
+
+        // Positive control: the same account, sourcing PARSED from revision 1.
+        var sourced = f.saves.save(processAuthority(), scopedSave("op-same-account", sourceA, "derived:" + account)
+                .addSources(partSource(sourceA)).build());
+        assertThat(sourced.getAccession().getRevision()).isEqualTo(1);
+        var newEntry = f.catalog.manifest(sourced.getAccession().getAddress(), 1).orElseThrow().getPartsList().stream()
+                .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst()
+                .orElseThrow();
+        assertThat(newEntry.getRef()).isEqualTo(sourceRef);
+        assertThat(f.stack.puts.get()).as("one PUT, for CORE only").isEqualTo(putsBefore + 1);
+
+        // Another account's document is not a source, even when the caller can read it.
+        var crossSource = scopedSave("op-cross-source", sourceA, "derived2:" + account)
+                .addSources(partSource(sourceB)).build();
+        assertSourceNotFound(() -> f.saves.save(processAuthority(), crossSource));
+        var recorded = f.catalog.outcome(account, "op-cross-source").orElseThrow().outcome();
+        assertThat(recorded.getRejection().getReason())
+                .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND);
+        assertSourceNotFound(() -> f.saves.save(processAuthority(), crossSource)); // replayed, not re-evaluated
+        assertThat(f.stack.puts.get()).isEqualTo(putsBefore + 1);
+
+        var crossLineage = scopedSave("op-cross-lineage", sourceA, "derived3:" + account)
+                .addDerivedFrom(ai.protomolt.proto.repo.v2.SourceRevision.newBuilder().setAddress(sourceB).setRevision(1))
+                .build();
+        assertSourceNotFound(() -> f.saves.save(processAuthority(), crossLineage));
+        assertThat(f.catalog.outcome(account, "op-cross-lineage")).isPresent();
+        assertThat(f.stack.puts.get()).isEqualTo(putsBefore + 1);
+    }
+
+    /** A CORE-only save of doc-scope at another graph location in the source's account. */
+    private SaveDocumentRequest.Builder scopedSave(String operation, ai.protomolt.proto.repo.v1.NodeAddress source,
+            String graphId) {
+        var core = Document.newBuilder().setDocId(source.getDocId()).setOwnership(ownership(account))
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle(operation)).build();
+        return SaveDocumentRequest.newBuilder().setOperationId(operation)
+                .setTarget(DocumentTarget.newBuilder().setAddress(source.toBuilder().setGraphId(graphId)))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .setDocument(core).addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).setOwner(intakeOwner());
+    }
+
+    private static ai.protomolt.proto.repo.v2.PartSource partSource(ai.protomolt.proto.repo.v1.NodeAddress from) {
+        return ai.protomolt.proto.repo.v2.PartSource.newBuilder()
+                .setSelector(ai.protomolt.proto.repo.v2.PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED))
+                .setFromAddress(from).setFromRevision(1).build();
+    }
+
+    private static void assertSourceNotFound(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(AccessionException.class, failure -> {
+            assertThat(failure.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+            assertThat(((ai.protomolt.proto.repo.v2.SaveRejection) failure.detail().orElseThrow()).getReason())
+                    .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND);
+        });
+    }
+
     private static SaveDocumentRequest corePut(String operation, ai.protomolt.proto.repo.v1.NodeAddress address,
             long expected, ai.protomolt.proto.repo.v1.OwnershipContext ownership) {
         var core = Document.newBuilder().setDocId(address.getDocId()).setOwnership(ownership)
