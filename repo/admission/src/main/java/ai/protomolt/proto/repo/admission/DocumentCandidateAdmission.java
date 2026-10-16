@@ -119,8 +119,8 @@ public final class DocumentCandidateAdmission {
     }
 
     /**
-     * A host schema-retention budget (binding count, retained artifact bytes or
-     * descriptor closure limits) was exhausted. Not a content rejection to record
+     * A host admission budget (fragment bytes, decoded payload bytes, binding count,
+     * retained artifact bytes or descriptor closure limits) was exhausted. Not a content rejection to record
      * against the operation ID, and distinct from a corrupt resolver answer.
      */
     public static final class BudgetExhausted extends RuntimeException {
@@ -169,7 +169,7 @@ public final class DocumentCandidateAdmission {
                 throw new IllegalArgumentException("candidate admission supports CORE, BLOBS and PARSED fragments");
             if (!seen.add(fragment.part())) throw new IllegalArgumentException("duplicate candidate fragment");
             if (fragment.bytes().size() > limits.maxFragmentBytes() - total)
-                throw new ContentRefused("candidate fragments exceed byte limit", null);
+                throw new BudgetExhausted("candidate fragments exceed byte limit", null);
             total += fragment.bytes().size();
             try {
                 new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), Document.getDescriptor());
@@ -226,7 +226,7 @@ public final class DocumentCandidateAdmission {
                 }
                 for (var root : inventory.roots()) {
                     active.run();
-                    if (decodedRemaining < 1) throw new ContentRefused("candidate decoded payload budget exhausted", null);
+                    if (decodedRemaining < 1) throw new BudgetExhausted("candidate decoded payload budget exhausted", null);
                     var locator = DocumentSchemaRootProjection.project(inventory, root, active);
                     var envelope = root.envelope();
                     var selected = select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
@@ -241,6 +241,8 @@ public final class DocumentCandidateAdmission {
                                         nested.typeUrl(), DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
                                                 definitions.schemas, active), nested.valueSha256(), nested.valueSizeBytes())),
                                 DocumentSchemaOccurrences.Limits.DEFAULT, evaluatedAt);
+                    } catch (DocumentPayloadCheck.ByteBudgetExceeded budget) {
+                        throw new BudgetExhausted("candidate decoded payload budget exhausted", budget);
                     } catch (InvalidProtocolBufferException invalid) {
                         throw new InvalidPayload("Any value does not decode as " + envelope.getTypeUrl(), invalid);
                     } catch (IllegalArgumentException refused) {

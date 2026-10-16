@@ -278,7 +278,7 @@ public final class DocumentSaves {
                         "The composed document cannot be admitted: " + refused.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
                 throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
-                        "Admission schema budget exhausted: " + budget.getMessage(), null, budget);
+                        "Admission host budget exhausted: " + budget.getMessage(), null, budget);
             } catch (DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException host) {
                 // Not the caller's content: surface it, never as a recorded outcome against the operation ID.
                 throw new AccessionException(Status.Code.INTERNAL, "Admission host failure: " + host.getMessage(), null, host);
