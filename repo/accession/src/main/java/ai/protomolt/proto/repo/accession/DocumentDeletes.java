@@ -60,7 +60,7 @@ public final class DocumentDeletes {
         if (!DocumentAccessPolicy.allows(caller, address.getAccountId(), base.getOwnership().getSecurity(), null, Access.ACCESS_WRITE))
             throw WriterAuthority.denied("The caller may not delete this document");
         var authorized = authority.authorizeDelete(caller, base.getOwnership());
-        if (base.getRevision() != request.getExpected().getRevision()) {
+        if (base.getTombstone() || base.getRevision() != request.getExpected().getRevision()) {
             var raced = catalog.outcome(address.getAccountId(), request.getOperationId());
             if (raced.isPresent()) return replay(caller, request, digest, raced.get());
             throw DocumentSaves.aborted(address, request.getExpected(), base.getRevision(), base.getTombstone());

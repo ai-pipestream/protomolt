@@ -405,7 +405,7 @@ public final class PostgresCatalog implements Catalog {
         }
         try (var update = connection.prepareStatement("""
                 UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?, catalog_entry = ?, catalog_entry_sha256 = ?
-                WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ? AND NOT purged
+                WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ? AND NOT purged AND (NOT ? OR NOT tombstone)
                 RETURNING document_id""")) {
             update.setBoolean(1, tombstone);
             update.setTimestamp(2, now);
@@ -413,6 +413,7 @@ public final class PostgresCatalog implements Catalog {
             update.setString(4, sha256Hex(entry));
             bindAddress(update, 5, address);
             update.setLong(9, expectedRevision);
+            update.setBoolean(10, tombstone);
             try (var rows = update.executeQuery()) { return rows.next() ? Optional.of(rows.getLong(1)) : Optional.empty(); }
         }
     }

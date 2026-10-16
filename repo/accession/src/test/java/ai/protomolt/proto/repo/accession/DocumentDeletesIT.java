@@ -41,6 +41,15 @@ class DocumentDeletesIT {
             assertCode(Status.Code.ALREADY_EXISTS, () -> deletes.delete(processAuthority(), request.toBuilder().setReason("different").build()));
             assertCode(Status.Code.ALREADY_EXISTS, () -> deletes.delete(processAuthority(), request.toBuilder().setExpected(at(2)).build()));
             assertCode(Status.Code.ALREADY_EXISTS, () -> deletes.delete(processAuthority(), request.toBuilder().setOperationId("save").build()));
+            assertThatThrownBy(() -> deletes.delete(processAuthority(), request.toBuilder()
+                    .setOperationId("second-delete").setExpected(at(2)).build()))
+                    .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                        assertThat(failure.code()).isEqualTo(Status.Code.ABORTED);
+                        var conflict = (RevisionConflict) failure.detail().orElseThrow();
+                        assertThat(conflict.getCurrentRevision()).isEqualTo(2);
+                        assertThat(conflict.getCurrentIsTombstone()).isTrue();
+                    });
+            assertThat(f.catalog.outcome("a", "second-delete")).isEmpty();
             assertThat(f.catalog.events(address)).hasSize(2);
             assertThat(f.catalog.events(address).getLast().getTombstoned().getReason()).isEqualTo("removed");
             assertThat(DocumentSaves.VALIDATOR.validate(response.toBuilder().setAccession(response.getAccession().toBuilder()

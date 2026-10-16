@@ -233,4 +233,23 @@ class MessageProjectionTest {
         assertThat(projection.project(text).getField(rendered)).isEqualTo("before");
     }
 
+    @Test void dynamicDescriptorChurnEvictsWithoutLosingProjectionBehavior() throws Exception {
+        var original = ai.protomolt.proto.projection.test.EvolvingSource.getDescriptor();
+        var target = ai.protomolt.proto.projection.test.EvolvingProjection.getDescriptor();
+        var projection = MessageProjection.forTarget(target, SourceResolver.of(original)).orElseThrow();
+        var rendered = target.findFieldByName("rendered");
+        var first = ai.protomolt.proto.projection.test.EvolvingSource.newBuilder().setValue("first").build();
+        assertThat(projection.project(first).getField(rendered)).isEqualTo("first");
+        for (int n = 0; n < MessageProjection.MAX_CACHED_EVALUATORS + 10; n++) {
+            var copy = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(original.getFile().toProto(),
+                    original.getFile().getDependencies().toArray(com.google.protobuf.Descriptors.FileDescriptor[]::new))
+                    .findMessageTypeByName("EvolvingSource");
+            var message = DynamicMessage.newBuilder(copy).setField(copy.findFieldByNumber(1), "value-" + n).build();
+            assertThat(projection.project(message).getField(rendered)).isEqualTo("value-" + n);
+            assertThat(projection.cachedEvaluatorCount()).isLessThanOrEqualTo(MessageProjection.MAX_CACHED_EVALUATORS);
+        }
+        assertThat(projection.project(first).getField(rendered)).isEqualTo("first");
+        assertThat(projection.cachedEvaluatorCount()).isEqualTo(MessageProjection.MAX_CACHED_EVALUATORS);
+    }
+
 }
