@@ -37,8 +37,9 @@ final class CourtDocuments {
     /** Segmentation, segment, and embedding-set ID of the single document-level embedding: {@value}. */
     static final String EMBEDDING_RESULT_ID = "court-sample-doc-embedding";
 
-    private static final String EMPTY_TEXT_SHA256 =
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    /** Maximum number of body characters included in the document-level embedding input. */
+    static final int EMBED_BODY_CHARS = 2000;
+
     private static final String DOC_ID_NAMESPACE = "courtlistener|";
     private static final String SOURCE_URI_TEMPLATE = "https://www.courtlistener.com/opinion/%d/%s/";
 
@@ -103,26 +104,47 @@ final class CourtDocuments {
         return slug.replaceAll("^-+|-+$", "");
     }
 
+    /** The embedding input: title plus the first {@value #EMBED_BODY_CHARS} chars of the body. */
+    static String embedText(Document document) {
+        var metadata = document.getSearchMetadata();
+        String body = metadata.getBody();
+        if (body.length() > EMBED_BODY_CHARS) {
+            body = body.substring(0, EMBED_BODY_CHARS);
+        }
+        return metadata.getTitle() + "\n" + body;
+    }
+
     /**
-     * Attaches one document-level embedding as a single {@link Segmentation} and
-     * {@link EmbeddingSet} ({@value #EMBEDDING_RESULT_ID}) with one segment carrying one
-     * {@link SegmentVector}.
+     * Attaches one document-level embedding over {@link #embedText(Document)} as a single
+     * {@link Segmentation} and {@link EmbeddingSet} ({@value #EMBEDDING_RESULT_ID}) with one
+     * segment carrying one {@link SegmentVector}.
      */
     static Document withEmbedding(Document document, float[] vector, String model) {
+        return withEmbedding(document, embedText(document), vector, model);
+    }
+
+    /**
+     * Attaches one document-level embedding over {@code embeddedText} as a single
+     * {@link Segmentation} and {@link EmbeddingSet} ({@value #EMBEDDING_RESULT_ID}) with one
+     * segment carrying one {@link SegmentVector}.
+     */
+    static Document withEmbedding(Document document, String embeddedText, float[] vector, String model) {
+        String resolvedText = embeddedText == null ? "" : embeddedText;
+        byte[] utf8Bytes = resolvedText.getBytes(StandardCharsets.UTF_8);
         TextSource source = TextSource.newBuilder()
                 .setDerived(DerivedText.newBuilder()
                         .setDerivationId(EMBEDDING_RESULT_ID)
-                        .setText(""))
+                        .setText(resolvedText))
                 .setBinding(SourceTextBinding.newBuilder()
-                        .setResolvedTextSha256(EMPTY_TEXT_SHA256)
-                        .setUtf8Length(0))
+                        .setResolvedTextSha256(sha256Hex(utf8Bytes))
+                        .setUtf8Length(utf8Bytes.length))
                 .build();
         Segment segment = Segment.newBuilder()
                 .setSegmentId(EMBEDDING_RESULT_ID)
                 .setOrdinal(0)
-                .setText("")
+                .setText(resolvedText)
                 .setStart(0)
-                .setEnd(0)
+                .setEnd(utf8Bytes.length)
                 .build();
         SegmentationDigestInput digestInput = SegmentationDigestInput.newBuilder()
                 .setEncodingVersion(1)

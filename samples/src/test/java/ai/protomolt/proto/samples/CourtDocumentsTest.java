@@ -8,8 +8,10 @@ import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -130,6 +132,12 @@ class CourtDocumentsTest {
         assertThat(CourtDocuments.firstDocumentEmbedding(base)).isEmpty();
 
         float[] vector = new float[] {0.25f, -0.5f, 0.75f};
+        String expectedText = CourtDocumentIndexSample.embedText(base);
+        assertThat(expectedText).isEqualTo("Smith v. Jones\nOpinion text.");
+        byte[] expectedBytes = expectedText.getBytes(StandardCharsets.UTF_8);
+        String expectedSha256 = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(expectedBytes));
+
         Document embedded = CourtDocuments.withEmbedding(base, vector, "model2vec-sample");
 
         assertThat(ValidationResult.validate(embedded).valid()).isTrue();
@@ -137,6 +145,18 @@ class CourtDocumentsTest {
         assertThat(embedded.getSearchMetadata().getSegmentationsCount()).isEqualTo(1);
         assertThat(embedded.getSearchMetadata().getEmbeddingSetsCount()).isEqualTo(1);
         assertThat(embedded.getSearchMetadata().getSemanticResultsCount()).isZero();
+
+        var segmentation = embedded.getSearchMetadata().getSegmentations(0);
+        assertThat(segmentation.getSource().getDerived().getText()).isEqualTo(expectedText);
+        assertThat(segmentation.getSource().getBinding().getUtf8Length())
+                .isEqualTo(expectedBytes.length);
+        assertThat(segmentation.getSource().getBinding().getResolvedTextSha256())
+                .isEqualTo(expectedSha256);
+        assertThat(segmentation.getSegmentsCount()).isEqualTo(1);
+        var segment = segmentation.getSegments(0);
+        assertThat(segment.getText()).isEqualTo(expectedText);
+        assertThat(segment.getStart()).isZero();
+        assertThat(segment.getEnd()).isEqualTo(expectedBytes.length);
     }
 
     private static JsonNode opinion(String json) throws Exception {

@@ -14,6 +14,7 @@ import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
 import ai.protomolt.proto.repo.semantic.v1.Segment;
 import ai.protomolt.proto.repo.semantic.v1.SegmentVector;
 import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.Similarity;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.EnumValueDescriptor;
@@ -33,12 +34,14 @@ import qdrant.Points.Vectors;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.WeakHashMap;
 
 /**
  * Maps a repo {@link Document} into Qdrant {@link PointStruct}s: one point per semantic
@@ -48,9 +51,12 @@ import java.util.UUID;
  * <p>Vector source: {@code search_metadata.segmentations} ({@link Segmentation} &rarr;
  * {@link Segment}) joined with {@code search_metadata.embedding_sets} ({@link EmbeddingSet}
  * &rarr; {@link SegmentVector}) on {@code segmentation_id} and {@code segment_id}.
- * A segment with no embeddings produces no point. When several models embed the same segment,
- * their vectors ride on the single point as named vectors; the vector name is the model id
- * sanitized to {@code [A-Za-z0-9_-]} (every other character becomes {@code _}).
+ * Every matching {@link EmbeddingSet}'s {@code segmentation_digest} must equal its
+ * {@link Segmentation}'s {@code content_digest}. A segment with no embeddings produces no
+ * point. When several distinct models embed the same segment, their vectors ride on the single
+ * point as named vectors; the vector name is the model id sanitized to {@code [A-Za-z0-9_-]}
+ * (every other character becomes {@code _}). Colliding vector names on the same segmentation
+ * or across distinct model ids are rejected with a {@link MappingException}.
  *
  * <p>Point ids are deterministic (platform tenet): UUIDv5-style
  * {@link UUID#nameUUIDFromBytes} over {@code "qdrant|<doc_id>|<segmentation_id>|<segment_id>"},
@@ -73,10 +79,10 @@ import java.util.UUID;
  * <p>Vector hints: when the mapping declares a VECTOR field for the embeddings
  * ({@code search_metadata.embedding_sets.vectors.values}, legacy
  * {@code search_metadata.semantic_results.chunks.embeddings.vector}, or the mapping's only
- * VECTOR field), its {@code vector_dims} are enforced on every embedding and its
- * {@code vector_similarity} becomes the collection's distance via {@link #vectorSpecs} —
- * the same hint vocabulary OpenSearch ({@code knn_vector}/{@code space_type}) and Lucene
- * consume. With no hint, sizes are read from the data and the distance defaults to COSINE.
+ * VECTOR field), its {@code vector_dims} and {@code vector_similarity} are enforced against
+ * every embedding set — the same hint vocabulary OpenSearch ({@code knn_vector}/{@code space_type})
+ * and Lucene consume. With no hint, sizes and distances come from the {@link EmbeddingSet}s
+ * themselves via {@link #vectorSpecs}.
  */
 public final class QdrantPointMapper implements SearchEngineIndexer {
     public static final String ENGINE_ID = "qdrant";
@@ -85,6 +91,14 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     private static final String SEGMENTATIONS_PREFIX = "search_metadata.segmentations";
     private static final String EMBEDDING_SETS_PREFIX = "search_metadata.embedding_sets";
     private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
+
+    /**
+     * Tracks the declared {@link Distance} per named vector on mapped {@link PointStruct}s so
+     * {@link #vectorSpecs(Collection, IndexMapping)} preserves {@link EmbeddingSet#getSimilarity()}
+     * without polluting the Qdrant point payload.
+     */
+    private static final Map<PointStruct, Map<String, Distance>> POINT_DISTANCES =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private final ProtoFieldMapper fieldMapper;
     private final AnyIndexing anyIndexing;
@@ -111,7 +125,9 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
      *
      * @throws ValidationResult.ValidationException when the document violates a declared rule
      * @throws MappingException when {@code message} is not a {@link Document}, a mapping path
-     *         cannot be read, or an embedding violates the mapping's declared vector dims
+     *         cannot be read, an embedding set's {@code segmentation_digest} mismatches its
+     *         segmentation's {@code content_digest}, vector names collide, or an embedding
+     *         violates the mapping's declared vector dims or similarity
      */
     @Override
     public List<PointStruct> map(Message message, IndexMapping mapping) throws MappingException {
@@ -129,31 +145,37 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
         Optional<ResolvedFieldHint> vectorHint = vectorHint(mapping);
         List<PointStruct> points = new ArrayList<>();
         List<EmbeddingSet> allEmbeddingSets = document.getSearchMetadata().getEmbeddingSetsList();
+        Map<String, String> modelByVectorName = new LinkedHashMap<>();
+        Map<String, Distance> distanceByVectorName = new LinkedHashMap<>();
         for (Segmentation segmentation : document.getSearchMetadata().getSegmentationsList()) {
-            List<EmbeddingSet> matchingSets = new ArrayList<>();
-            for (EmbeddingSet embeddingSet : allEmbeddingSets) {
-                if (embeddingSet.getSegmentationId().equals(segmentation.getSegmentationId())) {
-                    matchingSets.add(embeddingSet);
-                }
-            }
+            List<EmbeddingSet> matchingSets = matchingEmbeddingSets(
+                    segmentation, allEmbeddingSets, vectorHint,
+                    modelByVectorName, distanceByVectorName);
             for (Segment segment : segmentation.getSegmentsList()) {
                 NamedVectors.Builder namedVectors = NamedVectors.newBuilder();
                 List<String> models = new ArrayList<>();
+                Map<String, Distance> pointVectorDistances = new LinkedHashMap<>();
                 for (EmbeddingSet embeddingSet : matchingSets) {
+                    Distance setDistance = distance(embeddingSet.getSimilarity());
+                    String name = vectorName(embeddingSet.getModel());
                     for (SegmentVector segmentVector : embeddingSet.getVectorsList()) {
                         if (!segmentVector.getSegmentId().equals(segment.getSegmentId())
                                 || segmentVector.getValuesCount() == 0) {
                             continue;
                         }
                         checkDeclaredDims(embeddingSet, segmentVector, vectorHint);
-                        String name = vectorName(embeddingSet.getModel());
+                        if (namedVectors.containsVectors(name)) {
+                            throw new MappingException("Duplicate vector '" + name
+                                    + "' for segment '" + segment.getSegmentId()
+                                    + "' in segmentation '" + segmentation.getSegmentationId() + "'",
+                                    "search_metadata.embedding_sets.vectors");
+                        }
                         namedVectors.putVectors(name, Vector.newBuilder()
                                 .setDense(DenseVector.newBuilder()
                                         .addAllData(segmentVector.getValuesList()))
                                 .build());
-                        if (!models.contains(name)) {
-                            models.add(name);
-                        }
+                        models.add(name);
+                        pointVectorDistances.put(name, setDistance);
                     }
                 }
                 if (namedVectors.getVectorsCount() == 0) {
@@ -171,16 +193,68 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                 ListValue.Builder modelList = ListValue.newBuilder();
                 models.forEach(model -> modelList.addValues(stringValue(model)));
                 payload.put("models", Value.newBuilder().setListValue(modelList).build());
-                points.add(PointStruct.newBuilder()
+                PointStruct point = PointStruct.newBuilder()
                         .setId(PointId.newBuilder().setUuid(
                                 pointUuid(document.getDocId(), segmentation.getSegmentationId(),
                                         segment.getSegmentId()).toString()))
                         .setVectors(Vectors.newBuilder().setVectors(namedVectors))
                         .putAllPayload(payload)
-                        .build());
+                        .build();
+                POINT_DISTANCES.put(point, Map.copyOf(pointVectorDistances));
+                points.add(point);
             }
         }
         return points;
+    }
+
+    private static List<EmbeddingSet> matchingEmbeddingSets(
+            Segmentation segmentation,
+            List<EmbeddingSet> allEmbeddingSets,
+            Optional<ResolvedFieldHint> vectorHint,
+            Map<String, String> modelByVectorName,
+            Map<String, Distance> distanceByVectorName) throws MappingException {
+        List<EmbeddingSet> matchingSets = new ArrayList<>();
+        Map<String, EmbeddingSet> setsByVectorName = new LinkedHashMap<>();
+        for (EmbeddingSet embeddingSet : allEmbeddingSets) {
+            if (!embeddingSet.getSegmentationId().equals(segmentation.getSegmentationId())) {
+                continue;
+            }
+            if (!segmentation.getContentDigest().equals(embeddingSet.getSegmentationDigest())) {
+                throw new MappingException("Embedding set '" + embeddingSet.getEmbeddingSetId()
+                        + "' declares segmentation_digest '" + embeddingSet.getSegmentationDigest()
+                        + "' that does not match segmentation '" + segmentation.getSegmentationId()
+                        + "' content_digest '" + segmentation.getContentDigest() + "'",
+                        "search_metadata.embedding_sets.segmentation_digest");
+            }
+            String name = vectorName(embeddingSet.getModel());
+            EmbeddingSet collidingOnSegmentation = setsByVectorName.putIfAbsent(name, embeddingSet);
+            if (collidingOnSegmentation != null) {
+                throw new MappingException("Embedding sets '"
+                        + collidingOnSegmentation.getEmbeddingSetId() + "' (model '"
+                        + collidingOnSegmentation.getModel() + "') and '"
+                        + embeddingSet.getEmbeddingSetId() + "' (model '"
+                        + embeddingSet.getModel() + "') collide on Qdrant vector name '"
+                        + name + "' in segmentation '" + segmentation.getSegmentationId() + "'",
+                        "search_metadata.embedding_sets.model");
+            }
+            String previousModel = modelByVectorName.putIfAbsent(name, embeddingSet.getModel());
+            if (previousModel != null && !previousModel.equals(embeddingSet.getModel())) {
+                throw new MappingException("Models '" + previousModel + "' and '"
+                        + embeddingSet.getModel() + "' collide on Qdrant vector name '" + name + "'",
+                        "search_metadata.embedding_sets.model");
+            }
+            Distance setDistance = distance(embeddingSet.getSimilarity());
+            checkDeclaredSimilarity(embeddingSet, setDistance, vectorHint);
+            Distance previousDistance = distanceByVectorName.putIfAbsent(name, setDistance);
+            if (previousDistance != null && previousDistance != setDistance) {
+                throw new MappingException("Named vector '" + name + "' (model '"
+                        + embeddingSet.getModel() + "') has conflicting similarities "
+                        + previousDistance + " and " + setDistance,
+                        "search_metadata.embedding_sets.similarity");
+            }
+            matchingSets.add(embeddingSet);
+        }
+        return matchingSets;
     }
 
     /** The deterministic point id for one (document, segmentation, segment) triple. */
@@ -223,21 +297,105 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     /**
      * Named-vector specs for a batch of points, honoring the mapping's VECTOR hint where
      * declared: size and distance come from the hint ({@code vector_dims},
-     * {@code vector_similarity}); without a hint the size is read from the data and the
-     * distance defaults to COSINE. Every point of one embedding model must agree on the
-     * size, and the data must match declared hint dims.
+     * {@code vector_similarity}) when present, and otherwise from the mapped
+     * {@link EmbeddingSet}s ({@code dimensions}, {@link EmbeddingSet#getSimilarity()}),
+     * falling back to COSINE for synthetic points not produced by {@link #map}. Every point of
+     * one embedding model must agree on the size and similarity, and the data must match any
+     * declared hint.
      *
      * @throws IllegalArgumentException when two points carry the same named vector at
-     *         different sizes, or the data contradicts the hint
+     *         different sizes or distances, or the data contradicts the hint
      */
     public static List<QdrantVectorSpec> vectorSpecs(Collection<PointStruct> points,
                                                      IndexMapping mapping) {
         Optional<ResolvedFieldHint> hint = mapping == null ? Optional.empty() : vectorHint(mapping);
-        Distance distance = hint.map(h -> distance(h.vectorSimilarity())).orElse(Distance.Cosine);
+        Optional<Distance> hintDistance = hint.map(h -> distance(h.vectorSimilarity()));
+        Map<String, Distance> recordedDistances = recordedDistances(points);
+        if (hintDistance.isPresent()) {
+            for (Map.Entry<String, Distance> entry : recordedDistances.entrySet()) {
+                if (entry.getValue() != hintDistance.get()) {
+                    throw new IllegalArgumentException("Named vector '" + entry.getKey()
+                            + "' has distance " + entry.getValue()
+                            + " from its EmbeddingSet but the mapping's VECTOR hint declares "
+                            + hintDistance.get());
+                }
+            }
+        }
         List<QdrantVectorSpec> specs = new ArrayList<>();
-        vectorDimensions(points).forEach((name, size) ->
-                specs.add(new QdrantVectorSpec(name, size, distance)));
+        vectorDimensions(points).forEach((name, size) -> {
+            Distance distance = hintDistance.orElseGet(
+                    () -> recordedDistances.getOrDefault(name, Distance.Cosine));
+            specs.add(new QdrantVectorSpec(name, size, distance));
+        });
         return specs;
+    }
+
+    /**
+     * Named-vector specs derived directly from a repo {@link Document} and optional
+     * {@link IndexMapping}, honoring each {@link EmbeddingSet#getSimilarity()} and enforcing
+     * any declared VECTOR hint.
+     *
+     * @throws ValidationResult.ValidationException when the document violates a declared rule
+     * @throws MappingException when a digest, vector name, dimension, or similarity conflicts
+     */
+    public static List<QdrantVectorSpec> vectorSpecs(Document document, IndexMapping mapping)
+            throws MappingException {
+        Objects.requireNonNull(document, "document");
+        ValidationResult.validate(document).throwIfInvalid();
+        Optional<ResolvedFieldHint> vectorHint =
+                mapping == null ? Optional.empty() : vectorHint(mapping);
+        List<EmbeddingSet> allEmbeddingSets = document.getSearchMetadata().getEmbeddingSetsList();
+        Map<String, String> modelByVectorName = new LinkedHashMap<>();
+        Map<String, Distance> distanceByVectorName = new LinkedHashMap<>();
+        Map<String, Integer> sizeByVectorName = new LinkedHashMap<>();
+        for (Segmentation segmentation : document.getSearchMetadata().getSegmentationsList()) {
+            List<EmbeddingSet> matchingSets = matchingEmbeddingSets(
+                    segmentation, allEmbeddingSets, vectorHint,
+                    modelByVectorName, distanceByVectorName);
+            for (Segment segment : segmentation.getSegmentsList()) {
+                for (EmbeddingSet embeddingSet : matchingSets) {
+                    String name = vectorName(embeddingSet.getModel());
+                    for (SegmentVector segmentVector : embeddingSet.getVectorsList()) {
+                        if (!segmentVector.getSegmentId().equals(segment.getSegmentId())
+                                || segmentVector.getValuesCount() == 0) {
+                            continue;
+                        }
+                        checkDeclaredDims(embeddingSet, segmentVector, vectorHint);
+                        int size = segmentVector.getValuesCount();
+                        Integer existingSize = sizeByVectorName.putIfAbsent(name, size);
+                        if (existingSize != null && existingSize != size) {
+                            throw new MappingException("Named vector '" + name
+                                    + "' has conflicting dimensions " + existingSize
+                                    + " and " + size,
+                                    "search_metadata.embedding_sets.vectors.values");
+                        }
+                    }
+                }
+            }
+        }
+        List<QdrantVectorSpec> specs = new ArrayList<>();
+        sizeByVectorName.forEach((name, size) ->
+                specs.add(new QdrantVectorSpec(name, size, distanceByVectorName.get(name))));
+        return specs;
+    }
+
+    private static Map<String, Distance> recordedDistances(Collection<PointStruct> points) {
+        Map<String, Distance> distances = new LinkedHashMap<>();
+        for (PointStruct point : points) {
+            Map<String, Distance> pointMap = POINT_DISTANCES.get(point);
+            if (pointMap == null) {
+                continue;
+            }
+            for (Map.Entry<String, Distance> entry : pointMap.entrySet()) {
+                Distance existing = distances.putIfAbsent(entry.getKey(), entry.getValue());
+                if (existing != null && existing != entry.getValue()) {
+                    throw new IllegalArgumentException("Named vector '" + entry.getKey()
+                            + "' has conflicting distances " + existing
+                            + " and " + entry.getValue());
+                }
+            }
+        }
+        return distances;
     }
 
     /** Qdrant distance for a hint similarity; MAX_INNER_PRODUCT maps to Dot like OpenSearch's innerproduct. */
@@ -246,6 +404,18 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
             case COSINE -> Distance.Cosine;
             case L2 -> Distance.Euclid;
             case DOT_PRODUCT, MAX_INNER_PRODUCT -> Distance.Dot;
+        };
+    }
+
+    /** Qdrant distance for an {@link EmbeddingSet}'s declared {@link Similarity}. */
+    public static Distance distance(Similarity similarity) throws MappingException {
+        return switch (similarity == null ? Similarity.SIMILARITY_UNSPECIFIED : similarity) {
+            case SIMILARITY_COSINE -> Distance.Cosine;
+            case SIMILARITY_DOT_PRODUCT -> Distance.Dot;
+            case SIMILARITY_EUCLIDEAN -> Distance.Euclid;
+            case SIMILARITY_UNSPECIFIED, UNRECOGNIZED ->
+                    throw new MappingException("Unsupported embedding similarity: " + similarity,
+                            "search_metadata.embedding_sets.similarity");
         };
     }
 
@@ -288,6 +458,24 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                     + " dimensions but the mapping's VECTOR hint declares "
                     + vectorHint.get().vectorDims(),
                     "search_metadata.embedding_sets.vectors.values");
+        }
+    }
+
+    /** Declared vector_similarity, when any, must agree with the embedding set's similarity. */
+    private static void checkDeclaredSimilarity(EmbeddingSet embeddingSet,
+                                                Distance embeddingDistance,
+                                                Optional<ResolvedFieldHint> vectorHint)
+            throws MappingException {
+        if (vectorHint.isPresent()) {
+            Distance hintDistance = distance(vectorHint.get().vectorSimilarity());
+            if (embeddingDistance != hintDistance) {
+                throw new MappingException("Embedding set '" + embeddingSet.getEmbeddingSetId()
+                        + "' (model " + embeddingSet.getModel() + ") declares similarity "
+                        + embeddingSet.getSimilarity() + " (" + embeddingDistance
+                        + ") but the mapping's VECTOR hint declares "
+                        + vectorHint.get().vectorSimilarity() + " (" + hintDistance + ")",
+                        "search_metadata.embedding_sets.similarity");
+            }
         }
     }
 
