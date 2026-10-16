@@ -489,7 +489,9 @@ correctness and RustFS for performance measurements.
 
 11. Crash after object upload, before commit: no accession is visible, and a retry
     with the same operation ID succeeds.
-12. Crash after commit, before the response: a retry returns the committed outcome.
+12. Crash after commit, before the response: a retry returns the committed outcome
+    for a caller that can still read the document; a save that removes the caller's
+    own read access is confirmed by a principal that can read it.
 13. Truncated or corrupt stored content fails the read with a typed error and is never
     returned as valid.
 14. A retained schema that is unavailable fails the typed read with a distinct error,
