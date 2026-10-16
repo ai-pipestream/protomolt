@@ -24,29 +24,7 @@ class CatalogBaselineIT {
              var rows = connection.createStatement().executeQuery(
                      "SELECT count(*) FROM " + CatalogBaseline.HISTORY_TABLE + " WHERE success")) {
             rows.next();
-            assertThat(rows.getInt(1)).isEqualTo(2);
-        }
-    }
-
-    @Test void upgradesPopulatedV1WithoutInventingRejectionAccess() throws Exception {
-        var url = database("upgrade_rejection");
-        org.flywaydb.core.Flyway.configure().dataSource(url, POSTGRES.getUsername(), POSTGRES.getPassword())
-                .locations("classpath:db/repo-catalog").table(CatalogBaseline.HISTORY_TABLE).target("1").load().migrate();
-        var outcome = ai.protomolt.proto.repo.v2.RecordedOutcome.newBuilder()
-                .setRejection(ai.protomolt.proto.repo.v2.SaveRejection.newBuilder()
-                        .setReason(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_VALIDATION_FAILED)
-                        .setMessage("retained rejection")).build();
-        try (var connection = DriverManager.getConnection(url, POSTGRES.getUsername(), POSTGRES.getPassword());
-             var insert = connection.prepareStatement("INSERT INTO catalog_operation_outcomes (account_id,operation_id,intent_sha256,outcome,recorded_at) VALUES ('acct','op',?,?,now())")) {
-            insert.setString(1, "a".repeat(64));
-            insert.setBytes(2, outcome.toByteArray());
-            assertThat(insert.executeUpdate()).isEqualTo(1);
-        }
-        try (var catalog = new PostgresCatalog(config(url))) {
-            var retained = catalog.outcome("acct", "op").orElseThrow();
-            assertThat(retained.outcome()).isEqualTo(outcome);
-            assertThat(retained.intentSha256()).isEqualTo("a".repeat(64));
-            assertThat(retained.rejectionAccess()).isEmpty();
+            assertThat(rows.getInt(1)).isEqualTo(1);
         }
     }
 

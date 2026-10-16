@@ -40,7 +40,8 @@ class SliceOneFollowupsIT {
             assertThat(f.catalog.events(address).get(2).getAccessioned().getChanges(0).getKind())
                     .isEqualTo(ChangeKind.CHANGE_KIND_DELETED);
             assertThat(f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address)
-                    .setRevision(RevisionSelector.newBuilder().setRevision(1)).build()).getDocument()).isEqualTo(original);
+                    .setRevision(RevisionSelector.newBuilder().setRevision(1)).build()).getDocument())
+                    .isEqualTo(claimChecked(original, f.catalog.manifest(address, 1).orElseThrow()));
             assertThat(f.stack.puts.get()).isZero();
             // A PUT with a reason carries real PARSED content, so the delete-reason rule is the only fault.
             var parsedContent = Document.newBuilder().setDocId("parts").putParserResults("tika",

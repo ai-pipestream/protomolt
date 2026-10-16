@@ -1,7 +1,7 @@
 package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import io.grpc.Status;
 
@@ -9,7 +9,7 @@ import io.grpc.Status;
 final class RejectionAccess {
     private RejectionAccess() {}
 
-    static void require(PostgresCatalog catalog, RepositoryCaller caller, CatalogRecords.Outcome recorded) {
+    static void require(Catalog catalog, RepositoryCaller caller, CatalogRecords.Outcome recorded) {
         if (caller.processAuthority()) return;
         var access = recorded.rejectionAccess().orElseThrow(RejectionAccess::denied);
         DocumentReads.requireAccount(caller, access.address().getAccountId());
