@@ -109,5 +109,11 @@ public interface Catalog extends AutoCloseable {
     /** Every outbox event of one document, in revision order. */
     List<DocumentEvent> events(NodeAddress address);
 
+    /**
+     * The outbox events of the given revisions of one document, in revision order:
+     * one bounded query for one history page. A revision without an event is absent.
+     */
+    List<DocumentEvent> events(NodeAddress address, List<Long> revisions);
+
     @Override void close();
 }

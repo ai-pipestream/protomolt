@@ -26,7 +26,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * The v2 reads (requirements §8; change map §4 steps R1-R7). A read resolves the
@@ -112,10 +111,13 @@ public final class DocumentReads {
                     throw new AccessionException(Status.Code.INVALID_ARGUMENT, "Invalid page token", null);
             }
             var page = catalog.revisions(request.getAddress(), before, request.getPageSize() + 1);
-            var events = catalog.events(request.getAddress()).stream()
-                    .collect(Collectors.toMap(DocumentEvent::getRevision, Function.identity()));
+            var shown = page.subList(0, Math.min(page.size(), request.getPageSize()));
+            // One bounded query for this page's events, not the document's whole outbox (#327).
+            var events = new java.util.HashMap<Long, DocumentEvent>();
+            for (var event : catalog.events(request.getAddress(), shown.stream().map(StoredManifest::getRevision).toList()))
+                events.put(event.getRevision(), event);
             var response = ListRevisionsResponse.newBuilder();
-            for (var stored : page.subList(0, Math.min(page.size(), request.getPageSize()))) {
+            for (var stored : shown) {
                 var event = events.get(stored.getRevision());
                 if (event == null) throw new AccessionException(Status.Code.DATA_LOSS, "Revision has no event", null);
                 var summary = RevisionSummary.newBuilder().setRevision(stored.getRevision())
