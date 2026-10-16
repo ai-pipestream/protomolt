@@ -19,8 +19,10 @@ import java.util.concurrent.CancellationException;
 
 /**
  * Typed admission of the parts a v2 save writes. Carried parts keep their
- * references and are not read: document.proto declares no rule that spans
+ * references and are not read here: document.proto declares no rule that spans
  * parts, so the written fragments are the whole candidate the rules can see.
+ * The semantic relationships between segmentations, their source text and
+ * embedding sets are {@link DocumentSemanticAdmission}'s concern.
  * <p>
  * Runs the same engine as publication admission: strict fragment decoding and
  * confinement, the known-Any-location walk, ProtoValidator over the written
@@ -35,9 +37,28 @@ public final class DocumentCandidateAdmission {
 
     private DocumentCandidateAdmission() {}
 
-    /** One written fragment, exactly as it will be stored. */
-    public record Fragment(DocumentPart part, ByteString bytes) {
-        public Fragment { Objects.requireNonNull(part); Objects.requireNonNull(bytes); }
+    /**
+     * One written fragment, exactly as it will be stored. A CHUNKS fragment is
+     * keyed by its segmentation ID and an EMBEDDINGS fragment by its segmentation
+     * and embedding set IDs; CORE, BLOBS and PARSED carry no key.
+     */
+    public record Fragment(DocumentPart part, List<String> key, ByteString bytes) {
+        public Fragment {
+            Objects.requireNonNull(part); Objects.requireNonNull(bytes);
+            key = List.copyOf(key);
+            int expected = switch (part) {
+                case DOCUMENT_PART_CHUNKS -> 1;
+                case DOCUMENT_PART_EMBEDDINGS -> 2;
+                default -> 0;
+            };
+            if (key.size() != expected)
+                throw new IllegalArgumentException(part + " fragment takes " + expected + " key values, got " + key.size());
+            if (key.stream().anyMatch(value -> value == null || value.isBlank()))
+                throw new IllegalArgumentException(part + " fragment key is blank");
+        }
+
+        /** A fragment of a part without a key. */
+        public Fragment(DocumentPart part, ByteString bytes) { this(part, List.of(), bytes); }
     }
 
     /** The written fragments of one candidate and the container definition they decode with. */
@@ -186,13 +207,14 @@ public final class DocumentCandidateAdmission {
             var type = container.schema().type();
             var written = DynamicMessage.newBuilder(type);
             long total = 0;
-            var seen = new java.util.HashSet<DocumentPart>();
+            var seen = new java.util.HashSet<List<Object>>();
             for (var fragment : request.fragments()) {
                 active.run();
-                if (fragment.part() != DocumentPart.DOCUMENT_PART_CORE && fragment.part() != DocumentPart.DOCUMENT_PART_BLOBS
-                        && fragment.part() != DocumentPart.DOCUMENT_PART_PARSED)
-                    throw new IllegalArgumentException("candidate admission supports CORE, BLOBS and PARSED fragments");
-                if (!seen.add(fragment.part())) throw new IllegalArgumentException("duplicate candidate fragment");
+                if (fragment.part() == DocumentPart.DOCUMENT_PART_UNSPECIFIED
+                        || fragment.part() == DocumentPart.UNRECOGNIZED)
+                    throw new IllegalArgumentException("candidate admission needs a defined part");
+                if (!seen.add(List.of(fragment.part(), fragment.key())))
+                    throw new IllegalArgumentException("duplicate candidate fragment");
                 if (fragment.bytes().size() > limits.maxFragmentBytes() - total)
                     throw new BudgetExhausted("candidate fragments exceed byte limit", null);
                 total += fragment.bytes().size();
@@ -205,7 +227,13 @@ public final class DocumentCandidateAdmission {
                     if (input.getTotalBytesRead() != fragment.bytes().size())
                         throw new InvalidProtocolBufferException("Fragment was not completely consumed");
                     requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
-                    DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
+                    switch (fragment.part()) {
+                        case DOCUMENT_PART_CHUNKS -> DocumentFragmentConfinement.requireConfinedSegmentation(parsed,
+                                fragment.key().get(0), request.docId());
+                        case DOCUMENT_PART_EMBEDDINGS -> DocumentFragmentConfinement.requireConfinedEmbeddingSet(parsed,
+                                fragment.key().get(0), fragment.key().get(1), request.docId());
+                        default -> DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
+                    }
                     written.mergeFrom(parsed);
                 } catch (MessageWireBudget.LimitExceededException budget) {
                     throw new BudgetExhausted(fragment.part() + " fragment: " + budget.getMessage(), budget);
@@ -230,7 +258,11 @@ public final class DocumentCandidateAdmission {
             long decodedRemaining = limits.maxDecodedBytes();
             for (var fragment : request.fragments()) {
                 active.run();
-                if (fragment.part() == DocumentPart.DOCUMENT_PART_BLOBS) continue;
+                // BLOBS carries no Any. Segmentations and embedding sets declare none either
+                // (semantic.proto), and the known-Any-location walk above refused any that a
+                // fragment smuggled in; only CORE and PARSED have Any roots to inventory.
+                if (fragment.part() != DocumentPart.DOCUMENT_PART_CORE
+                        && fragment.part() != DocumentPart.DOCUMENT_PART_PARSED) continue;
                 var slot = DocumentPublicationSlot.newBuilder().setPart(fragment.part()).build();
                 final DocumentAnyRootInventory.Result inventory;
                 try {
@@ -387,11 +419,19 @@ public final class DocumentCandidateAdmission {
         }
     }
 
-    /** The layout's part fields: anything else is CORE. */
-    private static DocumentPart partOf(String path) {
+    /**
+     * The part that owns a field path under the default Document layout:
+     * anything outside the layout's part fields is CORE.
+     *
+     * @param path a field path, as a validator reports it or a text source names it
+     * @return the owning part
+     */
+    public static DocumentPart partOf(String path) {
         if (path.startsWith("blob_bag")) return DocumentPart.DOCUMENT_PART_BLOBS;
         if (path.startsWith("parser_results")) return DocumentPart.DOCUMENT_PART_PARSED;
         if (path.startsWith("search_metadata.semantic_results")) return DocumentPart.DOCUMENT_PART_CHUNKS;
+        if (path.startsWith("search_metadata.segmentations")) return DocumentPart.DOCUMENT_PART_CHUNKS;
+        if (path.startsWith("search_metadata.embedding_sets")) return DocumentPart.DOCUMENT_PART_EMBEDDINGS;
         return DocumentPart.DOCUMENT_PART_CORE;
     }
 }
