@@ -77,13 +77,23 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
                 binding.issuer(), binding.credentialId(), binding.generation()));
     }
 
+    private static final String V1_SEMANTIC_FIELDS_UNSUPPORTED =
+            "Segmentations and embedding sets are not supported by the v1 DocumentService; use the v2 DocumentService";
+
     @Override public void saveDocument(SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
         var read = readControl();
         var control = new ai.protomolt.proto.repo.spi.RepositoryOperationControl() {
             @Override public boolean isCancelled() { return read.isCancelled(); }
             @Override public long remainingNanos() { return read.remainingNanos(); }
         };
-        GrpcErrors.run(observer, () -> documents.saveDocument(caller(), request, control));
+        GrpcErrors.run(observer, () -> {
+            var search = request.getDocument().getSearchMetadata();
+            if (search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0) {
+                throw new RepositoryException(RepositoryException.Code.INVALID_ARGUMENT,
+                        V1_SEMANTIC_FIELDS_UNSUPPORTED);
+            }
+            return documents.saveDocument(caller(), request, control);
+        });
     }
 
     @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
