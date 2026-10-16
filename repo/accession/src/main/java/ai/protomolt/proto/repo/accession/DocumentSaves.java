@@ -28,7 +28,6 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -631,9 +630,11 @@ public final class DocumentSaves {
     }
 
     static String eventId(NodeAddress address, long revision) {
-        var name = "accession|" + address.getAccountId() + "|" + address.getGraphId() + "|"
-                + address.getGraphAddressId() + "|" + address.getDocId() + "|" + revision;
-        return UUID.nameUUIDFromBytes(name.getBytes(StandardCharsets.UTF_8)).toString();
+        // Protobuf field lengths keep separators inside address components unambiguous.
+        var identity = Accession.newBuilder().setAddress(address).setRevision(revision).build();
+        var name = ByteString.copyFromUtf8("protomolt/accession/v1\0").concat(ByteString.copyFrom(
+                ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(identity)));
+        return UUID.nameUUIDFromBytes(name.toByteArray()).toString();
     }
 
     static String sha256(ByteString bytes) { return SaveIntents.sha256Hex(bytes.toByteArray()); }
