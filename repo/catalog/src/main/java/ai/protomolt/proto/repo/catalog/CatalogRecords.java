@@ -47,18 +47,21 @@ public final class CatalogRecords {
         }
     }
 
+    /** A rejection either finds/records an outcome or loses writer authority. */
+    public sealed interface RejectionResult permits Recorded, WriteDenied {}
+
     /** What a commit did. */
     public sealed interface CommitResult {}
     /** The accession, outcome and event were written and the pointer moved. */
     public record Committed() implements CommitResult {}
-    /** An outcome was already recorded for the operation ID; nothing was written. */
-    public record Recorded(Outcome outcome) implements CommitResult {}
+    /** The operation has a recorded outcome, either found or newly stored as a rejection. */
+    public record Recorded(Outcome outcome) implements CommitResult, RejectionResult {}
     /** The current revision differs from the expected one, and no outcome is recorded. */
     public record Conflict(long currentRevision, boolean currentTombstone) implements CommitResult {}
     /** A carried-forward object was purged before the commit. */
     public record SourcePurged(StackRef ref) implements CommitResult {}
     /** The writer grant or credential was revoked or rotated before the commit. */
-    public record WriteDenied(String reason) implements CommitResult {}
+    public record WriteDenied(String reason) implements CommitResult, RejectionResult {}
 
     /** One provisioned grant with its exact stored snapshot. */
     public record Grant(WriterGrant grant, ByteString snapshot, String snapshotSha256, boolean revoked) {}
