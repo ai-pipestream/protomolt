@@ -160,7 +160,8 @@ public final class DocumentSaves {
         if (base.isPresent() && !DocumentAccessPolicy.allows(caller, account, base.get().getOwnership().getSecurity(),
                 null, Access.ACCESS_WRITE))
             throw WriterAuthority.denied("The caller may not write this document");
-        var ownership = ownership(caller, document, address, base, writes);
+        var ownership = ownership(document, address, base,
+                writes.get(DocumentPart.DOCUMENT_PART_CORE) == WriteAction.WRITE_ACTION_PUT);
         requireOwnerMatches(request.getOwner(), ownership);
         var authorized = authority.authorize(caller, request.getOwner(), account,
                 ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
@@ -239,8 +240,12 @@ public final class DocumentSaves {
             if (write.getAction() == WriteAction.WRITE_ACTION_PUT)
                 admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(write.getSelector().getPart()),
                         fragments.get(write.getSelector().getPart())));
-        for (var entry : sourced.entrySet())
-            admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(entry.getKey()), readVerified(entry.getValue())));
+        ByteString sourcedCore = null;
+        for (var entry : sourced.entrySet()) {
+            var bytes = readVerified(entry.getValue());
+            admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(entry.getKey()), bytes));
+            if (entry.getKey() == DocumentPart.DOCUMENT_PART_CORE) sourcedCore = bytes;
+        }
         var validation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
                 .setValidatorProfile(DocumentCandidateAdmission.PROFILE);
         Map<String, ByteString> artifacts = new HashMap<>(container.artifacts());
@@ -255,6 +260,15 @@ public final class DocumentSaves {
                             .setRuleId(v.ruleId()).setMessage(v.message()).build()).toList();
                     return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                             "The composed document failed validation", violations);
+                }
+                // Decision 47: use the same verified and admitted CORE bytes for ownership.
+                // The current ACL and writer grant were checked above; the fixed-field check
+                // keeps their account/datasource/connector scope valid. No second fetch or PUT.
+                if (sourcedCore != null) {
+                    var core = DocumentPartCodec.assemble(List.of(sourcedCore.toByteArray()),
+                            Document.getDefaultInstance());
+                    ownership = ownership(core, address, base, true);
+                    requireOwnerMatches(request.getOwner(), ownership);
                 }
                 var accepted = (DocumentCandidateAdmission.Accepted) result;
                 for (var occurrence : accepted.occurrences())
@@ -495,13 +509,12 @@ public final class DocumentSaves {
     }
 
     /**
-     * The revision's ownership: from a CORE PUT, else carried. Its account, datasource and
+     * The revision's ownership: from a CORE write (PUT or source), else carried. Its account, datasource and
      * connector are fixed at creation; any authorized writer may change security and source
      * owner (decision 30).
      */
-    private static OwnershipContext ownership(RepositoryCaller caller, Document document, NodeAddress address,
-            Optional<StoredManifest> base, Map<DocumentPart, WriteAction> writes) {
-        boolean corePut = writes.get(DocumentPart.DOCUMENT_PART_CORE) == WriteAction.WRITE_ACTION_PUT;
+    private static OwnershipContext ownership(Document document, NodeAddress address,
+            Optional<StoredManifest> base, boolean corePut) {
         if (base.isEmpty() && (!corePut || !document.hasOwnership()))
             throw malformedException("Creating a document needs a CORE PUT with ownership");
         var ownership = corePut ? document.getOwnership() : base.get().getOwnership();
