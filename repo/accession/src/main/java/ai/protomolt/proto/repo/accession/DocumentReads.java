@@ -2,7 +2,11 @@ package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
+import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
+import ai.protomolt.proto.repo.admission.DocumentRetainedDefinitions;
+import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -11,16 +15,17 @@ import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Status;
 import java.io.IOException;
+import java.time.Clock;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * The v2 reads (requirements §8; change map §4 steps R1-R7). A read resolves the
@@ -28,16 +33,29 @@ import java.util.stream.Collectors;
  * another. Part bytes are verified against their stack reference before they
  * are decoded; a mismatch is DATA_LOSS. Access follows the document's current
  * ownership, stored as binary protobuf in the catalog.
+ * <p>
+ * A typed read decodes each selected part with the schemas its revision retained
+ * (requirements §9, §15.14): the part's {@code fragment_schema} and the schema of
+ * every Any occurrence recorded for it, read from the catalog and checked against
+ * their digests. There is no schema registry here, so a stopped registry cannot
+ * affect a read and no live schema can stand in for a retained one. An unreachable
+ * catalog is UNAVAILABLE; a retained artifact that is absent from a reachable
+ * catalog, or fails its digest, is DATA_LOSS.
  */
 public final class DocumentReads {
-    private final PostgresCatalog catalog;
+    private final Catalog catalog;
     private final DocumentSaves.Drives drives;
-    private final RepositorySchemaAssetReference container;
+    private final DocumentSchemaAdmission.Limits limits;
+    private final DocumentAdmissionReservations reservations;
+    private final Clock clock;
 
-    public DocumentReads(PostgresCatalog catalog, DocumentSaves.Drives drives, RepositorySchemaAssetReference container) {
+    public DocumentReads(Catalog catalog, DocumentSaves.Drives drives, DocumentSchemaAdmission.Limits limits,
+            DocumentAdmissionReservations reservations, Clock clock) {
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
-        this.container = Objects.requireNonNull(container);
+        this.limits = Objects.requireNonNull(limits);
+        this.reservations = Objects.requireNonNull(reservations);
+        this.clock = Objects.requireNonNull(clock);
     }
 
     public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request) {
@@ -52,9 +70,14 @@ public final class DocumentReads {
                 if (entry.getOpaque() && !request.getAllowOpaque())
                     throw new AccessionException(Status.Code.FAILED_PRECONDITION,
                             "The revision holds opaque content; request its opaque representation explicitly", null);
-                requireContainer(stored, entry.getSelector());
+                var bytes = read(part.getRef());
+                // Opaque content makes no typed claim and is not decoded (requirements §9).
+                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
+                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
                 try {
-                    document.mergeFrom(read(part.getRef()));
+                    document.mergeFrom(bytes);
                 } catch (InvalidProtocolBufferException corrupt) {
                     throw new AccessionException(Status.Code.DATA_LOSS, "Stored part does not decode", null, corrupt);
                 }
@@ -88,10 +111,13 @@ public final class DocumentReads {
                     throw new AccessionException(Status.Code.INVALID_ARGUMENT, "Invalid page token", null);
             }
             var page = catalog.revisions(request.getAddress(), before, request.getPageSize() + 1);
-            var events = catalog.events(request.getAddress()).stream()
-                    .collect(Collectors.toMap(DocumentEvent::getRevision, Function.identity()));
+            var shown = page.subList(0, Math.min(page.size(), request.getPageSize()));
+            // One bounded query for this page's events, not the document's whole outbox (#327).
+            var events = new java.util.HashMap<Long, DocumentEvent>();
+            for (var event : catalog.events(request.getAddress(), shown.stream().map(StoredManifest::getRevision).toList()))
+                events.put(event.getRevision(), event);
             var response = ListRevisionsResponse.newBuilder();
-            for (var stored : page.subList(0, Math.min(page.size(), request.getPageSize()))) {
+            for (var stored : shown) {
                 var event = events.get(stored.getRevision());
                 if (event == null) throw new AccessionException(Status.Code.DATA_LOSS, "Revision has no event", null);
                 var summary = RevisionSummary.newBuilder().setRevision(stored.getRevision())
@@ -145,15 +171,53 @@ public final class DocumentReads {
                 .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));
     }
 
-    /** Selected parts decode with the container schema retained at save time, never a newer one. */
-    private void requireContainer(StoredManifest stored, PartSelector part) {
-        var binding = stored.getValidation().getPartSchemasList().stream()
-                .filter(schema -> schema.getPart().equals(part)).findFirst()
+    /**
+     * Decodes one stored fragment with the schemas its revision retained: the part's
+     * fragment schema and every recorded Any occurrence's schema, through the same
+     * admission engine a save runs. The occurrences found must be the ones recorded.
+     */
+    private void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
+        var validation = stored.getValidation();
+        var binding = validation.getPartSchemasList().stream().filter(schema -> schema.getPart().equals(part)).findFirst()
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
-        if (!binding.getFragmentSchema().getDescriptorSha256().equals(container.getDescriptorSha256()))
-            throw new AccessionException(Status.Code.FAILED_PRECONDITION,
-                    "The revision was saved under another Document schema; decoding it with the retained schema is not supported yet",
-                    null);
+        var recorded = validation.getResolvedOccurrencesList().stream()
+                .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
+        DocumentRetainedDefinitions.Reader retained = catalog::artifact;
+        try {
+            var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained);
+            var byTypeUrl = new HashMap<String, DocumentSchemaAdmission.Definition>();
+            for (var occurrence : recorded) {
+                var definition = DocumentRetainedDefinitions.definition(occurrence.getSchema(), retained);
+                var previous = byTypeUrl.putIfAbsent(occurrence.getSchema().getTypeUrl(), definition);
+                if (previous != null && !previous.equals(definition))
+                    throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
+            }
+            var fragment = new DocumentCandidateAdmission.Fragment(DocumentSaves.v1(part.getPart()), bytes);
+            try (var result = DocumentCandidateAdmission.check(new DocumentCandidateAdmission.Request(
+                    stored.getAddress().getDocId(), List.of(fragment), container),
+                    selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {})) {
+                if (result instanceof DocumentCandidateAdmission.Rejected rejected)
+                    throw lost("Stored part fails its retained rules: " + rejected.violations().getFirst().message(), null);
+                var found = new HashSet<ResolvedOccurrence>();
+                for (var occurrence : ((DocumentCandidateAdmission.Accepted) result).occurrences())
+                    found.add(ResolvedOccurrence.newBuilder().setOccurrence(OccurrenceLocator.newBuilder().setPart(part)
+                                    .addAllSteps(occurrence.steps())).setSchema(occurrence.schema())
+                            .setPayloadSha256(occurrence.payloadSha256()).setPayloadLength(occurrence.payloadLength()).build());
+                if (!found.equals(new HashSet<>(recorded)))
+                    throw lost("Stored part's Any occurrences differ from the retained record", null);
+            }
+        } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.SchemaMissing
+                 | DocumentCandidateAdmission.InvalidPayload | DocumentCandidateAdmission.ContentRefused
+                 | DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException failure) {
+            throw lost("Stored part does not decode with its retained schema: " + failure.getMessage(), failure);
+        } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
+            throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED, "Retained schema budget exhausted: "
+                    + budget.getMessage(), null, budget);
+        }
+    }
+
+    private static AccessionException lost(String message, Throwable cause) {
+        return new AccessionException(Status.Code.DATA_LOSS, message, null, cause);
     }
 
     private ByteString read(StackRef ref) {

@@ -29,7 +29,7 @@ class CatalogOutageIT {
             var stack = new BlobStoreStack(stackId, new S3BlobStore(AccessionFixture.s3()), BUCKET, "outage");
             var drives = new DocumentSaves.Drives("default", Map.of("default", stack));
             var saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
-            var reads = new DocumentReads(catalog, drives, saves.containerSchema());
+            var reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
             var account = "acct-" + UUID.randomUUID();
             var credential = UUID.randomUUID();
             catalog.registerCredential(ISSUER, credential, "crawler");

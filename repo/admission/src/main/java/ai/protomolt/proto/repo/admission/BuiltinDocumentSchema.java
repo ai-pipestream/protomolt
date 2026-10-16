@@ -44,8 +44,7 @@ public final class BuiltinDocumentSchema {
                 .setEvidence(SchemaCompilerEvidence.SCHEMA_COMPILER_EVIDENCE_PRODUCER_REPORTED)
                 .setKnownCompiler(SchemaCompilerDetails.newBuilder().setTool(SchemaToolIdentity.newBuilder()
                         .setName(required(properties,"compiler.name")).setVersion(required(properties,"compiler.version"))))
-                .setAdmissionRuntime(SchemaToolIdentity.newBuilder().setName("com.google.protobuf:protobuf-java")
-                        .setVersion(loadedRuntimeVersion()));
+                .setAdmissionRuntime(admissionRuntime());
         var metadata=RepositorySchemaAsset.newBuilder().setTypeUrl("type.googleapis.com/"+descriptor.getFullName())
                 .setArtifactSha256(DocumentPartCodec.sha256Hex(bytes.toByteArray()))
                 .setSchema(PublicationSchemaCondition.newBuilder().setTypeName(descriptor.getFullName())
@@ -53,6 +52,11 @@ public final class BuiltinDocumentSchema {
                 .setCompilation(compilation).build();
         DocumentSchemaAssetCodec.encode(metadata,() -> {});
         return new DocumentSchemaAdmission.Definition(metadata,bytes,Optional.empty());
+    }
+
+    /** The protobuf runtime this host decodes with, for a definition's admission provenance. */
+    public static SchemaToolIdentity admissionRuntime() {
+        return SchemaToolIdentity.newBuilder().setName("com.google.protobuf:protobuf-java").setVersion(loadedRuntimeVersion()).build();
     }
 
     private static String required(Properties properties,String key) {

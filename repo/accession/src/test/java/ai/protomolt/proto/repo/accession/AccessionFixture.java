@@ -98,7 +98,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(stackId, new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
-        reads = new DocumentReads(catalog, drives, saves.containerSchema());
+        reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
     /** A second host over the same catalog and stack, as after a restart. */
@@ -111,7 +111,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(original.stack.stackId(), new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
-        reads = new DocumentReads(catalog, drives, saves.containerSchema());
+        reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
     static S3Client s3() { return client; }
@@ -223,6 +223,35 @@ final class AccessionFixture implements AutoCloseable {
                 .build();
     }
 
+    /**
+     * What a read returns for a saved document: each raw blob's inline data is
+     * replaced by the claim check the server bound it to (decision 45).
+     */
+    static Document claimChecked(Document sent, StoredManifest stored) {
+        var refs = new java.util.HashMap<String, StackRef>();
+        stored.getPartsList().forEach(part -> part.getBlobRefsList().forEach(ref -> refs.put(ref.getBlobId(), ref.getRef())));
+        java.util.function.UnaryOperator<Blob> swap = blob -> blob.toBuilder().clearData()
+                .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
+                        .setDriveName(refs.get(blob.getBlobId()).getStackId())
+                        .setObjectKey(refs.get(blob.getBlobId()).getKey())).build();
+        if (!sent.hasBlobBag()) return sent;
+        var bag = sent.getBlobBag().toBuilder();
+        if (bag.hasBlob()) bag.setBlob(swap.apply(bag.getBlob()));
+        if (bag.hasBlobs()) {
+            var blobs = ai.protomolt.proto.repo.v1.Blobs.newBuilder();
+            bag.getBlobs().getBlobList().forEach(blob -> blobs.addBlob(swap.apply(blob)));
+            bag.setBlobs(blobs);
+        }
+        return sent.toBuilder().setBlobBag(bag).build();
+    }
+
+    /** The raw bytes of a stored blob, read and verified through the stack. */
+    byte[] blobBytes(StoredManifest stored, String blobId) throws IOException {
+        var ref = stored.getPartsList().stream().flatMap(part -> part.getBlobRefsList().stream())
+                .filter(blob -> blob.getBlobId().equals(blobId)).findFirst().orElseThrow().getRef();
+        try (var stream = stack.open(ref)) { return stream.readAllBytes(); }
+    }
+
     static PartWrite put(DocumentPart part) {
         return PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setPart(part))
                 .setAction(WriteAction.WRITE_ACTION_PUT).build();
@@ -280,6 +309,16 @@ final class AccessionFixture implements AutoCloseable {
             opened.merge(ref.getKey(), 1, Integer::sum);
             return delegate.open(ref);
         }
+
+        @Override public InputStream openRange(StackRef ref, long offset, long length) throws IOException {
+            opens.incrementAndGet();
+            opened.merge(ref.getKey(), 1, Integer::sum);
+            return delegate.openRange(ref, offset, length);
+        }
+
+        @Override public long head(StackRef ref) throws IOException { return delegate.head(ref); }
+
+        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); }
 
         void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; }
     }
