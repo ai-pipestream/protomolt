@@ -253,6 +253,9 @@ class ReviewFixesIT {
                 .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst()
                 .orElseThrow();
         assertThat(newEntry.getRef()).isEqualTo(sourceRef);
+        // §5: a sourced part counts as changed, so it records the saving writer and the new revision.
+        assertThat(newEntry.getEntry().getOwner()).isEqualTo(intakeOwner());
+        assertThat(newEntry.getEntry().getWrittenInRevision()).isEqualTo(1);
         assertThat(f.stack.puts.get()).as("one PUT, for CORE only").isEqualTo(putsBefore + 1);
 
         // Another account's document is not a source, even when the caller can read it.
@@ -271,6 +274,19 @@ class ReviewFixesIT {
         assertSourceNotFound(() -> f.saves.save(processAuthority(), crossLineage));
         assertThat(f.catalog.outcome(account, "op-cross-lineage")).isPresent();
         assertThat(f.stack.puts.get()).isEqualTo(putsBefore + 1);
+
+        // A later save carries the sourced part unchanged: same reference, owner and revision as when sourced.
+        var derived = sourced.getAccession().getAddress();
+        var followOn = f.saves.save(processAuthority(), scopedSave("op-follow-on", sourceA, derived.getGraphId())
+                .setExpected(at(1)).build());
+        assertThat(followOn.getAccession().getRevision()).isEqualTo(2);
+        var carried = f.catalog.manifest(derived, 2).orElseThrow().getPartsList().stream()
+                .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).findFirst()
+                .orElseThrow();
+        assertThat(carried.getRef()).isEqualTo(sourceRef);
+        assertThat(carried.getEntry().getOwner()).isEqualTo(intakeOwner());
+        assertThat(carried.getEntry().getWrittenInRevision()).isEqualTo(1);
+        assertThat(f.stack.puts.get()).as("the follow-on save PUTs its CORE only").isEqualTo(putsBefore + 2);
     }
 
     /** A CORE-only save of doc-scope at another graph location in the source's account. */
