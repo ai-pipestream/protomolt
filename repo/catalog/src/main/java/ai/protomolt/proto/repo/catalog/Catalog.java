@@ -67,7 +67,7 @@ public interface Catalog extends AutoCloseable {
      * recorded, or the denial when authority was revoked or rotated in between.
      */
     RejectionResult recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome,
-            List<String> grantIds, Optional<CredentialCheck> credential);
+            List<String> grantIds, Optional<CredentialCheck> credential, NodeAddress address, boolean creating);
 
     // ------------------------------------------------------------------ writer authority
 

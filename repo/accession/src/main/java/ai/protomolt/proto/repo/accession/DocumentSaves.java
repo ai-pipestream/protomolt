@@ -619,6 +619,7 @@ public final class DocumentSaves {
 
     private SaveDocumentResponse replay(RepositoryCaller caller, SaveDocumentRequest request, String intentSha,
             CatalogRecords.Outcome recorded) {
+        if (recorded.outcome().hasRejection()) RejectionAccess.require(catalog, caller, recorded);
         if (!recorded.intentSha256().equals(intentSha))
             throw new AccessionException(Status.Code.ALREADY_EXISTS, "Operation ID was used with a different intent",
                     OperationReuse.newBuilder().setOperationId(request.getOperationId())
@@ -649,7 +650,7 @@ public final class DocumentSaves {
         var rejection = SaveRejection.newBuilder().setReason(reason).setMessage(message).addAllViolations(violations).build();
         var outcome = RecordedOutcome.newBuilder().setRejection(rejection).setRecordedAt(timestamp(clock.instant())).build();
         var result = catalog.recordRejection(address.getAccountId(), request.getOperationId(), intentSha, outcome,
-                authorized.grantIds(), authorized.credential());
+                authorized.grantIds(), authorized.credential(), address, request.getExpected().hasNone());
         return switch (result) {
             case CatalogRecords.Recorded stored -> replay(caller, request, intentSha, stored.outcome());
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());

@@ -133,6 +133,14 @@ CREATE TABLE catalog_operation_outcomes (
     revision      bigint,
     outcome       bytea NOT NULL,
     recorded_at   timestamptz NOT NULL,
+    rejection_address bytea,
+    rejection_create boolean,
+    rejection_issuer text,
+    rejection_credential_id uuid,
+    CONSTRAINT rejection_access_complete CHECK (
+        (rejection_address IS NULL AND rejection_create IS NULL AND rejection_issuer IS NULL AND rejection_credential_id IS NULL)
+        OR (rejection_address IS NOT NULL AND rejection_create IS NOT NULL
+            AND ((rejection_issuer IS NULL) = (rejection_credential_id IS NULL)))),
     PRIMARY KEY (account_id, operation_id),
     FOREIGN KEY (document_id, revision) REFERENCES catalog_revisions,
     CHECK ((document_id IS NULL) = (revision IS NULL))

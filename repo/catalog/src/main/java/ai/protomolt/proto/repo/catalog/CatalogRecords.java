@@ -22,9 +22,13 @@ public final class CatalogRecords {
     public record Current(long revision, boolean tombstone) {}
 
     /** A recorded terminal outcome and the intent it was recorded for. */
-    public record Outcome(String intentSha256, RecordedOutcome outcome) {
-        public Outcome { Objects.requireNonNull(intentSha256); Objects.requireNonNull(outcome); }
+    public record Outcome(String intentSha256, RecordedOutcome outcome, Optional<RejectionAccess> rejectionAccess) {
+        public Outcome { Objects.requireNonNull(intentSha256); Objects.requireNonNull(outcome); Objects.requireNonNull(rejectionAccess); }
     }
+
+    /** Internal access context; never supplied by the request or exposed in the outcome. */
+    public record RejectionAccess(NodeAddress address, boolean create, Optional<CredentialIdentity> creator) {}
+    public record CredentialIdentity(String issuer, UUID credentialId) {}
 
     /** Commit-time recheck of the presented credential generation. */
     public record CredentialCheck(String issuer, UUID credentialId, long generation) {}
