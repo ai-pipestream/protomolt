@@ -117,9 +117,9 @@ message IngestStreamRequest {
 message IngestDocumentResponse {
   // The document id the row was stored under (caller-preserved or derived).
   string doc_id = 1;
-  // The repository node id assigned to the stored state (derived echo of
-  // `address`; never truth — see repo's address.proto).
-  string node_id = 2;
+  // v1 node identity is replaced by the canonical address and exact revision.
+  reserved 2;
+  reserved "node_id";
   // The stored row's canonical storage address.
   ai.protomolt.proto.repo.v1.NodeAddress address = 3;
   // Drive the document was stored on.
@@ -129,9 +129,10 @@ message IngestDocumentResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when the save was elided by the SHA-256 intake dedupe (identical
-  // content already stored; the existing coordinates are echoed).
+  // True when an identical intake intent replayed its recorded outcome.
   bool deduplicated = 7;
+  // Exact committed repository revision, unchanged on an identical retry.
+  int64 revision = 8;
 }
 
 // The streaming lane's intake receipt. Field-for-field the same receipt as
@@ -140,9 +141,9 @@ message IngestDocumentResponse {
 message IngestStreamResponse {
   // The document id the row was stored under (caller-preserved or derived).
   string doc_id = 1;
-  // The repository node id assigned to the stored state (derived echo of
-  // `address`; never truth — see repo's address.proto).
-  string node_id = 2;
+  // v1 node identity is replaced by the canonical address and exact revision.
+  reserved 2;
+  reserved "node_id";
   // The stored row's canonical storage address.
   ai.protomolt.proto.repo.v1.NodeAddress address = 3;
   // Drive the document was stored on.
@@ -152,9 +153,10 @@ message IngestStreamResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when the save was elided by the SHA-256 intake dedupe (identical
-  // content already stored; the existing coordinates are echoed).
+  // True when an identical intake intent replayed its recorded outcome.
   bool deduplicated = 7;
+  // Exact committed repository revision, unchanged on an identical retry.
+  int64 revision = 8;
 }
 
 // The only authenticated way in: ingest into repo-service.

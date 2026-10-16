@@ -10,14 +10,8 @@ import ai.protomolt.proto.intake.v1.IngestDocumentRequest;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
 import ai.protomolt.proto.intake.v1.IntakeServiceGrpc;
 import ai.protomolt.proto.intake.v1.RawPayload;
-import ai.protomolt.proto.repo.service.RepoServiceConfig;
-import ai.protomolt.proto.repo.service.RepoServices;
-import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.v1.CreateDriveRequest;
-import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -36,13 +30,13 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * End-to-end integration test of the intake service against a REAL repo-service:
- * testcontainers PostgreSQL 17 + LocalStack S3 behind {@link RepoServices},
+ * testcontainers PostgreSQL 18 + LocalStack S3 behind {@link V2RepositoryFixture},
  * intake mounted in front over the in-process transport — the all-in-one
  * embedding path, no fakes anywhere. Proves the receipt is honest: what
  * intake acknowledges is fetchable back out of the repository at the
  * receipt's address, and identical content dedupes.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IntakeServiceIT {
 
     static final String ACCOUNT = "acct-intake-it";
@@ -56,7 +50,7 @@ class IntakeServiceIT {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
                     .withServices("s3");
 
-    static RepoServices repo;
+    static V2RepositoryFixture repo;
     static IntakeServices intake;
     static ManagedChannel repoChannel;
     static ManagedChannel intakeChannel;
@@ -64,26 +58,8 @@ class IntakeServiceIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        RepoServiceConfig config = new RepoServiceConfig(
-                0,
-                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                LOCALSTACK.getEndpoint().toString(),
-                LOCALSTACK.getRegion(),
-                LOCALSTACK.getAccessKey(),
-                LOCALSTACK.getSecretKey(),
-                "intake-it-docs",
-                0,
-                null, null, null, null, 0, 0L);
-        repo = RepoServices.build(config);
-        repo.startInProcess("intake-it-repo");
+        repo = new V2RepositoryFixture(POSTGRES, LOCALSTACK, "intake-it-repo");
         repoChannel = InProcessChannelBuilder.forName("intake-it-repo").build();
-        DriveServiceGrpc.newBlockingStub(repoChannel)
-                .createDrive(
-                        CreateDriveRequest.newBuilder()
-                                .setName("intake")
-                                .setAccountId(ACCOUNT)
-                                .setDriveType(DriveType.DRIVE_TYPE_INTAKE)
-                                .build());
 
         intake =
                 IntakeServices.build(
@@ -111,7 +87,7 @@ class IntakeServiceIT {
     }
 
     @Test
-    void ingestedPayloadIsFetchableAtTheReceiptAddressAndDedupes() {
+    void ingestedPayloadIsFetchableAtTheReceiptAddressAndDedupes() throws Exception {
         byte[] payload = "intake integration payload".getBytes();
         IngestDocumentRequest request =
                 IngestDocumentRequest.newBuilder()
@@ -125,7 +101,7 @@ class IntakeServiceIT {
 
         IngestDocumentResponse receipt = intakeStub.ingestDocument(request);
         assertThat(receipt.getDocId()).isNotBlank();
-        assertThat(receipt.getNodeId()).isNotBlank();
+        assertThat(receipt.getRevision()).isEqualTo(1);
         assertThat(receipt.getDrive()).isEqualTo("intake");
         assertThat(receipt.getDeduplicated()).isFalse();
         assertThat(receipt.getAddress().getAccountId()).isEqualTo(ACCOUNT);
@@ -134,21 +110,25 @@ class IntakeServiceIT {
 
         // The receipt is honest: the document is fetchable at its address.
         GetDocumentResponse fetched =
-                ai.protomolt.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(repoChannel)
-                        .getDocumentByReference(
-                                GetDocumentByReferenceRequest.newBuilder()
+                ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel)
+                        .getDocument(
+                                GetDocumentRequest.newBuilder()
                                         .setAddress(receipt.getAddress())
                                         .build());
-        assertThat(fetched.getDocument().getBlobBag().getBlob().getData().toByteArray())
+        assertThat(repo.retainedBlob(receipt.getAddress(), fetched.getManifest().getRevision()))
                 .isEqualTo(payload);
         assertThat(fetched.getDocument().getOwnership().getAccountId()).isEqualTo(ACCOUNT);
         assertThat(fetched.getDocument().getOwnership().getDatasourceId()).isEqualTo("ds-it");
+
+        assertThat(fetched.getManifest().getRevision()).isEqualTo(1);
+        assertThat(fetched.getDocument().getBlobBag().getBlob().hasStorageRef()).isTrue();
 
         // Identical content dedupes; the existing coordinates are echoed.
         IngestDocumentResponse again = intakeStub.ingestDocument(request);
         assertThat(again.getDeduplicated()).isTrue();
         assertThat(again.getDocId()).isEqualTo(receipt.getDocId());
-        assertThat(again.getNodeId()).isEqualTo(receipt.getNodeId());
+        assertThat(again.getRevision()).isEqualTo(receipt.getRevision());
+        assertThat(repo.catalog.revisions(receipt.getAddress(), Long.MAX_VALUE, 10)).hasSize(1);
     }
 
     @Test
@@ -182,12 +162,12 @@ class IntakeServiceIT {
 
             // The receipt is honest: the payload is fetchable at its address.
             GetDocumentResponse fetched =
-                    ai.protomolt.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(repoChannel)
-                            .getDocumentByReference(
-                                    GetDocumentByReferenceRequest.newBuilder()
+                    ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel)
+                            .getDocument(
+                                    GetDocumentRequest.newBuilder()
                                             .setAddress(receipt.getAddress())
                                             .build());
-            assertThat(fetched.getDocument().getBlobBag().getBlob().getData().toByteArray())
+            assertThat(repo.retainedBlob(receipt.getAddress(), fetched.getManifest().getRevision()))
                     .isEqualTo(payload);
             assertThat(fetched.getDocument().getOwnership().getDatasourceId())
                     .isEqualTo("ds-http-it");
@@ -210,6 +190,6 @@ class IntakeServiceIT {
                         StatusRuntimeException.class,
                         e ->
                                 assertThat(e.getStatus().getCode())
-                                        .isIn(Status.Code.NOT_FOUND, Status.Code.FAILED_PRECONDITION));
+                                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
     }
 }
