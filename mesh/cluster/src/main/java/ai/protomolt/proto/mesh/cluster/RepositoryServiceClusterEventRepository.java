@@ -1,30 +1,34 @@
 package ai.protomolt.proto.mesh.cluster;
 
 import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.repository.RepositoryStateDocuments;
 import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.mesh.cluster.storage.v1.ClusterEventLog;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterEvent;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
-/** Stores an encrypted cluster directory event log through repository-service blob RPCs. */
+/**
+ * Stores an encrypted cluster directory event log as one v2 repository document whose
+ * CORE part carries the envelope in {@code structured_data}. Every save reads the
+ * current revision and compares-and-sets on it (ExpectedRevision none while absent),
+ * retrying once when a concurrent write lands in between.
+ */
 public final class RepositoryServiceClusterEventRepository
         implements ClusterEventRepository {
 
@@ -33,7 +37,7 @@ public final class RepositoryServiceClusterEventRepository
             "application/vnd.protomolt.cluster-event-log+protobuf";
 
     /**
-     * How long one blob round trip may take before the directory gives up on it. A
+     * How long one repository round trip may take before the directory gives up on it. A
      * blocking stub with no deadline waits forever, so an unreachable or wedged
      * repository-service turned every mesh mutation into an unbounded stall that logged
      * nothing. The bound sits well inside the shortest presence TTL the directory serves,
@@ -65,13 +69,13 @@ public final class RepositoryServiceClusterEventRepository
         this(documents, driveName, objectKey, keyReference, codec, DEFAULT_TIMEOUT);
     }
 
-    /** Creates a repository with an explicit per-call blob timeout. */
+    /** Creates a repository with an explicit per-call repository timeout. */
     public RepositoryServiceClusterEventRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
             EncryptedRepositoryStateCodec codec, Duration timeout) {
         this.documents = Objects.requireNonNull(documents, "documents");
-        this.driveName = requireText(driveName, "driveName", 256);
+        this.driveName = requireText(driveName, "driveName", 200);
         this.objectKey = requireText(objectKey, "objectKey", 1024);
         this.keyReference = requireText(keyReference, "keyReference", 256);
         this.codec = Objects.requireNonNull(codec, "codec");
@@ -102,33 +106,14 @@ public final class RepositoryServiceClusterEventRepository
     @Override
     public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
         ClusterValidation.validate(cluster);
-        GetBlobResponse response;
-        try {
-            response = within().getBlob(GetBlobRequest.newBuilder()
-                    .setStorageRef(storageReference()).build());
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
-                return Optional.empty();
-            }
-            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
-                throw unreachable("return", e);
-            }
-            throw e;
+        var response = readCurrent();
+        if (response.isEmpty()) {
+            return Optional.empty();
         }
-        byte[] stored = response.getData().toByteArray();
-        if (response.getSizeBytes() != stored.length) {
-            throw corrupt("stored cluster event log size does not match repository metadata");
-        }
-        if (response.hasMimeType() && !EncryptedRepositoryStateCodec.ENVELOPE_MIME_TYPE
-                .equals(response.getMimeType())) {
-            throw corrupt("stored cluster event log has an unexpected media type");
-        }
-        EncryptedRepositoryState envelope;
-        try {
-            envelope = EncryptedRepositoryState.parseFrom(stored);
-        } catch (InvalidProtocolBufferException e) {
-            throw corrupt("stored cluster event log envelope is not valid protobuf", e);
-        }
+        var pair = response.get();
+        RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
+        EncryptedRepositoryState envelope =
+                RepositoryStateDocuments.envelopeOf(pair.getValue().getDocument(), "cluster event log");
         byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
         ClusterEventLog eventLog;
         try {
@@ -172,39 +157,50 @@ public final class RepositoryServiceClusterEventRepository
         ValidationResult.validate(eventLog).throwIfInvalid();
         EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
                 CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
-        byte[] stored = envelope.toByteArray();
-        PutBlobResponse response;
-        try {
-            response = within().putBlob(PutBlobRequest.newBuilder()
-                    .setDriveName(driveName)
-                    .setObjectKey(objectKey)
-                    .setData(ByteString.copyFrom(stored))
-                    .setMimeType(EncryptedRepositoryStateCodec.ENVELOPE_MIME_TYPE)
-                    .build());
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
-                // The write may still land server-side. That is safe to leave: the caller
-                // does not install the candidate, and the next mutation rewrites the whole
-                // log from the state this process still considers current.
-                throw unreachable("accept", e);
+        // Compare-and-set on the revision read just before the write; one re-read when
+        // a concurrent save lands in between. A second conflict means real contention.
+        for (int attempt = 0; ; attempt++) {
+            long current = currentRevision();
+            var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, current);
+            final SaveDocumentResponse response;
+            try {
+                response = within().saveDocument(request);
+            } catch (StatusRuntimeException e) {
+                if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                    // The write may still land server-side. That is safe to leave: the caller
+                    // does not install the candidate, and the next mutation re-reads the
+                    // current revision and rewrites the whole log from the state this
+                    // process still considers current.
+                    throw unreachable("accept", e);
+                }
+                if (e.getStatus().getCode() == Status.Code.ABORTED && attempt == 0) {
+                    continue;
+                }
+                throw e;
             }
-            throw e;
-        }
-        if (response.getSizeBytes() != stored.length
-                || !EncryptedRepositoryStateCodec.sha256Hex(stored)
-                .equals(response.getSha256())
-                || !driveName.equals(response.getStorageRef().getDriveName())
-                || !objectKey.equals(response.getStorageRef().getObjectKey())) {
-            throw new IllegalStateException(
-                    "repository service did not confirm the persisted cluster event log");
+            RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
+            return;
         }
     }
 
-    private FileStorageReference storageReference() {
-        return FileStorageReference.newBuilder()
-                .setDriveName(driveName)
-                .setObjectKey(objectKey)
-                .build();
+    /** The committed revision of the state document, or 0 when it does not exist yet. */
+    private long currentRevision() {
+        return readCurrent().map(pair -> pair.getValue().getManifest().getRevision()).orElse(0L);
+    }
+
+    private Optional<Map.Entry<GetDocumentRequest, GetDocumentResponse>> readCurrent() {
+        var request = RepositoryStateDocuments.get(driveName, objectKey);
+        try {
+            return Optional.of(Map.entry(request, within().getDocument(request)));
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return Optional.empty();
+            }
+            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                throw unreachable("return", e);
+            }
+            throw e;
+        }
     }
 
     private String storageContext() {

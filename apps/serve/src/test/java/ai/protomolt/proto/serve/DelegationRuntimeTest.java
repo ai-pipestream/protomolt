@@ -8,18 +8,26 @@ import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
-import com.google.protobuf.ByteString;
+import ai.protomolt.proto.repo.v2.Accession;
+import ai.protomolt.proto.repo.v2.DocumentManifest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartManifestEntry;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import com.google.protobuf.Any;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,11 +35,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.HexFormat;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -82,7 +86,7 @@ class DelegationRuntimeTest {
             assertThat(bridge.coordinator().state().tasks().get(taskId).phase())
                     .isEqualTo(DelegationReducer.Phase.LEASED);
         }
-        assertThat(documents.lastCompare).isNull();
+        assertThat(documents.lastSave).isNull();
 
         try (DelegationRuntime reopened = DelegationRuntime.open(null, KEYS)) {
             assertThat(reopened.bridge().coordinator().workers()).isEmpty();
@@ -108,10 +112,10 @@ class DelegationRuntimeTest {
         }
 
         // The repository service saw only the encrypted envelope.
-        assertThat(documents.lastCompare).isNotNull();
-        assertThat(documents.lastCompare.getKey().getDriveName())
+        assertThat(documents.lastSave).isNotNull();
+        assertThat(documents.lastSave.getTarget().getAddress().getAccountId())
                 .isEqualTo(ProtoMoltServe.DelegationOptions.DEFAULT_DRIVE);
-        assertThat(documents.lastCompare.getData().toStringUtf8())
+        assertThat(documents.lastSave.getDocument().getStructuredData().getValue().toStringUtf8())
                 .doesNotContain("prove the bounded change");
 
         try (DelegationRuntime restored = DelegationRuntime.open(options, KEYS)) {
@@ -257,15 +261,14 @@ class DelegationRuntimeTest {
 
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private ByteString stored;
-        private CompareAndPutBlobRequest lastCompare;
-        private String etag;
-        private int generation;
-        private boolean hangReads;
+        private volatile ai.protomolt.proto.repo.v1.Document stored;
+        private volatile long revision;
+        private volatile SaveDocumentRequest lastSave;
+        private volatile boolean hangReads;
 
         @Override
-        public void getBlobForUpdate(GetBlobForUpdateRequest request,
-                                     StreamObserver<GetBlobForUpdateResponse> observer) {
+        public synchronized void getDocument(GetDocumentRequest request,
+                                             StreamObserver<GetDocumentResponse> observer) {
             if (hangReads) {
                 return;
             }
@@ -273,41 +276,37 @@ class DelegationRuntimeTest {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            observer.onNext(GetBlobForUpdateResponse.newBuilder()
-                    .setVersion(ConditionalBlobVersion.newBuilder()
-                            .setKey(request.getKey()).setEtag(etag).setSizeBytes(stored.size())
-                            .setSha256(sha256(stored)))
-                    .setData(stored)
-                    .setMimeType(RepositoryServiceTranscriptRepository.MIME_TYPE)
-                    .build());
+            var manifest = DocumentManifest.newBuilder().setAddress(request.getAddress())
+                    .setRevision(revision)
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
+                            .setOwner(SaveOwner.newBuilder().setIntake(
+                                    IntakeOrigin.newBuilder().setDatasourceId("serve-test"))));
+            observer.onNext(GetDocumentResponse.newBuilder().setDocument(stored).setManifest(manifest).build());
             observer.onCompleted();
         }
 
         @Override
-        public void compareAndPutBlob(CompareAndPutBlobRequest request,
-                                      StreamObserver<CompareAndPutBlobResponse> observer) {
-            lastCompare = request;
-            boolean allowed = request.hasIfAbsent() ? stored == null
-                    : stored != null && request.getExpectedEtag().equals(etag);
-            if (!allowed) {
-                observer.onError(Status.ABORTED.asRuntimeException());
+        public synchronized void saveDocument(SaveDocumentRequest request,
+                                              StreamObserver<SaveDocumentResponse> observer) {
+            lastSave = request;
+            long expected = request.getExpected().hasNone() ? 0 : request.getExpected().getRevision();
+            if (stored == null ? expected != 0 : revision != expected) {
+                var detail = RevisionConflict.newBuilder().setAddress(request.getTarget().getAddress())
+                        .setExpected(request.getExpected()).setCurrentRevision(revision).build();
+                observer.onError(StatusProto.toStatusRuntimeException(com.google.rpc.Status.newBuilder()
+                        .setCode(Status.Code.ABORTED.value()).setMessage("conditional write conflict")
+                        .addDetails(Any.pack(detail)).build()));
                 return;
             }
-            stored = request.getData();
-            etag = "\"etag-" + (++generation) + "\"";
-            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(
-                    ConditionalBlobVersion.newBuilder().setKey(request.getKey()).setEtag(etag)
-                            .setSizeBytes(stored.size()).setSha256(sha256(stored))).build());
+            stored = request.getDocument();
+            revision++;
+            observer.onNext(SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
+                    .setAccession(Accession.newBuilder().setAddress(request.getTarget().getAddress())
+                            .setRevision(revision).setPreviousRevision(expected))
+                    .build());
             observer.onCompleted();
-        }
-
-        private static String sha256(ByteString data) {
-            try {
-                return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                        .digest(data.toByteArray()));
-            } catch (NoSuchAlgorithmException e) {
-                throw new IllegalStateException(e);
-            }
         }
     }
 }
