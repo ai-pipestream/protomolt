@@ -62,6 +62,9 @@ around that rule.
 | `repo/engine` | `:protomolt-repo-engine` | Shared document, archive, drive and raw-blob operations over ledgers and selected byte storage |
 | `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
 | `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
+| `repo/stack` | `:protomolt-repo-stack` | v2 write-once stacks: streamed puts that return a `StackRef`, reads verified against it |
+| `repo/catalog` | `:protomolt-repo-catalog` | v2 catalog over JDBC + HikariCP + Flyway: revisions, part references, outcomes, writer grants, outbox |
+| `repo/accession` | `:protomolt-repo-accession` | v2 `DocumentService` save and read handlers (slice 1); not mounted by `RepoServices` |
 
 ## Storage model
 

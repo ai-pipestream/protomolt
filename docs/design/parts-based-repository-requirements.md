@@ -154,7 +154,10 @@ does not delete prior evidence or rewrite producer ownership.
 
 Authorized intake and steps may create documents. A step creating a derived document
 records exact source document/revision lineage; PartSource remains a separate choice
-about reusing bytes, not a mandatory copy operation. Non-derived step creation still
+about reusing bytes, not a mandatory copy operation. Part sources and lineage must name
+a document in the saving document's account, and the caller must be able to read that
+document's current revision, as for a read; otherwise the save is rejected with
+SOURCE_NOT_FOUND (decision 37). Non-derived step creation still
 requires explicit creation authority. There is no intake-only creation restriction.
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
 The accession records its save owner and source lineage, including metadata-only saves.
@@ -435,7 +438,19 @@ correctness and RustFS for performance measurements.
 5. An invalid composed document doesn't commit.
 6. An opaque save is accepted only when policy allows it. The opaque occurrences are
    recorded, and a rule needing their contents is recorded as not evaluated.
-7. Unknown fields and int64 values survive save, restart and read.
+7. Exact int64 values survive save, restart and read. Fields from any registered,
+   compatible `Document` version survive save, restart and read byte-for-byte: the
+   save decodes against the latest registered version of the `Document` subject and
+   records that schema artifact ID on the revision. Fields from no registered version
+   are refused with SCHEMA_MISSING. Which versions can be registered is the subject's
+   compatibility mode (`core/compat`, the Confluent set); the registry default is
+   BACKWARD, which can be changed per subject; the `Document` subject is configured
+   BACKWARD_TRANSITIVE (decision 34), so a new `Document` version is checked against
+   every registered version. A save decodes typed content against the latest
+   registered `Document` version; a field that version does not know, including one
+   only an older version had, is refused with SCHEMA_MISSING and never dropped
+   (decision 35). Each revision records the schema version it was saved with, and
+   reads decode with that version.
 8. History pages correctly, and exact-revision reads return the old content.
 9. Each accession writes one outbox event listing what changed. An outbox relay retry
    produces duplicate delivery but no duplicate catalog event.

@@ -1,0 +1,9 @@
+description = 'Write-once stacks: streamed puts that return a StackRef and verified streamed reads'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-blob-spi')
+}
+
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'hibernate-core', 'jedis', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

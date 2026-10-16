@@ -56,7 +56,8 @@ final class DocumentSchemaDefinitions {
             if (!previous.equals(definition)) throw new IllegalArgumentException("conflicting definition for one schema identity");
             return bindings.get(key);
         }
-        if (selected.size() >= limits.maxBindings()) throw new IllegalArgumentException("schema binding count exceeds limit");
+        if (selected.size() >= limits.maxBindings())
+            throw new DocumentRetainedSchemaAssets.LimitExceeded("schema binding count exceeds limit");
         if (definition.descriptors().isEmpty() || definition.descriptors().size() > 16 * MIB
                 || definition.source().filter(value -> value.isEmpty() || value.size() > 16 * MIB).isPresent())
             throw new IllegalArgumentException("definition artifact exceeds byte limit");
@@ -105,7 +106,7 @@ final class DocumentSchemaDefinitions {
             return prior;
         }
         if (artifacts.size() >= 64 || value.size() > limits.maxRetainedBytes() - bytes)
-            throw new IllegalArgumentException("retained artifact union exceeds limit");
+            throw new DocumentRetainedSchemaAssets.LimitExceeded("retained artifact union exceeds limit");
         var retainedValue = resources != null && copy ? resources.copy(value, control) : value;
         artifacts.put(digest, retainedValue); bytes += value.size();
         return retainedValue;

@@ -196,6 +196,23 @@ public interface BlobStore {
     GetResult get(String bucket, String key, String versionId);
 
     /**
+     * Opens a streamed read of one object: the whole object when {@code length} is
+     * negative, otherwise {@code length} bytes from {@code offset}. Nothing is buffered
+     * beyond the transport's own window. The caller closes the stream; closing it
+     * before the end abandons the transfer instead of draining it.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @param offset first byte to read; zero for the start
+     * @param length bytes to read, or negative for the rest of the object
+     * @return the object's bytes
+     * @throws BlobNotFoundException when the object does not exist
+     */
+    default InputStream openStream(String bucket, String key, long offset, long length) {
+        throw new UnsupportedOperationException("streamed object read is unsupported");
+    }
+
+    /**
      * Server-side copy of one object within this store (the four-part partial
      * save's copy-forward: unwritten parts move between addresses without
      * their bytes ever transiting the service).

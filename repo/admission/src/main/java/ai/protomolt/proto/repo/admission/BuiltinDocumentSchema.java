@@ -17,17 +17,26 @@ public final class BuiltinDocumentSchema {
     /** Complete generated descriptor closure and producer-reported compiler artifact identity. */
     public static DocumentSchemaAdmission.Definition definition() { return Holder.DEFINITION; }
 
-    private static final class Holder {
-        private static final DocumentSchemaAdmission.Definition DEFINITION=load();
+    /**
+     * The same identity for another message compiled into the repository contract
+     * artifact, such as a retained WriterGrant snapshot's schema.
+     */
+    public static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor descriptor) {
+        if (!descriptor.getFile().getPackage().startsWith("ai.protomolt.proto.repo."))
+            throw new IllegalArgumentException("Not a repository contract message: "+descriptor.getFullName());
+        return load(descriptor);
     }
 
-    private static DocumentSchemaAdmission.Definition load() {
+    private static final class Holder {
+        private static final DocumentSchemaAdmission.Definition DEFINITION=load(Document.getDescriptor());
+    }
+
+    private static DocumentSchemaAdmission.Definition load(com.google.protobuf.Descriptors.Descriptor descriptor) {
         var properties=new Properties();
         try (var input=Document.class.getResourceAsStream(COMPILER_RESOURCE)) {
             if (input==null) throw new IllegalStateException("Document contract compiler identity is missing");
             properties.load(input);
         } catch (IOException failure) { throw new UncheckedIOException("Cannot read document compiler identity",failure); }
-        var descriptor=Document.getDescriptor();
         var closure=DescriptorFingerprints.closure(descriptor);
         var bytes=closure.toByteString();
         var compilation=SchemaCompilationProvenance.newBuilder()
