@@ -6,6 +6,7 @@ dependencies {
     api project(':protomolt-repo-stack')
     api project(':protomolt-repo-spi')
     implementation project(':protomolt-repo-codec')
+    implementation project(':protomolt-descriptors')
     implementation project(':protomolt-repo-admission')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-authz-grpc')
