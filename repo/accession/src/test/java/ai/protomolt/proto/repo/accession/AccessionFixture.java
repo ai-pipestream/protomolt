@@ -281,6 +281,16 @@ final class AccessionFixture implements AutoCloseable {
             return delegate.open(ref);
         }
 
+        @Override public InputStream openRange(StackRef ref, long offset, long length) throws IOException {
+            opens.incrementAndGet();
+            opened.merge(ref.getKey(), 1, Integer::sum);
+            return delegate.openRange(ref, offset, length);
+        }
+
+        @Override public long head(StackRef ref) throws IOException { return delegate.head(ref); }
+
+        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); }
+
         void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; }
     }
 
