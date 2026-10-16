@@ -66,7 +66,7 @@ final class SaveIntents {
         return intent.build();
     }
 
-    static String sha256(SaveIntent intent) { return sha256Hex(intent.toByteArray()); }
+    static String sha256(SaveIntent intent) { return ai.protomolt.proto.descriptors.MessageFingerprints.fingerprint(intent); }
 
     static String sha256Hex(byte[] bytes) {
         try {
