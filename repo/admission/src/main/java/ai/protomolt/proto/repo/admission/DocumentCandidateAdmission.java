@@ -130,7 +130,7 @@ public final class DocumentCandidateAdmission {
 
     /**
      * A host admission budget (fragment bytes, decoded payload bytes, binding count,
-     * retained artifact bytes or descriptor closure limits) was exhausted. Not a content rejection to record
+     * retained artifact bytes, root/parser counts, wire traversal or descriptor closure limits) was exhausted. Not a content rejection to record
      * against the operation ID, and distinct from a corrupt resolver answer.
      */
     public static final class BudgetExhausted extends RuntimeException {
@@ -207,6 +207,8 @@ public final class DocumentCandidateAdmission {
                     requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
                     DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
                     written.mergeFrom(parsed);
+                } catch (MessageWireBudget.LimitExceededException budget) {
+                    throw new BudgetExhausted(fragment.part() + " fragment: " + budget.getMessage(), budget);
                 } catch (IllegalArgumentException | InvalidProtocolBufferException refused) {
                     throw new ContentRefused(fragment.part() + " fragment: " + refused.getMessage(), refused);
                 }
@@ -234,6 +236,8 @@ public final class DocumentCandidateAdmission {
                 try {
                     inventory = DocumentAnyRootInventory.inspect(container.schema(), slot, fragment.bytes(), request.docId(),
                             new DocumentAnyRootInventory.Limits(Integer.MAX_VALUE, 1_000_000, 64, limits.maxRoots(), 10000), active);
+                } catch (DocumentAnyRootInventory.LimitExceeded | MessageWireBudget.LimitExceededException budget) {
+                    throw new BudgetExhausted(fragment.part() + " roots: " + budget.getMessage(), budget);
                 } catch (IllegalArgumentException refused) {
                     throw new ContentRefused(fragment.part() + " roots: " + refused.getMessage(), refused);
                 }
@@ -254,6 +258,8 @@ public final class DocumentCandidateAdmission {
                                         nested.typeUrl(), DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
                                                 definitions.schemas, active), nested.valueSha256(), nested.valueSizeBytes())),
                                 DocumentSchemaOccurrences.Limits.DEFAULT, evaluatedAt);
+                    } catch (MessageWireBudget.LimitExceededException budget) {
+                        throw new BudgetExhausted("payload at " + envelope.getTypeUrl() + ": " + budget.getMessage(), budget);
                     } catch (DocumentPayloadCheck.ByteBudgetExceeded budget) {
                         throw new BudgetExhausted("candidate decoded payload budget exhausted", budget);
                     } catch (InvalidProtocolBufferException invalid) {

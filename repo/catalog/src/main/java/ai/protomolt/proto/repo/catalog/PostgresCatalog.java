@@ -5,11 +5,13 @@ import ai.protomolt.proto.repo.catalog.CatalogRecords.CommitResult;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Committed;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Conflict;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Credential;
+import ai.protomolt.proto.repo.catalog.CatalogRecords.CredentialCheck;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Current;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Grant;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Outcome;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.OutboxEvent;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Recorded;
+import ai.protomolt.proto.repo.catalog.CatalogRecords.RejectionResult;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.SourcePurged;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.WriteDenied;
 import ai.protomolt.proto.repo.v1.NodeAddress;
@@ -206,7 +208,7 @@ public final class PostgresCatalog implements Catalog {
                     connection.rollback();
                     return new Recorded(recorded.get());
                 }
-                var denied = recheckAuthority(connection, commit);
+                var denied = recheckAuthority(connection, commit.grantIds(), commit.credential());
                 if (denied.isPresent()) {
                     connection.rollback();
                     return denied.get();
@@ -252,9 +254,14 @@ public final class PostgresCatalog implements Catalog {
      * Records a terminal rejection. Returns the stored outcome, which is another
      * request's when the operation ID was already recorded.
      */
-    @Override public Outcome recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome) {
+    @Override public RejectionResult recordRejection(String accountId, String operationId, String intentSha256,
+            RecordedOutcome outcome, List<String> grantIds, Optional<CredentialCheck> credential) {
         if (!outcome.hasRejection()) throw new IllegalArgumentException("Only a rejection is recorded without an accession");
         return inTransaction("Rejection record", connection -> {
+            var existing = selectOutcome(connection, accountId, operationId);
+            if (existing.isPresent()) return new Recorded(existing.get());
+            var denied = recheckAuthority(connection, grantIds, credential);
+            if (denied.isPresent()) return denied.get();
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_operation_outcomes (account_id, operation_id, intent_sha256, outcome, recorded_at)
                     VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
@@ -265,16 +272,17 @@ public final class PostgresCatalog implements Catalog {
                 insert.setTimestamp(5, toTimestamp(outcome.getRecordedAt()));
                 insert.executeUpdate();
             }
-            return selectOutcome(connection, accountId, operationId)
-                    .orElseThrow(() -> new IllegalStateException("Recorded rejection is not readable"));
+            return new Recorded(selectOutcome(connection, accountId, operationId)
+                    .orElseThrow(() -> new IllegalStateException("Recorded rejection is not readable")));
         });
     }
 
-    private Optional<CommitResult> recheckAuthority(Connection connection, Commit commit) throws SQLException {
+    private Optional<WriteDenied> recheckAuthority(Connection connection, List<String> grantIds,
+            Optional<CredentialCheck> credentialCheck) throws SQLException {
         // Every grant authorizing this write, in unsigned UTF-8 order so two commits
         // naming the same grants take their share locks in one order.
         try (var lock = connection.prepareStatement("SELECT snapshot_sha256, revoked FROM lock_catalog_writer_grant(?)")) {
-            for (var grantId : commit.grantIds()) {
+            for (var grantId : grantIds) {
                 lock.setString(1, grantId);
                 try (var rows = lock.executeQuery()) {
                     if (!rows.next()) return Optional.of(new WriteDenied("writer grant " + grantId + " no longer exists"));
@@ -282,8 +290,8 @@ public final class PostgresCatalog implements Catalog {
                 }
             }
         }
-        if (commit.credential().isPresent()) {
-            var credential = commit.credential().get();
+        if (credentialCheck.isPresent()) {
+            var credential = credentialCheck.get();
             try (var lock = connection.prepareStatement(
                     "SELECT generation, revoked FROM lock_catalog_credential_authority(?, ?)")) {
                 lock.setString(1, credential.issuer());

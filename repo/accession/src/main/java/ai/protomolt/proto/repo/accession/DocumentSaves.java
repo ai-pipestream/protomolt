@@ -203,7 +203,7 @@ public final class DocumentSaves {
         if (creating ? current.isPresent() : currentRevision != request.getExpected().getRevision())
             return conflict(caller, request, intentSha, address);
         if (request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
-            return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_OPAQUE_NOT_ALLOWED,
+            return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_OPAQUE_NOT_ALLOWED,
                     "Host policy does not allow opaque content", List.of());
 
         // S10: compose the candidate from carried references, sources and writes.
@@ -217,11 +217,11 @@ public final class DocumentSaves {
             var part = source.getSelector().getPart();
             var from = readableSource(caller, account, source.getFromAddress(), source.getFromRevision());
             if (from.isEmpty())
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Source revision " + source.getFromRevision() + " is not readable", List.of());
             var entry = from.get().getPartsList().stream().filter(p -> p.getEntry().getSelector().getPart() == part).findFirst();
             if (entry.isEmpty())
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Source revision has no " + part + " part", List.of());
             var copied = entry.get().toBuilder();
             copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded();
@@ -232,7 +232,7 @@ public final class DocumentSaves {
         }
         for (var lineage : request.getDerivedFromList()) {
             if (readableSource(caller, account, lineage.getAddress(), lineage.getRevision()).isEmpty())
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Lineage revision " + lineage.getRevision() + " is not readable", List.of());
         }
         for (var write : request.getWritesList()) {
@@ -288,7 +288,7 @@ public final class DocumentSaves {
                     var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
                             .setPart(PartSelector.newBuilder().setPart(v2(v.part()))).setFieldPath(v.fieldPath())
                             .setRuleId(v.ruleId()).setMessage(v.message()).build()).toList();
-                    return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                             "The composed document failed validation", violations);
                 }
                 // Decision 47: use the same verified and admitted CORE bytes for ownership.
@@ -311,15 +311,15 @@ public final class DocumentSaves {
                             .setPayloadLength(occurrence.payloadLength()));
                 artifacts.putAll(accepted.artifacts());
             } catch (DocumentCandidateAdmission.SchemaMissing missing) {
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SCHEMA_MISSING,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SCHEMA_MISSING,
                         missing.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.InvalidPayload invalid) {
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_INVALID_BYTES,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_INVALID_BYTES,
                         invalid.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.SchemaUnavailable unavailable) {
                 throw new AccessionException(Status.Code.UNAVAILABLE, "Schema registry unavailable", null, unavailable);
             } catch (DocumentCandidateAdmission.ContentRefused refused) {
-                return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                         "The composed document cannot be admitted: " + refused.getMessage(), List.of());
             } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
                 throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
@@ -411,7 +411,7 @@ public final class DocumentSaves {
             case CatalogRecords.Recorded again -> replay(caller, request, intentSha, again.outcome());
             case CatalogRecords.Conflict conflict -> throw aborted(address, request.getExpected(), conflict.currentRevision(),
                     conflict.currentTombstone());
-            case CatalogRecords.SourcePurged purged -> reject(caller, request, address, intentSha,
+            case CatalogRecords.SourcePurged purged -> reject(caller, request, address, intentSha, authorized,
                     RejectionReason.REJECTION_REASON_SOURCE_PURGED, "A carried object is purged", List.of());
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
         };
@@ -645,11 +645,15 @@ public final class DocumentSaves {
     }
 
     private SaveDocumentResponse reject(RepositoryCaller caller, SaveDocumentRequest request, NodeAddress address,
-            String intentSha, RejectionReason reason, String message, List<FieldViolation> violations) {
+            String intentSha, WriterAuthority.Authorized authorized, RejectionReason reason, String message, List<FieldViolation> violations) {
         var rejection = SaveRejection.newBuilder().setReason(reason).setMessage(message).addAllViolations(violations).build();
         var outcome = RecordedOutcome.newBuilder().setRejection(rejection).setRecordedAt(timestamp(clock.instant())).build();
-        var stored = catalog.recordRejection(address.getAccountId(), request.getOperationId(), intentSha, outcome);
-        return replay(caller, request, intentSha, stored);
+        var result = catalog.recordRejection(address.getAccountId(), request.getOperationId(), intentSha, outcome,
+                authorized.grantIds(), authorized.credential());
+        return switch (result) {
+            case CatalogRecords.Recorded stored -> replay(caller, request, intentSha, stored.outcome());
+            case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
+        };
     }
 
     static AccessionException aborted(NodeAddress address, ExpectedRevision expected, long current, boolean tombstone) {

@@ -2,10 +2,12 @@ package ai.protomolt.proto.repo.catalog;
 
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Commit;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.CommitResult;
+import ai.protomolt.proto.repo.catalog.CatalogRecords.CredentialCheck;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Credential;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Current;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Grant;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.OutboxEvent;
+import ai.protomolt.proto.repo.catalog.CatalogRecords.RejectionResult;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Outcome;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
@@ -59,10 +61,13 @@ public interface Catalog extends AutoCloseable {
     CommitResult commit(Commit commit);
 
     /**
-     * Records a terminal rejection. Returns the stored outcome, which is another
-     * request's when the operation ID was already recorded.
+     * Records a terminal rejection after rechecking, in the storing transaction, that
+     * every named grant and the credential still authorize the write. Returns the
+     * stored outcome, which is another request's when the operation ID was already
+     * recorded, or the denial when authority was revoked or rotated in between.
      */
-    Outcome recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome);
+    RejectionResult recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome,
+            List<String> grantIds, Optional<CredentialCheck> credential);
 
     // ------------------------------------------------------------------ writer authority
 
