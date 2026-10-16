@@ -1,6 +1,7 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Timestamp;
@@ -114,6 +115,28 @@ class CourtDocumentsTest {
                 .isEqualTo("ansys-inc-v-computational-dynamics-north-america");
         assertThat(CourtDocuments.slug("Morrissette v. Teledyne Princeton, Inc."))
                 .isEqualTo("morrissette-v-teledyne-princeton-inc");
+    }
+
+    @Test
+    void attachesValidSegmentationAndEmbeddingSet() throws Exception {
+        Document base = CourtDocuments.toDocument(opinion("""
+                {
+                  "opinion_id": "10",
+                  "cluster_id": "20",
+                  "case_name": "Smith v. Jones",
+                  "plain_text": "Opinion text."
+                }
+                """));
+        assertThat(CourtDocuments.firstDocumentEmbedding(base)).isEmpty();
+
+        float[] vector = new float[] {0.25f, -0.5f, 0.75f};
+        Document embedded = CourtDocuments.withEmbedding(base, vector, "model2vec-sample");
+
+        assertThat(ValidationResult.validate(embedded).valid()).isTrue();
+        assertThat(CourtDocuments.firstDocumentEmbedding(embedded)).containsExactly(vector);
+        assertThat(embedded.getSearchMetadata().getSegmentationsCount()).isEqualTo(1);
+        assertThat(embedded.getSearchMetadata().getEmbeddingSetsCount()).isEqualTo(1);
+        assertThat(embedded.getSearchMetadata().getSemanticResultsCount()).isZero();
     }
 
     private static JsonNode opinion(String json) throws Exception {

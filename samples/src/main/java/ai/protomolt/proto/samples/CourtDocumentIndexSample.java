@@ -108,7 +108,7 @@ public final class CourtDocumentIndexSample {
                 ndjson.writeLine(ndjsonOut, project(document, vector));
 
                 org.apache.lucene.document.Document luceneDoc = luceneMapper.map(document, mapping);
-                // Document-level embedding lives under repeated semantic_results; catalog
+                // Document-level embedding lives under repeated embedding_sets; catalog
                 // paths cannot index into repeated fields yet — attach explicitly.
                 if (isNonZero(vector)) {
                     luceneDoc.add(new KnnFloatVectorField(
@@ -220,6 +220,8 @@ public final class CourtDocumentIndexSample {
                 .put(metadata, "category", ResolvedFieldHint.skipped())
                 .put(metadata, "metadata", ResolvedFieldHint.skipped())
                 .put(metadata, "semantic_results", ResolvedFieldHint.skipped())
+                .put(metadata, "segmentations", ResolvedFieldHint.skipped())
+                .put(metadata, "embedding_sets", ResolvedFieldHint.skipped())
                 .put(metadata, "custom_fields", ResolvedFieldHint.skipped())
                 .put(metadata, "source_path", ResolvedFieldHint.skipped())
                 .put(document, "blob_bag", ResolvedFieldHint.skipped())

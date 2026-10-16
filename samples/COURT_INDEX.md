@@ -55,8 +55,8 @@ reads are `opinion_id`, `cluster_id`, `case_name`, `date_filed`, `judges`,
 
 Each document is embedded as `title + "\n" + first 2000 chars of body` with the
 Model2Vec provider (`:protomolt-search-embedding-model2vec`) and attached as one
-`SemanticProcessingResult` (`result_id` `court-sample-doc-embedding`) with a single
-`SemanticChunk` carrying a `ChunkEmbedding`.
+`Segmentation` (`segmentation_id` `court-sample-doc-embedding`) with a single
+`Segment` and one `EmbeddingSet` carrying a `SegmentVector`.
 
 Model resolution mirrors the provider module's own tests: when neither
 `protomolt.embeddings.model2vec.path` (also `-Pmodel2vec=`) nor
@@ -74,7 +74,7 @@ Indexing **hints** come from a catalog (`CourtDocumentIndexSample.documentCatalo
 `doc_id` KEYWORD; `title`/`body` TEXT; `language`/`source_uri`/`document_type`/`author`
 KEYWORD; everything else skipped (`search_metadata` carries a TEXT hint so the mapping
 factory expands it into dotted paths). The document-level vector lives under the
-repeated `semantic_results`, which catalog paths cannot index into yet, so the sample
+repeated `embedding_sets`, which catalog paths cannot index into yet, so the sample
 attaches the `KnnFloatVectorField` explicitly — the same vector the NDJSON projection
 carries.
 

@@ -3,10 +3,14 @@ package ai.protomolt.proto.search.index.qdrant;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
+import ai.protomolt.proto.repo.semantic.v1.OffsetUnit;
+import ai.protomolt.proto.repo.semantic.v1.Segment;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
+import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
+import ai.protomolt.proto.repo.semantic.v1.TextSource;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import ai.protomolt.proto.validate.FieldRules;
 import ai.protomolt.proto.validate.StringRules;
 import ai.protomolt.proto.validate.ValidateProto;
@@ -30,12 +34,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Validation on write: {@link QdrantPointMapper#map} gates the source message on its
- * declared {@code ai.protomolt.proto.validate.v1} rules before producing points. The repo
- * Document declares no rules today, so the gate is exercised with a ruled dynamic message:
- * a violating message is rejected by the validator, a valid one sails past validation and
- * fails only at the Document-type check — proving the gate ran first.
+ * declared {@code ai.protomolt.proto.validate.v1} rules before producing points.
  */
 class QdrantPointMapperValidationTest {
+
+    private static final String DIGEST =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
@@ -97,16 +101,25 @@ class QdrantPointMapperValidationTest {
 
     @Test
     void ruleFreeDocumentsMapUnchanged() throws Exception {
-        // The repo Document declares no validation rules: the gate is a pass-through.
         Document document = Document.newBuilder()
                 .setDocId("doc-1")
                 .setSearchMetadata(SearchMetadata.newBuilder()
-                        .addSemanticResults(SemanticProcessingResult.newBuilder()
-                                .setResultId("rs-1")
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-1")
-                                        .setChunkNumber(0)
-                                        .setText("chunk text"))))
+                        .addSegmentations(Segmentation.newBuilder()
+                                .setSegmentationId("rs-1")
+                                .setContentDigest(DIGEST)
+                                .setKind(SegmentationKind.SEGMENTATION_KIND_PARAGRAPH)
+                                .setOffsetUnit(OffsetUnit.OFFSET_UNIT_UTF8_BYTE)
+                                .setSource(TextSource.newBuilder()
+                                        .setFieldPath("search_metadata.body")
+                                        .setBinding(SourceTextBinding.newBuilder()
+                                                .setResolvedTextSha256(DIGEST)
+                                                .setUtf8Length(10)))
+                                .addSegments(Segment.newBuilder()
+                                        .setSegmentId("c-1")
+                                        .setOrdinal(0)
+                                        .setText("chunk text")
+                                        .setStart(0)
+                                        .setEnd(10))))
                 .build();
         IndexMapping mapping = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("doc_id", "doc_id",
