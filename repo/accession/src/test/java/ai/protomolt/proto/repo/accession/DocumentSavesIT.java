@@ -104,6 +104,20 @@ class DocumentSavesIT {
         assertThat(result.getAccession().getManifest().getPartsList()).filteredOn(p ->
                 p.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED)
                 .singleElement().satisfies(p -> assertThat(p.getOwner()).isEqualTo(owner));
+        assertThat(f.catalog.events(address).get(1).getAccessioned().getChangesList()).singleElement()
+                .satisfies(change -> {
+                    assertThat(change.getKind()).isEqualTo(ChangeKind.CHANGE_KIND_SOURCED);
+                    assertThat(change.getSelector().getPart()).isEqualTo(DocumentPart.DOCUMENT_PART_PARSED);
+                    assertThat(change.getSha256()).isEqualTo(sourced.getEntry().getSha256());
+                });
+        f.saves.save(processAuthority(), titleSave("source-carry", address, 2, "v3"));
+        var carried = entry(f.catalog.manifest(address, 3).orElseThrow(), DocumentPart.DOCUMENT_PART_PARSED);
+        assertThat(carried).isEqualTo(sourced);
+        assertThat(carried.getEntry().getOwner()).isEqualTo(owner);
+        assertThat(carried.getEntry().getWrittenInRevision()).isEqualTo(2);
+        assertThat(f.stack.puts.get()).as("only the changed CORE is uploaded").isEqualTo(1);
+        assertThat(f.catalog.manifest(address, 2).orElseThrow()).isEqualTo(stored);
+        assertThat(f.catalog.manifest(address, 1).orElseThrow()).isEqualTo(original);
     }
 
     // §15.3
