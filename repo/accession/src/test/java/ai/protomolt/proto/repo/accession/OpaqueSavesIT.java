@@ -282,6 +282,137 @@ class OpaqueSavesIT {
         assertThat(f.catalog.outcome(account, "op-2")).isEmpty();
     }
 
+    // §15.22/§9: reading a revision with tampered grant evidence fails DATA_LOSS.
+    @Test void tamperedGrantEvidenceFailsOpaqueReadWithDataLoss() throws Exception {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-corrupt-read");
+        f.opaqueSaves.save(caller, opaqueCreate("op-1", address, "doc-corrupt-read"));
+        corruptStoredGrantEvidence();
+
+        assertThatThrownBy(() -> f.reads.getDocument(caller, GetDocumentRequest.newBuilder()
+                .setAddress(address).setAllowOpaque(true).build()))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.DATA_LOSS));
+        assertThatThrownBy(() -> f.reads.getManifest(caller, GetManifestRequest.newBuilder()
+                .setAddress(address).build()))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.DATA_LOSS));
+    }
+
+    // §9: an opaque read re-verifies stored bytes against the recorded occurrence.
+    @Test void tamperedOpaqueRecordFailsOpaqueReadWithDataLoss() throws Exception {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-corrupt-opaque");
+        f.opaqueSaves.save(caller, opaqueCreate("op-1", address, "doc-corrupt-opaque"));
+        corruptStoredOpaqueSha();
+
+        assertThatThrownBy(() -> f.reads.getDocument(caller, GetDocumentRequest.newBuilder()
+                .setAddress(address).setAllowOpaque(true).build()))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.DATA_LOSS));
+    }
+
+    // S1: attestations outside OPAQUE_ALLOWED are malformed, never silently ignored.
+    @Test void attestationsWithoutOpaqueModeAreMalformed() {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-att-typed");
+        var request = create("op-1", address, opaqueDocument("doc-att-typed")).setOwner(stepOwner("chunker"))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .addOpaqueAttestations(attestation(OPAQUE_URL)).build();
+        assertRejected(() -> f.opaqueSaves.save(caller, request), Status.Code.INVALID_ARGUMENT,
+                RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        assertThat(f.catalog.outcome(account, "op-1")).isEmpty();
+        assertThat(f.catalog.current(address)).isEmpty();
+    }
+
+    // S1: segmentation attestation selectors are malformed, never an NPE.
+    @Test void attestationSegmentationSelectorsAreMalformed() {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var segmentation = PartSelector.newBuilder().setSegmentationId("seg-1").build();
+        var badLocator = OccurrenceLocator.newBuilder().setPart(segmentation)
+                .addSteps(RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(4)).build();
+
+        var address = address(account, "doc-att-seg");
+        var direct = create("op-1", address, opaqueDocument("doc-att-seg")).setOwner(stepOwner("chunker"))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+                .addOpaqueAttestations(OpaqueAttestation.newBuilder().setOccurrence(badLocator)
+                        .setTypeUrl(OPAQUE_URL)).build();
+        assertRejected(() -> f.opaqueSaves.save(caller, direct), Status.Code.INVALID_ARGUMENT,
+                RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        assertThat(f.catalog.outcome(account, "op-1")).isEmpty();
+
+        var carried = attestation(OPAQUE_URL).toBuilder().setCarriedFrom(OpaqueSource.newBuilder()
+                .setSource(SourceRevision.newBuilder().setAddress(address).setRevision(1))
+                .setOccurrence(badLocator)).build();
+        var viaCarried = create("op-2", address, opaqueDocument("doc-att-seg")).setOwner(stepOwner("chunker"))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+                .addOpaqueAttestations(carried).build();
+        assertRejected(() -> f.opaqueSaves.save(caller, viaCarried), Status.Code.INVALID_ARGUMENT,
+                RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        assertThat(f.catalog.outcome(account, "op-2")).isEmpty();
+        assertThat(f.catalog.current(address)).isEmpty();
+    }
+
+    // S1: duplicate attestation locators are malformed instead of overwriting.
+    @Test void duplicateAttestationLocatorsAreMalformed() {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-att-dup");
+        var request = opaqueCreate("op-1", address, "doc-att-dup").toBuilder()
+                .addOpaqueAttestations(attestation(OPAQUE_URL)).build();
+        assertRejected(() -> f.opaqueSaves.save(caller, request), Status.Code.INVALID_ARGUMENT,
+                RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        assertThat(f.catalog.outcome(account, "op-1")).isEmpty();
+        assertThat(f.catalog.current(address)).isEmpty();
+    }
+
+    // §3/§11 S9: process authority is denied for OPAQUE_ALLOWED even with no attestations.
+    @Test void processAuthorityOpaqueModeWithoutAttestationsDeniedUnrecorded() {
+        var address = address(account, "doc-pa-opaque-mode");
+        var request = create("op-1", address, document(account, "doc-pa-opaque-mode", "v1", "chunker"))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED).build();
+        assertRejected(() -> f.opaqueSaves.save(processAuthority(), request), Status.Code.PERMISSION_DENIED,
+                RejectionReason.REJECTION_REASON_WRITE_DENIED);
+        assertThat(f.catalog.outcome(account, "op-1")).isEmpty();
+        assertThat(f.catalog.current(address)).isEmpty();
+    }
+
+    // §3/§11 S9: process authority carrying an opaque part is denied before recording.
+    @Test void processAuthorityCarryingOpaqueDeniedUnrecorded() {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-pa-carry");
+        f.opaqueSaves.save(caller, opaqueCreate("op-1", address, "doc-pa-carry"));
+
+        var parsed = Document.newBuilder().putParserResults("docling", ParserResult.newBuilder()
+                .setParserName("docling").setParserVersion("2").setStatus(ParseStatus.PARSE_STATUS_OK).build()).build();
+        var edit = SaveDocumentRequest.newBuilder().setOperationId("op-2")
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(1)).setDocument(parsed)
+                .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED)).setOwner(intakeOwner()).build();
+        assertRejected(() -> f.opaqueSaves.save(processAuthority(), edit), Status.Code.PERMISSION_DENIED,
+                RejectionReason.REJECTION_REASON_WRITE_DENIED);
+        assertThat(f.catalog.outcome(account, "op-2")).isEmpty();
+        assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1);
+    }
+
+    // §3/§11 S9: process authority sourcing an opaque part is denied before recording.
+    @Test void processAuthoritySourcingOpaqueDeniedUnrecorded() {
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var address = address(account, "doc-pa-source");
+        f.opaqueSaves.save(caller, opaqueCreate("op-1", address, "doc-pa-source"));
+
+        var parsed = Document.newBuilder().putParserResults("docling", ParserResult.newBuilder()
+                .setParserName("docling").setParserVersion("2").setStatus(ParseStatus.PARSE_STATUS_OK).build()).build();
+        var edit = SaveDocumentRequest.newBuilder().setOperationId("op-2")
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(1)).setDocument(parsed)
+                .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED)).setOwner(intakeOwner())
+                .addSources(PartSource.newBuilder()
+                        .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                        .setFromAddress(address).setFromRevision(1)).build();
+        assertRejected(() -> f.opaqueSaves.save(processAuthority(), edit), Status.Code.PERMISSION_DENIED,
+                RejectionReason.REJECTION_REASON_WRITE_DENIED);
+        assertThat(f.catalog.outcome(account, "op-2")).isEmpty();
+        assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Document opaqueDocument(String doc) {
@@ -337,6 +468,33 @@ class OpaqueSavesIT {
             var sha = occurrence.getWriterGrant().getWriterGrantSha256();
             occurrence.getWriterGrantBuilder()
                     .setWriterGrantSha256((sha.startsWith("a") ? "b" : "a") + sha.substring(1));
+            var corrupt = stored.build().toByteString();
+            connection.createStatement().execute("ALTER TABLE catalog_revisions DISABLE TRIGGER catalog_revisions_immutable");
+            try (var update = connection.prepareStatement(
+                    "UPDATE catalog_revisions SET manifest = ?, manifest_sha256 = ? WHERE revision = 1")) {
+                update.setBytes(1, corrupt.toByteArray());
+                update.setString(2, DocumentSaves.sha256(corrupt));
+                assertThat(update.executeUpdate()).isEqualTo(1);
+            } finally {
+                connection.createStatement().execute("ALTER TABLE catalog_revisions ENABLE TRIGGER catalog_revisions_immutable");
+            }
+        }
+    }
+
+    /** Rewrites revision 1's stored manifest with a wrong opaque value digest. */
+    private void corruptStoredOpaqueSha() throws Exception {
+        try (var connection = DriverManager.getConnection(f.url,
+                AccessionFixture.POSTGRES.getUsername(), AccessionFixture.POSTGRES.getPassword())) {
+            byte[] bytes;
+            try (var select = connection.prepareStatement("SELECT manifest FROM catalog_revisions WHERE revision = 1");
+                 var rows = select.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                bytes = rows.getBytes(1);
+            }
+            var stored = StoredManifest.parseFrom(bytes).toBuilder();
+            var occurrence = stored.getValidationBuilder().getOpaqueOccurrencesBuilder(0);
+            var sha = occurrence.getSha256();
+            occurrence.setSha256((sha.startsWith("a") ? "b" : "a") + sha.substring(1));
             var corrupt = stored.build().toByteString();
             connection.createStatement().execute("ALTER TABLE catalog_revisions DISABLE TRIGGER catalog_revisions_immutable");
             try (var update = connection.prepareStatement(

@@ -220,8 +220,10 @@ public final class DocumentSaves {
         requireOwnerMatches(request.getOwner(), ownership);
         var authorized = authority.authorize(caller, request.getOwner(), account,
                 ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
-        if (caller.processAuthority() && request.getOpaqueAttestationsCount() > 0)
-            throw WriterAuthority.denied("Process authority may not attest opaque content");
+        // S9: process authority is never valid for opaque writes (requirements §3, §11).
+        if (caller.processAuthority() && (request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED
+                || request.getOpaqueAttestationsCount() > 0))
+            throw WriterAuthority.denied("Process authority may not save opaque content");
 
         // The writer is authorized: from here on refusals are recorded outcomes.
         long currentRevision = current.map(CatalogRecords.Current::revision).orElse(0L);
@@ -238,9 +240,11 @@ public final class DocumentSaves {
         if (opaqueMode) {
             var grantIds = new ArrayList<>(authorized.grantIds());
             try {
-                for (var attestation : request.getOpaqueAttestationsList())
-                    resolvedOpaque.put(attestation.getOccurrence(),
-                            resolveAttestation(caller, request, account, creating, attestation, grantIds, opaqueSourceRefs));
+                for (var attestation : request.getOpaqueAttestationsList()) {
+                    var resolved = resolveAttestation(caller, request, account, creating, attestation, grantIds, opaqueSourceRefs);
+                    if (resolvedOpaque.putIfAbsent(attestation.getOccurrence(), resolved) != null)
+                        throw malformedException("Duplicate opaque attestation occurrence");
+                }
             } catch (OpaqueRefusal refusal) {
                 return reject(caller, request, address, intentSha, authorized, refusal.reason, refusal.getMessage(), List.of());
             }
@@ -270,6 +274,9 @@ public final class DocumentSaves {
             // revision; they never enter a typed save or a refusing host silently.
             var sourcedOpaque = from.get().getValidation().getOpaqueOccurrencesList().stream()
                     .filter(occurrence -> occurrence.getOccurrence().getPart().getPart() == part).toList();
+            // S9 before any recorded outcome: process authority never sources opaque parts.
+            if (!sourcedOpaque.isEmpty() && caller.processAuthority())
+                throw WriterAuthority.denied("Process authority may not save opaque content");
             if (!sourcedOpaque.isEmpty() && !(opaqueMode && opaqueAllowed))
                 return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_OPAQUE_NOT_ALLOWED,
                         "Host policy does not allow opaque content", List.of());
@@ -324,6 +331,10 @@ public final class DocumentSaves {
         if (!parts.containsKey(DocumentPart.DOCUMENT_PART_CORE)
                 || parts.get(DocumentPart.DOCUMENT_PART_CORE).getEntry().getState() != PartState.PART_STATE_PRESENT)
             throw malformedException("A document revision needs a PRESENT CORE part");
+        // S9 before any recorded outcome: process authority never carries opaque parts forward.
+        if (caller.processAuthority() && base.isPresent() && base.get().getValidation().getOpaqueOccurrencesList().stream()
+                .anyMatch(occurrence -> carried.contains(occurrence.getOccurrence().getPart().getPart())))
+            throw WriterAuthority.denied("Process authority may not save opaque content");
 
         // S11: typed validation of written and sourced bytes. Carried parts are not read.
         var admitted = new ArrayList<DocumentCandidateAdmission.Fragment>();
@@ -587,6 +598,18 @@ public final class DocumentSaves {
                 throw malformedException("A source part must come from a document with the same doc_id");
         }
         for (var lineage : request.getDerivedFromList()) DocumentReads.requireAddress(lineage.getAddress());
+        // S1: attestations are request structure. They need OPAQUE_ALLOWED, supported
+        // part selectors (never an NPE from an unmapped part) and unique locators.
+        if (!request.getOpaqueAttestationsList().isEmpty()
+                && request.getValidationMode() != ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+            throw malformedException("Opaque attestations require VALIDATION_MODE_OPAQUE_ALLOWED");
+        var attestedLocators = new HashSet<OccurrenceLocator>();
+        for (var attestation : request.getOpaqueAttestationsList()) {
+            supported(attestation.getOccurrence().getPart());
+            if (attestation.hasCarriedFrom()) supported(attestation.getCarriedFrom().getOccurrence().getPart());
+            if (!attestedLocators.add(attestation.getOccurrence()))
+                throw malformedException("Duplicate opaque attestation occurrence");
+        }
         if (writes.isEmpty() && sourced.isEmpty()) throw malformedException("A save writes or sources at least one part");
         return writes;
     }
@@ -783,8 +806,7 @@ public final class DocumentSaves {
                 throw new OpaqueRefusal(RejectionReason.REJECTION_REASON_OPAQUE_UNOWNED,
                         "Attested opaque owner differs from its carried source");
             source.getPartsList().stream()
-                    .filter(part -> part.getEntry().getSelector().getPart()
-                            == carriedFrom.getOccurrence().getPart().getPart())
+                    .filter(part -> part.getEntry().getSelector().equals(carriedFrom.getOccurrence().getPart()))
                     .filter(StoredPartEntry::hasRef).findFirst()
                     .ifPresent(part -> sourceRefs.add(part.getRef()));
             return new ResolvedOpaque(attestation, original.getOwner(), original.getWriterGrant(),

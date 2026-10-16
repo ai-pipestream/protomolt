@@ -71,8 +71,9 @@ public final class DocumentReads {
                     throw new AccessionException(Status.Code.FAILED_PRECONDITION,
                             "The revision holds opaque content; request its opaque representation explicitly", null);
                 var bytes = read(part.getRef());
-                // Opaque content makes no typed claim and is not decoded (requirements §9).
-                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                // Opaque occurrences are verified undecoded against their record inside
+                // decodeRetained; typed siblings in the same part still decode (§9).
+                decodeRetained(stored, entry.getSelector(), bytes);
                 // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
                 if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
                     bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
@@ -167,9 +168,13 @@ public final class DocumentReads {
 
     private StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
         var latest = current(caller, address);
-        if (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) return latest;
-        return catalog.manifest(address, selector.getRevision())
-                .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));
+        var stored = (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) ? latest
+                : catalog.manifest(address, selector.getRevision())
+                        .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));
+        // §15.22: reading a revision fails closed on corrupt retained grant evidence.
+        for (var occurrence : stored.getValidation().getOpaqueOccurrencesList())
+            DocumentSaves.requireGrantEvidenceIntact(occurrence.getWriterGrant());
+        return stored;
     }
 
     /**
@@ -183,6 +188,8 @@ public final class DocumentReads {
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
         var recorded = validation.getResolvedOccurrencesList().stream()
                 .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
+        var recordedOpaque = validation.getOpaqueOccurrencesList().stream()
+                .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
         DocumentRetainedDefinitions.Reader retained = catalog::artifact;
         try {
             var container = DocumentRetainedDefinitions.definition(binding.getFragmentSchema(), retained);
@@ -194,20 +201,33 @@ public final class DocumentReads {
                     throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
             }
             var fragment = new DocumentCandidateAdmission.Fragment(DocumentSaves.v1(part.getPart()), bytes);
+            var attested = new HashSet<DocumentCandidateAdmission.AttestedOpaque>();
+            for (var occurrence : recordedOpaque)
+                attested.add(new DocumentCandidateAdmission.AttestedOpaque(DocumentSaves.v1(part.getPart()),
+                        occurrence.getOccurrence().getStepsList(), occurrence.getTypeUrl()));
             try (var result = DocumentCandidateAdmission.check(new DocumentCandidateAdmission.Request(
-                    stored.getAddress().getDocId(), List.of(fragment), container),
+                    stored.getAddress().getDocId(), List.of(fragment), container, attested),
                     selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {})) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected)
                     throw lost("Stored part fails its retained rules: " + rejected.violations().getFirst().message(), null);
+                var accepted = (DocumentCandidateAdmission.Accepted) result;
                 var found = new HashSet<ResolvedOccurrence>();
-                for (var occurrence : ((DocumentCandidateAdmission.Accepted) result).occurrences())
+                for (var occurrence : accepted.occurrences())
                     found.add(ResolvedOccurrence.newBuilder().setOccurrence(OccurrenceLocator.newBuilder().setPart(part)
                                     .addAllSteps(occurrence.steps())).setSchema(occurrence.schema())
                             .setPayloadSha256(occurrence.payloadSha256()).setPayloadLength(occurrence.payloadLength()).build());
                 if (!found.equals(new HashSet<>(recorded)))
                     throw lost("Stored part's Any occurrences differ from the retained record", null);
+                var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
+                for (var occurrence : recordedOpaque)
+                    expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(DocumentSaves.v1(part.getPart()),
+                            occurrence.getOccurrence().getStepsList(), occurrence.getTypeUrl(),
+                            occurrence.getSha256(), occurrence.getLength()));
+                if (!new HashSet<>(accepted.opaque()).equals(expectedOpaque))
+                    throw lost("Stored part's opaque occurrences differ from the retained record", null);
             }
         } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.SchemaMissing
+                 | DocumentCandidateAdmission.OpaqueMismatch
                  | DocumentCandidateAdmission.InvalidPayload | DocumentCandidateAdmission.ContentRefused
                  | DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException failure) {
             throw lost("Stored part does not decode with its retained schema: " + failure.getMessage(), failure);
