@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -30,11 +30,11 @@ import java.util.stream.Collectors;
  * ownership, stored as binary protobuf in the catalog.
  */
 public final class DocumentReads {
-    private final PostgresCatalog catalog;
+    private final Catalog catalog;
     private final DocumentSaves.Drives drives;
     private final RepositorySchemaAssetReference container;
 
-    public DocumentReads(PostgresCatalog catalog, DocumentSaves.Drives drives, RepositorySchemaAssetReference container) {
+    public DocumentReads(Catalog catalog, DocumentSaves.Drives drives, RepositorySchemaAssetReference container) {
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
         this.container = Objects.requireNonNull(container);

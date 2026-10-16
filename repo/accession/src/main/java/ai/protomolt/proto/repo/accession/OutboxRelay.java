@@ -1,6 +1,6 @@
 package ai.protomolt.proto.repo.accession;
 
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
 import java.util.Objects;
 
@@ -17,10 +17,10 @@ public final class OutboxRelay {
         void publish(String key, DocumentEvent event) throws Exception;
     }
 
-    private final PostgresCatalog catalog;
+    private final Catalog catalog;
     private final Publisher publisher;
 
-    public OutboxRelay(PostgresCatalog catalog, Publisher publisher) {
+    public OutboxRelay(Catalog catalog, Publisher publisher) {
         this.catalog = Objects.requireNonNull(catalog);
         this.publisher = Objects.requireNonNull(publisher);
     }

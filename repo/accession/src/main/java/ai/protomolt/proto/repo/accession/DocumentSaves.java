@@ -7,7 +7,7 @@ import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.PartLayouts;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
@@ -77,7 +77,7 @@ public final class DocumentSaves {
         }
     }
 
-    private final PostgresCatalog catalog;
+    private final Catalog catalog;
     private final Drives drives;
     private final DocumentSchemaAdmission.Resolver resolver;
     private final DocumentSchemaAdmission.Limits limits;
@@ -87,13 +87,13 @@ public final class DocumentSaves {
     private final DocumentSchemaRetention.Retained container;
     private final WriterAuthority authority;
 
-    public DocumentSaves(PostgresCatalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+    public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock) {
         this(catalog, drives, resolver, limits, reservations, clock, BuiltinDocumentSchema.definition());
     }
 
     /** Seam for tests that need another container identity; production uses the compiled Document. */
-    DocumentSaves(PostgresCatalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+    DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
             DocumentSchemaAdmission.Definition containerDefinition) {
         this.catalog = Objects.requireNonNull(catalog);
@@ -354,7 +354,7 @@ public final class DocumentSaves {
         }
         var result = catalog.commit(new CatalogRecords.Commit(address, request.getOperationId(), intentSha,
                 request.getExpected(), stored, outcome, event, newObjects, carriedObjects, artifacts,
-                authorized.grantId(), authorized.credential()));
+                authorized.grantIds(), authorized.credential()));
         return switch (result) {
             case CatalogRecords.Committed ignored -> SaveDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId()).setAccession(accession).build();

@@ -47,7 +47,7 @@ import javax.sql.DataSource;
  * objects, then the revision, part references, outcome and outbox event. The
  * compare-and-set is the only coordination between hosts; there are no leases.
  */
-public final class PostgresCatalog implements AutoCloseable {
+public final class PostgresCatalog implements Catalog {
     private static final String OUTCOME_KEY = "catalog_operation_outcomes_pkey";
     private final DataSource dataSource;
     private final HikariDataSource owned;
@@ -79,7 +79,7 @@ public final class PostgresCatalog implements AutoCloseable {
     // ------------------------------------------------------------------ stacks
 
     /** Returns the stack ID recorded for this namespace, recording it on first use. */
-    public String registerStack(StackRecord record) {
+    @Override public String registerStack(StackRecord record) {
         return inTransaction("Stack registration", connection -> {
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_stacks (stack_id, provider, endpoint, namespace, record, created_at)
@@ -109,17 +109,17 @@ public final class PostgresCatalog implements AutoCloseable {
     // ------------------------------------------------------------------ reads
 
     /** The recorded outcome for an operation ID, read in a fresh transaction. */
-    public Optional<Outcome> outcome(String accountId, String operationId) {
+    @Override public Optional<Outcome> outcome(String accountId, String operationId) {
         return inTransaction("Outcome lookup", connection -> selectOutcome(connection, accountId, operationId));
     }
 
     /** The document's current-revision pointer. */
-    public Optional<Current> current(NodeAddress address) {
+    @Override public Optional<Current> current(NodeAddress address) {
         return inTransaction("Current revision lookup", connection -> selectCurrent(connection, address, false));
     }
 
     /** One accession's stored manifest; its stored digest is verified. */
-    public Optional<StoredManifest> manifest(NodeAddress address, long revision) {
+    @Override public Optional<StoredManifest> manifest(NodeAddress address, long revision) {
         return inTransaction("Manifest lookup", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT r.manifest, r.manifest_sha256 FROM catalog_revisions r
@@ -137,7 +137,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Stored manifests below {@code beforeRevision}, newest first. */
-    public List<StoredManifest> revisions(NodeAddress address, long beforeRevision, int limit) {
+    @Override public List<StoredManifest> revisions(NodeAddress address, long beforeRevision, int limit) {
         return inTransaction("Revision history", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT r.manifest, r.manifest_sha256, r.revision FROM catalog_revisions r
@@ -157,7 +157,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Retained schema bytes by SHA-256. */
-    public Optional<ByteString> artifact(String sha256) {
+    @Override public Optional<ByteString> artifact(String sha256) {
         return inTransaction("Schema artifact lookup", connection -> {
             try (var select = connection.prepareStatement("SELECT content FROM catalog_schema_artifacts WHERE sha256 = ?")) {
                 select.setString(1, sha256);
@@ -175,7 +175,7 @@ public final class PostgresCatalog implements AutoCloseable {
     // ------------------------------------------------------------------ commit
 
     /** Commits one accession, or reports why it did not. Never partial. */
-    public CommitResult commit(Commit commit) {
+    @Override public CommitResult commit(Commit commit) {
         long next = commit.expected().hasNone() ? 1 : Math.addExact(commit.expected().getRevision(), 1);
         var manifest = commit.manifest();
         if (manifest.getRevision() != next || manifest.getPreviousRevision() != next - 1
@@ -239,7 +239,7 @@ public final class PostgresCatalog implements AutoCloseable {
      * Records a terminal rejection. Returns the stored outcome, which is another
      * request's when the operation ID was already recorded.
      */
-    public Outcome recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome) {
+    @Override public Outcome recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome) {
         if (!outcome.hasRejection()) throw new IllegalArgumentException("Only a rejection is recorded without an accession");
         return inTransaction("Rejection record", connection -> {
             try (var insert = connection.prepareStatement("""
@@ -258,12 +258,14 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     private Optional<CommitResult> recheckAuthority(Connection connection, Commit commit) throws SQLException {
-        if (commit.grantId().isPresent()) {
-            try (var lock = connection.prepareStatement("SELECT snapshot_sha256, revoked FROM lock_catalog_writer_grant(?)")) {
-                lock.setString(1, commit.grantId().get());
+        // Every grant authorizing this write, in unsigned UTF-8 order so two commits
+        // naming the same grants take their share locks in one order.
+        try (var lock = connection.prepareStatement("SELECT snapshot_sha256, revoked FROM lock_catalog_writer_grant(?)")) {
+            for (var grantId : commit.grantIds()) {
+                lock.setString(1, grantId);
                 try (var rows = lock.executeQuery()) {
-                    if (!rows.next()) return Optional.of(new WriteDenied("writer grant no longer exists"));
-                    if (rows.getBoolean(2)) return Optional.of(new WriteDenied("writer grant is revoked"));
+                    if (!rows.next()) return Optional.of(new WriteDenied("writer grant " + grantId + " no longer exists"));
+                    if (rows.getBoolean(2)) return Optional.of(new WriteDenied("writer grant " + grantId + " is revoked"));
                 }
             }
         }
@@ -420,7 +422,7 @@ public final class PostgresCatalog implements AutoCloseable {
     // ------------------------------------------------------------------ writer authority (administration)
 
     /** Provisions an immutable grant. Administrative; never reachable from DocumentService. */
-    public Grant installGrant(WriterGrant grant) {
+    @Override public Grant installGrant(WriterGrant grant) {
         var snapshot = grant.toByteString();
         var sha = sha256Hex(snapshot.toByteArray());
         inTransaction("Grant provisioning", connection -> {
@@ -442,7 +444,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Revokes a grant. Final; prior evidence is kept. */
-    public void revokeGrant(String grantId) {
+    @Override public void revokeGrant(String grantId) {
         inTransaction("Grant revocation", connection -> {
             try (var update = connection.prepareStatement("UPDATE catalog_writer_grants SET revoked = true WHERE grant_id = ?")) {
                 update.setString(1, grantId);
@@ -453,7 +455,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Grants for one account and credential, by unsigned UTF-8 grant ID. */
-    public List<Grant> grants(String accountId, String issuer, UUID credentialId) {
+    @Override public List<Grant> grants(String accountId, String issuer, UUID credentialId) {
         return inTransaction("Grant lookup", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT snapshot, snapshot_sha256, revoked FROM catalog_writer_grants
@@ -472,7 +474,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Whether any grant in the account covers this owner scope, for any credential. */
-    public boolean ownerKnown(String accountId, java.util.function.Predicate<WriterGrant> covers) {
+    @Override public boolean ownerKnown(String accountId, java.util.function.Predicate<WriterGrant> covers) {
         return inTransaction("Owner lookup", connection -> {
             try (var select = connection.prepareStatement(
                     "SELECT snapshot, snapshot_sha256, revoked FROM catalog_writer_grants WHERE account_id = ?")) {
@@ -487,7 +489,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Registers a credential at generation 1. Administrative. */
-    public void registerCredential(String issuer, UUID credentialId, String principal) {
+    @Override public void registerCredential(String issuer, UUID credentialId, String principal) {
         inTransaction("Credential registration", connection -> {
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_credential_authorities (issuer, credential_id, generation, principal)
@@ -502,7 +504,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Moves a credential to its next generation. Administrative. */
-    public long rotateCredential(String issuer, UUID credentialId) {
+    @Override public long rotateCredential(String issuer, UUID credentialId) {
         return inTransaction("Credential rotation", connection -> {
             try (var update = connection.prepareStatement("""
                     UPDATE catalog_credential_authorities SET generation = generation + 1
@@ -518,7 +520,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Revokes a credential's current generation. Final. */
-    public void revokeCredential(String issuer, UUID credentialId) {
+    @Override public void revokeCredential(String issuer, UUID credentialId) {
         inTransaction("Credential revocation", connection -> {
             try (var update = connection.prepareStatement(
                     "UPDATE catalog_credential_authorities SET revoked = true WHERE issuer = ? AND credential_id = ?")) {
@@ -531,7 +533,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** The credential's authority row. */
-    public Optional<Credential> credential(String issuer, UUID credentialId) {
+    @Override public Optional<Credential> credential(String issuer, UUID credentialId) {
         return inTransaction("Credential lookup", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT generation, principal, revoked FROM catalog_credential_authorities
@@ -549,7 +551,7 @@ public final class PostgresCatalog implements AutoCloseable {
     // ------------------------------------------------------------------ outbox
 
     /** Unrelayed events in commit order. */
-    public List<OutboxEvent> pendingEvents(int limit) {
+    @Override public List<OutboxEvent> pendingEvents(int limit) {
         return inTransaction("Outbox claim", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT event_id, event_key, payload, attempts FROM catalog_outbox WHERE relayed_at IS NULL
@@ -566,7 +568,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Stamps an event relayed after the broker acknowledged it. */
-    public boolean markRelayed(String eventId) {
+    @Override public boolean markRelayed(String eventId) {
         return inTransaction("Outbox relay stamp", connection -> {
             try (var update = connection.prepareStatement(
                     "UPDATE catalog_outbox SET relayed_at = ? WHERE event_id = ? AND relayed_at IS NULL")) {
@@ -578,7 +580,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Counts a failed relay attempt; the event stays pending. */
-    public void markAttempt(String eventId) {
+    @Override public void markAttempt(String eventId) {
         inTransaction("Outbox attempt", connection -> {
             try (var update = connection.prepareStatement("UPDATE catalog_outbox SET attempts = attempts + 1 WHERE event_id = ?")) {
                 update.setString(1, eventId);
@@ -589,7 +591,7 @@ public final class PostgresCatalog implements AutoCloseable {
     }
 
     /** Every outbox event of one document, in revision order. */
-    public List<DocumentEvent> events(NodeAddress address) {
+    @Override public List<DocumentEvent> events(NodeAddress address) {
         return inTransaction("Outbox read", connection -> {
             try (var select = connection.prepareStatement("""
                     SELECT o.payload FROM catalog_outbox o JOIN catalog_documents d ON d.document_id = o.document_id
@@ -698,18 +700,7 @@ public final class PostgresCatalog implements AutoCloseable {
         return Timestamp.from(Instant.ofEpochSecond(value.getSeconds(), value.getNanos()));
     }
 
-    /** Unsigned UTF-8 byte order, which equals code point order. */
-    static int compareUtf8(String left, String right) {
-        return Objects.compare(left, right, (a, b) -> {
-            int i = 0, j = 0;
-            while (i < a.length() && j < b.length()) {
-                int x = a.codePointAt(i), y = b.codePointAt(j);
-                if (x != y) return Integer.compare(x, y);
-                i += Character.charCount(x); j += Character.charCount(y);
-            }
-            return Integer.compare(a.length() - i, b.length() - j);
-        });
-    }
+    static int compareUtf8(String left, String right) { return CatalogRecords.compareUtf8(left, right); }
 
     static String sha256Hex(byte[] bytes) {
         try {
