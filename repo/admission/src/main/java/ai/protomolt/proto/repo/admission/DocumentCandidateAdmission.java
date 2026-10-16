@@ -117,10 +117,19 @@ public final class DocumentCandidateAdmission {
     }
 
     /**
+     * A host schema-retention budget (binding count, retained artifact bytes or
+     * descriptor closure limits) was exhausted. Not a content rejection to record
+     * against the operation ID, and distinct from a corrupt resolver answer.
+     */
+    public static final class BudgetExhausted extends RuntimeException {
+        public BudgetExhausted(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /**
      * The host or registry misbehaved: a resolver returned the wrong asset,
-     * two definitions claim one identity, retained bytes differ from their
-     * metadata, or a host limit was hit. Not the caller's fault and not an
-     * outcome to record against its operation ID.
+     * two definitions claim one identity, or retained bytes differ from their
+     * metadata. Not the caller's fault and not an outcome to record against its
+     * operation ID.
      */
     public static final class HostFailure extends RuntimeException {
         public HostFailure(String message, Throwable cause) { super(message, cause); }
@@ -193,6 +202,8 @@ public final class DocumentCandidateAdmission {
             final DocumentSchemaAssetBinding container;
             try {
                 container = definitions.add(request.container());
+            } catch (DocumentRetainedSchemaAssets.LimitExceeded | ai.protomolt.proto.descriptors.ClosedDescriptorSet.LimitExceededException budget) {
+                throw new BudgetExhausted("container definition: " + budget.getMessage(), budget);
             } catch (IllegalArgumentException host) {
                 throw new HostFailure("container definition: " + host.getMessage(), host);
             }
@@ -294,6 +305,8 @@ public final class DocumentCandidateAdmission {
             DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Selection selection) {
         try {
             return definitions.select(resolver, selection);
+        } catch (DocumentRetainedSchemaAssets.LimitExceeded | ai.protomolt.proto.descriptors.ClosedDescriptorSet.LimitExceededException budget) {
+            throw new BudgetExhausted("schema resolution for " + selection.typeUrl() + ": " + budget.getMessage(), budget);
         } catch (IllegalArgumentException host) {
             throw new HostFailure("schema resolution for " + selection.typeUrl() + ": " + host.getMessage(), host);
         }

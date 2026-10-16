@@ -68,7 +68,7 @@ class ReviewFixesIT {
         assertThat(f.saves.save(processAuthority(), request).getAccession().getRevision()).isEqualTo(1);
     }
 
-    // Item 2: a host reservation refusal surfaces as RESOURCE_EXHAUSTED, unrecorded.
+    // Item 2: a host reservation refusal or schema-binding budget exhaustion surfaces as RESOURCE_EXHAUSTED, unrecorded.
     @Test void anExhaustedHostReservationIsNotARecordedRejection() {
         var saves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), bytes -> {
             throw new ai.protomolt.proto.repo.spi.RepositoryException(
@@ -79,6 +79,15 @@ class ReviewFixesIT {
                 document(account, "doc-budget", "b")).build())).isInstanceOfSatisfying(AccessionException.class,
                 failure -> assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
         assertThat(f.catalog.outcome(account, "op-budget")).isEmpty();
+
+        var oneBindingOnly = new DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024, 64, 4L * 1024 * 1024, 1,
+                32L * 1024 * 1024, 64 * 1024 * 1024);
+        var bindingExhausted = new DocumentSaves(f.catalog, f.drives, resolver(), oneBindingOnly,
+                bytes -> () -> {}, Clock.systemUTC());
+        assertThatThrownBy(() -> bindingExhausted.save(processAuthority(), create("op-binding-budget", address,
+                document(account, "doc-budget", "b")).build())).isInstanceOfSatisfying(AccessionException.class,
+                failure -> assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        assertThat(f.catalog.outcome(account, "op-binding-budget")).isEmpty();
     }
 
     // Item 4: a carried part keeps the schema binding it was admitted under.
@@ -174,6 +183,53 @@ class ReviewFixesIT {
         assertThat(saved.getAccession().getValidation().getWriterGrant().getWriterGrantId()).isEqualTo(creator.getGrantId());
         assertThat(saved.getAccession().getDerivedFromList()).singleElement()
                 .satisfies(lineage -> assertThat(lineage.getRevision()).isEqualTo(1));
+    }
+
+    @Test void revokedSourceReadAccessPreventsSourcingAndLineageFromHistoricalRevision() {
+        var credential = UUID.randomUUID();
+        f.catalog.registerCredential(ISSUER, credential, "summarizer");
+        f.stepGrant(account, credential, "summarizer", true);
+        var caller = writer(account, "summarizer", credential, 1);
+
+        var source = address(account, "doc-shared");
+        f.saves.save(processAuthority(), create("op-source-1", source,
+                document(account, "doc-shared", "rev1", "summarizer")).build());
+        // Revision 2 revokes summarizer's read access on the source document.
+        f.saves.save(processAuthority(), corePut("op-source-2", source, 1, ownership(account, "other-reader")));
+
+        var target = source.toBuilder().setGraphId("derived:" + account).build();
+        var coreOnly = Document.newBuilder().setDocId("doc-shared")
+                .setOwnership(ownership(account, "summarizer"))
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle("derived")).build();
+        var withSourcedPart = SaveDocumentRequest.newBuilder().setOperationId("op-sourced-revoked")
+                .setTarget(DocumentTarget.newBuilder().setAddress(target))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .setDocument(coreOnly).addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                .addSources(ai.protomolt.proto.repo.v2.PartSource.newBuilder()
+                        .setSelector(ai.protomolt.proto.repo.v2.PartSelector.newBuilder()
+                                .setPart(DocumentPart.DOCUMENT_PART_PARSED))
+                        .setFromAddress(source).setFromRevision(1))
+                .setOwner(stepOwner("summarizer")).build();
+        assertThatThrownBy(() -> f.saves.save(caller, withSourcedPart)).isInstanceOfSatisfying(AccessionException.class,
+                failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(((ai.protomolt.proto.repo.v2.SaveRejection) failure.detail().orElseThrow()).getReason())
+                            .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND);
+                });
+
+        var withLineage = SaveDocumentRequest.newBuilder().setOperationId("op-lineage-revoked")
+                .setTarget(DocumentTarget.newBuilder().setAddress(target))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .setDocument(coreOnly).addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                .addDerivedFrom(ai.protomolt.proto.repo.v2.SourceRevision.newBuilder()
+                        .setAddress(source).setRevision(1))
+                .setOwner(stepOwner("summarizer")).build();
+        assertThatThrownBy(() -> f.saves.save(caller, withLineage)).isInstanceOfSatisfying(AccessionException.class,
+                failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                    assertThat(((ai.protomolt.proto.repo.v2.SaveRejection) failure.detail().orElseThrow()).getReason())
+                            .isEqualTo(ai.protomolt.proto.repo.v2.RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND);
+                });
     }
 
     private static SaveDocumentRequest corePut(String operation, ai.protomolt.proto.repo.v1.NodeAddress address,

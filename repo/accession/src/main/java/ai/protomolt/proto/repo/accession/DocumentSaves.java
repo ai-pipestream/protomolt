@@ -184,8 +184,8 @@ public final class DocumentSaves {
         var sourced = new LinkedHashMap<DocumentPart, StackRef>();
         for (var source : request.getSourcesList()) {
             var part = source.getSelector().getPart();
-            var from = catalog.manifest(source.getFromAddress(), source.getFromRevision());
-            if (from.isEmpty() || !DocumentReads.canRead(caller, source.getFromAddress(), from.get().getOwnership()))
+            var from = readableSource(caller, account, source.getFromAddress(), source.getFromRevision());
+            if (from.isEmpty())
                 return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Source revision " + source.getFromRevision() + " is not readable", List.of());
             var entry = from.get().getPartsList().stream().filter(p -> p.getEntry().getSelector().getPart() == part).findFirst();
@@ -200,8 +200,7 @@ public final class DocumentSaves {
             changes.add(change(part, ChangeKind.CHANGE_KIND_SOURCED, entry.get().getEntry().getSha256()));
         }
         for (var lineage : request.getDerivedFromList()) {
-            var from = catalog.manifest(lineage.getAddress(), lineage.getRevision());
-            if (from.isEmpty() || !DocumentReads.canRead(caller, lineage.getAddress(), from.get().getOwnership()))
+            if (readableSource(caller, account, lineage.getAddress(), lineage.getRevision()).isEmpty())
                 return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Lineage revision " + lineage.getRevision() + " is not readable", List.of());
         }
@@ -277,6 +276,9 @@ public final class DocumentSaves {
             } catch (DocumentCandidateAdmission.ContentRefused refused) {
                 return reject(caller, request, address, intentSha, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                         "The composed document cannot be admitted: " + refused.getMessage(), List.of());
+            } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
+                throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                        "Admission schema budget exhausted: " + budget.getMessage(), null, budget);
             } catch (DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException host) {
                 // Not the caller's content: surface it, never as a recorded outcome against the operation ID.
                 throw new AccessionException(Status.Code.INTERNAL, "Admission host failure: " + host.getMessage(), null, host);
@@ -520,6 +522,24 @@ public final class DocumentSaves {
     private static void requireOwnerMatches(SaveOwner owner, OwnershipContext ownership) {
         if (owner.hasIntake() && !owner.getIntake().getDatasourceId().equals(ownership.getDatasourceId()))
             throw WriterAuthority.denied("The intake owner differs from the document's datasource");
+    }
+
+    /**
+     * Source and lineage revisions follow the same current-ownership read gate as
+     * {@link DocumentReads}, within the target document's account, so an ACL
+     * tightening or tombstone on the source document cannot be bypassed by citing
+     * an earlier revision.
+     */
+    private Optional<StoredManifest> readableSource(RepositoryCaller caller, String account,
+            NodeAddress sourceAddress, long revision) {
+        if (!sourceAddress.getAccountId().equals(account)) return Optional.empty();
+        var current = catalog.current(sourceAddress)
+                .flatMap(state -> catalog.manifest(sourceAddress, state.revision()));
+        if (current.isEmpty() || current.get().getTombstone()
+                || !DocumentReads.canRead(caller, sourceAddress, current.get().getOwnership()))
+            return Optional.empty();
+        var target = revision == current.get().getRevision() ? current : catalog.manifest(sourceAddress, revision);
+        return target.filter(manifest -> !manifest.getTombstone());
     }
 
     // ------------------------------------------------------------------ outcomes
