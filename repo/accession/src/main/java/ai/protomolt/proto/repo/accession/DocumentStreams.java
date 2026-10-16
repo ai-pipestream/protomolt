@@ -25,7 +25,6 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Server-streaming read handlers for {@code ReadDocument} and {@code ReadBlob}
@@ -37,6 +36,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * object digests before signaling completion.
  */
 public final class DocumentStreams {
+    private static final System.Logger LOG = System.getLogger(DocumentStreams.class.getName());
+
     /** Maximum byte payload per streamed {@code PartData} or {@code ReadBlobResponse} chunk (64 KiB). */
     public static final int CHUNK_SIZE = 64 * 1024;
 
@@ -184,12 +185,12 @@ public final class DocumentStreams {
         if (blobRef == null) {
             throw DocumentReads.notFound("Blob not found: " + request.getBlobId());
         }
-        final ByteString blobsFragment;
+        final RawBlobs.Metadata metadata;
         try (var ignored = Objects.requireNonNull(
                 reads.reservations().reserve(blobsPart.getRef().getLength()), "reservation lease")) {
-            blobsFragment = reads.read(blobsPart.getRef());
+            var blobsFragment = reads.read(blobsPart.getRef());
+            metadata = RawBlobs.metadata(blobsFragment, request.getBlobId());
         }
-        var metadata = RawBlobs.metadata(blobsFragment, request.getBlobId());
         var stackRef = blobRef.getRef();
         long totalLength = stackRef.getLength();
         long offset = request.getOffset();
@@ -241,16 +242,18 @@ public final class DocumentStreams {
         private final DocumentManifest manifest;
         private final List<StoredPartEntry> selectedParts;
         private final byte[] buffer = new byte[CHUNK_SIZE];
-        private final AtomicReference<DocumentAdmissionReservations.Lease> currentLease = new AtomicReference<>();
+        private final Object stateLock = new Object();
 
         private volatile boolean cancelled;
         private volatile InputStream activeStream;
         private boolean completed;
         private boolean pumping;
+        private boolean inPump;
         private boolean manifestSent;
         private int partIndex;
         private StoredPartEntry currentPart;
         private ByteString.Output currentPartAccumulator;
+        private DocumentAdmissionReservations.Lease currentLease;
         private long currentOffset;
         private int lookahead = -1;
 
@@ -274,12 +277,27 @@ public final class DocumentStreams {
             var stream = activeStream;
             activeStream = null;
             closeOnCancel(stream);
-            releaseLease();
+            DocumentAdmissionReservations.Lease leaseToRelease = null;
+            synchronized (stateLock) {
+                cancelled = true;
+                if (!inPump) {
+                    currentPart = null;
+                    currentPartAccumulator = null;
+                    leaseToRelease = currentLease;
+                    currentLease = null;
+                }
+            }
+            if (leaseToRelease != null) {
+                leaseToRelease.close();
+            }
         }
 
         synchronized void pump() {
-            if (pumping || cancelled || completed) return;
-            pumping = true;
+            synchronized (stateLock) {
+                if (pumping || cancelled || completed) return;
+                pumping = true;
+                inPump = true;
+            }
             try {
                 while (!cancelled && !completed && (serverObserver == null || serverObserver.isReady())) {
                     if (!manifestSent) {
@@ -305,8 +323,6 @@ public final class DocumentStreams {
                             var s = activeStream;
                             activeStream = null;
                             closeOnCancel(s);
-                            currentPart = null;
-                            currentPartAccumulator = null;
                             releaseLease();
                             return;
                         }
@@ -324,11 +340,19 @@ public final class DocumentStreams {
                         activeStream = null;
                         closeOnCancel(stream);
                         releaseLease();
-                        currentPartAccumulator = null;
                         return;
                     }
-                    if (currentPartAccumulator != null && chunkLen > 0) {
-                        currentPartAccumulator.write(buffer, 0, chunkLen);
+                    synchronized (stateLock) {
+                        if (cancelled) {
+                            activeStream = null;
+                            closeOnCancel(stream);
+                        } else if (currentPartAccumulator != null && chunkLen > 0) {
+                            currentPartAccumulator.write(buffer, 0, chunkLen);
+                        }
+                    }
+                    if (cancelled) {
+                        releaseLease();
+                        return;
                     }
                     boolean isLast = lookahead < 0;
                     var selector = currentPart.getEntry().getSelector();
@@ -338,8 +362,11 @@ public final class DocumentStreams {
                         activeStream = null;
                         stream.close();
                         if (!currentPart.getEntry().getOpaque()) {
-                            var bytes = currentPartAccumulator.toByteString();
-                            currentPartAccumulator = null;
+                            final ByteString bytes;
+                            synchronized (stateLock) {
+                                bytes = currentPartAccumulator.toByteString();
+                                currentPartAccumulator = null;
+                            }
                             try {
                                 DocumentReads.guarded(() -> {
                                     reads.decodeRetained(stored, selector, bytes);
@@ -349,7 +376,9 @@ public final class DocumentStreams {
                                 releaseLease();
                             }
                         }
-                        currentPart = null;
+                        synchronized (stateLock) {
+                            currentPart = null;
+                        }
                         partIndex++;
                     }
                     var partData = PartData.newBuilder()
@@ -374,7 +403,24 @@ public final class DocumentStreams {
                         .withCause(failure)
                         .asRuntimeException());
             } finally {
-                pumping = false;
+                DocumentAdmissionReservations.Lease leaseToRelease = null;
+                InputStream streamToClose = null;
+                synchronized (stateLock) {
+                    pumping = false;
+                    inPump = false;
+                    if (cancelled || completed) {
+                        streamToClose = activeStream;
+                        activeStream = null;
+                        currentPart = null;
+                        currentPartAccumulator = null;
+                        leaseToRelease = currentLease;
+                        currentLease = null;
+                    }
+                }
+                closeOnCancel(streamToClose);
+                if (leaseToRelease != null) {
+                    leaseToRelease.close();
+                }
             }
         }
 
@@ -384,15 +430,22 @@ public final class DocumentStreams {
             if (!entry.getOpaque()) {
                 var lease = Objects.requireNonNull(
                         reads.reservations().reserve(ref.getLength()), "reservation lease");
-                currentLease.set(lease);
-                if (cancelled) {
-                    releaseLease();
-                    return;
+                synchronized (stateLock) {
+                    if (cancelled) {
+                        lease.close();
+                        return;
+                    }
+                    currentLease = lease;
+                    currentPartAccumulator = ByteString.newOutput(
+                            (int) Math.min(ref.getLength(), Integer.MAX_VALUE));
                 }
-                currentPartAccumulator = ByteString.newOutput(
-                        (int) Math.min(ref.getLength(), Integer.MAX_VALUE));
             } else {
-                currentPartAccumulator = null;
+                synchronized (stateLock) {
+                    if (cancelled) {
+                        return;
+                    }
+                    currentPartAccumulator = null;
+                }
             }
             boolean opened = false;
             InputStream stream = null;
@@ -402,14 +455,22 @@ public final class DocumentStreams {
                 if (cancelled) {
                     activeStream = null;
                     closeOnCancel(stream);
-                    releaseLease();
-                    currentPartAccumulator = null;
                     return;
                 }
-                currentPart = part;
-                currentOffset = 0L;
-                lookahead = stream.read();
-                opened = true;
+                int firstByte = stream.read();
+                synchronized (stateLock) {
+                    if (cancelled) {
+                        activeStream = null;
+                    } else {
+                        currentPart = part;
+                        currentOffset = 0L;
+                        lookahead = firstByte;
+                        opened = true;
+                    }
+                }
+                if (!opened) {
+                    closeOnCancel(stream);
+                }
             } catch (StackDataLoss loss) {
                 closeOnFailure(stream, loss);
                 throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
@@ -419,8 +480,6 @@ public final class DocumentStreams {
             } finally {
                 if (!opened) {
                     activeStream = null;
-                    currentPart = null;
-                    currentPartAccumulator = null;
                     releaseLease();
                 }
             }
@@ -452,8 +511,6 @@ public final class DocumentStreams {
             var stream = activeStream;
             activeStream = null;
             closeOnFailure(stream, primary);
-            currentPart = null;
-            currentPartAccumulator = null;
             releaseLease();
             if (!cancelled) {
                 observer.onError(statusError);
@@ -461,7 +518,13 @@ public final class DocumentStreams {
         }
 
         private void releaseLease() {
-            var lease = currentLease.getAndSet(null);
+            final DocumentAdmissionReservations.Lease lease;
+            synchronized (stateLock) {
+                currentPart = null;
+                currentPartAccumulator = null;
+                lease = currentLease;
+                currentLease = null;
+            }
             if (lease != null) {
                 lease.close();
             }
@@ -583,8 +646,11 @@ public final class DocumentStreams {
         if (stream == null) return;
         try {
             stream.close();
-        } catch (IOException | RuntimeException ignored) {
-            // Client already cancelled the call; underlying stream was closed to abort transfer.
+        } catch (IOException | RuntimeException closeFailure) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    "Failed to close active stack stream during client cancellation",
+                    closeFailure);
         }
     }
 }

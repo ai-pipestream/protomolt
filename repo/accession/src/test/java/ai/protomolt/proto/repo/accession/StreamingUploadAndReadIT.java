@@ -1028,6 +1028,79 @@ class StreamingUploadAndReadIT {
                 .as("cancel() must immediately close the active Stack InputStream")
                 .isTrue();
         assertThat(readReleased.get()).isEqualTo(readReserved.get());
+
+        // 3. Concurrent cancellation while pump() is actively executing does not release the reservation
+        // until the in-flight reader unwinds.
+        var inReader = new CountDownLatch(1);
+        var allowReaderUnwind = new CountDownLatch(1);
+        var activeBytes = new java.util.concurrent.atomic.AtomicLong();
+        ai.protomolt.proto.repo.stack.Stack blockingReadStack = new ForwardingStack(f.stack) {
+            @Override
+            public java.io.InputStream open(StackRef ref) throws IOException {
+                var delegate = super.open(ref);
+                return new java.io.FilterInputStream(delegate) {
+                    private boolean signalled;
+
+                    @Override
+                    public int read(byte[] b, int off, int len) throws IOException {
+                        if (!signalled) {
+                            signalled = true;
+                            inReader.countDown();
+                            try {
+                                allowReaderUnwind.await(5, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new IOException("interrupted", e);
+                            }
+                        }
+                        return super.read(b, off, len);
+                    }
+                };
+            }
+        };
+        var concurrentReads = new DocumentReads(
+                f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", blockingReadStack)),
+                limits(),
+                bytes -> {
+                    activeBytes.addAndGet(bytes);
+                    return () -> activeBytes.addAndGet(-bytes);
+                },
+                java.time.Clock.systemUTC());
+        var concurrentCancelRef = new AtomicReference<Runnable>();
+        var concurrentCancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var concurrentObserver = new io.grpc.stub.ServerCallStreamObserver<ReadDocumentResponse>() {
+            @Override public boolean isCancelled() { return concurrentCancelled.get(); }
+            @Override public void setOnCancelHandler(Runnable onCancelHandler) { concurrentCancelRef.set(onCancelHandler); }
+            @Override public void setCompression(String compression) {}
+            @Override public boolean isReady() { return true; }
+            @Override public void setOnReadyHandler(Runnable onReadyHandler) {}
+            @Override public void request(int count) {}
+            @Override public void setMessageCompression(boolean enable) {}
+            @Override public void disableAutoInboundFlowControl() {}
+            @Override public void onNext(ReadDocumentResponse value) {}
+            @Override public void onError(Throwable t) {}
+            @Override public void onCompleted() {}
+        };
+        var pumpFuture = CompletableFuture.runAsync(() -> concurrentReads.readDocument(
+                processAuthority(),
+                ReadDocumentRequest.newBuilder().setAddress(address).build(),
+                concurrentObserver));
+        assertThat(inReader.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(activeBytes.get()).isEqualTo(coreFragmentBytes.length);
+
+        // Cancel on this thread while pump() is still inside readNextPartChunk on the worker thread.
+        concurrentCancelled.set(true);
+        concurrentCancelRef.get().run();
+        assertThat(activeBytes.get())
+                .as("reservation must remain held while in-flight pump() has not yet unwound")
+                .isEqualTo(coreFragmentBytes.length);
+
+        allowReaderUnwind.countDown();
+        pumpFuture.get(5, TimeUnit.SECONDS);
+        assertThat(activeBytes.get())
+                .as("reservation must be released once in-flight pump() finishes unwinding")
+                .isZero();
     }
 
     @Test
@@ -1043,7 +1116,8 @@ class StreamingUploadAndReadIT {
                 .build();
         sendUpload(header, List.of(ByteString.copyFrom(payload)));
 
-        // 1. Normal completion close() failure on ReadBlob surfaces as UNAVAILABLE error instead of onCompleted.
+        // 1. Normal completion close() failure on ReadDocument surfaces as UNAVAILABLE error instead of onCompleted.
+        var failOnClose = new java.util.concurrent.atomic.AtomicBoolean(true);
         ai.protomolt.proto.repo.stack.Stack failingCloseStack = new ForwardingStack(f.stack) {
             @Override
             public java.io.InputStream open(StackRef ref) throws IOException {
@@ -1052,7 +1126,9 @@ class StreamingUploadAndReadIT {
                     @Override
                     public void close() throws IOException {
                         super.close();
-                        throw new IOException("simulated close failure at EOF");
+                        if (failOnClose.get()) {
+                            throw new IOException("simulated close failure at EOF");
+                        }
                     }
                 };
             }
@@ -1076,7 +1152,58 @@ class StreamingUploadAndReadIT {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
                         assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
 
-        // 2. Delete failure during upload mismatch cleanup is attached as suppressed to the rejection exception.
+        // 2. Cancellation close() failure is logged at WARNING level without throwing on the cancel callback thread.
+        var julLogger = java.util.logging.Logger.getLogger(DocumentStreams.class.getName());
+        var loggedRecords = new java.util.concurrent.CopyOnWriteArrayList<java.util.logging.LogRecord>();
+        var handler = new java.util.logging.Handler() {
+            @Override
+            public void publish(java.util.logging.LogRecord record) {
+                loggedRecords.add(record);
+            }
+            @Override public void flush() {}
+            @Override public void close() {}
+        };
+        julLogger.addHandler(handler);
+        try {
+            failOnClose.set(false);
+            var cancelHandlerRef = new AtomicReference<Runnable>();
+            var ready = new java.util.concurrent.atomic.AtomicBoolean(true);
+            failingReads.readBlob(
+                    processAuthority(),
+                    ReadBlobRequest.newBuilder().setAddress(address).setBlobId("b1").build(),
+                    new io.grpc.stub.ServerCallStreamObserver<ReadBlobResponse>() {
+                        @Override public boolean isCancelled() { return !ready.get(); }
+                        @Override public void setOnCancelHandler(Runnable onCancelHandler) { cancelHandlerRef.set(onCancelHandler); }
+                        @Override public void setCompression(String compression) {}
+                        @Override public boolean isReady() { return ready.get(); }
+                        @Override public void setOnReadyHandler(Runnable onReadyHandler) {}
+                        @Override public void request(int count) {}
+                        @Override public void setMessageCompression(boolean enable) {}
+                        @Override public void disableAutoInboundFlowControl() {}
+                        @Override
+                        public void onNext(ReadBlobResponse value) {
+                            if (value.hasHeader()) {
+                                failOnClose.set(true);
+                                ready.set(false);
+                            }
+                        }
+                        @Override public void onError(Throwable t) {}
+                        @Override public void onCompleted() {}
+                    });
+            cancelHandlerRef.get().run();
+            assertThat(loggedRecords)
+                    .anySatisfy(record -> {
+                        assertThat(record.getLevel()).isEqualTo(java.util.logging.Level.WARNING);
+                        assertThat(record.getMessage()).contains("Failed to close active stack stream during client cancellation");
+                        assertThat(record.getThrown())
+                                .isInstanceOf(IOException.class)
+                                .hasMessageContaining("simulated close failure at EOF");
+                    });
+        } finally {
+            julLogger.removeHandler(handler);
+        }
+
+        // 3. Delete failure during upload mismatch cleanup is attached as suppressed to the rejection exception.
         ai.protomolt.proto.repo.stack.Stack failingDeleteStack = new ForwardingStack(f.stack) {
             @Override
             public void delete(StackRef ref) throws IOException {
