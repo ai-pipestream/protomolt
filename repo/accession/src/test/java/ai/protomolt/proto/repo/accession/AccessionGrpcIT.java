@@ -45,8 +45,10 @@ class AccessionGrpcIT {
                 }
                 var saved = stub.saveDocument(create("op-1", address, document).build());
                 assertThat(saved.getAccession().getRevision()).isEqualTo(1);
+                var stored = f.catalog.manifest(address, 1).orElseThrow();
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build()).getDocument())
-                        .isEqualTo(document);
+                        .isEqualTo(claimChecked(document, stored));
+                assertThat(f.blobBytes(stored, "b1")).isEqualTo(document.getBlobBag().getBlob().getData().toByteArray());
                 assertThat(stub.getManifest(GetManifestRequest.newBuilder().setAddress(address).build())
                         .getManifest().getPartsCount()).isEqualTo(3);
                 assertThat(stub.listRevisions(ListRevisionsRequest.newBuilder().setAddress(address).setPageSize(5).build())

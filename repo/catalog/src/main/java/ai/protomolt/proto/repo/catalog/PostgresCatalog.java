@@ -312,11 +312,17 @@ public final class PostgresCatalog implements Catalog {
         }
     }
 
-    /** Share-locks carried objects so a purge cannot mark them while this commit references them. */
+    /**
+     * Share-locks carried objects, part and blob references alike, so a purge cannot
+     * mark them while this commit references them. Rows are locked in
+     * {@code (stack_id, object_key)} order, the order purge takes them in.
+     */
     private static Optional<StackRef> checkCarried(Connection connection, List<StackRef> carried) throws SQLException {
+        var ordered = carried.stream().sorted(java.util.Comparator.comparing(StackRef::getStackId, CatalogRecords::compareUtf8)
+                .thenComparing(StackRef::getKey, CatalogRecords::compareUtf8)).toList();
         try (var select = connection.prepareStatement(
                 "SELECT purged, sha256, length FROM catalog_objects WHERE stack_id = ? AND object_key = ? FOR SHARE")) {
-            for (var ref : carried) {
+            for (var ref : ordered) {
                 select.setString(1, ref.getStackId());
                 select.setString(2, ref.getKey());
                 try (var rows = select.executeQuery()) {
@@ -391,6 +397,21 @@ public final class PostgresCatalog implements Catalog {
                 insert.setString(7, present ? part.getRef().getKey() : null);
                 insert.setLong(8, entry.getWrittenInRevision());
                 insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+        try (var insert = connection.prepareStatement("""
+                INSERT INTO catalog_blob_refs (document_id, revision, blob_id, stack_id, object_key)
+                VALUES (?, ?, ?, ?, ?)""")) {
+            for (var part : manifest.getPartsList()) {
+                for (var blob : part.getBlobRefsList()) {
+                    insert.setLong(1, documentId);
+                    insert.setLong(2, revision);
+                    insert.setString(3, blob.getBlobId());
+                    insert.setString(4, blob.getRef().getStackId());
+                    insert.setString(5, blob.getRef().getKey());
+                    insert.addBatch();
+                }
             }
             insert.executeBatch();
         }

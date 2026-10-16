@@ -53,8 +53,12 @@ public final class DocumentReads {
                     throw new AccessionException(Status.Code.FAILED_PRECONDITION,
                             "The revision holds opaque content; request its opaque representation explicitly", null);
                 requireContainer(stored, entry.getSelector());
+                var bytes = read(part.getRef());
+                // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
+                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
                 try {
-                    document.mergeFrom(read(part.getRef()));
+                    document.mergeFrom(bytes);
                 } catch (InvalidProtocolBufferException corrupt) {
                     throw new AccessionException(Status.Code.DATA_LOSS, "Stored part does not decode", null, corrupt);
                 }

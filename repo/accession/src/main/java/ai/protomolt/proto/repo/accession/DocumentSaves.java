@@ -138,8 +138,16 @@ public final class DocumentSaves {
         var account = address.getAccountId();
         DocumentReads.requireAccount(caller, account);
 
-        // S6-S7: content identity, intent, and the early outcome lookup.
+        // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
+        // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out.
         var fragments = split(document, writes);
+        var storedFragments = new EnumMap<DocumentPart, ByteString>(fragments);
+        List<RawBlobs.Raw> rawBlobs = List.of();
+        if (fragments.containsKey(DocumentPart.DOCUMENT_PART_BLOBS)) {
+            var extracted = RawBlobs.extract(fragments.get(DocumentPart.DOCUMENT_PART_BLOBS));
+            storedFragments.put(DocumentPart.DOCUMENT_PART_BLOBS, extracted.stored());
+            rawBlobs = extracted.blobs();
+        }
         var contents = new HashMap<Integer, SaveIntents.Content>();
         for (int index = 0; index < request.getWritesCount(); index++) {
             var write = request.getWrites(index);
@@ -212,7 +220,7 @@ public final class DocumentSaves {
                     .setOwner(request.getOwner());
             switch (write.getAction()) {
                 case WRITE_ACTION_PUT -> {
-                    var bytes = fragments.get(part);
+                    var bytes = storedFragments.get(part);
                     entry.setState(PartState.PART_STATE_PRESENT).setSizeBytes(bytes.size()).setSha256(sha256(bytes));
                     changes.add(change(part, previous != null && previous.getEntry().getState() == PartState.PART_STATE_PRESENT
                             ? ChangeKind.CHANGE_KIND_REPLACED : ChangeKind.CHANGE_KIND_ADDED, entry.getSha256()));
@@ -238,7 +246,7 @@ public final class DocumentSaves {
         for (var write : request.getWritesList())
             if (write.getAction() == WriteAction.WRITE_ACTION_PUT)
                 admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(write.getSelector().getPart()),
-                        fragments.get(write.getSelector().getPart())));
+                        storedFragments.get(write.getSelector().getPart())));
         for (var entry : sourced.entrySet())
             admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(entry.getKey()), readVerified(entry.getValue())));
         var validation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
@@ -289,27 +297,32 @@ public final class DocumentSaves {
                 .filter(occurrence -> carried.contains(occurrence.getOccurrence().getPart().getPart()))
                 .forEach(validation::addResolvedOccurrences));
 
-        // S12: write new bytes to the drive's stack, before the commit transaction.
+        // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
+        // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
         var stack = drives.resolve(request.getDrive());
         var newObjects = new ArrayList<StackRef>();
+        var blobRefs = new ArrayList<BlobObjectRef>();
+        for (var raw : rawBlobs) {
+            var ref = put(stack, raw.data());
+            newObjects.add(ref);
+            blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
+        }
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
             var part = write.getSelector().getPart();
-            var bytes = fragments.get(part);
-            final StackRef ref;
-            try {
-                ref = stack.put(bytes.toByteArray());
-            } catch (IOException failure) {
-                throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
-            }
-            if (!ref.getSha256().equals(parts.get(part).getEntry().getSha256()) || ref.getLength() != bytes.size())
-                throw new IllegalStateException("Stack digest differs from the encoded fragment");
+            var ref = put(stack, storedFragments.get(part));
             newObjects.add(ref);
-            parts.put(part, parts.get(part).toBuilder().setRef(ref).build());
+            var entry = parts.get(part).toBuilder().setRef(ref);
+            if (part == DocumentPart.DOCUMENT_PART_BLOBS) entry.addAllBlobRefs(blobRefs);
+            parts.put(part, entry.build());
         }
+        // Carried and sourced parts reference their objects, raw blobs included, without re-upload.
         var carriedObjects = new ArrayList<StackRef>();
-        for (var part : parts.values())
+        for (var part : parts.values()) {
             if (part.hasRef() && !newObjects.contains(part.getRef())) carriedObjects.add(part.getRef());
+            for (var blob : part.getBlobRefsList())
+                if (!newObjects.contains(blob.getRef())) carriedObjects.add(blob.getRef());
+        }
 
         // S13-S15: build the records for this revision and commit them together.
         var ordered = parts.values().stream()
@@ -608,6 +621,19 @@ public final class DocumentSaves {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Writes one object and checks the stack's reference against the bytes it was given. */
+    private static StackRef put(Stack stack, ByteString bytes) {
+        final StackRef ref;
+        try {
+            ref = stack.put(bytes.toByteArray());
+        } catch (IOException failure) {
+            throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
+        }
+        if (!ref.getSha256().equals(sha256(bytes)) || ref.getLength() != bytes.size())
+            throw new IllegalStateException("Stack digest differs from the bytes written");
+        return ref;
+    }
 
     private ByteString readVerified(StackRef ref) {
         try (var stream = drives.byId(ref.getStackId()).open(ref)) {

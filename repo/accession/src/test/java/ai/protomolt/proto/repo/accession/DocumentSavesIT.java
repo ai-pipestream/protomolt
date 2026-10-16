@@ -152,7 +152,9 @@ class DocumentSavesIT {
         f.saves.save(processAuthority(), create("op-1", address, document).build());
         try (var restarted = f.restarted()) {
             var read = restarted.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build());
-            assertThat(read.getDocument()).isEqualTo(document);
+            var stored = restarted.catalog.manifest(address, 1).orElseThrow();
+            assertThat(read.getDocument()).isEqualTo(claimChecked(document, stored));
+            assertThat(restarted.blobBytes(stored, "b1")).isEqualTo(document.getBlobBag().getBlob().getData().toByteArray());
             assertThat(read.getDocument().getBlobBag().getBlob().getSizeBytes()).isEqualTo(Long.MAX_VALUE - 7);
             assertThat(read.getDocument().getStructuredData().unpack(com.google.protobuf.Int64Value.class).getValue())
                     .isEqualTo(Long.MAX_VALUE);
