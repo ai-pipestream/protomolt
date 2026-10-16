@@ -311,6 +311,40 @@ class LargeStreamQualificationIT {
                 .build()).hasNone()).isTrue();
         assertThat(listS3Objects()).isEmpty();
 
+        // 1b. Mid-stream abort on a 600 MB HTTP upload after streaming 16 MiB -> 0 objects, NoRecordedOutcome.
+        String token = "http-cancel-token-" + UUID.randomUUID();
+        var httpServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        httpServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        httpServer.createContext(UploadHttpHandler.UPLOAD_PATH, new UploadHttpHandler(f.uploads, token));
+        httpServer.start();
+        try (var socket = new java.net.Socket("127.0.0.1", httpServer.getAddress().getPort())) {
+            var out = socket.getOutputStream();
+            String rawRequest = "POST " + UploadHttpHandler.UPLOAD_PATH
+                    + "?account_id=" + account
+                    + "&datasource_id=ds-1"
+                    + "&drive=default"
+                    + "&filename=cancel-http.bin"
+                    + "&operation_id=op-cancel-http-600mb"
+                    + "&doc_id=doc-cancel-http-600mb"
+                    + " HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Authorization: Bearer " + token + "\r\n"
+                    + "Content-Length: " + SIX_HUNDRED_MB + "\r\n\r\n";
+            out.write(rawRequest.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            for (int i = 0; i < 16; i++) { // 16 MiB
+                out.write(PATTERN);
+            }
+            out.flush();
+        }
+        Thread.sleep(150);
+        httpServer.stop(0);
+        assertThat(blockingStub.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
+                .setAccountId(account)
+                .setOperationId("op-cancel-http-600mb")
+                .build()).hasNone()).isTrue();
+        assertThat(f.catalog.current(address(account, "doc-cancel-http-600mb"))).isEmpty();
+        assertThat(listS3Objects()).isEmpty();
+
         // 2. Slow consumer backpressure and mid-stream cancellation on ReadBlob.
         var readAddress = address(account, "doc-slow-read");
         long blobSize = 8L * 1024 * 1024; // 8 MiB (128 chunks of 64 KiB)

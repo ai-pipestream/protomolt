@@ -125,17 +125,14 @@ public final class UploadHttpHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         try {
             if (!authenticate(exchange.getRequestHeaders())) {
-                drainRequestBody(exchange);
                 sendError(exchange, HTTP_UNAUTHORIZED, "Unauthorized");
                 return;
             }
             if (!UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
-                drainRequestBody(exchange);
                 sendError(exchange, HTTP_NOT_FOUND, "Not found");
                 return;
             }
             if (!METHOD_POST.equalsIgnoreCase(exchange.getRequestMethod())) {
-                drainRequestBody(exchange);
                 sendError(exchange, HTTP_METHOD_NOT_ALLOWED, "Method not allowed");
                 return;
             }
@@ -149,7 +146,6 @@ public final class UploadHttpHandler implements HttpHandler {
             var driveName = param(query, headers, PARAM_DRIVE, HEADER_DRIVE_NAME);
             var filename = param(query, headers, PARAM_FILENAME, HEADER_FILENAME);
             if (isBlank(accountId) || isBlank(datasourceId) || isBlank(driveName) || isBlank(filename)) {
-                drainRequestBody(exchange);
                 sendError(
                         exchange,
                         HTTP_BAD_REQUEST,
@@ -219,16 +215,12 @@ public final class UploadHttpHandler implements HttpHandler {
                 sendJson(exchange, HTTP_OK, json);
             }
         } catch (LengthRequiredException missingLength) {
-            drainRequestBody(exchange);
             sendError(exchange, HTTP_LENGTH_REQUIRED, missingLength.getMessage());
         } catch (BadRequestException badRequest) {
-            drainRequestBody(exchange);
             sendError(exchange, HTTP_BAD_REQUEST, badRequest.getMessage());
         } catch (AccessionException failure) {
-            drainRequestBody(exchange);
             sendError(exchange, mapStatusCode(failure), failure.getMessage());
         } catch (RuntimeException failure) {
-            drainRequestBody(exchange);
             sendError(exchange, HTTP_INTERNAL_ERROR, "Upload failed");
         } finally {
             exchange.close();
@@ -418,17 +410,6 @@ public final class UploadHttpHandler implements HttpHandler {
         return value == null || value.isBlank();
     }
 
-    private static void drainRequestBody(HttpExchange exchange) {
-        try (var body = exchange.getRequestBody()) {
-            byte[] buffer = new byte[8192];
-            while (body.read(buffer) >= 0) {
-                // Drain remaining bytes so the HTTP client receives the status response cleanly.
-            }
-        } catch (IOException ignored) {
-            // Ignore stream close/read errors when draining after a failure.
-        }
-    }
-
     private static String formatSuccessJson(
             String operationId,
             String docId,
@@ -448,6 +429,7 @@ public final class UploadHttpHandler implements HttpHandler {
 
     private static void sendError(HttpExchange exchange, int statusCode, String message) throws IOException {
         String safeMessage = message == null ? "" : message;
+        exchange.getResponseHeaders().set("Connection", "close");
         sendJson(exchange, statusCode, "{\"error\":\"" + escapeJson(safeMessage) + "\"}");
     }
 

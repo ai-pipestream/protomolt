@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.accession;
 
+import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.stack.StackDataLoss;
 import ai.protomolt.proto.repo.v2.BlobHeader;
@@ -7,7 +8,6 @@ import ai.protomolt.proto.repo.v2.BlobObjectRef;
 import ai.protomolt.proto.repo.v2.DocumentManifest;
 import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.PartData;
-import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartState;
 import ai.protomolt.proto.repo.v2.ReadBlobRequest;
 import ai.protomolt.proto.repo.v2.ReadBlobResponse;
@@ -25,6 +25,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Server-streaming read handlers for {@code ReadDocument} and {@code ReadBlob}
@@ -183,7 +184,11 @@ public final class DocumentStreams {
         if (blobRef == null) {
             throw DocumentReads.notFound("Blob not found: " + request.getBlobId());
         }
-        var blobsFragment = reads.read(blobsPart.getRef());
+        final ByteString blobsFragment;
+        try (var ignored = Objects.requireNonNull(
+                reads.reservations().reserve(blobsPart.getRef().getLength()), "reservation lease")) {
+            blobsFragment = reads.read(blobsPart.getRef());
+        }
         var metadata = RawBlobs.metadata(blobsFragment, request.getBlobId());
         var stackRef = blobRef.getRef();
         long totalLength = stackRef.getLength();
@@ -235,15 +240,19 @@ public final class DocumentStreams {
         private final StoredManifest stored;
         private final DocumentManifest manifest;
         private final List<StoredPartEntry> selectedParts;
+        private final byte[] buffer = new byte[CHUNK_SIZE];
+        private final AtomicReference<DocumentAdmissionReservations.Lease> currentLease = new AtomicReference<>();
 
         private volatile boolean cancelled;
+        private volatile InputStream activeStream;
         private boolean completed;
         private boolean pumping;
         private boolean manifestSent;
         private int partIndex;
-        private PartSelector currentSelector;
-        private ByteString currentBytes;
-        private int currentOffset;
+        private StoredPartEntry currentPart;
+        private ByteString.Output currentPartAccumulator;
+        private long currentOffset;
+        private int lookahead = -1;
 
         DocumentStreamSession(
                 DocumentReads reads,
@@ -262,6 +271,10 @@ public final class DocumentStreams {
 
         void cancel() {
             cancelled = true;
+            var stream = activeStream;
+            activeStream = null;
+            closeOnCancel(stream);
+            releaseLease();
         }
 
         synchronized void pump() {
@@ -274,7 +287,7 @@ public final class DocumentStreams {
                         observer.onNext(ReadDocumentResponse.newBuilder().setManifest(manifest).build());
                         continue;
                     }
-                    if (currentBytes == null) {
+                    if (currentPart == null) {
                         if (partIndex >= selectedParts.size()) {
                             completed = true;
                             observer.onNext(ReadDocumentResponse.newBuilder()
@@ -283,57 +296,175 @@ public final class DocumentStreams {
                             observer.onCompleted();
                             return;
                         }
-                        var part = selectedParts.get(partIndex);
-                        currentSelector = part.getEntry().getSelector();
-                        currentBytes = DocumentReads.guarded(() -> loadAndVerifyPart(part));
-                        currentOffset = 0;
+                        var nextPart = selectedParts.get(partIndex);
+                        DocumentReads.guarded(() -> {
+                            openPart(nextPart);
+                            return null;
+                        });
+                        if (cancelled || currentPart == null) {
+                            var s = activeStream;
+                            activeStream = null;
+                            closeOnCancel(s);
+                            currentPart = null;
+                            currentPartAccumulator = null;
+                            releaseLease();
+                            return;
+                        }
                     }
-                    int remaining = currentBytes.size() - currentOffset;
-                    int chunkLen = Math.min(CHUNK_SIZE, remaining);
-                    boolean isLast = (currentOffset + chunkLen) >= currentBytes.size();
-                    var chunk = currentBytes.substring(currentOffset, currentOffset + chunkLen);
-                    var partData = PartData.newBuilder()
-                            .setSelector(currentSelector)
-                            .setOffset(currentOffset)
-                            .setData(chunk)
-                            .setLast(isLast)
-                            .build();
+
+                    var stream = activeStream;
+                    if (stream == null || cancelled) {
+                        activeStream = null;
+                        closeOnCancel(stream);
+                        releaseLease();
+                        return;
+                    }
+                    int chunkLen = readNextPartChunk(stream, buffer);
+                    if (cancelled) {
+                        activeStream = null;
+                        closeOnCancel(stream);
+                        releaseLease();
+                        currentPartAccumulator = null;
+                        return;
+                    }
+                    if (currentPartAccumulator != null && chunkLen > 0) {
+                        currentPartAccumulator.write(buffer, 0, chunkLen);
+                    }
+                    boolean isLast = lookahead < 0;
+                    var selector = currentPart.getEntry().getSelector();
+                    long offset = currentOffset;
                     currentOffset += chunkLen;
                     if (isLast) {
-                        currentBytes = null;
-                        currentSelector = null;
+                        activeStream = null;
+                        stream.close();
+                        if (!currentPart.getEntry().getOpaque()) {
+                            var bytes = currentPartAccumulator.toByteString();
+                            currentPartAccumulator = null;
+                            try {
+                                DocumentReads.guarded(() -> {
+                                    reads.decodeRetained(stored, selector, bytes);
+                                    return null;
+                                });
+                            } finally {
+                                releaseLease();
+                            }
+                        }
+                        currentPart = null;
                         partIndex++;
                     }
+                    var partData = PartData.newBuilder()
+                            .setSelector(selector)
+                            .setOffset(offset)
+                            .setData(ByteString.copyFrom(buffer, 0, chunkLen))
+                            .setLast(isLast)
+                            .build();
                     observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
                 }
+            } catch (StackDataLoss loss) {
+                failWith(loss, AccessionGrpcService.toStatus(
+                        new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss)));
+            } catch (IOException failure) {
+                failWith(failure, AccessionGrpcService.toStatus(
+                        new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure)));
             } catch (AccessionException failure) {
-                completed = true;
-                if (!cancelled) {
-                    observer.onError(AccessionGrpcService.toStatus(failure));
-                }
+                failWith(failure, AccessionGrpcService.toStatus(failure));
             } catch (RuntimeException failure) {
-                completed = true;
-                if (!cancelled) {
-                    observer.onError(Status.INTERNAL
-                            .withDescription("Repository failure")
-                            .withCause(failure)
-                            .asRuntimeException());
-                }
+                failWith(failure, Status.INTERNAL
+                        .withDescription("Repository failure")
+                        .withCause(failure)
+                        .asRuntimeException());
             } finally {
                 pumping = false;
             }
         }
 
-        private ByteString loadAndVerifyPart(StoredPartEntry part) {
+        private void openPart(StoredPartEntry part) {
             var entry = part.getEntry();
-            var bytes = reads.read(part.getRef());
+            var ref = part.getRef();
             if (!entry.getOpaque()) {
-                reads.decodeRetained(stored, entry.getSelector(), bytes);
+                var lease = Objects.requireNonNull(
+                        reads.reservations().reserve(ref.getLength()), "reservation lease");
+                currentLease.set(lease);
+                if (cancelled) {
+                    releaseLease();
+                    return;
+                }
+                currentPartAccumulator = ByteString.newOutput(
+                        (int) Math.min(ref.getLength(), Integer.MAX_VALUE));
+            } else {
+                currentPartAccumulator = null;
             }
-            if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS) {
-                bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
+            boolean opened = false;
+            InputStream stream = null;
+            try {
+                stream = reads.drives().byId(ref.getStackId()).open(ref);
+                activeStream = stream;
+                if (cancelled) {
+                    activeStream = null;
+                    closeOnCancel(stream);
+                    releaseLease();
+                    currentPartAccumulator = null;
+                    return;
+                }
+                currentPart = part;
+                currentOffset = 0L;
+                lookahead = stream.read();
+                opened = true;
+            } catch (StackDataLoss loss) {
+                closeOnFailure(stream, loss);
+                throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
+            } catch (IOException failure) {
+                closeOnFailure(stream, failure);
+                throw new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure);
+            } finally {
+                if (!opened) {
+                    activeStream = null;
+                    currentPart = null;
+                    currentPartAccumulator = null;
+                    releaseLease();
+                }
             }
-            return bytes;
+        }
+
+        private int readNextPartChunk(InputStream stream, byte[] buf) throws IOException {
+            int total = 0;
+            if (lookahead >= 0) {
+                buf[0] = (byte) lookahead;
+                total = 1;
+                lookahead = -1;
+            }
+            while (total < buf.length && !cancelled) {
+                int n = stream.read(buf, total, buf.length - total);
+                if (n < 0) {
+                    lookahead = -1;
+                    return total;
+                }
+                total += n;
+            }
+            if (!cancelled) {
+                lookahead = stream.read();
+            }
+            return total;
+        }
+
+        private void failWith(Throwable primary, RuntimeException statusError) {
+            completed = true;
+            var stream = activeStream;
+            activeStream = null;
+            closeOnFailure(stream, primary);
+            currentPart = null;
+            currentPartAccumulator = null;
+            releaseLease();
+            if (!cancelled) {
+                observer.onError(statusError);
+            }
+        }
+
+        private void releaseLease() {
+            var lease = currentLease.getAndSet(null);
+            if (lease != null) {
+                lease.close();
+            }
         }
     }
 
@@ -362,7 +493,7 @@ public final class DocumentStreams {
 
         void cancel() {
             cancelled = true;
-            closeQuietly();
+            closeOnCancel(stream);
         }
 
         synchronized void pump() {
@@ -377,12 +508,12 @@ public final class DocumentStreams {
                     }
                     int read = readChunk(stream, buffer);
                     if (cancelled) {
-                        closeQuietly();
+                        closeOnCancel(stream);
                         return;
                     }
                     if (read < 0) {
                         completed = true;
-                        closeQuietly();
+                        stream.close();
                         observer.onCompleted();
                         return;
                     }
@@ -392,27 +523,27 @@ public final class DocumentStreams {
                 }
             } catch (StackDataLoss loss) {
                 completed = true;
-                closeQuietly();
+                closeOnFailure(stream, loss);
                 if (!cancelled) {
                     observer.onError(AccessionGrpcService.toStatus(
                             new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss)));
                 }
             } catch (IOException failure) {
                 completed = true;
-                closeQuietly();
+                closeOnFailure(stream, failure);
                 if (!cancelled) {
                     observer.onError(AccessionGrpcService.toStatus(
                             new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure)));
                 }
             } catch (AccessionException failure) {
                 completed = true;
-                closeQuietly();
+                closeOnFailure(stream, failure);
                 if (!cancelled) {
                     observer.onError(AccessionGrpcService.toStatus(failure));
                 }
             } catch (RuntimeException failure) {
                 completed = true;
-                closeQuietly();
+                closeOnFailure(stream, failure);
                 if (!cancelled) {
                     observer.onError(Status.INTERNAL
                             .withDescription("Repository failure")
@@ -435,13 +566,25 @@ public final class DocumentStreams {
             }
             return total;
         }
+    }
 
-        private void closeQuietly() {
-            try {
-                stream.close();
-            } catch (IOException ignored) {
-                // Best-effort close on stream completion or cancellation.
+    private static void closeOnFailure(InputStream stream, Throwable primary) {
+        if (stream == null) return;
+        try {
+            stream.close();
+        } catch (IOException | RuntimeException closeFailure) {
+            if (primary != null && primary != closeFailure) {
+                primary.addSuppressed(closeFailure);
             }
+        }
+    }
+
+    private static void closeOnCancel(InputStream stream) {
+        if (stream == null) return;
+        try {
+            stream.close();
+        } catch (IOException | RuntimeException ignored) {
+            // Client already cancelled the call; underlying stream was closed to abort transfer.
         }
     }
 }

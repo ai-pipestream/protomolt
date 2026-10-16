@@ -218,6 +218,10 @@ public final class DocumentReads {
         return drives;
     }
 
+    DocumentAdmissionReservations reservations() {
+        return reservations;
+    }
+
     // ------------------------------------------------------------------ resolution
 
     /** The current revision's manifest, after read access is checked against it. */

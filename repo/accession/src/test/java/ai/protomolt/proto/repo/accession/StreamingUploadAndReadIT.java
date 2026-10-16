@@ -184,10 +184,21 @@ class StreamingUploadAndReadIT {
                 DocumentPart.DOCUMENT_PART_CORE,
                 DocumentPart.DOCUMENT_PART_BLOBS,
                 DocumentPart.DOCUMENT_PART_PARSED);
-        var merged = Document.newBuilder();
-        for (var partBytes : reassembled.values()) {
-            merged.mergeFrom(partBytes);
+        for (var manifestPart : frames.getFirst().getManifest().getPartsList()) {
+            var partBytes = reassembled.get(manifestPart.getSelector().getPart());
+            assertThat(partBytes.size()).isEqualTo(manifestPart.getSizeBytes());
+            assertThat(SaveIntents.sha256Hex(partBytes.toByteArray())).isEqualTo(manifestPart.getSha256());
         }
+        var blobsEntry = stored.getPartsList().stream()
+                .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                .findFirst()
+                .orElseThrow();
+        var merged = Document.newBuilder()
+                .mergeFrom(reassembled.get(DocumentPart.DOCUMENT_PART_CORE))
+                .mergeFrom(RawBlobs.withClaimChecks(
+                        reassembled.get(DocumentPart.DOCUMENT_PART_BLOBS),
+                        blobsEntry.getBlobRefsList()))
+                .mergeFrom(reassembled.get(DocumentPart.DOCUMENT_PART_PARSED));
         assertThat(merged.build()).isEqualTo(getDoc.getDocument());
 
         // ReadBlob full read and range reads.
@@ -767,9 +778,334 @@ class StreamingUploadAndReadIT {
                     .setBlobId("http-blob-1")
                     .build()).forEachRemaining(readFrames::add);
             assertThat(concatBlobData(readFrames)).isEqualTo(payload);
+
+            // 6. Early refusal (401/400) does not wait to drain a 600 MB request body stream.
+            try (var socket = new java.net.Socket("127.0.0.1", port)) {
+                socket.setSoTimeout(5_000);
+                var out = socket.getOutputStream();
+                String rawReq = "POST " + UploadHttpHandler.UPLOAD_PATH + " HTTP/1.1\r\n"
+                        + "Host: 127.0.0.1\r\n"
+                        + "api_token: wrong-token\r\n"
+                        + "Content-Length: " + (600L * 1024 * 1024) + "\r\n\r\n";
+                out.write(rawReq.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                var responseLine = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                        .readLine();
+                assertThat(responseLine).contains("401");
+            }
         } finally {
             httpServer.stop(0);
         }
+    }
+
+    @Test
+    void replayMustRejectDeclaredLengthAndExpectedDigestMismatchesWithoutOverwritingRecordedOutcome() throws Exception {
+        var address = address(account, "doc-replay-mismatch");
+        var doc = document(account, "doc-replay-mismatch", "title");
+        byte[] payload = doc.getBlobBag().getBlob().getData().toByteArray();
+        var inline = doc.toBuilder()
+                .setBlobBag(doc.getBlobBag().toBuilder().setBlob(doc.getBlobBag().getBlob().toBuilder().clearData()))
+                .build();
+        var header = UploadHeader.newBuilder()
+                .setSave(create("op-replay-strict", address, inline))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(payload))
+                .build();
+
+        var committed = f.uploads.upload(processAuthority(), header, new java.io.ByteArrayInputStream(payload));
+        assertThat(committed.getSaved().getAccession().getRevision()).isEqualTo(1L);
+        assertThat(committed.getSaved().getReplayed()).isFalse();
+
+        // 1. Retry with declared_length mismatch (+1 and -1) must be rejected with UPLOAD_MISMATCH.
+        var badLengthPlus = header.toBuilder().setDeclaredLength(payload.length + 1).build();
+        assertThatThrownBy(() -> f.uploads.upload(
+                processAuthority(), badLengthPlus, new java.io.ByteArrayInputStream(payload)))
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat((SaveRejection) failure.detail().orElseThrow())
+                            .extracting(SaveRejection::getReason)
+                            .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+                });
+
+        var badLengthMinus = header.toBuilder().setDeclaredLength(Math.max(0, payload.length - 1)).build();
+        assertThat(detail(
+                () -> sendUpload(badLengthMinus, List.of(ByteString.copyFrom(payload))),
+                Status.Code.INVALID_ARGUMENT,
+                SaveRejection.class).getReason())
+                .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+
+        // 2. Retry with expected_sha256 mismatch must be rejected with UPLOAD_MISMATCH.
+        var badDigest = header.toBuilder().setExpectedSha256("0".repeat(64)).build();
+        assertThatThrownBy(() -> f.uploads.upload(
+                processAuthority(), badDigest, new java.io.ByteArrayInputStream(payload)))
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat((SaveRejection) failure.detail().orElseThrow())
+                            .extracting(SaveRejection::getReason)
+                            .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+                });
+        assertThat(detail(
+                () -> sendUpload(badDigest, List.of(ByteString.copyFrom(payload))),
+                Status.Code.INVALID_ARGUMENT,
+                SaveRejection.class).getReason())
+                .isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+
+        // 3. The original committed Accession outcome in the catalog is untouched and still replays on a valid retry.
+        assertThat(f.catalog.outcome(account, "op-replay-strict").orElseThrow().outcome().hasAccession()).isTrue();
+        var validReplay = f.uploads.upload(processAuthority(), header, new java.io.ByteArrayInputStream(payload));
+        assertThat(validReplay.getSaved().getReplayed()).isTrue();
+        assertThat(validReplay.getSaved().getAccession()).isEqualTo(committed.getSaved().getAccession());
+    }
+
+    @Test
+    void readDocumentCancellationClosesActiveStackStreamAndEncodedPartReservesAdmissionBytes() throws Exception {
+        // 1. Encoded-part upload reserves admission bytes before/while buffering the fragment.
+        var reservedBytes = new java.util.concurrent.atomic.AtomicLong();
+        var releasedBytes = new java.util.concurrent.atomic.AtomicLong();
+        var trackingSaves = new DocumentSaves(
+                f.catalog,
+                f.drives,
+                resolver(),
+                limits(),
+                bytes -> {
+                    reservedBytes.addAndGet(bytes);
+                    return () -> releasedBytes.addAndGet(bytes);
+                },
+                java.time.Clock.systemUTC());
+        var trackingUploads = new DocumentUploads(trackingSaves);
+
+        var address = address(account, "doc-reserved-enc");
+        var coreFragmentDoc = Document.newBuilder()
+                .setDocId("doc-reserved-enc")
+                .setOwnership(ownership(account))
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .setTitle("reserved")
+                        .setBody("y".repeat(90_000)))
+                .build();
+        byte[] coreFragmentBytes = RawBlobs.deterministic(coreFragmentDoc).toByteArray();
+        var encHeader = UploadHeader.newBuilder()
+                .setSave(SaveDocumentRequest.newBuilder()
+                        .setOperationId("op-reserved-enc")
+                        .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                        .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                        .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                        .setOwner(intakeOwner()))
+                .setEncodedPart(StreamedPart.newBuilder()
+                        .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)))
+                .setDeclaredLength(coreFragmentBytes.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(coreFragmentBytes))
+                .build();
+
+        trackingUploads.upload(processAuthority(), encHeader, new java.io.ByteArrayInputStream(coreFragmentBytes));
+        assertThat(reservedBytes.get()).isGreaterThanOrEqualTo(coreFragmentBytes.length);
+        assertThat(releasedBytes.get()).isEqualTo(reservedBytes.get());
+
+        // Exhausted host reservation during encoded-part buffering fails with RESOURCE_EXHAUSTED unrecorded.
+        var exhaustedSaves = new DocumentSaves(
+                f.catalog,
+                f.drives,
+                resolver(),
+                limits(),
+                bytes -> {
+                    throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                            ai.protomolt.proto.repo.spi.RepositoryException.Code.RESOURCE_EXHAUSTED,
+                            "host reservation exhausted");
+                },
+                java.time.Clock.systemUTC());
+        var exhaustedUploads = new DocumentUploads(exhaustedSaves);
+        var exhaustedHeader = encHeader.toBuilder()
+                .setSave(encHeader.getSave().toBuilder()
+                        .setOperationId("op-exhausted-enc")
+                        .setTarget(DocumentTarget.newBuilder().setAddress(address(account, "doc-exhausted-enc"))))
+                .build();
+        assertThatThrownBy(() -> exhaustedUploads.upload(
+                processAuthority(), exhaustedHeader, new java.io.ByteArrayInputStream(coreFragmentBytes)))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        assertThat(f.catalog.outcome(account, "op-exhausted-enc")).isEmpty();
+
+        // 2. ReadDocument retains the open Stack InputStream and closes it immediately on cancellation.
+        var streamClosed = new CountDownLatch(1);
+        ai.protomolt.proto.repo.stack.Stack trackingCloseStack = new ForwardingStack(f.stack) {
+            @Override
+            public java.io.InputStream open(StackRef ref) throws IOException {
+                var delegate = super.open(ref);
+                return new java.io.FilterInputStream(delegate) {
+                    @Override
+                    public void close() throws IOException {
+                        streamClosed.countDown();
+                        super.close();
+                    }
+                };
+            }
+        };
+        var readDrives = new DocumentSaves.Drives("default", java.util.Map.of("default", trackingCloseStack));
+        var readReserved = new java.util.concurrent.atomic.AtomicLong();
+        var readReleased = new java.util.concurrent.atomic.AtomicLong();
+        var customReads = new DocumentReads(
+                f.catalog,
+                readDrives,
+                limits(),
+                bytes -> {
+                    readReserved.addAndGet(bytes);
+                    return () -> readReleased.addAndGet(bytes);
+                },
+                java.time.Clock.systemUTC());
+
+        var cancelHandler = new AtomicReference<Runnable>();
+        var ready = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var frames = new ArrayList<ReadDocumentResponse>();
+        var serverObserver = new io.grpc.stub.ServerCallStreamObserver<ReadDocumentResponse>() {
+            @Override
+            public boolean isCancelled() {
+                return !ready.get();
+            }
+
+            @Override
+            public void setOnCancelHandler(Runnable onCancelHandler) {
+                cancelHandler.set(onCancelHandler);
+            }
+
+            @Override
+            public void setCompression(String compression) {}
+
+            @Override
+            public boolean isReady() {
+                return ready.get();
+            }
+
+            @Override
+            public void setOnReadyHandler(Runnable onReadyHandler) {}
+
+            @Override
+            public void request(int count) {}
+
+            @Override
+            public void setMessageCompression(boolean enable) {}
+
+            @Override
+            public void disableAutoInboundFlowControl() {}
+
+            @Override
+            public void onNext(ReadDocumentResponse value) {
+                frames.add(value);
+                if (value.hasPartData() && !value.getPartData().getLast()) {
+                    ready.set(false);
+                }
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                throw new AssertionError("unexpected onError during paused read", t);
+            }
+
+            @Override
+            public void onCompleted() {
+                throw new AssertionError("unexpected onCompleted before cancellation");
+            }
+        };
+
+        customReads.readDocument(
+                processAuthority(),
+                ReadDocumentRequest.newBuilder().setAddress(address).build(),
+                serverObserver);
+
+        assertThat(frames).hasSize(2);
+        assertThat(frames.get(0).hasManifest()).isTrue();
+        assertThat(frames.get(1).hasPartData()).isTrue();
+        assertThat(frames.get(1).getPartData().getLast()).isFalse();
+        assertThat(streamClosed.getCount())
+                .as("active Stack InputStream remains open while paused mid-part")
+                .isEqualTo(1L);
+        assertThat(readReserved.get()).isEqualTo(coreFragmentBytes.length);
+        assertThat(readReleased.get()).isZero();
+
+        cancelHandler.get().run();
+
+        assertThat(streamClosed.await(1, TimeUnit.SECONDS))
+                .as("cancel() must immediately close the active Stack InputStream")
+                .isTrue();
+        assertThat(readReleased.get()).isEqualTo(readReserved.get());
+    }
+
+    @Test
+    void closeAndDeleteFailuresPreserveDiagnostics() throws Exception {
+        var address = address(account, "doc-diagnostics");
+        byte[] payload = "diagnostic-payload".getBytes(StandardCharsets.UTF_8);
+        var doc = documentWithPendingBlob(account, "doc-diagnostics", "b1");
+        var header = UploadHeader.newBuilder()
+                .setSave(create("op-diag-1", address, doc))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(payload))
+                .build();
+        sendUpload(header, List.of(ByteString.copyFrom(payload)));
+
+        // 1. Normal completion close() failure on ReadBlob surfaces as UNAVAILABLE error instead of onCompleted.
+        ai.protomolt.proto.repo.stack.Stack failingCloseStack = new ForwardingStack(f.stack) {
+            @Override
+            public java.io.InputStream open(StackRef ref) throws IOException {
+                var delegate = super.open(ref);
+                return new java.io.FilterInputStream(delegate) {
+                    @Override
+                    public void close() throws IOException {
+                        super.close();
+                        throw new IOException("simulated close failure at EOF");
+                    }
+                };
+            }
+        };
+        var failingReads = new DocumentReads(
+                f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", failingCloseStack)),
+                limits(),
+                bytes -> () -> {},
+                java.time.Clock.systemUTC());
+        var errorRef = new AtomicReference<Throwable>();
+        failingReads.readDocument(
+                processAuthority(),
+                ReadDocumentRequest.newBuilder().setAddress(address).build(),
+                new StreamObserver<>() {
+                    @Override public void onNext(ReadDocumentResponse value) {}
+                    @Override public void onError(Throwable t) { errorRef.set(t); }
+                    @Override public void onCompleted() {}
+                });
+        assertThat(errorRef.get())
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+
+        // 2. Delete failure during upload mismatch cleanup is attached as suppressed to the rejection exception.
+        ai.protomolt.proto.repo.stack.Stack failingDeleteStack = new ForwardingStack(f.stack) {
+            @Override
+            public void delete(StackRef ref) throws IOException {
+                super.delete(ref);
+                throw new IOException("simulated delete failure for " + ref.getKey());
+            }
+        };
+        var failingSaves = new DocumentSaves(
+                f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", failingDeleteStack)),
+                resolver(),
+                limits(),
+                bytes -> () -> {},
+                java.time.Clock.systemUTC());
+        var failingUploads = new DocumentUploads(failingSaves);
+        var badDigestHeader = UploadHeader.newBuilder()
+                .setSave(create("op-diag-mismatch", address(account, "doc-diag-mismatch"),
+                        documentWithPendingBlob(account, "doc-diag-mismatch", "b1")))
+                .setBlobId("b1")
+                .setDeclaredLength(payload.length)
+                .setExpectedSha256("f".repeat(64))
+                .build();
+        assertThatThrownBy(() -> failingUploads.upload(
+                processAuthority(), badDigestHeader, new java.io.ByteArrayInputStream(payload)))
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(failure.getSuppressed())
+                            .anySatisfy(s -> assertThat(s.getMessage()).contains("simulated delete failure"));
+                });
     }
 
     // ------------------------------------------------------------------ helpers
@@ -901,5 +1237,26 @@ class StreamingUploadAndReadIT {
             }
         }
         throw new AssertionError("call succeeded");
+    }
+
+    private static class ForwardingStack implements ai.protomolt.proto.repo.stack.Stack {
+        private final ai.protomolt.proto.repo.stack.Stack delegate;
+
+        ForwardingStack(ai.protomolt.proto.repo.stack.Stack delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override public String stackId() { return delegate.stackId(); }
+        @Override public StackRef put(java.io.InputStream body, long expectedLength) throws IOException {
+            return delegate.put(body, expectedLength);
+        }
+        @Override public StackRef put(byte[] body) throws IOException { return delegate.put(body); }
+        @Override public java.io.InputStream open(StackRef ref) throws IOException { return delegate.open(ref); }
+        @Override public java.io.InputStream openRange(StackRef ref, long offset, long length) throws IOException {
+            return delegate.openRange(ref, offset, length);
+        }
+        @Override public long head(StackRef ref) throws IOException { return delegate.head(ref); }
+        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); }
+        @Override public void close() throws IOException { delegate.close(); }
     }
 }
