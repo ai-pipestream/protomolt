@@ -432,8 +432,10 @@ public final class DocumentSaves {
         try {
             DocumentCandidateAdmission.requireKnownFields(document);
         } catch (DocumentCandidateAdmission.ContentRefused refused) {
-            throw malformedException("Fields outside this server's Document schema are not supported by this server yet: "
-                    + refused.getMessage());
+            String reason = refused.getMessage();
+            throw malformedException(DocumentSchemaAdmission.UNKNOWN_DOCUMENT_FIELDS.equals(reason)
+                    ? "Fields outside this server's Document schema are not supported by this server yet: " + reason
+                    : reason);
         }
         if (request.getTarget().hasAddress()) {
             var docId = request.getTarget().getAddress().getDocId();

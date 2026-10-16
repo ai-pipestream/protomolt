@@ -110,7 +110,9 @@ public final class DocumentCandidateAdmission {
     /**
      * The caller's content cannot be admitted: a fragment does not parse, is
      * not confined to its part, exceeds a structural bound, or places an Any
-     * where the layout allows none. A recorded refusal is the right outcome.
+     * where the layout allows none. Recording depends on the boundary: request
+     * structure checks before authorization are unrecorded; admission refusals
+     * after authorization follow the recorded-outcome policy.
      */
     public static final class ContentRefused extends RuntimeException {
         public ContentRefused(String message, Throwable cause) { super(message, cause); }

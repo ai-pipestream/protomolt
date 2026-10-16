@@ -91,6 +91,50 @@ class AccessionGrpcIT {
         }
     }
 
+    @Test void structuralRefusalsNameTheActualBoundOverGrpc() throws Exception {
+        var name = "structure-" + UUID.randomUUID();
+        try (var f = new AccessionFixture()) {
+            var server = InProcessServerBuilder.forName(name).directExecutor()
+                    .addService(new AccessionGrpcService(f.saves, f.reads, authentication -> new RepositoryCaller(
+                            authentication.caller().name(), authentication.caller().unrestricted())))
+                    .build().start();
+            var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+            try {
+                var stub = DocumentServiceGrpc.newBlockingStub(channel);
+                var account = "acct-" + UUID.randomUUID();
+                var address = address(account, "structure");
+                // Struct is an existing Document field, populated as protobuf, without JSON conversion.
+                var deep = com.google.protobuf.Value.getDefaultInstance();
+                for (int i = 0; i < 33; i++) deep = com.google.protobuf.Value.newBuilder()
+                        .setListValue(com.google.protobuf.ListValue.newBuilder().addValues(deep)).build();
+                var wide = com.google.protobuf.Value.newBuilder().setListValue(com.google.protobuf.ListValue.newBuilder()
+                        .addAllValues(java.util.Collections.nCopies(1_000_001, com.google.protobuf.Value.getDefaultInstance()))).build();
+                var unknownContent = document(account, "structure", "unknown").toBuilder()
+                        .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder().addField(4000,
+                                com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build()).build();
+                var unknownRequest = create("unknown-content", address, unknownContent).build();
+                assertThat(detail(() -> stub.saveDocument(unknownRequest), Status.Code.INVALID_ARGUMENT,
+                        SaveRejection.class).getMessage()).isEqualTo(
+                        "Fields outside this server's Document schema are not supported by this server yet: unknown document fields cannot receive typed admission");
+                assertThat(f.catalog.outcome(account, "unknown-content")).isEmpty();
+                for (var value : java.util.List.of(deep, wide)) {
+                    var document = document(account, "structure", "shape").toBuilder();
+                    document.getSearchMetadataBuilder().setCustomFields(com.google.protobuf.Struct.newBuilder().putFields("test", value));
+                    var request = create("structure", address, document.build()).build();
+                    var rejection = detail(() -> stub.saveDocument(request), Status.Code.INVALID_ARGUMENT, SaveRejection.class);
+                    assertThat(rejection.getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+                    assertThat(rejection.toString()).contains(value == deep ? "nesting exceeds 64" : "exceeds 1,000,000 nodes");
+                    assertThat(f.catalog.outcome(account, "structure")).isEmpty();
+                    assertThat(f.catalog.current(address)).isEmpty();
+                    assertThat(f.stack.puts.get()).isZero();
+                }
+            } finally {
+                channel.shutdownNow();
+                server.shutdownNow();
+            }
+        }
+    }
+
     private static <T extends com.google.protobuf.Message> T detail(Runnable call, Status.Code code, Class<T> type) {
         try {
             call.run();
