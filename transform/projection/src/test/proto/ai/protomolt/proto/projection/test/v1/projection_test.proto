@@ -366,3 +366,16 @@ message SingularFromRepeatedDoc {
     paths: {path: "scores"}
   }];
 }
+
+// Runtime descriptor evolution fixture: the same source name changes field type.
+message EvolvingSource {
+  string value = 1;
+}
+
+message EvolvingProjection {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.EvolvingSource"
+  };
+  // CEL must compile against each supplied source schema, not just its name.
+  string rendered = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "string(source.value)"}];
+}

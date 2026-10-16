@@ -5,6 +5,7 @@ import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluationException;
 import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 import ai.protomolt.proto.helpers.TypeConverter;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapper;
@@ -111,7 +112,10 @@ public final class MessageProjection {
     private final List<FieldRule> rules;
     private final ProtoFieldMapper fieldMapper;
     private final TypeConverter typeConverter = new TypeConverter();
-    private final ConcurrentHashMap<String, CelEvaluator> evaluators = new ConcurrentHashMap<>();
+    private record EvaluatorKey(String sourceName, String sourceSchema, String targetSchema) {}
+    private final ConcurrentHashMap<EvaluatorKey, CelEvaluator> evaluators = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Descriptor, EvaluatorKey> evaluatorKeys = new ConcurrentHashMap<>();
+    private final String targetSchema;
 
     private MessageProjection(
             Descriptor targetType,
@@ -119,6 +123,7 @@ public final class MessageProjection {
             List<FieldRule> rules,
             ProtoFieldMapper fieldMapper) {
         this.targetType = targetType;
+        this.targetSchema = DescriptorFingerprints.fingerprintOf(targetType);
         this.declaredSources = List.copyOf(declaredSources);
         this.rules = List.copyOf(rules);
         this.fieldMapper = fieldMapper;
@@ -463,7 +468,9 @@ public final class MessageProjection {
     }
 
     private CelEvaluator evaluatorFor(Descriptor sourceType) {
-        return evaluators.computeIfAbsent(sourceType.getFullName(), name ->
+        var key = evaluatorKeys.computeIfAbsent(sourceType, type -> new EvaluatorKey(
+                type.getFullName(), DescriptorFingerprints.fingerprintOf(type), targetSchema));
+        return evaluators.computeIfAbsent(key, ignored ->
                 new CelEvaluator(CelEnvironmentFactory.builder()
                         .addMessageVar("source", sourceType)
                         .build()));
