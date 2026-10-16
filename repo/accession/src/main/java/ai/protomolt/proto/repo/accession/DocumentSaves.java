@@ -433,7 +433,7 @@ public final class DocumentSaves {
             DocumentCandidateAdmission.requireKnownFields(document);
         } catch (DocumentCandidateAdmission.ContentRefused refused) {
             String reason = refused.getMessage();
-            throw malformedException("unknown document fields cannot receive typed admission".equals(reason)
+            throw malformedException(DocumentSchemaAdmission.UNKNOWN_DOCUMENT_FIELDS.equals(reason)
                     ? "Fields outside this server's Document schema are not supported by this server yet: " + reason
                     : reason);
         }

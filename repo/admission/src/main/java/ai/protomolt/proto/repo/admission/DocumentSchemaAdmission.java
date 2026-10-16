@@ -487,6 +487,9 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Fail on newly introduced or unknown Any locations instead of silently omitting them. */
+    /** The refusal message for content outside the compiled Document schema; callers match on it. */
+    public static final String UNKNOWN_DOCUMENT_FIELDS = "unknown document fields cannot receive typed admission";
+
     static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
                                              int[] visited, Runnable control) {
         active(control);
@@ -495,7 +498,7 @@ public final class DocumentSchemaAdmission {
         if (++visited[0] > 1_000_000)
             throw new IllegalArgumentException("Document exceeds 1,000,000 nodes");
         if (!message.getUnknownFields().asMap().isEmpty())
-            throw new IllegalArgumentException("unknown document fields cannot receive typed admission");
+            throw new IllegalArgumentException(UNKNOWN_DOCUMENT_FIELDS);
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) {
             if (!path.equals("structured_data") && !path.equals("parser_results.value.document.shape"))
                 throw new IllegalArgumentException("An Any at " + path + " is not allowed; Any is accepted only at structured_data or parser_results.value.document.shape");

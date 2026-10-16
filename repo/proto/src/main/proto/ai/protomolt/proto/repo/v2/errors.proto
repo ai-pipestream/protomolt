@@ -25,8 +25,10 @@ option java_package = "ai.protomolt.proto.repo.v2";
 //                                         (not recorded)
 //   PERMISSION_DENIED   SaveRejection     OPAQUE_NOT_ALLOWED (recorded);
 //                                         WRITE_DENIED (not recorded)
-//   RESOURCE_EXHAUSTED none              host reservation or schema-retention budget;
+//   RESOURCE_EXHAUSTED  none              host reservation or schema-retention budget;
 //                                         never recorded
+//   INTERNAL            none              the host or registry misbehaved (admission
+//                                         host failure); never recorded
 //   UNAVAILABLE         none              registry or catalog unreachable; never recorded
 //   NOT_FOUND           none              exact revision, blob or document absent
 //   DATA_LOSS           none              stored bytes or retained evidence fail
