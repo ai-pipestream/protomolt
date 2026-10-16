@@ -29,6 +29,20 @@ class AccessionGrpcIT {
                 var account = "acct-" + UUID.randomUUID();
                 var address = address(account, "doc-grpc");
                 var document = document(account, "doc-grpc", "over the wire");
+                var unknown = com.google.protobuf.UnknownFieldSet.newBuilder().addField(999,
+                        com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build();
+                var command = create("op-unknown", address, document).build();
+                for (var unsupported : java.util.List.of(
+                        command.toBuilder().setOwner(command.getOwner().toBuilder().setIntake(
+                                command.getOwner().getIntake().toBuilder().setUnknownFields(unknown))).build(),
+                        command.toBuilder().setWrites(0, command.getWrites(0).toBuilder().setSelector(
+                                command.getWrites(0).getSelector().toBuilder().setUnknownFields(unknown))).build())) {
+                    assertThat(detail(() -> stub.saveDocument(unsupported), Status.Code.INVALID_ARGUMENT,
+                            SaveRejection.class).getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+                    assertThat(f.catalog.outcome(account, "op-unknown")).isEmpty();
+                    assertThat(f.catalog.current(address)).isEmpty();
+                    assertThat(f.stack.puts.get()).isZero();
+                }
                 var saved = stub.saveDocument(create("op-1", address, document).build());
                 assertThat(saved.getAccession().getRevision()).isEqualTo(1);
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build()).getDocument())
@@ -55,6 +69,21 @@ class AccessionGrpcIT {
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
                         .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build()).getDocument().hasBlobBag()).isTrue();
+                // No semantic parts exist in this document. A wildcard for them must
+                // not return unrelated CORE, BLOBS or PARSED content.
+                for (var selection : java.util.List.of(
+                        PartSelection.newBuilder().setAllSegmentations(true).build(),
+                        PartSelection.newBuilder().setAllEmbeddingSets(true).build(),
+                        PartSelection.newBuilder().setAllSegmentations(true).setAllEmbeddingSets(true).build())) {
+                    int opensBefore = f.stack.opens.get();
+                    var selected = stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
+                            .setSelection(selection).build());
+                    assertThat(selected.getDocument()).isEqualTo(
+                            ai.protomolt.proto.repo.v1.Document.getDefaultInstance());
+                    assertThat(selected.getManifest().getPartsList()).allSatisfy(part ->
+                            assertThat(part.getContentIncluded()).isFalse());
+                    assertThat(f.stack.opens.get()).isEqualTo(opensBefore);
+                }
             } finally {
                 channel.shutdownNow();
                 server.shutdownNow();

@@ -167,7 +167,8 @@ public final class DocumentReads {
     }
 
     private static Function<PartSelector, Boolean> selected(PartSelection selection) {
-        if (selection.getSelectorsCount() == 0) return selector -> true;
+        if (selection.getSelectorsCount() == 0
+                && !selection.getAllSegmentations() && !selection.getAllEmbeddingSets()) return selector -> true;
         var selectors = new HashSet<PartSelector>();
         for (var selector : selection.getSelectorsList())
             if (!selectors.add(selector)) throw new AccessionException(Status.Code.INVALID_ARGUMENT, "Duplicate selector", null);

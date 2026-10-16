@@ -368,13 +368,25 @@ public final class DocumentSaves {
     // ------------------------------------------------------------------ structure
 
     private static void requireNoUnknownCommandFields(SaveDocumentRequest request) {
-        List<Message> command = new ArrayList<>(List.of(request, request.getTarget(), request.getExpected(), request.getOwner()));
-        command.addAll(request.getWritesList());
-        command.addAll(request.getSourcesList());
-        command.addAll(request.getDerivedFromList());
-        for (var message : command)
+        var pending = new java.util.ArrayDeque<Message>();
+        pending.add(request);
+        while (!pending.isEmpty()) {
+            var message = pending.removeFirst();
             if (!message.getUnknownFields().asMap().isEmpty())
                 throw malformedException("Unsupported field in the save command: " + message.getDescriptorForType().getName());
+            for (var entry : message.getAllFields().entrySet()) {
+                var field = entry.getKey();
+                // Content has its own schema admission rules. This walk checks
+                // only commands, including nested owners, selectors and locators.
+                if (message == request && field.getNumber() == SaveDocumentRequest.DOCUMENT_FIELD_NUMBER) continue;
+                if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+                if (field.isRepeated()) {
+                    for (var child : (List<?>) entry.getValue()) pending.add((Message) child);
+                } else {
+                    pending.add((Message) entry.getValue());
+                }
+            }
+        }
     }
 
     /** Validates the write and source selectors and returns the written parts. */
