@@ -164,6 +164,8 @@ SOURCE_NOT_FOUND (decision 37). Every creation under a step grant, derived or no
 requires `allow_create`; `derived_from` records lineage only and grants nothing
 (decision 46). There is no intake-only creation restriction.
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
+A sourced part counts as changed: it records the SaveOwner and the new revision; the
+bytes' producer stays recorded on the source revision.
 The accession records its save owner and source lineage, including metadata-only saves.
 
 **Delete and purge authority (decision 36).** A delete needs the document ACL write check
