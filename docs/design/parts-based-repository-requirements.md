@@ -440,9 +440,14 @@ correctness and RustFS for performance measurements.
    save decodes against the latest registered version of the `Document` subject and
    records that schema artifact ID on the revision. Fields from no registered version
    are refused with SCHEMA_MISSING. Which versions can be registered is the subject's
-   compatibility mode (`core/compat`, the Confluent set); the `Document` subject uses
-   the registry default, BACKWARD, which can be changed per subject. Each revision
-   records the schema version it was saved with, and reads decode with that version.
+   compatibility mode (`core/compat`, the Confluent set); the registry default is
+   BACKWARD, which can be changed per subject; the `Document` subject is configured
+   BACKWARD_TRANSITIVE (decision 34), so a new `Document` version is checked against
+   every registered version. A save decodes typed content against the latest
+   registered `Document` version; a field that version does not know, including one
+   only an older version had, is refused with SCHEMA_MISSING and never dropped
+   (decision 35). Each revision records the schema version it was saved with, and
+   reads decode with that version.
 8. History pages correctly, and exact-revision reads return the old content.
 9. Each accession writes one outbox event listing what changed. An outbox relay retry
    produces duplicate delivery but no duplicate catalog event.
