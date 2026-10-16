@@ -114,6 +114,15 @@ class DocumentSemanticAdmissionTest {
         assertThat(reject(notString, VIEW).violations().getFirst().message()).contains("not a string");
         var unknown = withPath(missing, "search_metadata.no_such_field");
         assertThat(reject(unknown, VIEW).violations().getFirst().message()).contains("does not resolve");
+        // The mapper's literal and trimming conveniences are not field paths.
+        for (var literal : List.of("\"hello world\"", " search_metadata.body", "search_metadata.body ", "42",
+                "search_metadata..body", ".search_metadata.body", "search_metadata.body.", "search metadata"))
+            assertThat(reject(withPath(missing, literal), VIEW).violations()).singleElement().satisfies(v -> {
+                assertThat(v.ruleId()).isEqualTo("segmentation.source-resolves");
+                assertThat(v.message()).contains("dot-separated field names");
+            });
+        for (var notAField : List.of("nope.body", "true", "null"))
+            assertThat(reject(withPath(missing, notAField), VIEW).violations().getFirst().message()).contains("does not start at a field");
         assertThat(DocumentSemanticAdmission.sourcePart("search_metadata.body")).isEqualTo(DocumentPart.DOCUMENT_PART_CORE);
         assertThat(DocumentSemanticAdmission.sourcePart("parser_results")).isEqualTo(DocumentPart.DOCUMENT_PART_PARSED);
         assertThat(DocumentSemanticAdmission.sourcePart("blob_bag.blob.filename")).isEqualTo(DocumentPart.DOCUMENT_PART_BLOBS);

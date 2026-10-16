@@ -244,8 +244,22 @@ public final class DocumentSemanticAdmission {
     private record Resolved(String text) implements Resolution {}
     private record Unresolved(String reason) implements Resolution {}
 
+    /**
+     * The shape of a field path: dot-separated field names, nothing else. The mapper also
+     * accepts quoted or numeric literals and trims whitespace; a text source may name only
+     * a field of the document.
+     */
+    private static final java.util.regex.Pattern FIELD_PATH =
+            java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
+
     /** Resolves a field path over the composed view to its text, or to the reason it does not resolve to a string. */
     private static Resolution resolve(String fieldPath, MessageOrBuilder view, ProtoFieldMapperImpl mapper) {
+        if (!FIELD_PATH.matcher(fieldPath).matches())
+            return new Unresolved("field_path must be dot-separated field names of the document, got '" + fieldPath + "'");
+        var root = fieldPath.contains(".") ? fieldPath.substring(0, fieldPath.indexOf('.')) : fieldPath;
+        if (view.getDescriptorForType().findFieldByName(root) == null)
+            return new Unresolved("field_path " + fieldPath + " does not start at a field of "
+                    + view.getDescriptorForType().getFullName());
         var owner = sourcePart(fieldPath);
         if (owner == DocumentPart.DOCUMENT_PART_CHUNKS || owner == DocumentPart.DOCUMENT_PART_EMBEDDINGS)
             return new Unresolved("field_path " + fieldPath

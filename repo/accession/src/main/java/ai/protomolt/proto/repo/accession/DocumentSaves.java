@@ -76,6 +76,9 @@ public final class DocumentSaves {
             DocumentPart.DOCUMENT_PART_PARSED, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_PARSED);
     static final PartSelector CORE_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
     static final PartSelector BLOBS_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS).build();
+    /** The element index a validator reports for a keyed part, in the admitted view's order. */
+    private static final java.util.regex.Pattern KEYED_ELEMENT =
+            java.util.regex.Pattern.compile("^search_metadata\\.(?:segmentations|embedding_sets)\\[(\\d+)\\]");
     /** Codec order: CORE, BLOBS, CHUNKS by segmentation ID, PARSED, EMBEDDINGS by key, IDs in unsigned UTF-8 order. */
     static final java.util.Comparator<PartSelector> CODEC_ORDER = (left, right) -> {
         int order = Integer.compare(rank(left), rank(right));
@@ -845,8 +848,7 @@ public final class DocumentSaves {
             return PartSelector.newBuilder().setPart(v2(part)).build();
         var keyed = admitted.stream().filter(selector -> part == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS
                 ? selector.hasSegmentationId() : selector.hasEmbeddingSet()).toList();
-        var matcher = java.util.regex.Pattern.compile("^search_metadata\\.(?:segmentations|embedding_sets)\\[(\\d+)\\]")
-                .matcher(violation.fieldPath());
+        var matcher = KEYED_ELEMENT.matcher(violation.fieldPath());
         int index = matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
         if (index >= keyed.size())
             throw new AccessionException(Status.Code.INTERNAL, "Validation names element " + index + " of " + keyed.size()

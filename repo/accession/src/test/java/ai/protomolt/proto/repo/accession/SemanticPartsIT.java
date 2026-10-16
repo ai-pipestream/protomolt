@@ -279,6 +279,22 @@ class SemanticPartsIT {
                 Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
         assertThat(resolves.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("segmentation.source-resolves");
 
+        // A quoted literal is a value to the mapper, not a field of the document; the binding over it would
+        // otherwise verify against text that no part holds.
+        var literal = bodySegmentation().toBuilder();
+        literal.getSourceBuilder().setFieldPath("\"" + BODY + "\"");
+        var quoted = rejected(() -> f.saves.save(processAuthority(), fullSave("op-literal", literal.build(), derivedSegmentation()).build()),
+                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+        assertThat(quoted.getViolationsList()).singleElement().satisfies(violation -> {
+            assertThat(violation.getRuleId()).isEqualTo("segmentation.source-resolves");
+            assertThat(violation.getFieldPath()).isEqualTo("source.field_path");
+            assertThat(violation.getMessage()).contains("dot-separated field names");
+        });
+        var padded = bodySegmentation().toBuilder();
+        padded.getSourceBuilder().setFieldPath(" search_metadata.body");
+        rejected(() -> f.saves.save(processAuthority(), fullSave("op-padded", padded.build(), derivedSegmentation()).build()),
+                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+
         var claimed = bodySegmentation().toBuilder().setContentDigest(SegmentationDigests.digest(bodySegmentation())).build();
         var saved = f.saves.save(processAuthority(), fullSave("op-claim", claimed, derivedSegmentation()).build());
         assertThat(segmentationEntry(saved.getAccession().getManifest(), S1).getSegmentationDigest()).isEqualTo(claimed.getContentDigest());
