@@ -194,7 +194,7 @@ public final class PostgresCatalog implements AutoCloseable {
                     connection.rollback();
                     return new Recorded(recorded.get());
                 }
-                var denied = recheckAuthority(connection, commit);
+                var denied = recheckAuthority(connection, commit.grantId(), commit.credential());
                 if (denied.isPresent()) {
                     connection.rollback();
                     return denied.get();
@@ -239,9 +239,14 @@ public final class PostgresCatalog implements AutoCloseable {
      * Records a terminal rejection. Returns the stored outcome, which is another
      * request's when the operation ID was already recorded.
      */
-    public Outcome recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome) {
+    public CatalogRecords.RejectionResult recordRejection(String accountId, String operationId, String intentSha256,
+            RecordedOutcome outcome, Optional<String> grantId, Optional<CatalogRecords.CredentialCheck> credential) {
         if (!outcome.hasRejection()) throw new IllegalArgumentException("Only a rejection is recorded without an accession");
         return inTransaction("Rejection record", connection -> {
+            var existing = selectOutcome(connection, accountId, operationId);
+            if (existing.isPresent()) return new Recorded(existing.get());
+            var denied = recheckAuthority(connection, grantId, credential);
+            if (denied.isPresent()) return denied.get();
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_operation_outcomes (account_id, operation_id, intent_sha256, outcome, recorded_at)
                     VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
@@ -252,23 +257,24 @@ public final class PostgresCatalog implements AutoCloseable {
                 insert.setTimestamp(5, toTimestamp(outcome.getRecordedAt()));
                 insert.executeUpdate();
             }
-            return selectOutcome(connection, accountId, operationId)
-                    .orElseThrow(() -> new IllegalStateException("Recorded rejection is not readable"));
+            return new Recorded(selectOutcome(connection, accountId, operationId)
+                    .orElseThrow(() -> new IllegalStateException("Recorded rejection is not readable")));
         });
     }
 
-    private Optional<CommitResult> recheckAuthority(Connection connection, Commit commit) throws SQLException {
-        if (commit.grantId().isPresent()) {
+    private Optional<WriteDenied> recheckAuthority(Connection connection, Optional<String> grantId,
+            Optional<CatalogRecords.CredentialCheck> credentialCheck) throws SQLException {
+        if (grantId.isPresent()) {
             try (var lock = connection.prepareStatement("SELECT snapshot_sha256, revoked FROM lock_catalog_writer_grant(?)")) {
-                lock.setString(1, commit.grantId().get());
+                lock.setString(1, grantId.get());
                 try (var rows = lock.executeQuery()) {
                     if (!rows.next()) return Optional.of(new WriteDenied("writer grant no longer exists"));
                     if (rows.getBoolean(2)) return Optional.of(new WriteDenied("writer grant is revoked"));
                 }
             }
         }
-        if (commit.credential().isPresent()) {
-            var credential = commit.credential().get();
+        if (credentialCheck.isPresent()) {
+            var credential = credentialCheck.get();
             try (var lock = connection.prepareStatement(
                     "SELECT generation, revoked FROM lock_catalog_credential_authority(?, ?)")) {
                 lock.setString(1, credential.issuer());
