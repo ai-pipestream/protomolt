@@ -30,7 +30,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * gRPC adapter for the implemented v2 save, read, delete and listing RPCs. Refusals carry the
+ * gRPC adapter for the implemented v2 save, read, delete, purge and listing RPCs. Refusals carry the
  * errors.proto detail message in the status details. Remaining RPCs
  * answer UNIMPLEMENTED. Not registered in any production server.
  */
@@ -39,6 +39,7 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
     private final DocumentReads reads;
     private final DocumentDeletes deletes;
     private final DocumentLists lists;
+    private final DocumentPurges purges;
     private final Function<AuthenticatedCaller, RepositoryCaller> bindings;
 
     /**
@@ -48,15 +49,17 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
      * @param reads the document reads coordinator
      * @param deletes the tombstone coordinator
      * @param lists the document listing coordinator
+     * @param purges the administrator purge coordinator
      * @param bindings resolves the trusted authentication result into repository
      *        identity; it must preserve principal, authority and credential binding
      */
     public AccessionGrpcService(DocumentSaves saves, DocumentReads reads,
-            DocumentDeletes deletes, DocumentLists lists, Function<AuthenticatedCaller, RepositoryCaller> bindings) {
+            DocumentDeletes deletes, DocumentLists lists, DocumentPurges purges, Function<AuthenticatedCaller, RepositoryCaller> bindings) {
         this.saves = Objects.requireNonNull(saves);
         this.reads = Objects.requireNonNull(reads);
         this.deletes = Objects.requireNonNull(deletes);
         this.lists = Objects.requireNonNull(lists);
+        this.purges = Objects.requireNonNull(purges);
         this.bindings = Objects.requireNonNull(bindings);
     }
 
@@ -87,6 +90,11 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
 
     @Override public void listDocuments(ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> observer) {
         respond(observer, () -> lists.list(caller(), request));
+    }
+
+    @Override public void purgeDocument(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
+            StreamObserver<ai.protomolt.proto.repo.v2.PurgeDocumentResponse> observer) {
+        respond(observer, () -> purges.purge(caller(), request));
     }
 
     private RepositoryCaller caller() {

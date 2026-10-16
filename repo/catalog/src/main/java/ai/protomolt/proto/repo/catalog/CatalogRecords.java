@@ -22,6 +22,12 @@ public final class CatalogRecords {
     public record ListedDocument(NodeAddress address, long revision, boolean tombstone,
             com.google.protobuf.Timestamp committedAt, ai.protomolt.proto.repo.v2.CatalogEntry entry) {}
 
+    public record PurgeState(ai.protomolt.proto.repo.v2.CatalogPurge record, boolean completed) {}
+    /** An idempotency key already belongs to a different document. */
+    public static final class PurgeConflict extends IllegalStateException {
+        public PurgeConflict() { super("Purge ID belongs to another document"); }
+    }
+
     public record Current(long revision, boolean tombstone) {}
 
     /** A recorded terminal outcome and the intent it was recorded for. */

@@ -73,6 +73,13 @@ public interface Catalog extends AutoCloseable {
     RejectionResult recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome,
             List<String> grantIds, Optional<CredentialCheck> credential, NodeAddress address, boolean creating);
 
+    /** Marks all document references and durably records exact deletion targets; empty if the address is absent. */
+    Optional<CatalogRecords.PurgeState> markPurged(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
+            com.google.protobuf.Timestamp markedAt);
+
+    /** Completes a recorded purge once, after its provider deletes have succeeded. */
+    void completePurge(String accountId, String purgeId, com.google.protobuf.Timestamp completedAt);
+
     // ------------------------------------------------------------------ writer authority
 
     /** Grants for one account and credential, by unsigned UTF-8 grant ID. */

@@ -347,3 +347,17 @@ message CatalogPageToken {
   // Last returned address.
   ai.protomolt.proto.repo.v1.NodeAddress after = 6;
 }
+
+// Durable purge targets recorded before any provider deletion.
+message CatalogPurge {
+  // First authorized request; retries bind purge_id and address.
+  PurgeDocumentRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Newly marked part and raw blob references.
+  int64 references_purged = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Exact immutable object identities whose reference count reached zero.
+  repeated StackRef objects_to_delete = 3;
+  // Distinct candidate objects still referenced elsewhere.
+  int64 objects_retained_shared = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Time of the mark transaction.
+  google.protobuf.Timestamp marked_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

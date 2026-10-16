@@ -139,7 +139,7 @@ public final class PostgresCatalog implements Catalog {
                     SELECT r.manifest, r.manifest_sha256 FROM catalog_revisions r
                     JOIN catalog_documents d ON d.document_id = r.document_id
                     WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
-                      AND r.revision = ?""")) {
+                      AND NOT d.purged AND r.revision = ?""")) {
                 bindAddress(select, 1, address);
                 select.setLong(5, revision);
                 try (var rows = select.executeQuery()) {
@@ -157,7 +157,7 @@ public final class PostgresCatalog implements Catalog {
                     SELECT r.manifest, r.manifest_sha256, r.revision FROM catalog_revisions r
                     JOIN catalog_documents d ON d.document_id = r.document_id
                     WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
-                      AND r.revision < ? ORDER BY r.revision DESC LIMIT ?""")) {
+                      AND NOT d.purged AND r.revision < ? ORDER BY r.revision DESC LIMIT ?""")) {
                 bindAddress(select, 1, address);
                 select.setLong(5, beforeRevision);
                 select.setInt(6, limit);
@@ -209,7 +209,7 @@ public final class PostgresCatalog implements Catalog {
             throw new IllegalArgumentException("Cursor belongs to another account");
         return inTransaction("Document listing", connection -> {
             String sql = "SELECT graph_id, graph_address_id, doc_id, current_revision, tombstone, catalog_entry, catalog_entry_sha256 "
-                    + "FROM catalog_documents WHERE account_id = ?"
+                    + "FROM catalog_documents WHERE NOT purged AND account_id = ?"
                     + (graphId.isEmpty() ? "" : " AND graph_id = ?")
                     + (graphAddressId.isEmpty() ? "" : " AND graph_address_id = ?")
                     + (includeTombstoned ? "" : " AND NOT tombstone")
@@ -246,6 +246,18 @@ public final class PostgresCatalog implements Catalog {
                 }
                 return List.copyOf(result);
             }
+        });
+    }
+
+    @Override public Optional<CatalogRecords.PurgeState> markPurged(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
+            com.google.protobuf.Timestamp markedAt) {
+        return inTransaction("Purge mark", connection -> PostgresPurges.mark(connection, request, markedAt));
+    }
+
+    @Override public void completePurge(String accountId, String purgeId, com.google.protobuf.Timestamp completedAt) {
+        inTransaction("Purge completion", connection -> {
+            PostgresPurges.complete(connection, accountId, purgeId, completedAt);
+            return null;
         });
     }
 
@@ -393,7 +405,7 @@ public final class PostgresCatalog implements Catalog {
         }
         try (var update = connection.prepareStatement("""
                 UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?, catalog_entry = ?, catalog_entry_sha256 = ?
-                WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ?
+                WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ? AND NOT purged
                 RETURNING document_id""")) {
             update.setBoolean(1, tombstone);
             update.setTimestamp(2, now);
@@ -725,7 +737,7 @@ public final class PostgresCatalog implements Catalog {
             try (var select = connection.prepareStatement("""
                     SELECT o.payload FROM catalog_outbox o JOIN catalog_documents d ON d.document_id = o.document_id
                     WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
-                    ORDER BY o.revision""")) {
+                    ORDER BY o.sequence""")) {
                 bindAddress(select, 1, address);
                 var result = new ArrayList<DocumentEvent>();
                 try (var rows = select.executeQuery()) { while (rows.next()) result.add(parseEvent(rows.getBytes(1))); }
@@ -807,7 +819,7 @@ public final class PostgresCatalog implements Catalog {
             throws SQLException {
         try (var select = connection.prepareStatement("""
                 SELECT current_revision, tombstone FROM catalog_documents
-                WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?""" + (lock ? " FOR UPDATE" : ""))) {
+                WHERE NOT purged AND account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?""" + (lock ? " FOR UPDATE" : ""))) {
             bindAddress(select, 1, address);
             try (var rows = select.executeQuery()) {
                 return rows.next() ? Optional.of(new Current(rows.getLong(1), rows.getBoolean(2))) : Optional.empty();

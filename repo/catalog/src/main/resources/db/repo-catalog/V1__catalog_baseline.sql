@@ -40,6 +40,7 @@ CREATE TABLE catalog_documents (
     doc_id           text NOT NULL CHECK (length(btrim(doc_id)) > 0),
     current_revision bigint NOT NULL CHECK (current_revision > 0),
     tombstone        boolean NOT NULL,
+    purged           boolean NOT NULL DEFAULT false,
     catalog_entry    bytea NOT NULL,
     catalog_entry_sha256 char(64) NOT NULL,
     updated_at       timestamptz NOT NULL,
@@ -95,6 +96,7 @@ CREATE TRIGGER catalog_objects_guard BEFORE UPDATE OR DELETE ON catalog_objects
 CREATE TABLE catalog_part_refs (
     document_id         bigint NOT NULL,
     revision            bigint NOT NULL,
+    purged              boolean NOT NULL DEFAULT false,
     ordinal             integer NOT NULL CHECK (ordinal >= 0),
     selector            bytea NOT NULL,
     state               smallint NOT NULL CHECK (state IN (1, 2, 3)),
@@ -108,14 +110,24 @@ CREATE TABLE catalog_part_refs (
     CHECK ((state = 1) = (stack_id IS NOT NULL AND object_key IS NOT NULL))
 );
 CREATE INDEX catalog_part_refs_object ON catalog_part_refs (stack_id, object_key);
+CREATE FUNCTION protect_catalog_part_refs() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Reference rows are retained'; END IF;
+    IF (NEW.document_id, NEW.revision, NEW.ordinal, NEW.selector, NEW.state, NEW.stack_id, NEW.object_key, NEW.written_in_revision) IS DISTINCT FROM (OLD.document_id, OLD.revision, OLD.ordinal, OLD.selector, OLD.state, OLD.stack_id, OLD.object_key, OLD.written_in_revision) OR (OLD.purged AND NOT NEW.purged) THEN
+        RAISE EXCEPTION 'Reference identity is immutable and purge is final';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 CREATE TRIGGER catalog_part_refs_immutable BEFORE UPDATE OR DELETE ON catalog_part_refs
-    FOR EACH ROW EXECUTE FUNCTION reject_catalog_rewrite();
+    FOR EACH ROW EXECUTE FUNCTION protect_catalog_part_refs();
 
 -- Each raw blob of a BLOBS part is its own stack object (decision 45). Blob
 -- references count with part references for purge and the carry-forward check.
 CREATE TABLE catalog_blob_refs (
     document_id bigint NOT NULL,
     revision    bigint NOT NULL,
+    purged      boolean NOT NULL DEFAULT false,
     blob_id     text NOT NULL CHECK (length(blob_id) > 0),
     stack_id    text NOT NULL,
     object_key  text NOT NULL,
@@ -124,8 +136,17 @@ CREATE TABLE catalog_blob_refs (
     FOREIGN KEY (stack_id, object_key) REFERENCES catalog_objects
 );
 CREATE INDEX catalog_blob_refs_object ON catalog_blob_refs (stack_id, object_key);
+CREATE FUNCTION protect_catalog_blob_refs() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Reference rows are retained'; END IF;
+    IF (NEW.document_id, NEW.revision, NEW.blob_id, NEW.stack_id, NEW.object_key) IS DISTINCT FROM (OLD.document_id, OLD.revision, OLD.blob_id, OLD.stack_id, OLD.object_key) OR (OLD.purged AND NOT NEW.purged) THEN
+        RAISE EXCEPTION 'Reference identity is immutable and purge is final';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 CREATE TRIGGER catalog_blob_refs_immutable BEFORE UPDATE OR DELETE ON catalog_blob_refs
-    FOR EACH ROW EXECUTE FUNCTION reject_catalog_rewrite();
+    FOR EACH ROW EXECUTE FUNCTION protect_catalog_blob_refs();
 
 -- Terminal outcomes, unique by account and operation ID. outcome is a binary
 -- RecordedOutcome; committed outcomes name their accession.
@@ -164,9 +185,12 @@ CREATE TABLE catalog_outbox (
     created_at  timestamptz NOT NULL,
     relayed_at  timestamptz,
     attempts    integer NOT NULL DEFAULT 0,
-    UNIQUE (document_id, revision),
-    FOREIGN KEY (document_id, revision) REFERENCES catalog_revisions
+    accession_revision bigint GENERATED ALWAYS AS (NULLIF(revision, 0)) STORED,
+    CHECK (revision >= 0),
+    FOREIGN KEY (document_id) REFERENCES catalog_documents,
+    FOREIGN KEY (document_id, accession_revision) REFERENCES catalog_revisions
 );
+CREATE UNIQUE INDEX catalog_outbox_accession ON catalog_outbox (document_id, revision) WHERE revision > 0;
 CREATE INDEX catalog_outbox_pending ON catalog_outbox (sequence) WHERE relayed_at IS NULL;
 
 -- Retained schema bytes (descriptor closures, metadata, sources) by SHA-256.
@@ -257,3 +281,28 @@ BEGIN
         WHERE w.grant_id = g FOR SHARE OF w;
 END;
 $$;
+
+-- Exact purge plan is immutable after mark; completion does not replace it.
+CREATE TABLE catalog_purges (
+    account_id text NOT NULL,
+    purge_id text NOT NULL,
+    document_id bigint NOT NULL REFERENCES catalog_documents,
+    record bytea NOT NULL,
+    record_sha256 char(64) NOT NULL,
+    completed boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (account_id, purge_id),
+    CHECK (encode(sha256(record), 'hex') = record_sha256)
+);
+CREATE FUNCTION protect_catalog_purge() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Purge records are retained'; END IF;
+    IF (NEW.account_id, NEW.purge_id, NEW.document_id, NEW.record, NEW.record_sha256)
+        IS DISTINCT FROM (OLD.account_id, OLD.purge_id, OLD.document_id, OLD.record, OLD.record_sha256)
+        OR (OLD.completed AND NOT NEW.completed) THEN
+        RAISE EXCEPTION 'Purge identity is immutable and completion is final';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER catalog_purge_guard BEFORE UPDATE OR DELETE ON catalog_purges
+    FOR EACH ROW EXECUTE FUNCTION protect_catalog_purge();
