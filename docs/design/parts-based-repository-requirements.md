@@ -117,7 +117,10 @@ must match the document's ownership and authenticated caller's authority. A step
 reuses WriteProvenance for recorded attribution. Module ID is required; node, graph
 ID and graph version may be supplied but graph membership/version is not verified
 in slice 1. A graph registry is not a prerequisite and no numeric/string workflow
-version conversion is implied.
+version conversion is implied. A CORE part taken from another revision through
+PartSource counts as a CORE write: its ownership becomes the revision's ownership, under
+the same checks as a CORE PUT (account, datasource and connector stay fixed; the ACL may
+change) (decision 47).
 
 **Writer grants (W1).** A trusted administrator provisions an immutable WriterGrant
 for one account and one credential (issuer and credential ID). Grants do not name a
@@ -161,7 +164,19 @@ SOURCE_NOT_FOUND (decision 37). Every creation under a step grant, derived or no
 requires `allow_create`; `derived_from` records lineage only and grants nothing
 (decision 46). There is no intake-only creation restriction.
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
+A sourced part counts as changed: it records the SaveOwner and the new revision; the
+bytes' producer stays recorded on the source revision.
 The accession records its save owner and source lineage, including metadata-only saves.
+
+**Delete and purge authority (decision 36).** A delete needs the document ACL write check
+plus either an active intake WriterGrant whose datasource and connector cover the
+document's ownership, or process authority for that intake. It is rechecked in the commit
+transaction like a save's grant. A step grant cannot delete. Administrator status alone
+does not authorize a delete. The tombstone records the evidence in its validation record,
+as writer-grant evidence or process-authority evidence; it records no content validation.
+Purge is administrator-only and requires the account ACL write check. Process authority
+and writer grants cannot purge. Delete and purge authorization failures are
+PERMISSION_DENIED and are not recorded, as for saves.
 
 Missing owner is INVALID_ARGUMENT/MALFORMED_REQUEST. An owner with no grant in the
 account is FAILED_PRECONDITION/OWNER_UNKNOWN; a revoked grant, invalid credential,
@@ -182,8 +197,8 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
   byte range, head, delete, and optional server-side copy as a speed-up only.
 - **Carry-forward by reference.** A new accession points at the same key for unchanged
   parts. Nothing is copied or re-uploaded.
-- **Keep forever.** Delete is a catalog tombstone. Only an explicit admin purge removes
-  bytes. A purge first marks the document's references purged in the catalog. It deletes
+- **Keep forever.** Delete is a catalog tombstone. Only an explicit administrator purge removes
+  bytes (§5, decision 36). A purge first marks the document's references purged in the catalog. It deletes
   an object's bytes only when no remaining unpurged reference, from any document, still
   points at it. A save that carries forward a reference checks, in its commit
   transaction, that the object is not purged. A read already streaming a purged object
@@ -474,7 +489,9 @@ correctness and RustFS for performance measurements.
 
 11. Crash after object upload, before commit: no accession is visible, and a retry
     with the same operation ID succeeds.
-12. Crash after commit, before the response: a retry returns the committed outcome.
+12. Crash after commit, before the response: a retry returns the committed outcome
+    for a caller that can still read the document; a save that removes the caller's
+    own read access is confirmed by a principal that can read it.
 13. Truncated or corrupt stored content fails the read with a typed error and is never
     returned as valid.
 14. A retained schema that is unavailable fails the typed read with a distinct error,

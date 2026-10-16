@@ -120,7 +120,9 @@ public final class DocumentCandidateAdmission {
     /**
      * The caller's content cannot be admitted: a fragment does not parse, is
      * not confined to its part, exceeds a structural bound, or places an Any
-     * where the layout allows none. A recorded refusal is the right outcome.
+     * where the layout allows none. Recording depends on the boundary: request
+     * structure checks before authorization are unrecorded; admission refusals
+     * after authorization follow the recorded-outcome policy.
      */
     public static final class ContentRefused extends RuntimeException {
         public ContentRefused(String message, Throwable cause) { super(message, cause); }
@@ -308,6 +310,22 @@ public final class DocumentCandidateAdmission {
     public static void requireKnownFields(Document document) {
         try {
             DocumentSchemaAdmission.requireKnownDocument(document, "", 0, new int[1], () -> {});
+        } catch (IllegalArgumentException refused) {
+            throw new ContentRefused(refused.getMessage(), refused);
+        }
+    }
+
+    /**
+     * Refuses a request document whose structure is out of bounds (nesting, node
+     * count) or that places an Any where the layout allows none. Unknown fields
+     * are left for {@link #check}, which decodes with the latest registered
+     * Document version and refuses a field it does not know as SCHEMA_MISSING.
+     *
+     * @throws ContentRefused when the document's structure is not admissible
+     */
+    public static void requireStructure(Document document) {
+        try {
+            DocumentSchemaAdmission.requireKnownDocument(document, "", 0, new int[1], () -> {}, true);
         } catch (IllegalArgumentException refused) {
             throw new ContentRefused(refused.getMessage(), refused);
         }

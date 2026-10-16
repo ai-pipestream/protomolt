@@ -487,16 +487,27 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Fail on newly introduced or unknown Any locations instead of silently omitting them. */
+    /** The refusal message for content outside the compiled Document schema; callers match on it. */
+    public static final String UNKNOWN_DOCUMENT_FIELDS = "unknown document fields cannot receive typed admission";
+
     static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
                                              int[] visited, Runnable control) {
+        requireKnownDocument(message, path, depth, visited, control, false);
+    }
+
+    /** As above; with {@code unknownAllowed}, unknown fields are left for a later schema decision. */
+    static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
+                                             int[] visited, Runnable control, boolean unknownAllowed) {
         active(control);
-        if (depth > 64 || ++visited[0] > 1_000_000)
-            throw new IllegalArgumentException("document root discovery exceeds structural limits");
-        if (!message.getUnknownFields().asMap().isEmpty())
-            throw new IllegalArgumentException("unknown document fields cannot receive typed admission");
+        if (depth > 64)
+            throw new IllegalArgumentException("Document nesting exceeds 64 levels at " + path);
+        if (++visited[0] > 1_000_000)
+            throw new IllegalArgumentException("Document exceeds 1,000,000 nodes");
+        if (!unknownAllowed && !message.getUnknownFields().asMap().isEmpty())
+            throw new IllegalArgumentException(UNKNOWN_DOCUMENT_FIELDS);
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) {
             if (!path.equals("structured_data") && !path.equals("parser_results.value.document.shape"))
-                throw new IllegalArgumentException("unsupported document Any location: " + path);
+                throw new IllegalArgumentException("An Any at " + path + " is not allowed; Any is accepted only at structured_data or parser_results.value.document.shape");
             return;
         }
         for (var entry : message.getAllFields().entrySet()) {
@@ -505,8 +516,10 @@ public final class DocumentSchemaAdmission {
             String childPath = path.isEmpty() ? field.getName() : path + "." + field.getName();
             if (field.isRepeated()) {
                 for (var child : (List<?>) entry.getValue())
-                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control);
-            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control);
+                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control,
+                            unknownAllowed);
+            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control,
+                    unknownAllowed);
         }
     }
     private static void active(Runnable control) {
