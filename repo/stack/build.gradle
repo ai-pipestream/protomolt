@@ -3,6 +3,13 @@ description = 'Write-once stacks: streamed puts that return a StackRef and verif
 dependencies {
     api project(':protomolt-repo-proto')
     api project(':protomolt-repo-blob-spi')
+
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation libs.awssdk.s3
+    testImplementation libs.awssdk.url.connection.client
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
 }
 
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'hibernate-core', 'jedis', 'kafka-clients']

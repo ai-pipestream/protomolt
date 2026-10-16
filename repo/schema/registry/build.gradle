@@ -2,6 +2,7 @@ description = 'Authorized registry schema selection with leased descriptor cachi
 dependencies {
     api project(':protomolt-repo-admission')
     api project(':protomolt-registry')
+    implementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-schema-registry-git')
     testImplementation project(':protomolt-descriptors')
     testImplementation project(':protomolt-repo-codec')

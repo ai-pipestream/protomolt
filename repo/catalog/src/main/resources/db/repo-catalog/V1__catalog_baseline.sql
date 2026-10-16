@@ -107,6 +107,22 @@ CREATE INDEX catalog_part_refs_object ON catalog_part_refs (stack_id, object_key
 CREATE TRIGGER catalog_part_refs_immutable BEFORE UPDATE OR DELETE ON catalog_part_refs
     FOR EACH ROW EXECUTE FUNCTION reject_catalog_rewrite();
 
+-- Each raw blob of a BLOBS part is its own stack object (decision 45). Blob
+-- references count with part references for purge and the carry-forward check.
+CREATE TABLE catalog_blob_refs (
+    document_id bigint NOT NULL,
+    revision    bigint NOT NULL,
+    blob_id     text NOT NULL CHECK (length(blob_id) > 0),
+    stack_id    text NOT NULL,
+    object_key  text NOT NULL,
+    PRIMARY KEY (document_id, revision, blob_id),
+    FOREIGN KEY (document_id, revision) REFERENCES catalog_revisions,
+    FOREIGN KEY (stack_id, object_key) REFERENCES catalog_objects
+);
+CREATE INDEX catalog_blob_refs_object ON catalog_blob_refs (stack_id, object_key);
+CREATE TRIGGER catalog_blob_refs_immutable BEFORE UPDATE OR DELETE ON catalog_blob_refs
+    FOR EACH ROW EXECUTE FUNCTION reject_catalog_rewrite();
+
 -- Terminal outcomes, unique by account and operation ID. outcome is a binary
 -- RecordedOutcome; committed outcomes name their accession.
 CREATE TABLE catalog_operation_outcomes (

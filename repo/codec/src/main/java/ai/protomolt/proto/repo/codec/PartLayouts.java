@@ -20,7 +20,19 @@ public final class PartLayouts {
      * @return the default Document part layout
      */
     public static PartLayout document() {
-        return PartLayout.builder(Document.getDescriptor())
+        return document(Document.getDescriptor());
+    }
+
+    /**
+     * The same layout over another registered version of the {@code Document}
+     * message, resolved by field name.
+     *
+     * @param documentType a {@code Document} descriptor
+     * @return the default part layout over that descriptor
+     * @throws IllegalArgumentException when the descriptor lacks a layout field
+     */
+    public static PartLayout document(com.google.protobuf.Descriptors.Descriptor documentType) {
+        return PartLayout.builder(documentType)
                 .identityField("doc_id")
                 .partField(DocumentPart.DOCUMENT_PART_BLOBS, "blob_bag")
                 .partField(DocumentPart.DOCUMENT_PART_PARSED, "parser_results")

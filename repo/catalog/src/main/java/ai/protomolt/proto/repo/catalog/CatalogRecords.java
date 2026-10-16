@@ -32,18 +32,23 @@ public final class CatalogRecords {
     /**
      * Everything one accession writes. The manifest, outcome and event are built
      * for revision {@code expected + 1}; the commit refuses any other numbering.
+     * {@code grantIds} are every writer grant authorizing this write, not
+     * historical producer evidence; the commit rechecks each against revocation
+     * under a share lock.
      */
     public record Commit(NodeAddress address, String operationId, String intentSha256, ExpectedRevision expected,
                          StoredManifest manifest, RecordedOutcome outcome, DocumentEvent event,
                          List<StackRef> newObjects, List<StackRef> carriedObjects, Map<String, ByteString> artifacts,
-                         Optional<String> grantId, Optional<CredentialCheck> credential) {
+                         List<String> grantIds, Optional<CredentialCheck> credential) {
         public Commit {
             Objects.requireNonNull(address); Objects.requireNonNull(operationId); Objects.requireNonNull(intentSha256);
             Objects.requireNonNull(expected); Objects.requireNonNull(manifest); Objects.requireNonNull(outcome);
             Objects.requireNonNull(event);
             newObjects = List.copyOf(newObjects); carriedObjects = List.copyOf(carriedObjects);
             artifacts = Map.copyOf(artifacts);
-            Objects.requireNonNull(grantId); Objects.requireNonNull(credential);
+            // Deduplicated and in unsigned UTF-8 order: the commit locks grants in this order.
+            grantIds = grantIds.stream().map(Objects::requireNonNull).distinct().sorted(CatalogRecords::compareUtf8).toList();
+            Objects.requireNonNull(credential);
         }
     }
 
@@ -71,4 +76,17 @@ public final class CatalogRecords {
 
     /** One outbox row awaiting relay. */
     public record OutboxEvent(String eventId, String key, DocumentEvent event, int attempts) {}
+
+    /** Unsigned UTF-8 byte order, which equals code point order. */
+    public static int compareUtf8(String left, String right) {
+        return Objects.compare(left, right, (a, b) -> {
+            int i = 0, j = 0;
+            while (i < a.length() && j < b.length()) {
+                int x = a.codePointAt(i), y = b.codePointAt(j);
+                if (x != y) return Integer.compare(x, y);
+                i += Character.charCount(x); j += Character.charCount(y);
+            }
+            return Integer.compare(a.length() - i, b.length() - j);
+        });
+    }
 }

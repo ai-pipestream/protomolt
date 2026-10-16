@@ -71,6 +71,8 @@ final class VerifyingInputStream extends FilterInputStream {
         verified = true;
     }
 
+    static String sha256Hex(byte[] bytes) { return HexFormat.of().formatHex(sha256().digest(bytes)); }
+
     static MessageDigest sha256() {
         try {
             return MessageDigest.getInstance("SHA-256");

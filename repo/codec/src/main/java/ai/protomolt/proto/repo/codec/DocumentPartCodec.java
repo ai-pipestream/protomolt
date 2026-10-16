@@ -217,7 +217,9 @@ public final class DocumentPartCodec {
      * @throws InvalidProtocolBufferException when the fragment fails to parse
      */
     public static PartObject deterministic(PartObject part, Message prototype) throws InvalidProtocolBufferException {
-        Message parsed = prototype.newBuilderForType().mergeFrom(part.bytes()).build();
+        // Generated maps sort under deterministic serialization; a DynamicMessage keeps its
+        // entries in wire order, so maps are put in the same key order first.
+        Message parsed = sortedMaps(prototype.newBuilderForType().mergeFrom(part.bytes()).build(), 0);
         var out = new java.io.ByteArrayOutputStream(part.bytes().length);
         var coded = com.google.protobuf.CodedOutputStream.newInstance(out);
         coded.useDeterministicSerialization();
@@ -229,6 +231,59 @@ public final class DocumentPartCodec {
         }
         byte[] bytes = out.toByteArray();
         return new PartObject(part.part(), part.subKey(), bytes, sha256Hex(bytes));
+    }
+
+    /**
+     * The message with every map's entries in ascending key order, nested maps
+     * included, keeping the last entry for a repeated key as a parse does. The key
+     * order is the natural order of protobuf-java's boxed key type, the order its
+     * generated messages serialize in deterministically.
+     */
+    static Message sortedMaps(Message message, int depth) {
+        if (depth > 100) throw new IllegalArgumentException("message nesting exceeds 100 levels");
+        Message.Builder changed = null;
+        for (var entry : message.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            Object value = entry.getValue();
+            Object canonical;
+            if (field.isMapField()) {
+                var byKey = new java.util.LinkedHashMap<Object, Message>();
+                var keyField = field.getMessageType().findFieldByNumber(1);
+                for (Object element : (List<?>) value) {
+                    var mapEntry = sortedMaps((Message) element, depth + 1);
+                    byKey.remove(mapEntry.getField(keyField));
+                    byKey.put(mapEntry.getField(keyField), mapEntry);
+                }
+                var sorted = new ArrayList<>(byKey.entrySet());
+                sorted.sort((left, right) -> compareKeys(left.getKey(), right.getKey()));
+                canonical = sorted.stream().map(java.util.Map.Entry::getValue).toList();
+            } else if (field.isRepeated()) {
+                var elements = new ArrayList<Message>();
+                for (Object element : (List<?>) value) elements.add(sortedMaps((Message) element, depth + 1));
+                canonical = elements;
+            } else {
+                canonical = sortedMaps((Message) value, depth + 1);
+            }
+            // Identity, not equals: message equality ignores map entry order.
+            if (!same(canonical, value)) {
+                if (changed == null) changed = message.toBuilder();
+                changed.setField(field, canonical);
+            }
+        }
+        return changed == null ? message : changed.build();
+    }
+
+    private static boolean same(Object canonical, Object value) {
+        if (canonical == value) return true;
+        if (!(canonical instanceof List<?> left) || !(value instanceof List<?> right) || left.size() != right.size()) return false;
+        for (int i = 0; i < left.size(); i++) if (left.get(i) != right.get(i)) return false;
+        return true;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static int compareKeys(Object left, Object right) {
+        return ((Comparable) left).compareTo(right);
     }
 
     /**
