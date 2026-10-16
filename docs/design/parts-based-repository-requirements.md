@@ -181,6 +181,13 @@ Purge is administrator-only and requires the account ACL write check. Process au
 and writer grants cannot purge. Delete and purge authorization failures are
 PERMISSION_DENIED and are not recorded, as for saves.
 
+Purge requires a non-null host authorization policy that checks administrator status
+and the target account's write ACL. There is no permissive default. Before invoking
+the policy, the repository rejects process authority and requires caller binding and
+membership in that account. Both policy conditions must pass; writer grants are not
+consulted. A refusal returns WRITE_DENIED without reserving a purge ID or storing an
+outcome. A policy lookup failure propagates as a failure, never as authorization.
+
 Missing owner is INVALID_ARGUMENT/MALFORMED_REQUEST. An owner with no grant in the
 account is FAILED_PRECONDITION/OWNER_UNKNOWN; a revoked grant, invalid credential,
 or caller without a matching grant is PERMISSION_DENIED. Error details must not
