@@ -1,9 +1,9 @@
 package ai.protomolt.proto.intake.service;
 
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.NodeAddress;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
-import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
@@ -13,7 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Records every {@code SaveDocument} call and answers with a plausible
  * receipt. The contract under test is WHICH save requests intake issues —
- * the whole repo-service stack would prove nothing extra here.
+ * storage and durability are qualified separately by the real-provider integration test.
  */
 final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
 
@@ -40,15 +40,13 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
                         .setDocId(docId)
                         .setGraphAddressId(request.getDocument().getOwnership().getDatasourceId())
                         .setAccountId(request.getDocument().getOwnership().getAccountId())
-                        .setGraphId(request.getGraphId())
+                        .setGraphId("intake:" + request.getDocument().getOwnership().getAccountId())
                         .build();
         observer.onNext(
                 SaveDocumentResponse.newBuilder()
-                        .setNodeId(UUID.nameUUIDFromBytes(address.toByteArray()).toString())
-                        .setDrive(request.getDrive())
-                        .setSizeBytes(request.getDocument().getSerializedSize())
-                        .setDeduplicated(deduplicated)
-                        .setAddress(address)
+                        .setAccession(ai.protomolt.proto.repo.v2.Accession.newBuilder()
+                                .setAddress(address).setRevision(1))
+                        .setReplayed(deduplicated)
                         .build());
         observer.onCompleted();
     }

@@ -74,7 +74,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Receipt.</b> 200 with the {@code IngestDocumentResponse} receipt
  * rendered as JSON (proto field names, no-presence fields included) — the
- * same vocabulary every lane answers: {@code doc_id}, {@code node_id},
+ * same vocabulary every lane answers: {@code doc_id}, {@code revision},
  * {@code address}, {@code drive}, {@code size_bytes}, {@code sha256},
  * {@code deduplicated}.
  */
@@ -224,16 +224,16 @@ public final class IntakeHttpServer implements AutoCloseable {
                         contentType == null || contentType.isBlank() ? "" : contentType.trim(),
                         Map.of());
         LOG.debug("HTTP intake saved doc_id={} ({} bytes, sha256={}, deduplicated={})",
-                saved.response().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
-                saved.response().getDeduplicated());
+                saved.response().getAccession().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
+                saved.response().getReplayed());
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAddress().getDocId())
-                .setNodeId(saved.response().getNodeId())
-                .setAddress(saved.response().getAddress())
-                .setDrive(saved.response().getDrive())
+                .setDocId(saved.response().getAccession().getAddress().getDocId())
+                .setRevision(saved.response().getAccession().getRevision())
+                .setAddress(saved.response().getAccession().getAddress())
+                .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getDeduplicated())
+                .setDeduplicated(saved.response().getReplayed())
                 .build();
     }
 

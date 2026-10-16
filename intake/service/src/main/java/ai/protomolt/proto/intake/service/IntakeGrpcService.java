@@ -13,7 +13,7 @@ import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.DocIdDerivation;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
@@ -98,13 +98,13 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                             "content is required: set document or raw");
                 };
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAddress().getDocId())
-                .setNodeId(saved.response().getNodeId())
-                .setAddress(saved.response().getAddress())
-                .setDrive(saved.response().getDrive())
+                .setDocId(saved.response().getAccession().getAddress().getDocId())
+                .setRevision(saved.response().getAccession().getRevision())
+                .setAddress(saved.response().getAccession().getAddress())
+                .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getDeduplicated())
+                .setDeduplicated(saved.response().getReplayed())
                 .build();
     }
 
@@ -123,13 +123,20 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         // The key's scope dictates ownership; whatever the caller supplied loses.
         ownership.setAccountId(scope.accountId()).setDatasourceId(targeting.datasourceId());
         document.setOwnership(ownership);
-        if (!caller.getDocId().isBlank() && !caller.hasDocIdDerivation()) {
+        if (caller.getDocId().isBlank()) {
+            byte[] canonical = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(document.build());
+            byte[] digest = RawIngests.sha256(canonical);
+            document.setDocId(java.util.UUID.nameUUIDFromBytes(digest).toString())
+                    .setDocIdDerivation(DocIdDerivation.newBuilder()
+                            .setMethod(DocIdDerivationMethod.DOC_ID_DERIVATION_METHOD_CONTENT_HASH)
+                            .setSourceValue(java.util.HexFormat.of().formatHex(digest)));
+        } else if (!caller.hasDocIdDerivation()) {
             document.setDocIdDerivation(
                     DocIdDerivation.newBuilder()
                             .setMethod(DocIdDerivationMethod.DOC_ID_DERIVATION_METHOD_CALLER_PROVIDED));
         }
         Document toSave = document.build();
-        byte[] canonical = toSave.toByteArray();
+        byte[] canonical = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(toSave);
         return ingests.save(
                 scope, targeting, toSave, metadata, RawIngests.sha256Hex(canonical), canonical.length);
     }
@@ -248,13 +255,13 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                         metadata.getMetadataMap());
                 observer.onNext(
                         IngestStreamResponse.newBuilder()
-                                .setDocId(saved.response().getAddress().getDocId())
-                                .setNodeId(saved.response().getNodeId())
-                                .setAddress(saved.response().getAddress())
-                                .setDrive(saved.response().getDrive())
+                                .setDocId(saved.response().getAccession().getAddress().getDocId())
+                                .setRevision(saved.response().getAccession().getRevision())
+                                .setAddress(saved.response().getAccession().getAddress())
+                                .setDrive(saved.drive())
                                 .setSizeBytes(saved.payloadSize())
                                 .setSha256(saved.sha256())
-                                .setDeduplicated(saved.response().getDeduplicated())
+                                .setDeduplicated(saved.response().getReplayed())
                                 .build());
                 observer.onCompleted();
             } catch (Throwable t) {

@@ -7,12 +7,13 @@ import ai.protomolt.proto.repo.v1.ChecksumType;
 import ai.protomolt.proto.repo.v1.DocIdDerivation;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
-import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.WriteProvenance;
+import ai.protomolt.proto.repo.v2.*;
+import ai.protomolt.proto.descriptors.MessageFingerprints;
 import com.google.protobuf.ByteString;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -76,6 +77,7 @@ final class RawIngests {
         Blob.Builder blob =
                 Blob.newBuilder()
                         .setBlobId(docId)
+                        .setDriveId(targeting.drive())
                         .setData(data)
                         .setSizeBytes(data.size())
                         .setChecksum(sha256)
@@ -120,19 +122,47 @@ final class RawIngests {
             Map<String, String> metadata,
             String sha256,
             long payloadSize) {
-        SaveDocumentRequest request =
+        var content = document.toBuilder();
+        if (document.hasBlobBag()) {
+            var bag = document.getBlobBag().toBuilder();
+            switch (bag.getBlobDataCase()) {
+                case BLOB -> bag.setBlob(inlineBlob(bag.getBlob(), targeting.drive()));
+                case BLOBS -> {
+                    var blobs = bag.getBlobs().toBuilder().clearBlob();
+                    for (var blob : bag.getBlobs().getBlobList()) blobs.addBlob(inlineBlob(blob, targeting.drive()));
+                    bag.setBlobs(blobs);
+                }
+                case BLOBDATA_NOT_SET -> { }
+            }
+            content.setBlobBag(bag);
+        }
+        document = content.build();
+        var origin = IntakeOrigin.newBuilder().setDatasourceId(targeting.datasourceId());
+        if (document.getOwnership().hasConnectorId()) origin.setConnectorId(document.getOwnership().getConnectorId());
+        SaveDocumentRequest.Builder request =
                 SaveDocumentRequest.newBuilder()
                         .setDocument(document)
                         .setDrive(targeting.drive())
-                        .setConnectorId(IntakeGrpcService.CONNECTOR_ID)
-                        .setUseDatasourceId(true)
-                        .setGraphId(IntakeGrpcService.INTAKE_GRAPH_PREFIX + scope.accountId())
-                        .setWrittenBy(
-                                WriteProvenance.newBuilder().setModuleId(IntakeGrpcService.CONNECTOR_ID))
-                        .putAllMetadata(metadata)
-                        .build();
-        SaveDocumentResponse response = documents.saveDocument(request);
-        return new Saved(response, sha256, payloadSize);
+                        .setTarget(DocumentTarget.newBuilder().setUseDatasourceId(targeting.datasourceId()))
+                        .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                        .setOwner(SaveOwner.newBuilder().setIntake(origin))
+                        .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                        .putAllMetadata(metadata);
+        if (document.hasBlobBag()) request.addWrites(put(DocumentPart.DOCUMENT_PART_BLOBS));
+        if (document.getParserResultsCount() > 0) request.addWrites(put(DocumentPart.DOCUMENT_PART_PARSED));
+        for (var segmentation : document.getSearchMetadata().getSegmentationsList())
+            request.addWrites(PartWrite.newBuilder().setSelector(PartSelector.newBuilder()
+                    .setSegmentationId(segmentation.getSegmentationId())).setAction(WriteAction.WRITE_ACTION_PUT));
+        for (var embedding : document.getSearchMetadata().getEmbeddingSetsList())
+            request.addWrites(PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setEmbeddingSet(
+                    ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey.newBuilder()
+                            .setSegmentationId(embedding.getSegmentationId()).setEmbeddingSetId(embedding.getEmbeddingSetId())))
+                    .setAction(WriteAction.WRITE_ACTION_PUT));
+        // Include the full typed intent, including metadata and target, in retry identity.
+        // The shared fingerprint helper uses deterministic protobuf encoding, never JSON.
+        request.setOperationId("intake-v2:" + MessageFingerprints.fingerprint(request.build()));
+        SaveDocumentResponse response = documents.saveDocument(request.build());
+        return new Saved(response, targeting.drive(), sha256, payloadSize);
     }
 
     /** RESOURCE_EXHAUSTED when {@code sizeBytes} breaches the service or per-key cap. */
@@ -174,7 +204,17 @@ final class RawIngests {
     }
 
     /** A completed repo save plus the receipt's integrity fields. */
-    record Saved(SaveDocumentResponse response, String sha256, long payloadSize) {}
+    record Saved(SaveDocumentResponse response, String drive, String sha256, long payloadSize) {}
+
+    private static Blob inlineBlob(Blob blob, String drive) {
+        if (blob.hasStorageRef()) throw GrpcErrors.invalidArgument("Intake blobs must carry bytes, not storage references");
+        return blob.toBuilder().setDriveId(drive).build();
+    }
+
+    private static PartWrite put(DocumentPart part) {
+        return PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setPart(part))
+                .setAction(WriteAction.WRITE_ACTION_PUT).build();
+    }
 
     /**
      * Scope-checked request targeting. Construction is the single place the

@@ -18,7 +18,7 @@ import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -137,11 +137,13 @@ class IntakeSaveContractTest {
 
         assertThat(repo.saves).hasSize(1);
         SaveDocumentRequest save = repo.saves.getFirst();
-        assertThat(save.getUseDatasourceId()).isTrue();
-        assertThat(save.getGraphId()).isEqualTo("intake:" + ACCOUNT);
+        assertThat(save.getTarget().getUseDatasourceId()).isEqualTo(save.getDocument().getOwnership().getDatasourceId());
+        assertThat(save.getExpected().getNone()).isTrue();
+        assertThat(save.getOperationId()).isNotBlank();
+        assertThat(save.getOwner().getIntake().getDatasourceId()).isEqualTo(save.getDocument().getOwnership().getDatasourceId());
         assertThat(save.getDrive()).isEqualTo("intake");
-        assertThat(save.getConnectorId()).isEqualTo("intake");
-        assertThat(save.getWrittenBy().getModuleId()).isEqualTo("intake");
+        assertThat(save.getOwner().getIntake().getConnectorId()).isEqualTo("intake");
+        assertThat(save.getOwner().getIntake().getConnectorId()).isEqualTo("intake");
         assertThat(save.getMetadataMap()).containsEntry("origin", "contract-test");
 
         Document saved = save.getDocument();
@@ -472,5 +474,35 @@ class IntakeSaveContractTest {
     static StatusRuntimeException streamFailure(Throwable t) {
         assertThat(t).isInstanceOf(StatusRuntimeException.class);
         return (StatusRuntimeException) t;
+    }
+    @Test
+    void typedDocumentWithoutIdGetsStableIdentityAndPreservesUnknownFields() {
+        var unknown = com.google.protobuf.UnknownFieldSet.newBuilder().addField(999,
+                com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(9007199254740993L).build()).build();
+        var document = Document.newBuilder().setUnknownFields(unknown).build();
+        var request = IngestDocumentRequest.newBuilder().setDatasourceId("ds-typed").setDocument(document).build();
+        var first = stub(KEY_UNRESTRICTED).ingestDocument(request);
+        var second = stub(KEY_UNRESTRICTED).ingestDocument(request);
+        assertThat(first.getDocId()).isNotBlank().isEqualTo(second.getDocId());
+        assertThat(first.getRevision()).isEqualTo(1);
+        assertThat(repo.saves.get(0).getOperationId()).isEqualTo(repo.saves.get(1).getOperationId());
+        assertThat(repo.saves.get(0).getDocument().getUnknownFields()).isEqualTo(unknown);
+    }
+
+    @Test
+    void inlineBlobDriveIsExplicitAndClientStorageReferencesAreRefused() {
+        var input = Document.newBuilder().setDocId("inline-drive").setBlobBag(BlobBag.newBuilder()
+                .setBlob(Blob.newBuilder().setBlobId("b").setData(ByteString.copyFromUtf8("bytes")))).build();
+        stub(KEY_UNRESTRICTED).ingestDocument(IngestDocumentRequest.newBuilder().setDatasourceId("ds-1")
+                .setDrive("chosen").setDocument(input).build());
+        assertThat(repo.saves.getFirst().getDocument().getBlobBag().getBlob().getDriveId()).isEqualTo("chosen");
+        var reference = input.toBuilder().setBlobBag(input.getBlobBag().toBuilder().setBlob(
+                input.getBlobBag().getBlob().toBuilder().setStorageRef(
+                        ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder().setObjectKey("untrusted")))).build();
+        assertThatThrownBy(() -> stub(KEY_UNRESTRICTED).ingestDocument(IngestDocumentRequest.newBuilder()
+                .setDatasourceId("ds-1").setDocument(reference).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+        assertThat(repo.saves).hasSize(1);
     }
 }
