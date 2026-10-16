@@ -40,9 +40,13 @@ CREATE TABLE catalog_documents (
     doc_id           text NOT NULL CHECK (length(btrim(doc_id)) > 0),
     current_revision bigint NOT NULL CHECK (current_revision > 0),
     tombstone        boolean NOT NULL,
+    catalog_entry    bytea NOT NULL,
+    catalog_entry_sha256 char(64) NOT NULL,
     updated_at       timestamptz NOT NULL,
     UNIQUE (account_id, graph_id, graph_address_id, doc_id)
 );
+CREATE INDEX catalog_documents_listing ON catalog_documents
+    (account_id, graph_id COLLATE "C", graph_address_id COLLATE "C", doc_id COLLATE "C");
 CREATE TRIGGER catalog_documents_no_delete BEFORE DELETE ON catalog_documents
     FOR EACH ROW EXECUTE FUNCTION reject_catalog_rewrite();
 

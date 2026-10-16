@@ -2,6 +2,7 @@ description = 'Parts-based repository catalog: revisions, part references, outco
 
 dependencies {
     api project(':protomolt-repo-proto')
+    implementation project(':protomolt-projection')
     api libs.hikari
     implementation libs.flyway.core
     implementation libs.flyway.database.postgresql

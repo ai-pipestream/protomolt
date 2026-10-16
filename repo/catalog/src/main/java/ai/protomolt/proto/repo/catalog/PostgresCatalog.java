@@ -188,6 +188,67 @@ public final class PostgresCatalog implements Catalog {
 
     // ------------------------------------------------------------------ commit
 
+    private static final ai.protomolt.proto.projection.MessageProjection ENTRY_PROJECTION =
+            ai.protomolt.proto.projection.MessageProjection.forTarget(
+                    ai.protomolt.proto.repo.v2.CatalogEntry.getDescriptor(),
+                    name -> name.equals(ai.protomolt.proto.repo.v1.Document.getDescriptor().getFullName())
+                            ? java.util.Optional.of(ai.protomolt.proto.repo.v1.Document.getDescriptor()) : java.util.Optional.empty()).orElseThrow();
+
+    /** Project only committed document metadata; no content fetch or JSON conversion. */
+    private static byte[] entryBytes(StoredManifest manifest) {
+        var projected = ENTRY_PROJECTION.project(ai.protomolt.proto.repo.v1.Document.newBuilder()
+                .setDocId(manifest.getAddress().getDocId()).setOwnership(manifest.getOwnership()).build());
+        return ai.protomolt.proto.repo.v2.CatalogEntry.newBuilder().mergeFrom(projected)
+                .setCommittedAt(manifest.getCommittedAt()).build().toByteArray();
+    }
+
+    @Override public List<CatalogRecords.ListedDocument> documents(String accountId, String graphId, String graphAddressId,
+            boolean includeTombstoned, Optional<NodeAddress> after, int limit) {
+        if (limit < 1 || limit > 1001) throw new IllegalArgumentException("Invalid catalog page size");
+        if (after.isPresent() && !after.get().getAccountId().equals(accountId))
+            throw new IllegalArgumentException("Cursor belongs to another account");
+        return inTransaction("Document listing", connection -> {
+            String sql = "SELECT graph_id, graph_address_id, doc_id, current_revision, tombstone, catalog_entry, catalog_entry_sha256 "
+                    + "FROM catalog_documents WHERE account_id = ?"
+                    + (graphId.isEmpty() ? "" : " AND graph_id = ?")
+                    + (graphAddressId.isEmpty() ? "" : " AND graph_address_id = ?")
+                    + (includeTombstoned ? "" : " AND NOT tombstone")
+                    + (after.isEmpty() ? "" : " AND (graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\") > (?, ?, ?)")
+                    + " ORDER BY graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\" LIMIT ?";
+            try (var select = connection.prepareStatement(sql)) {
+                int i = 1;
+                select.setString(i++, accountId);
+                if (!graphId.isEmpty()) select.setString(i++, graphId);
+                if (!graphAddressId.isEmpty()) select.setString(i++, graphAddressId);
+                if (after.isPresent()) {
+                    select.setString(i++, after.get().getGraphId());
+                    select.setString(i++, after.get().getGraphAddressId());
+                    select.setString(i++, after.get().getDocId());
+                }
+                select.setInt(i, limit);
+                var result = new ArrayList<CatalogRecords.ListedDocument>();
+                try (var rows = select.executeQuery()) {
+                    while (rows.next()) {
+                        var address = NodeAddress.newBuilder().setAccountId(accountId).setGraphId(rows.getString(1))
+                                .setGraphAddressId(rows.getString(2)).setDocId(rows.getString(3)).build();
+                        var bytes = rows.getBytes(6);
+                        if (bytes == null || !sha256Hex(bytes).equals(rows.getString(7)))
+                            throw new CatalogDataLoss("Catalog entry digest mismatch");
+                        final ai.protomolt.proto.repo.v2.CatalogEntry entry;
+                        try { entry = ai.protomolt.proto.repo.v2.CatalogEntry.parseFrom(bytes); }
+                        catch (com.google.protobuf.InvalidProtocolBufferException bad) { throw new CatalogDataLoss("Catalog entry does not decode", bad); }
+                        if (!entry.getDocId().equals(address.getDocId()) || !entry.hasOwnership()
+                                || !entry.getOwnership().getAccountId().equals(accountId) || !entry.hasCommittedAt())
+                            throw new CatalogDataLoss("Catalog entry identity mismatch");
+                        result.add(new CatalogRecords.ListedDocument(address, rows.getLong(4), rows.getBoolean(5),
+                                entry.getCommittedAt(), entry));
+                    }
+                }
+                return List.copyOf(result);
+            }
+        });
+    }
+
     /** Commits one accession, or reports why it did not. Never partial. */
     @Override public CommitResult commit(Commit commit) {
         long next = commit.expected().hasNone() ? 1 : Math.addExact(commit.expected().getRevision(), 1);
@@ -214,7 +275,7 @@ public final class PostgresCatalog implements Catalog {
                     return denied.get();
                 }
                 var documentId = compareAndSet(connection, commit.address(), commit.expected().hasNone(), next - 1,
-                        manifest.getTombstone());
+                        manifest.getTombstone(), manifest);
                 if (documentId.isEmpty()) {
                     connection.rollback();
                     conflicted = true;
@@ -314,27 +375,32 @@ public final class PostgresCatalog implements Catalog {
 
     /** Moves the pointer from {@code expectedRevision}; empty when the document is elsewhere. */
     private static Optional<Long> compareAndSet(Connection connection, NodeAddress address, boolean create,
-            long expectedRevision, boolean tombstone) throws SQLException {
-        var now = Timestamp.from(Instant.now());
+            long expectedRevision, boolean tombstone, StoredManifest manifest) throws SQLException {
+        var now = toTimestamp(manifest.getCommittedAt());
+        var entry = entryBytes(manifest);
         if (create) {
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_documents (account_id, graph_id, graph_address_id, doc_id, current_revision,
-                        tombstone, updated_at)
-                    VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT DO NOTHING RETURNING document_id""")) {
+                        tombstone, updated_at, catalog_entry, catalog_entry_sha256)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING document_id""")) {
                 bindAddress(insert, 1, address);
                 insert.setBoolean(5, tombstone);
                 insert.setTimestamp(6, now);
+                insert.setBytes(7, entry);
+                insert.setString(8, sha256Hex(entry));
                 try (var rows = insert.executeQuery()) { return rows.next() ? Optional.of(rows.getLong(1)) : Optional.empty(); }
             }
         }
         try (var update = connection.prepareStatement("""
-                UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?
+                UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?, catalog_entry = ?, catalog_entry_sha256 = ?
                 WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ?
                 RETURNING document_id""")) {
             update.setBoolean(1, tombstone);
             update.setTimestamp(2, now);
-            bindAddress(update, 3, address);
-            update.setLong(7, expectedRevision);
+            update.setBytes(3, entry);
+            update.setString(4, sha256Hex(entry));
+            bindAddress(update, 5, address);
+            update.setLong(9, expectedRevision);
             try (var rows = update.executeQuery()) { return rows.next() ? Optional.of(rows.getLong(1)) : Optional.empty(); }
         }
     }

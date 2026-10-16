@@ -350,6 +350,11 @@ message UploadDocumentResponse {
 
 // A tombstone request.
 message DeleteDocumentRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "delete-existing-revision"
+    message: "delete requires an exact existing revision"
+    expression: "has(this.expected.revision)"
+  };
   // Unique per account.
   string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true

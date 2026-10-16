@@ -15,6 +15,10 @@ import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -26,13 +30,15 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * gRPC adapter for the slice 1 v2 DocumentService RPCs. Refusals carry the
- * errors.proto detail message in the status details. RPCs outside slice 1
+ * gRPC adapter for the implemented v2 save, read, delete and listing RPCs. Refusals carry the
+ * errors.proto detail message in the status details. Remaining RPCs
  * answer UNIMPLEMENTED. Not registered in any production server.
  */
 public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServiceImplBase {
     private final DocumentSaves saves;
     private final DocumentReads reads;
+    private final DocumentDeletes deletes;
+    private final DocumentLists lists;
     private final Function<AuthenticatedCaller, RepositoryCaller> bindings;
 
     /**
@@ -40,13 +46,17 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
      *
      * @param saves the document saves coordinator
      * @param reads the document reads coordinator
+     * @param deletes the tombstone coordinator
+     * @param lists the document listing coordinator
      * @param bindings resolves the trusted authentication result into repository
      *        identity; it must preserve principal, authority and credential binding
      */
     public AccessionGrpcService(DocumentSaves saves, DocumentReads reads,
-            Function<AuthenticatedCaller, RepositoryCaller> bindings) {
+            DocumentDeletes deletes, DocumentLists lists, Function<AuthenticatedCaller, RepositoryCaller> bindings) {
         this.saves = Objects.requireNonNull(saves);
         this.reads = Objects.requireNonNull(reads);
+        this.deletes = Objects.requireNonNull(deletes);
+        this.lists = Objects.requireNonNull(lists);
         this.bindings = Objects.requireNonNull(bindings);
     }
 
@@ -69,6 +79,14 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
     @Override public void getOperationOutcome(GetOperationOutcomeRequest request,
             StreamObserver<GetOperationOutcomeResponse> observer) {
         respond(observer, () -> reads.outcome(caller(), request));
+    }
+
+    @Override public void deleteDocument(DeleteDocumentRequest request, StreamObserver<DeleteDocumentResponse> observer) {
+        respond(observer, () -> deletes.delete(caller(), request));
+    }
+
+    @Override public void listDocuments(ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> observer) {
+        respond(observer, () -> lists.list(caller(), request));
     }
 
     private RepositoryCaller caller() {

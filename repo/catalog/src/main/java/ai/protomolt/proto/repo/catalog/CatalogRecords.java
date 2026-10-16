@@ -19,6 +19,9 @@ public final class CatalogRecords {
     private CatalogRecords() {}
 
     /** A document's current-revision pointer. */
+    public record ListedDocument(NodeAddress address, long revision, boolean tombstone,
+            com.google.protobuf.Timestamp committedAt, ai.protomolt.proto.repo.v2.CatalogEntry entry) {}
+
     public record Current(long revision, boolean tombstone) {}
 
     /** A recorded terminal outcome and the intent it was recorded for. */

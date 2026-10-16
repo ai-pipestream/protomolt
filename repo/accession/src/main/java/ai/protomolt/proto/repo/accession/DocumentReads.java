@@ -161,12 +161,13 @@ public final class DocumentReads {
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Current revision has no manifest", null));
         if (!canRead(caller, address, stored.getOwnership()))
             throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
-        if (stored.getTombstone()) throw notFound("Document is deleted");
+
         return stored;
     }
 
     private StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
         var latest = current(caller, address);
+        if (!selector.hasRevision() && latest.getTombstone()) throw notFound("Document is deleted");
         if (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) return latest;
         return catalog.manifest(address, selector.getRevision())
                 .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));

@@ -55,6 +55,10 @@ public interface Catalog extends AutoCloseable {
      */
     Optional<ByteString> artifact(String sha256);
 
+    /** Current metadata rows in unsigned UTF-8 address order, strictly after the cursor. */
+    List<CatalogRecords.ListedDocument> documents(String accountId, String graphId, String graphAddressId,
+            boolean includeTombstoned, Optional<NodeAddress> after, int limit);
+
     // ------------------------------------------------------------------ commit
 
     /** Commits one accession, or reports why it did not. Never partial. */

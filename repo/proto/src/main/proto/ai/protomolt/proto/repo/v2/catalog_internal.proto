@@ -8,6 +8,7 @@ import "ai/protomolt/proto/repo/v2/document_service.proto";
 import "ai/protomolt/proto/repo/v2/manifest.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
 
 option java_multiple_files = true;
 option java_outer_classname = "CatalogInternalProto";
@@ -91,6 +92,17 @@ message StoredPartEntry {
 // security and history metadata.
 message StoredManifest {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-no-parts"
+    message: "tombstones contain no part references"
+    expression: "!this.tombstone || size(this.parts) == 0"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-validation-status"
+    message: "only tombstones have NOT_APPLICABLE validation"
+    expression: "this.tombstone == (this.validation.status == 3)"
+  };
+
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "save-owner-present"
     message: "save accessions require an owner"
     expression: "this.tombstone || has(this.owner)"
@@ -98,7 +110,7 @@ message StoredManifest {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "save-authority-present"
     message: "save accessions require grant or process-authority evidence"
-    expression: "this.tombstone || has(this.validation.writer_grant) || has(this.validation.process_authority)"
+    expression: "has(this.validation.writer_grant) || has(this.validation.process_authority)"
   };
   // The call number.
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
@@ -293,4 +305,45 @@ message CandidateDigestInput {
   uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
   // The parts in codec order.
   repeated CandidatePart parts = 2;
+}
+
+// Domain-separated retry identity for a tombstone operation.
+message DeleteIntent {
+  // Encoding version.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Target document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Expected live revision.
+  ExpectedRevision expected = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Recorded deletion reason.
+  string reason = 4;
+  // Prevents collision with save intents.
+  string operation_kind = 5 [(ai.protomolt.proto.validate.v1.field).string.const = "delete"];
+}
+
+// Internal metadata projection; authoritative content remains in the stored parts.
+message CatalogEntry {
+  option (ai.protomolt.proto.projection.v1.sources) = {source: "ai.protomolt.proto.repo.v1.Document"};
+  // Stable document identity.
+  string doc_id = 1 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "doc_id"}}];
+  // Current ownership used for listing access checks.
+  ai.protomolt.proto.repo.v1.OwnershipContext ownership = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership"}}];
+  // Exact commit timestamp supplied by the catalog; SQL timestamps can lose nanoseconds.
+  google.protobuf.Timestamp committed_at = 3;
+}
+
+// Internal binary continuation token, bound to the listing filters.
+message CatalogPageToken {
+  // Token format.
+  uint32 version = 1;
+  // Exact account filter.
+  string account_id = 2;
+  // Exact graph filter.
+  string graph_id = 3;
+  // Exact address filter.
+  string graph_address_id = 4;
+  // Exact tombstone filter.
+  bool include_tombstoned = 5;
+  // Last returned address.
+  ai.protomolt.proto.repo.v1.NodeAddress after = 6;
 }

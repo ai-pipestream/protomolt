@@ -6,6 +6,7 @@ description = 'The claim-check document store contract: Document, manifest, and 
 
 dependencies {
     api libs.protobuf.java
+    api project(':protomolt-projection')
     api libs.protobuf.java.util
     api libs.grpc.api
     api libs.grpc.stub
