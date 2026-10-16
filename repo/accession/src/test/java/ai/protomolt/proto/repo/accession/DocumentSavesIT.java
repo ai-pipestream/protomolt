@@ -479,9 +479,14 @@ class DocumentSavesIT {
                 .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).build();
         assertRejected(() -> f.saves.save(processAuthority(), duplicate), Status.Code.INVALID_ARGUMENT,
                 RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        // A segmentation in the document whose CHUNKS object is not written is stray content.
         var segmented = document(account, "doc-shape", "v1").toBuilder().setSearchMetadata(SearchMetadata.newBuilder()
                 .addSegmentations(Segmentation.newBuilder().setSegmentationId("s"))).build();
         assertRejected(() -> f.saves.save(processAuthority(), create("op-s", address, segmented).build()),
+                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        var legacy = document(account, "doc-shape", "v1").toBuilder().setSearchMetadata(SearchMetadata.newBuilder()
+                .addSemanticResults(ai.protomolt.proto.repo.v1.SemanticProcessingResult.newBuilder().setResultId("r"))).build();
+        assertRejected(() -> f.saves.save(processAuthority(), create("op-s", address, legacy).build()),
                 Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
         var blank = create("op-s", address, document(account, "doc-shape", "v1"))
                 .setTarget(DocumentTarget.newBuilder().setUseDatasourceId("ds-1"))
