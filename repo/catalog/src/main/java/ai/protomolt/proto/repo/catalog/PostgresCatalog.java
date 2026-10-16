@@ -240,7 +240,8 @@ public final class PostgresCatalog implements AutoCloseable {
      * request's when the operation ID was already recorded.
      */
     public CatalogRecords.RejectionResult recordRejection(String accountId, String operationId, String intentSha256,
-            RecordedOutcome outcome, Optional<String> grantId, Optional<CatalogRecords.CredentialCheck> credential) {
+            RecordedOutcome outcome, Optional<String> grantId, Optional<CatalogRecords.CredentialCheck> credential,
+            NodeAddress address, boolean creating) {
         if (!outcome.hasRejection()) throw new IllegalArgumentException("Only a rejection is recorded without an accession");
         return inTransaction("Rejection record", connection -> {
             var existing = selectOutcome(connection, accountId, operationId);
@@ -248,13 +249,18 @@ public final class PostgresCatalog implements AutoCloseable {
             var denied = recheckAuthority(connection, grantId, credential);
             if (denied.isPresent()) return denied.get();
             try (var insert = connection.prepareStatement("""
-                    INSERT INTO catalog_operation_outcomes (account_id, operation_id, intent_sha256, outcome, recorded_at)
-                    VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
+                    INSERT INTO catalog_operation_outcomes (account_id, operation_id, intent_sha256, outcome, recorded_at,
+                        rejection_address, rejection_create, rejection_issuer, rejection_credential_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
                 insert.setString(1, accountId);
                 insert.setString(2, operationId);
                 insert.setString(3, intentSha256);
                 insert.setBytes(4, outcome.toByteArray());
                 insert.setTimestamp(5, toTimestamp(outcome.getRecordedAt()));
+                insert.setBytes(6, address.toByteArray());
+                insert.setBoolean(7, creating);
+                insert.setString(8, credential.map(CatalogRecords.CredentialCheck::issuer).orElse(null));
+                insert.setObject(9, credential.map(CatalogRecords.CredentialCheck::credentialId).orElse(null));
                 insert.executeUpdate();
             }
             return new Recorded(selectOutcome(connection, accountId, operationId)
@@ -638,13 +644,23 @@ public final class PostgresCatalog implements AutoCloseable {
     private static Optional<Outcome> selectOutcome(Connection connection, String accountId, String operationId)
             throws SQLException {
         try (var select = connection.prepareStatement(
-                "SELECT intent_sha256, outcome FROM catalog_operation_outcomes WHERE account_id = ? AND operation_id = ?")) {
+                """
+                SELECT intent_sha256, outcome, rejection_address, rejection_create, rejection_issuer, rejection_credential_id
+                FROM catalog_operation_outcomes WHERE account_id = ? AND operation_id = ?""")) {
             select.setString(1, accountId);
             select.setString(2, operationId);
             try (var rows = select.executeQuery()) {
                 if (!rows.next()) return Optional.empty();
                 try {
-                    return Optional.of(new Outcome(rows.getString(1), RecordedOutcome.parseFrom(rows.getBytes(2))));
+                    var addressBytes = rows.getBytes(3);
+                    Optional<CatalogRecords.RejectionAccess> access = Optional.empty();
+                    if (addressBytes != null) {
+                        var issuer = rows.getString(5);
+                        var creator = issuer == null ? Optional.<CatalogRecords.CredentialIdentity>empty()
+                                : Optional.of(new CatalogRecords.CredentialIdentity(issuer, rows.getObject(6, java.util.UUID.class)));
+                        access = Optional.of(new CatalogRecords.RejectionAccess(NodeAddress.parseFrom(addressBytes), rows.getBoolean(4), creator));
+                    }
+                    return Optional.of(new Outcome(rows.getString(1), RecordedOutcome.parseFrom(rows.getBytes(2)), access));
                 } catch (InvalidProtocolBufferException corrupt) {
                     throw new CatalogDataLoss("Recorded outcome does not decode", corrupt);
                 }

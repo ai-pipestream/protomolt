@@ -264,7 +264,7 @@ opaque attestations are part of the intent. They must remain identical on retrie
 Trace IDs, connection details and transport diagnostics belong in request context,
 not persisted request metadata, and do not affect the intent. An authorized replay
 returns the recorded result without requiring the original writer grant to remain
-active or re-resolving historical authority, and without re-validating content against changed live schemas. Current access is still checked. The grant-free replay path applies only when an outcome is already recorded; when no outcome is recorded, the request is authorized in full as a fresh save.
+active or re-resolving historical authority, and without re-validating content against changed live schemas. Current access is still checked. Stored rejections for an existing document require current read access on replay and outcome lookup. A rejected create whose target still does not exist is accessible only to its original authenticated credential (issuer and credential ID, with a currently valid generation) or process authority; no live writer grant is required. If that target subsequently exists, its current read policy applies. Rejections retain this internal access context; legacy rejections lacking it are process-authority-only. The grant-free replay path applies only when an outcome is already recorded; when no outcome is recorded, the request is authorized in full as a fresh save.
 
 Canonical intent encoding is versioned binary protobuf with operation-kind domain
 separation. Emit fields in field-number order, sort metadata by unsigned UTF-8 key,
