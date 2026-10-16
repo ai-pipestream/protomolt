@@ -5,6 +5,7 @@ import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
+import ai.protomolt.proto.repo.admission.DocumentSchemas;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.catalog.Catalog;
@@ -23,6 +24,8 @@ import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v2.*;
 import ai.protomolt.proto.validate.ProtoValidator;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Timestamp;
@@ -41,6 +44,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The v2 save (requirements §5, §7, §9; change map §3 steps S1-S15). One save
@@ -83,33 +87,39 @@ public final class DocumentSaves {
     private final DocumentSchemaAdmission.Limits limits;
     private final DocumentAdmissionReservations reservations;
     private final Clock clock;
-    private final DocumentSchemaAdmission.Definition containerDefinition;
-    private final DocumentSchemaRetention.Retained container;
+    private final DocumentSchemas schemas;
+    private final Map<String, Descriptors.Descriptor> types = new ConcurrentHashMap<>();
     private final WriterAuthority authority;
 
+    /** A host without a schema registry: the compiled contract is the only Document version. */
     public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock) {
-        this(catalog, drives, resolver, limits, reservations, clock, BuiltinDocumentSchema.definition());
+        this(catalog, drives, resolver, limits, reservations, clock, DocumentSchemas.compiled());
     }
 
-    /** Seam for tests that need another container identity; production uses the compiled Document. */
-    DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+    /**
+     * @param schemas the latest registered {@code Document} version, asked on every save
+     */
+    public DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
             DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
-            DocumentSchemaAdmission.Definition containerDefinition) {
+            DocumentSchemas schemas) {
         this.catalog = Objects.requireNonNull(catalog);
         this.drives = Objects.requireNonNull(drives);
         this.resolver = Objects.requireNonNull(resolver);
         this.limits = Objects.requireNonNull(limits);
         this.reservations = Objects.requireNonNull(reservations);
         this.clock = Objects.requireNonNull(clock);
-        this.containerDefinition = Objects.requireNonNull(containerDefinition);
-        this.container = DocumentSchemaRetention.retain(containerDefinition);
+        this.schemas = Objects.requireNonNull(schemas);
         this.authority = new WriterAuthority(catalog, DocumentSchemaRetention.retain(
                 BuiltinDocumentSchema.definition(WriterGrant.getDescriptor())));
     }
 
-    /** The retained container schema every part fragment decodes with. */
-    RepositorySchemaAssetReference containerSchema() { return container.reference(); }
+    /** Seam for tests that need another container identity as the only registered version. */
+    DocumentSaves(Catalog catalog, Drives drives, DocumentSchemaAdmission.Resolver resolver,
+            DocumentSchemaAdmission.Limits limits, DocumentAdmissionReservations reservations, Clock clock,
+            DocumentSchemaAdmission.Definition containerDefinition) {
+        this(catalog, drives, resolver, limits, reservations, clock, () -> containerDefinition);
+    }
 
     public SaveDocumentResponse save(RepositoryCaller caller, SaveDocumentRequest request) {
         try {
@@ -133,6 +143,19 @@ public final class DocumentSaves {
         var writes = selectors(request);
         var document = normalizedDocument(request);
 
+        // S2: the latest registered Document version decodes the content (decisions 34, 35).
+        // An outage is UNAVAILABLE and records nothing; the save names no writer version.
+        final DocumentSchemaAdmission.Definition container;
+        final Descriptors.Descriptor documentType;
+        try {
+            container = schemas.latest();
+            documentType = documentType(container);
+        } catch (DocumentCandidateAdmission.SchemaUnavailable unavailable) {
+            throw new AccessionException(Status.Code.UNAVAILABLE, "Schema registry unavailable", null, unavailable);
+        } catch (DocumentCandidateAdmission.HostFailure host) {
+            throw new AccessionException(Status.Code.INTERNAL, "Document schema host failure: " + host.getMessage(), null, host);
+        }
+
         // S3-S4: call number and account scope.
         var address = resolveAddress(request, document);
         var account = address.getAccountId();
@@ -140,7 +163,7 @@ public final class DocumentSaves {
 
         // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
         // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out.
-        var fragments = split(document, writes);
+        var fragments = split(document, documentType, writes);
         var storedFragments = new EnumMap<DocumentPart, ByteString>(fragments);
         List<RawBlobs.Raw> rawBlobs = List.of();
         if (fragments.containsKey(DocumentPart.DOCUMENT_PART_BLOBS)) {
@@ -251,11 +274,11 @@ public final class DocumentSaves {
             admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(entry.getKey()), readVerified(entry.getValue())));
         var validation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
                 .setValidatorProfile(DocumentCandidateAdmission.PROFILE);
-        Map<String, ByteString> artifacts = new HashMap<>(container.artifacts());
-        artifacts.putAll(authority.grantSchema().artifacts());
+        Map<String, ByteString> artifacts = new HashMap<>(authority.grantSchema().artifacts());
+        RepositorySchemaAssetReference fragmentSchema = null;
         if (!admitted.isEmpty()) {
             try (var result = DocumentCandidateAdmission.check(
-                    new DocumentCandidateAdmission.Request(address.getDocId(), admitted, containerDefinition),
+                    new DocumentCandidateAdmission.Request(address.getDocId(), admitted, container),
                     resolver, limits, reservations, clock.instant(), () -> {})) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected) {
                     var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
@@ -265,6 +288,7 @@ public final class DocumentSaves {
                             "The composed document failed validation", violations);
                 }
                 var accepted = (DocumentCandidateAdmission.Accepted) result;
+                fragmentSchema = accepted.container();
                 for (var occurrence : accepted.occurrences())
                     validation.addResolvedOccurrences(ResolvedOccurrence.newBuilder()
                             .setOccurrence(OccurrenceLocator.newBuilder()
@@ -334,15 +358,15 @@ public final class DocumentSaves {
             digest.addParts(CandidatePart.newBuilder().setSelector(entry.getSelector()).setState(entry.getState())
                     .setSha256(entry.getSha256()).setLength(entry.getSizeBytes()));
             if (entry.getState() != PartState.PART_STATE_PRESENT) continue;
-            // Gap 9: a carried part keeps the binding it was admitted under; only written and
-            // sourced parts were decoded with this host's container schema.
+            // Gap 9: a carried part keeps the binding it was admitted under; written and sourced
+            // parts were decoded with the latest registered Document version.
             var binding = carried.contains(entry.getSelector().getPart())
                     ? base.orElseThrow().getValidation().getPartSchemasList().stream()
                             .filter(schema -> schema.getPart().equals(entry.getSelector())).findFirst()
                             .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS,
                                     "Carried part has no retained schema binding", null))
                     : PartSchemaBinding.newBuilder().setPart(entry.getSelector())
-                            .setFragmentSchema(container.reference()).build();
+                            .setFragmentSchema(Objects.requireNonNull(fragmentSchema, "admitted part schema")).build();
             validation.addPartSchemas(binding);
         }
         validation.setCandidateSha256(sha256(digest.build().toByteString()));
@@ -439,15 +463,9 @@ public final class DocumentSaves {
         var search = document.getSearchMetadata();
         if (search.getSemanticResultsCount() > 0 || search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0)
             throw malformedException("Semantic results, segmentations and embedding sets are not supported by this server yet");
-        // Decision 29: slice 1 decodes with the compiled Document schema only. A field this
-        // server does not know is refused before authorization and records nothing, so the
-        // operation ID stays usable once the registry-backed decode can accept the field.
-        try {
-            DocumentCandidateAdmission.requireKnownFields(document);
-        } catch (DocumentCandidateAdmission.ContentRefused refused) {
-            throw malformedException("Fields outside this server's Document schema are not supported by this server yet: "
-                    + refused.getMessage());
-        }
+        // Decision 35: fields the compiled Document does not know arrive as unknown fields and
+        // are decoded with the latest registered version; one that version does not know either
+        // is a recorded SCHEMA_MISSING after authorization, never dropped.
         if (request.getTarget().hasAddress()) {
             var docId = request.getTarget().getAddress().getDocId();
             if (!document.getDocId().isEmpty() && !document.getDocId().equals(docId))
@@ -474,16 +492,36 @@ public final class DocumentSaves {
         return address;
     }
 
-    /** Splits the request document and refuses content for any part not listed as PUT. */
-    private static Map<DocumentPart, ByteString> split(Document document, Map<DocumentPart, WriteAction> writes) {
+    /**
+     * Splits the request document, decoded with the latest registered Document version,
+     * and refuses content for any part not listed as PUT. Fields that version does not
+     * know stay in their fragment as unknown fields for admission to refuse.
+     */
+    private static Map<DocumentPart, ByteString> split(Document request, Descriptors.Descriptor documentType,
+            Map<DocumentPart, WriteAction> writes) {
+        final DynamicMessage document;
+        try {
+            document = DynamicMessage.parseFrom(documentType, request.toByteString());
+        } catch (InvalidProtocolBufferException impossible) {
+            throw new IllegalStateException("A parsed request document failed to parse again", impossible);
+        }
+        final ai.protomolt.proto.repo.codec.PartLayout layout;
+        try {
+            layout = PartLayouts.document(documentType);
+        } catch (IllegalArgumentException host) {
+            throw new AccessionException(Status.Code.INTERNAL, "The registered Document lacks a part field: "
+                    + host.getMessage(), null, host);
+        }
+        var prototype = DynamicMessage.getDefaultInstance(documentType);
         var fragments = new EnumMap<DocumentPart, ByteString>(DocumentPart.class);
-        var bare = Document.newBuilder().setDocId(document.getDocId()).build().toByteString();
-        for (var split : DocumentPartCodec.split(document, PartLayouts.document())) {
+        var bare = DynamicMessage.newBuilder(documentType).setField(documentType.findFieldByName("doc_id"),
+                request.getDocId()).build().toByteString();
+        for (var split : DocumentPartCodec.split(document, layout)) {
             // Deterministic bytes: a client sending map entries in another order must get
             // the same content digest, the same intent, and a replay on retry.
             final ai.protomolt.proto.repo.codec.PartObject part;
             try {
-                part = DocumentPartCodec.deterministic(split, Document.getDefaultInstance());
+                part = DocumentPartCodec.deterministic(split, prototype);
             } catch (InvalidProtocolBufferException impossible) {
                 throw new IllegalStateException("A freshly split fragment failed to parse", impossible);
             }
@@ -622,6 +660,17 @@ public final class DocumentSaves {
 
     // ------------------------------------------------------------------ helpers
 
+    /** The registered Document descriptor a definition names, cached by its artifact digest. */
+    private Descriptors.Descriptor documentType(DocumentSchemaAdmission.Definition container) {
+        var digest = container.metadata().getArtifactSha256();
+        var cached = types.get(digest);
+        if (cached != null) return cached;
+        var type = DocumentCandidateAdmission.containerType(container);
+        if (types.size() > 64) types.clear();
+        types.put(digest, type);
+        return type;
+    }
+
     /** Writes one object and checks the stack's reference against the bytes it was given. */
     private static StackRef put(Stack stack, ByteString bytes) {
         final StackRef ref;
@@ -647,6 +696,12 @@ public final class DocumentSaves {
 
     private static PartChange change(DocumentPart part, ChangeKind kind, String sha256) {
         return PartChange.newBuilder().setSelector(PartSelector.newBuilder().setPart(part)).setKind(kind).setSha256(sha256).build();
+    }
+
+    static ai.protomolt.proto.repo.v1.DocumentPart v1(DocumentPart part) {
+        var mapped = PARTS.get(part);
+        if (mapped == null) throw new AccessionException(Status.Code.DATA_LOSS, "Stored part " + part + " is not supported", null);
+        return mapped;
     }
 
     private static DocumentPart v2(ai.protomolt.proto.repo.v1.DocumentPart part) {

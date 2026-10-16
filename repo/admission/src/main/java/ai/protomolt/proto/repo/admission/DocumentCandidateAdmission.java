@@ -8,6 +8,7 @@ import ai.protomolt.proto.repo.v1.DocumentPublicationSlot;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -92,9 +93,18 @@ public final class DocumentCandidateAdmission {
         @Override public void close() {}
     }
 
-    /** An Any type URL has no registered schema. Distinct from an outage. */
+    /**
+     * An Any type URL has no registered schema, or a fragment carries a field the
+     * container version does not know (decision 35). Distinct from an outage.
+     */
     public static final class SchemaMissing extends RuntimeException {
         public SchemaMissing(String typeUrl) { super("No registered schema for " + typeUrl); }
+        private SchemaMissing(String message, boolean fields) { super(message); }
+        /** A field unknown to the latest registered Document version, at a field path. */
+        static SchemaMissing unknownField(DocumentPart part, String path) {
+            return new SchemaMissing(part + " carries a field the latest registered Document version does not know"
+                    + (path.isEmpty() ? "" : " under " + path), true);
+        }
     }
 
     /** Any value bytes do not decode as their declared type. */
@@ -157,44 +167,6 @@ public final class DocumentCandidateAdmission {
             return definition;
         };
 
-        var written = Document.newBuilder();
-        long total = 0;
-        var seen = new java.util.HashSet<DocumentPart>();
-        for (var fragment : request.fragments()) {
-            active.run();
-            if (fragment.part() != DocumentPart.DOCUMENT_PART_CORE && fragment.part() != DocumentPart.DOCUMENT_PART_BLOBS
-                    && fragment.part() != DocumentPart.DOCUMENT_PART_PARSED)
-                throw new IllegalArgumentException("candidate admission supports CORE, BLOBS and PARSED fragments");
-            if (!seen.add(fragment.part())) throw new IllegalArgumentException("duplicate candidate fragment");
-            if (fragment.bytes().size() > limits.maxFragmentBytes() - total)
-                throw new ContentRefused("candidate fragments exceed byte limit", null);
-            total += fragment.bytes().size();
-            try {
-                new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), Document.getDescriptor());
-                var input = fragment.bytes().newCodedInput();
-                input.setRecursionLimit(64);
-                var parsed = Document.parser().parseFrom(input);
-                input.checkLastTagWas(0);
-                if (input.getTotalBytesRead() != fragment.bytes().size())
-                    throw new InvalidProtocolBufferException("Fragment was not completely consumed");
-                DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
-                written.mergeFrom(parsed);
-            } catch (IllegalArgumentException | InvalidProtocolBufferException refused) {
-                throw new ContentRefused(fragment.part() + " fragment: " + refused.getMessage(), refused);
-            }
-        }
-        var view = written.build();
-        try {
-            DocumentSchemaAdmission.requireKnownDocument(view, "", 0, new int[1], active);
-        } catch (IllegalArgumentException refused) {
-            throw new ContentRefused(refused.getMessage(), refused);
-        }
-
-        var violations = new ArrayList<Violation>();
-        var result = DocumentSchemaAdmission.VALIDATOR.validate(view, evaluatedAt);
-        for (var violation : result.violations())
-            violations.add(new Violation(partOf(violation.path()), violation.path(), violation.ruleId(), violation.message()));
-
         var resources = new DocumentAdmissionResources(reservations);
         boolean transferred = false;
         try {
@@ -207,6 +179,47 @@ public final class DocumentCandidateAdmission {
             } catch (IllegalArgumentException host) {
                 throw new HostFailure("container definition: " + host.getMessage(), host);
             }
+            // Fragments decode with the container version, not the compiled Document: a field
+            // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
+            var type = container.schema().type();
+            var written = DynamicMessage.newBuilder(type);
+            long total = 0;
+            var seen = new java.util.HashSet<DocumentPart>();
+            for (var fragment : request.fragments()) {
+                active.run();
+                if (fragment.part() != DocumentPart.DOCUMENT_PART_CORE && fragment.part() != DocumentPart.DOCUMENT_PART_BLOBS
+                        && fragment.part() != DocumentPart.DOCUMENT_PART_PARSED)
+                    throw new IllegalArgumentException("candidate admission supports CORE, BLOBS and PARSED fragments");
+                if (!seen.add(fragment.part())) throw new IllegalArgumentException("duplicate candidate fragment");
+                if (fragment.bytes().size() > limits.maxFragmentBytes() - total)
+                    throw new ContentRefused("candidate fragments exceed byte limit", null);
+                total += fragment.bytes().size();
+                try {
+                    new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), type);
+                    var input = fragment.bytes().newCodedInput();
+                    input.setRecursionLimit(64);
+                    var parsed = DynamicMessage.getDefaultInstance(type).getParserForType().parseFrom(input);
+                    input.checkLastTagWas(0);
+                    if (input.getTotalBytesRead() != fragment.bytes().size())
+                        throw new InvalidProtocolBufferException("Fragment was not completely consumed");
+                    requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
+                    DocumentFragmentConfinement.requireConfined(parsed, fragment.part(), request.docId());
+                    written.mergeFrom(parsed);
+                } catch (IllegalArgumentException | InvalidProtocolBufferException refused) {
+                    throw new ContentRefused(fragment.part() + " fragment: " + refused.getMessage(), refused);
+                }
+            }
+            var view = written.build();
+            try {
+                DocumentSchemaAdmission.requireKnownDocument(view, "", 0, new int[1], active);
+            } catch (IllegalArgumentException refused) {
+                throw new ContentRefused(refused.getMessage(), refused);
+            }
+
+            var violations = new ArrayList<Violation>();
+            var result = DocumentSchemaAdmission.VALIDATOR.validate(view, evaluatedAt);
+            for (var violation : result.violations())
+                violations.add(new Violation(partOf(violation.path()), violation.path(), violation.ruleId(), violation.message()));
             var containerKey = new DocumentPayloadCheck.SchemaKey(request.container().metadata().getTypeUrl(),
                     request.container().metadata().getArtifactSha256());
             var occurrences = new ArrayList<Occurrence>();
@@ -297,6 +310,42 @@ public final class DocumentCandidateAdmission {
             DocumentSchemaAdmission.requireKnownDocument(document, "", 0, new int[1], () -> {});
         } catch (IllegalArgumentException refused) {
             throw new ContentRefused(refused.getMessage(), refused);
+        }
+    }
+
+    /**
+     * The message type a container definition names, from its own descriptor closure.
+     *
+     * @throws HostFailure when the definition does not bind
+     */
+    public static com.google.protobuf.Descriptors.Descriptor containerType(DocumentSchemaAdmission.Definition container) {
+        try {
+            return DocumentSchemaAssetBinding.bind(container.metadata(), container.descriptors(),
+                    new ai.protomolt.proto.descriptors.ClosedDescriptorSet.Limits(16 * 1024 * 1024, 256, 4096, 64), () -> {})
+                    .schema().type();
+        } catch (IllegalArgumentException host) {
+            throw new HostFailure("container definition: " + host.getMessage(), host);
+        }
+    }
+
+    /** Walks a decoded fragment; any unknown field is a field no registered container version names here. */
+    private static void requireNoUnknownFields(com.google.protobuf.Message message, DocumentPart part, String path,
+            int depth, Runnable active) {
+        active.run();
+        if (depth > 64) throw new IllegalArgumentException("fragment exceeds structural depth");
+        if (!message.getUnknownFields().asMap().isEmpty()) throw SchemaMissing.unknownField(part, path);
+        // Any values are their payload schema's concern, checked separately.
+        if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) return;
+        for (var entry : message.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            String child = path.isEmpty() ? field.getName() : path + "." + field.getName();
+            if (field.isRepeated()) {
+                for (var element : (List<?>) entry.getValue())
+                    requireNoUnknownFields((com.google.protobuf.Message) element, part, child, depth + 1, active);
+            } else {
+                requireNoUnknownFields((com.google.protobuf.Message) entry.getValue(), part, child, depth + 1, active);
+            }
         }
     }
 

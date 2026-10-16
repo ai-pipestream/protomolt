@@ -98,7 +98,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(stackId, new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
-        reads = new DocumentReads(catalog, drives, saves.containerSchema());
+        reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
     /** A second host over the same catalog and stack, as after a restart. */
@@ -111,7 +111,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(original.stack.stackId(), new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
-        reads = new DocumentReads(catalog, drives, saves.containerSchema());
+        reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
     static S3Client s3() { return client; }

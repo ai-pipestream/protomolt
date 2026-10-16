@@ -1,6 +1,5 @@
 package ai.protomolt.proto.repo.admission;
 
-import ai.protomolt.proto.descriptors.DescriptorFingerprints;
 import ai.protomolt.proto.descriptors.MessageWireBudget;
 import ai.protomolt.proto.repo.codec.DocumentFragmentConfinement;
 import ai.protomolt.proto.repo.v1.Document;
@@ -21,9 +20,6 @@ import java.util.concurrent.CancellationException;
 
 /** Strict discovery of Document structured_data and parser shapes; never resolves Any.value. */
 final class DocumentAnyRootInventory {
-    private static final String DOCUMENT_FINGERPRINT = DescriptorFingerprints.fingerprint(
-            DescriptorFingerprints.closure(Document.getDescriptor()));
-
     record Limits(int maxBytes, long maxWireValues, int maxDepth, int maxRoots, int maxParserEntries) {
         Limits {
             if (maxBytes < 1 || maxWireValues < 1 || maxDepth < 1 || maxDepth > 100 || maxRoots < 1 || maxParserEntries < 1)
@@ -49,9 +45,7 @@ final class DocumentAnyRootInventory {
         Objects.requireNonNull(container); Objects.requireNonNull(slot); Objects.requireNonNull(bytes);
         Objects.requireNonNull(limits); Objects.requireNonNull(control);
         active(control);
-        if (!container.type().getFullName().equals(Document.getDescriptor().getFullName())
-                || !container.condition().getDescriptorFingerprint().equals(DOCUMENT_FINGERPRINT))
-            throw new IllegalArgumentException("containing schema differs from supported Document layout");
+        requireLayout(container.type());
         if (!slot.getUnknownFields().asMap().isEmpty() || !slot.getSubKey().isEmpty()
                 || (slot.getPart() != DocumentPart.DOCUMENT_PART_CORE && slot.getPart() != DocumentPart.DOCUMENT_PART_PARSED))
             throw new IllegalArgumentException("root inventory requires a CORE or PARSED slot");
@@ -100,6 +94,43 @@ final class DocumentAnyRootInventory {
         var hash = sha256(bytes, control);
         active(control);
         return new Result(slot, DocumentFragmentConfinement.POLICY_ID, container, bytes, hash, roots);
+    }
+
+    /**
+     * The container may be any registered {@code Document} version (decisions 34, 35),
+     * but every field this inventory reads must have the compiled layout: the same
+     * number, type, cardinality and message type. A field a version lacks holds no
+     * roots. Compatibility checking keeps a registered number from changing meaning;
+     * this check refuses a container that would make the walk read the wrong thing.
+     */
+    private static void requireLayout(com.google.protobuf.Descriptors.Descriptor type) {
+        var compiled = Document.getDescriptor();
+        if (!type.getFullName().equals(compiled.getFullName()))
+            throw new IllegalArgumentException("containing schema differs from supported Document layout");
+        sameField(type, compiled, 4);
+        var parsers = sameField(type, compiled, 5);
+        if (parsers == null) return;
+        var compiledEntry = compiled.findFieldByNumber(5).getMessageType();
+        sameField(parsers.getMessageType(), compiledEntry, 1);
+        var value = sameField(parsers.getMessageType(), compiledEntry, 2);
+        if (value == null) return;
+        var compiledParser = compiledEntry.findFieldByNumber(2).getMessageType();
+        var parsed = sameField(value.getMessageType(), compiledParser, 7);
+        if (parsed != null) sameField(parsed.getMessageType(), compiledParser.findFieldByNumber(7).getMessageType(), 1);
+    }
+
+    private static com.google.protobuf.Descriptors.FieldDescriptor sameField(com.google.protobuf.Descriptors.Descriptor type,
+            com.google.protobuf.Descriptors.Descriptor compiled, int number) {
+        var field = type.findFieldByNumber(number);
+        if (field == null) return null;
+        var expected = compiled.findFieldByNumber(number);
+        boolean message = expected.getJavaType() == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE;
+        if (field.getType() != expected.getType() || field.isRepeated() != expected.isRepeated()
+                || field.isMapField() != expected.isMapField()
+                || (message && !field.getMessageType().getFullName().equals(expected.getMessageType().getFullName())))
+            throw new IllegalArgumentException("containing schema differs from supported Document layout at "
+                    + type.getFullName() + " field " + number);
+        return field;
     }
 
     private static void add(ArrayList<Root> roots, List<DocumentSchemaOccurrences.Step> access, Message any, Limits limits) {
