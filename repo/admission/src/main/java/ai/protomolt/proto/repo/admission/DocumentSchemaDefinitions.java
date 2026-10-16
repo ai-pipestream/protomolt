@@ -1,18 +1,11 @@
 package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentRootSchemaEvidence;
 import com.google.protobuf.ByteString;
-import com.google.protobuf.InvalidProtocolBufferException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CancellationException;
 
 /** Attempt-local assets; failed preparation never returns a partial proof or writes retained storage. */
 final class DocumentSchemaDefinitions {

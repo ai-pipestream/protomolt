@@ -40,7 +40,7 @@ class CarryForwardIT {
 
     @AfterEach void close() { f.close(); }
 
-    @Test void partsCarryByReferenceAcrossFiveRevisions() {
+    @Test void partsCarryByReferenceAcrossFiveRevisions() throws Exception {
         var original = document(account, "doc-carry", "v1");
         f.saves.save(processAuthority(), create("op-1", address, original).build());
         var r1 = manifest(1);
@@ -77,7 +77,7 @@ class CarryForwardIT {
                 .setData(ByteString.copyFromUtf8("second raw bytes")))).build();
         save("op-5", 5, blobs, put(BLOBS));
         var r5 = manifest(5);
-        assertThat(f.stack.puts.get()).isEqualTo(3);
+        assertThat(f.stack.puts.get()).as("the BLOBS part and its one raw blob, stored as a claim check").isEqualTo(4);
         assertCarried(r5, r4, CORE);
         assertCarried(r5, r2, PARSED);
         assertThat(f.stack.opens.get()).as("no save read a carried part").isZero();
@@ -105,9 +105,10 @@ class CarryForwardIT {
         var atR5 = read(5);
         assertThat(atR5.getSearchMetadata().getTitle()).isEqualTo("v4");
         assertThat(atR5.hasStructuredData()).isFalse();
-        assertThat(atR5.getBlobBag()).isEqualTo(blobs.getBlobBag());
+        assertThat(atR5.getBlobBag()).isEqualTo(claimChecked(blobs, r5).getBlobBag());
+        assertThat(f.blobBytes(r5, "b2")).isEqualTo("second raw bytes".getBytes());
         assertThat(atR5.getParserResultsMap()).isEqualTo(docling.getParserResultsMap());
-        assertThat(read(1)).isEqualTo(original);
+        assertThat(read(1)).isEqualTo(claimChecked(original, r1));
     }
 
     // Storage keys are never derived from content: rewriting identical bytes is a new object and a REPLACED change.

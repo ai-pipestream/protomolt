@@ -492,12 +492,18 @@ public final class DocumentSchemaAdmission {
 
     static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
                                              int[] visited, Runnable control) {
+        requireKnownDocument(message, path, depth, visited, control, false);
+    }
+
+    /** As above; with {@code unknownAllowed}, unknown fields are left for a later schema decision. */
+    static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
+                                             int[] visited, Runnable control, boolean unknownAllowed) {
         active(control);
         if (depth > 64)
             throw new IllegalArgumentException("Document nesting exceeds 64 levels at " + path);
         if (++visited[0] > 1_000_000)
             throw new IllegalArgumentException("Document exceeds 1,000,000 nodes");
-        if (!message.getUnknownFields().asMap().isEmpty())
+        if (!unknownAllowed && !message.getUnknownFields().asMap().isEmpty())
             throw new IllegalArgumentException(UNKNOWN_DOCUMENT_FIELDS);
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) {
             if (!path.equals("structured_data") && !path.equals("parser_results.value.document.shape"))
@@ -510,8 +516,10 @@ public final class DocumentSchemaAdmission {
             String childPath = path.isEmpty() ? field.getName() : path + "." + field.getName();
             if (field.isRepeated()) {
                 for (var child : (List<?>) entry.getValue())
-                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control);
-            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control);
+                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control,
+                            unknownAllowed);
+            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control,
+                    unknownAllowed);
         }
     }
     private static void active(Runnable control) {

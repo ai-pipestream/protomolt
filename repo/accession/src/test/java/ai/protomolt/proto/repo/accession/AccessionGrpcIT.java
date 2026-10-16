@@ -45,8 +45,10 @@ class AccessionGrpcIT {
                 }
                 var saved = stub.saveDocument(create("op-1", address, document).build());
                 assertThat(saved.getAccession().getRevision()).isEqualTo(1);
+                var stored = f.catalog.manifest(address, 1).orElseThrow();
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build()).getDocument())
-                        .isEqualTo(document);
+                        .isEqualTo(claimChecked(document, stored));
+                assertThat(f.blobBytes(stored, "b1")).isEqualTo(document.getBlobBag().getBlob().getData().toByteArray());
                 assertThat(stub.getManifest(GetManifestRequest.newBuilder().setAddress(address).build())
                         .getManifest().getPartsCount()).isEqualTo(3);
                 assertThat(stub.listRevisions(ListRevisionsRequest.newBuilder().setAddress(address).setPageSize(5).build())
@@ -113,10 +115,12 @@ class AccessionGrpcIT {
                         .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder().addField(4000,
                                 com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build()).build();
                 var unknownRequest = create("unknown-content", address, unknownContent).build();
-                assertThat(detail(() -> stub.saveDocument(unknownRequest), Status.Code.INVALID_ARGUMENT,
+                // Decision 35: a field no registered Document version knows is a recorded SCHEMA_MISSING.
+                assertThat(detail(() -> stub.saveDocument(unknownRequest), Status.Code.FAILED_PRECONDITION,
                         SaveRejection.class).getMessage()).isEqualTo(
-                        "Fields outside this server's Document schema are not supported by this server yet: unknown document fields cannot receive typed admission");
-                assertThat(f.catalog.outcome(account, "unknown-content")).isEmpty();
+                        "DOCUMENT_PART_CORE carries a field the latest registered Document version does not know");
+                assertThat(f.catalog.outcome(account, "unknown-content").orElseThrow().outcome().getRejection().getReason())
+                        .isEqualTo(RejectionReason.REJECTION_REASON_SCHEMA_MISSING);
                 for (var value : java.util.List.of(deep, wide)) {
                     var document = document(account, "structure", "shape").toBuilder();
                     document.getSearchMetadataBuilder().setCustomFields(com.google.protobuf.Struct.newBuilder().putFields("test", value));

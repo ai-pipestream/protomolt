@@ -10,6 +10,7 @@ import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v2.*;
 import ai.protomolt.proto.repo.v2.DocumentPart;
 import io.grpc.Status;
+import java.time.Clock;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -99,7 +100,7 @@ class VerifiedReadFailuresIT {
         var elsewhere = new BlobStoreStack("stack-" + UUID.randomUUID(), new S3BlobStore(AccessionFixture.s3()), BUCKET,
                 f.prefix);
         var drives = new DocumentSaves.Drives("default", Map.of("default", elsewhere));
-        var reads = new DocumentReads(f.catalog, drives, f.saves.containerSchema());
+        var reads = new DocumentReads(f.catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
         assertThatThrownBy(() -> reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address)
                 .build())).isInstanceOfSatisfying(AccessionException.class,
                 failure -> assertThat(failure.code()).isEqualTo(Status.Code.UNAVAILABLE));

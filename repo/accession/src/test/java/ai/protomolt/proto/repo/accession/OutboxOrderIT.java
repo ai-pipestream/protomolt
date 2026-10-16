@@ -69,7 +69,9 @@ class OutboxOrderIT {
         assertThat(relay.relayOnce(10)).isZero();
         assertThat(relay.relayOnce(10)).isZero();
         var pending = f.catalog.pendingEvents(10);
-        assertThat(pending).hasSize(3).allSatisfy(event -> assertThat(event.attempts()).isEqualTo(2));
+        assertThat(pending).hasSize(3);
+        assertThat(pending.stream().map(event -> event.attempts()).toList()).containsExactly(2, 0, 0);
+        assertThat(failures).containsExactly(events.getFirst().getEventId(), events.getFirst().getEventId());
         assertThat(pending.stream().map(event -> event.event()).toList()).isEqualTo(events);
 
         List<String> delivered = new ArrayList<>();

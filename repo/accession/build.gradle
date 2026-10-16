@@ -17,6 +17,7 @@ dependencies {
 
     testImplementation project(':protomolt-repo-blob-s3')
     testImplementation project(':protomolt-repo-container')
+    testImplementation project(':protomolt-repo-schema-registry')
     testImplementation libs.awssdk.s3
     testImplementation libs.awssdk.url.connection.client
     testImplementation libs.grpc.inprocess

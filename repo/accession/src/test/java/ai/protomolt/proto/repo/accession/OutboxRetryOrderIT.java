@@ -30,15 +30,20 @@ class OutboxRetryOrderIT {
                     .setTarget(DocumentTarget.newBuilder().setAddress(a)).setExpected(at(1)).setDocument(core)
                     .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).setOwner(intakeOwner()).build());
 
-            var delivered = new ArrayList<Long>();
+            var b = address(account, "doc-b");
+            f.saves.save(processAuthority(), create("b-1", b, document(account, "doc-b", "b1")).build());
+            var delivered = new ArrayList<String>();
             var failFirst = new AtomicBoolean(true);
             var relay = new OutboxRelay(f.catalog, (key, event) -> {
-                if (event.getRevision() == 1 && failFirst.getAndSet(false)) throw new java.io.IOException("broker timeout");
-                delivered.add(event.getRevision());
+                if (event.getAddress().equals(a) && event.getRevision() == 1 && failFirst.getAndSet(false)) throw new java.io.IOException("broker timeout");
+                delivered.add(event.getAddress().getDocId() + "@" + event.getRevision());
             });
-            relay.relayOnce(10);
-            relay.relayOnce(10);
-            assertThat(delivered).as("doc-a's events reach the broker in revision order").containsExactly(1L, 2L);
+            assertThat(relay.relayOnce(10)).isEqualTo(1);
+            assertThat(delivered).containsExactly("doc-b@1");
+            assertThat(f.catalog.pendingEvents(10).stream().map(event -> event.attempts()).toList())
+                    .containsExactly(1, 0);
+            assertThat(relay.relayOnce(10)).isEqualTo(2);
+            assertThat(delivered).as("doc-a's events reach the broker in revision order").containsExactly("doc-b@1", "doc-a@1", "doc-a@2");
         }
     }
 }

@@ -2,7 +2,7 @@ package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.CredentialCheck;
-import ai.protomolt.proto.repo.catalog.PostgresCatalog;
+import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RejectionReason;
@@ -10,6 +10,7 @@ import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import ai.protomolt.proto.repo.v2.WriterGrantEvidence;
 import io.grpc.Status;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,12 +23,12 @@ import java.util.Optional;
 final class WriterAuthority {
     /** The evidence for the revision and what the commit must recheck. */
     record Authorized(Optional<WriterGrantEvidence> grant, Optional<ProcessAuthorityEvidence> process,
-                      Optional<String> grantId, Optional<CredentialCheck> credential) {}
+                      List<String> grantIds, Optional<CredentialCheck> credential) {}
 
-    private final PostgresCatalog catalog;
+    private final Catalog catalog;
     private final DocumentSchemaRetention.Retained grantSchema;
 
-    WriterAuthority(PostgresCatalog catalog, DocumentSchemaRetention.Retained grantSchema) {
+    WriterAuthority(Catalog catalog, DocumentSchemaRetention.Retained grantSchema) {
         this.catalog = catalog;
         this.grantSchema = grantSchema;
     }
@@ -45,7 +46,7 @@ final class WriterAuthority {
                 throw denied("Process authority may save only as an intake owner");
             return new Authorized(Optional.empty(),
                     Optional.of(ProcessAuthorityEvidence.newBuilder().setPrincipal(caller.principalName()).build()),
-                    Optional.empty(), Optional.empty());
+                    List.of(), Optional.empty());
         }
         var binding = caller.credentialBinding()
                 .orElseThrow(() -> denied("Saving requires a credential-bound caller or process authority"));
@@ -60,7 +61,7 @@ final class WriterAuthority {
             var evidence = WriterGrantEvidence.newBuilder().setWriterGrantId(grant.grant().getGrantId())
                     .setWriterGrantSha256(grant.snapshotSha256()).setGrantSnapshot(grant.snapshot())
                     .setSnapshotSchema(grantSchema.reference()).setCredentialGeneration(binding.generation()).build();
-            return new Authorized(Optional.of(evidence), Optional.empty(), Optional.of(grant.grant().getGrantId()),
+            return new Authorized(Optional.of(evidence), Optional.empty(), List.of(grant.grant().getGrantId()),
                     Optional.of(new CredentialCheck(binding.issuer(), binding.credentialId(), binding.generation())));
         }
         if (!catalog.ownerKnown(accountId, grant -> covers(grant, owner, connector)))

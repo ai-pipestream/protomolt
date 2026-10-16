@@ -63,12 +63,28 @@ message StackRef {
   int64 length = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
 }
 
+// One raw blob's stack object, bound by the server to the blob's ID
+// (requirements §6, "Raw blob claim checks"; decision 45).
+message BlobObjectRef {
+  // Blob.blob_id in the BLOBS fragment; unique within the part.
+  string blob_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // The stack object holding the blob's raw bytes, written or verified by the server.
+  StackRef ref = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
 // One stored part of one accession.
 message StoredPartEntry {
   // The public entry; content_included is unused in storage.
   PartManifestEntry entry = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // Unset for EMPTY and DELETED.
   StackRef ref = 2;
+  // BLOBS only: each raw blob is its own stack object. The stored BLOBS fragment
+  // holds blob metadata without data or storage_ref; the server fills
+  // Blob.storage_ref from these bindings on read and refuses one from a client.
+  repeated BlobObjectRef blob_refs = 3;
 }
 
 // What the catalog stores per accession. Replaces today's JSON manifest,

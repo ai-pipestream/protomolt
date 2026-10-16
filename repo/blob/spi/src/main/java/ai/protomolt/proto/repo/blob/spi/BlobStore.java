@@ -289,6 +289,37 @@ public interface BlobStore {
     java.util.List<ListedObject> list(String bucket, String prefix);
 
     /**
+     * Reports an object's stored length without fetching its bytes.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @return the stored length in bytes
+     * @throws BlobNotFoundException when the key does not exist
+     */
+    default long objectLength(String bucket, String key) {
+        throw new UnsupportedOperationException("object length lookup is unsupported");
+    }
+
+    /**
+     * Writes a streamed body of unknown or large length as a multipart upload with
+     * bounded memory: the body is read into one {@code partSize} buffer at a time,
+     * and each part is sent from that buffer, so a provider retry resends a part
+     * and never rewinds the caller's stream. The body is read to its end and is
+     * not closed. On any failure, including an {@link java.io.IOException} from the
+     * body, the upload is aborted before the failure is rethrown, and no object
+     * becomes visible under the key.
+     *
+     * @param spec what and where to write; {@code sha256Hex} must be null
+     * @param body the object bytes
+     * @param partSize bytes per part; the provider's minimum part size or more
+     * @return the written object's coordinates
+     * @throws java.io.UncheckedIOException when reading the body fails
+     */
+    default PutResult putMultipart(PutSpec spec, InputStream body, int partSize) {
+        throw new UnsupportedOperationException("multipart streamed write is unsupported");
+    }
+
+    /**
      * Probes bucket reachability (drive-status checks).
      *
      * @param bucket the bucket to probe

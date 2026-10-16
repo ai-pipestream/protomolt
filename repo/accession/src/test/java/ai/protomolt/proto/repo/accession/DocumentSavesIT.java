@@ -195,7 +195,9 @@ class DocumentSavesIT {
         f.saves.save(processAuthority(), create("op-1", address, document).build());
         try (var restarted = f.restarted()) {
             var read = restarted.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build());
-            assertThat(read.getDocument()).isEqualTo(document);
+            var stored = restarted.catalog.manifest(address, 1).orElseThrow();
+            assertThat(read.getDocument()).isEqualTo(claimChecked(document, stored));
+            assertThat(restarted.blobBytes(stored, "b1")).isEqualTo(document.getBlobBag().getBlob().getData().toByteArray());
             assertThat(read.getDocument().getBlobBag().getBlob().getSizeBytes()).isEqualTo(Long.MAX_VALUE - 7);
             assertThat(read.getDocument().getStructuredData().unpack(com.google.protobuf.Int64Value.class).getValue())
                     .isEqualTo(Long.MAX_VALUE);
@@ -204,21 +206,28 @@ class DocumentSavesIT {
         }
     }
 
-    // §15.7, decision 29: a field outside this server's schema is refused unrecorded, so the
-    // same operation ID can retry once the field is within a schema the server accepts.
-    @Test void unknownFieldsAreRefusedBeforeAuthorizationAndNotRecorded() {
+    // §15.7, decision 35: a field no registered Document version knows is refused with a recorded
+    // SCHEMA_MISSING after authorization. It is never dropped, an identical retry replays the
+    // refusal, and the fixed payload is a new intent that needs a new operation ID.
+    @Test void unknownFieldsAreRefusedWithARecordedSchemaMissing() {
         var address = address(account, "doc-unknown");
         var unknown = UnknownFieldSet.newBuilder().addField(4000, UnknownFieldSet.Field.newBuilder().addVarint(7).build()).build();
         var document = document(account, "doc-unknown", "u").toBuilder().setSearchMetadata(
                 SearchMetadata.newBuilder().setTitle("u").setUnknownFields(unknown)).build();
-        assertRejected(() -> f.saves.save(processAuthority(), create("op-u", address, document).build()),
-                Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
+        f.stack.reset();
+        for (int attempt = 0; attempt < 2; attempt++)
+            assertRejected(() -> f.saves.save(processAuthority(), create("op-u", address, document).build()),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_SCHEMA_MISSING);
         assertThat(f.catalog.current(address)).isEmpty();
-        assertThat(f.catalog.outcome(account, "op-u")).isEmpty();
+        assertThat(f.catalog.outcome(account, "op-u").orElseThrow().outcome().getRejection().getReason())
+                .isEqualTo(RejectionReason.REJECTION_REASON_SCHEMA_MISSING);
         assertThat(f.stack.puts.get()).isZero();
-        var retried = f.saves.save(processAuthority(), create("op-u", address, document(account, "doc-unknown", "u")).build());
-        assertThat(retried.getReplayed()).isFalse();
-        assertThat(retried.getAccession().getRevision()).isEqualTo(1);
+        assertThatThrownBy(() -> f.saves.save(processAuthority(),
+                create("op-u", address, document(account, "doc-unknown", "u")).build()))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Status.Code.ALREADY_EXISTS));
+        var fixed = f.saves.save(processAuthority(), create("op-u2", address, document(account, "doc-unknown", "u")).build());
+        assertThat(fixed.getAccession().getRevision()).isEqualTo(1);
     }
 
     // §15.8

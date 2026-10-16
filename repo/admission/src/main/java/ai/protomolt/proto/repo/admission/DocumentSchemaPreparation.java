@@ -1,12 +1,9 @@
 package ai.protomolt.proto.repo.admission;
 
-import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.DocumentRootSchemaEvidence;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +13,6 @@ import java.util.concurrent.CancellationException;
 
 /** Initial evidence production; only the independent verifier constructs a public proof. */
 final class DocumentSchemaPreparation {
-    private static final int MIB = 1024 * 1024;
     private DocumentSchemaPreparation() {}
 
     static DocumentSchemaAdmission.Proof check(DocumentSchemaAdmission.Preparation request,
