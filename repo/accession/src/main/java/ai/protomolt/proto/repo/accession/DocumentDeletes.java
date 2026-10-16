@@ -90,6 +90,7 @@ public final class DocumentDeletes {
             case CatalogRecords.Recorded existing -> replay(caller, request, digest, existing.outcome());
             case CatalogRecords.Conflict conflict -> throw DocumentSaves.aborted(address, request.getExpected(), conflict.currentRevision(), conflict.currentTombstone());
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
+            case CatalogRecords.TargetPurged ignored -> throw new AccessionException(Status.Code.NOT_FOUND, "Document was purged", null);
             default -> throw new IllegalStateException("Delete without object references received " + result);
         };
     }

@@ -137,7 +137,8 @@ final class PostgresPurges {
 
     private static DocumentEvent.Builder baseEvent(PurgeDocumentRequest request, String phase, Timestamp time) {
         // Length-delimited protobuf identity; reason and timestamp cannot change event identity on retry.
-        var identity = request.toBuilder().clearReason().build().toByteArray();
+        var identity = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(
+                request.toBuilder().clearReason().build());
         var prefix = ("protomolt/purge/" + phase + "/v1\0").getBytes(java.nio.charset.StandardCharsets.UTF_8);
         var name = new byte[prefix.length + identity.length];
         System.arraycopy(prefix, 0, name, 0, prefix.length); System.arraycopy(identity, 0, name, prefix.length, identity.length);

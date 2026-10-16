@@ -19,6 +19,50 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class DocumentPurgesIT {
+    @Test void purgedAddressCannotBeRecreatedAndRejectionReplays() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var address = address("a", "doc");
+            f.saves.save(processAuthority(), create("original", address, document("a", "doc", "original")).build());
+            purges(f).purge(administrator(), request("purge", address));
+            var save = create("recreate", address, document("a", "doc", "replacement")).build();
+            assertPurged(() -> f.saves.save(processAuthority(), save));
+            assertPurged(() -> f.saves.save(processAuthority(), save));
+            assertThat(f.catalog.current(address)).isEmpty();
+            assertThat(f.catalog.events(address).stream().filter(DocumentEvent::hasAccessioned)).hasSize(1);
+            assertThat(f.catalog.outcome("a", "recreate").orElseThrow().outcome().getRejection().getReason())
+                    .isEqualTo(RejectionReason.REJECTION_REASON_SOURCE_PURGED);
+        }
+    }
+
+    @Test void purgeBetweenSavePreparationAndCommitIsNotARevisionConflict() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var address = address("a", "doc");
+            f.saves.save(processAuthority(), create("original", address, document("a", "doc", "original")).build());
+            // The actual provider write is the barrier: authorization and base selection
+            // have completed, but the catalog CAS has not run. Purge uses real transactions.
+            var once = new java.util.concurrent.atomic.AtomicBoolean();
+            f.stack.afterPut = () -> {
+                if (once.compareAndSet(false, true)) purges(f).purge(administrator(), request("purge", address));
+            };
+            var save = create("update", address, document("a", "doc", "replacement"))
+                    .setExpected(ExpectedRevision.newBuilder().setRevision(1)).build();
+            assertPurged(() -> f.saves.save(processAuthority(), save));
+            assertThat(once).isTrue();
+            assertThat(f.catalog.current(address)).isEmpty();
+            assertThat(f.catalog.events(address).stream().filter(DocumentEvent::hasAccessioned)).hasSize(1);
+            assertThat(f.catalog.outcome("a", "update").orElseThrow().outcome().getRejection().getReason())
+                    .isEqualTo(RejectionReason.REJECTION_REASON_SOURCE_PURGED);
+        }
+    }
+
+    private static void assertPurged(org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+        assertThatThrownBy(action).isInstanceOfSatisfying(AccessionException.class, failure -> {
+            assertThat(failure.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+            assertThat(failure.detail().orElseThrow()).isInstanceOfSatisfying(SaveRejection.class,
+                    rejection -> assertThat(rejection.getReason()).isEqualTo(RejectionReason.REJECTION_REASON_SOURCE_PURGED));
+        });
+    }
+
     private static void assertCode(Status.Code code, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
         assertThatThrownBy(action).isInstanceOfSatisfying(AccessionException.class, failure -> assertThat(failure.code()).isEqualTo(code));
     }

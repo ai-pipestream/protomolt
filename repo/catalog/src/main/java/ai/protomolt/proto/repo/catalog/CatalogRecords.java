@@ -78,6 +78,8 @@ public final class CatalogRecords {
     public record Conflict(long currentRevision, boolean currentTombstone) implements CommitResult {}
     /** A carried-forward object was purged before the commit. */
     public record SourcePurged(StackRef ref) implements CommitResult {}
+    /** The destination address was permanently purged and cannot accept another revision. */
+    public record TargetPurged() implements CommitResult {}
     /** The writer grant or credential was revoked or rotated before the commit. */
     public record WriteDenied(String reason) implements CommitResult, RejectionResult {}
 

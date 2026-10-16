@@ -318,6 +318,16 @@ public final class PostgresCatalog implements Catalog {
         return inTransaction("Conflict outcome reread", connection -> {
             var recorded = selectOutcome(connection, account, commit.operationId());
             if (recorded.isPresent()) return new Recorded(recorded.get());
+            // The failed CAS waited for any competing purge transaction. Its durable marker
+            // distinguishes a retired address from an absent document or revision conflict.
+            try (var select = connection.prepareStatement("""
+                    SELECT purged FROM catalog_documents
+                    WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?""")) {
+                bindAddress(select, 1, commit.address());
+                try (var rows = select.executeQuery()) {
+                    if (rows.next() && rows.getBoolean(1)) return new CatalogRecords.TargetPurged();
+                }
+            }
             var current = selectCurrent(connection, commit.address(), false);
             return new Conflict(current.map(Current::revision).orElse(0L), current.map(Current::tombstone).orElse(false));
         });
