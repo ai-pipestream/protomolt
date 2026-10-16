@@ -11,69 +11,95 @@ import ai.protomolt.proto.acquire.confluence.v1.ConfluenceEntity;
 import ai.protomolt.proto.acquire.confluence.v1.Label;
 import ai.protomolt.proto.acquire.confluence.v1.Page;
 import ai.protomolt.proto.acquire.confluence.v1.Version;
-import ai.protomolt.proto.repo.v1.DeleteDocumentRequest;
-import ai.protomolt.proto.repo.v1.DeleteDocumentResponse;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
-import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.Accession;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartWrite;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.WriteAction;
+import ai.protomolt.proto.validate.ProtoValidator;
+import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
+import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The entity-to-Document mapping of {@link RepoChangeSink}, verified against
- * a fake {@code DocumentService} on the in-process transport: deterministic
- * doc ids (re-crawls upsert), intake-save request shape, attachment bytes
- * through PutBlob, logical deletes, and the skip list for non-content arms.
+ * a fake v2 {@code DocumentService} on the in-process transport: deterministic
+ * doc ids (re-crawls upsert), intake-save request shape, inline attachment bytes
+ * written as {@code DOCUMENT_PART_BLOBS}, tombstone deletes, and the skip list
+ * for non-content arms.
  */
 class RepoChangeSinkTest {
+
+    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private Server server;
     private ManagedChannel channel;
     private FakeDocumentService fake;
     private RepoChangeSink sink;
 
-    /** Records every request the sink makes; responses are canned. */
+    /** Records every request the sink makes; responses are canned with optional CAS conflict simulation. */
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         private final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
-        private final List<PutBlobRequest> puts = new CopyOnWriteArrayList<>();
         private final List<DeleteDocumentRequest> deletes = new CopyOnWriteArrayList<>();
+        private final Map<String, Long> currentRevisions = new ConcurrentHashMap<>();
+        private boolean enforceCas;
 
         @Override
         public void saveDocument(SaveDocumentRequest request,
                 StreamObserver<SaveDocumentResponse> observer) {
             saves.add(request);
+            String docId = request.getTarget().getAddress().getDocId();
+            long current = currentRevisions.getOrDefault(docId, 0L);
+            if (enforceCas) {
+                boolean matches = request.getExpected().hasNone()
+                        ? current == 0L
+                        : request.getExpected().getRevision() == current;
+                if (!matches) {
+                    com.google.rpc.Status status = com.google.rpc.Status.newBuilder()
+                            .setCode(Status.Code.ABORTED.value())
+                            .setMessage("Expected revision is stale")
+                            .addDetails(Any.pack(RevisionConflict.newBuilder()
+                                    .setAddress(request.getTarget().getAddress())
+                                    .setExpected(request.getExpected())
+                                    .setCurrentRevision(current)
+                                    .build()))
+                            .build();
+                    observer.onError(StatusProto.toStatusRuntimeException(status));
+                    return;
+                }
+            }
+            long next = current + 1L;
+            currentRevisions.put(docId, next);
             observer.onNext(SaveDocumentResponse.newBuilder()
-                    .setNodeId("node-" + saves.size())
-                    .setDrive(request.getDrive())
-                    .build());
-            observer.onCompleted();
-        }
-
-        @Override
-        public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-            puts.add(request);
-            observer.onNext(PutBlobResponse.newBuilder()
-                    .setStorageRef(FileStorageReference.newBuilder()
-                            .setDriveName(request.getDriveName())
-                            .setObjectKey("blobs/blob-" + puts.size()))
-                    .setSizeBytes(request.getData().size())
-                    .setSha256("deadbeef")
+                    .setOperationId(request.getOperationId())
+                    .setAccession(Accession.newBuilder()
+                            .setAddress(request.getTarget().getAddress())
+                            .setRevision(next)
+                            .setPreviousRevision(current))
                     .build());
             observer.onCompleted();
         }
@@ -82,7 +108,14 @@ class RepoChangeSinkTest {
         public void deleteDocument(DeleteDocumentRequest request,
                 StreamObserver<DeleteDocumentResponse> observer) {
             deletes.add(request);
-            observer.onNext(DeleteDocumentResponse.getDefaultInstance());
+            observer.onNext(DeleteDocumentResponse.newBuilder()
+                    .setOperationId(request.getOperationId())
+                    .setAccession(Accession.newBuilder()
+                            .setAddress(request.getAddress())
+                            .setRevision(request.getExpected().getRevision() + 1L)
+                            .setPreviousRevision(request.getExpected().getRevision())
+                            .setTombstone(true))
+                    .build());
             observer.onCompleted();
         }
     }
@@ -135,17 +168,34 @@ class RepoChangeSinkTest {
                                 .setValue(body))));
     }
 
+    private static PartWrite put(DocumentPart part) {
+        return PartWrite.newBuilder()
+                .setSelector(PartSelector.newBuilder().setPart(part))
+                .setAction(WriteAction.WRITE_ACTION_PUT)
+                .build();
+    }
+
     @Test
     void pageUpsertSavesAnIntakeDocument() {
         sink.emit(change(pageEntity("123", "Hello Repo", "<p>Hello Repo</p>")).build());
 
         assertThat(fake.saves).hasSize(1);
         SaveDocumentRequest request = fake.saves.get(0);
+        assertThat(VALIDATOR.validate(request).valid()).isTrue();
+        assertThat(request.getOperationId()).isNotBlank();
         assertThat(request.getDrive()).isEqualTo("drive-1");
-        assertThat(request.getConnectorId()).isEqualTo("confluence");
-        assertThat(request.getUseDatasourceId()).isTrue();
-        assertThat(request.getGraphId()).isEqualTo("intake:account-1");
-        assertThat(request.getCrawlId()).isEqualTo("run-1");
+        assertThat(request.getTarget().getAddress()).isEqualTo(NodeAddress.newBuilder()
+                .setDocId(RepoChangeSink.docIdFor("123"))
+                .setGraphAddressId("datasource-1")
+                .setAccountId("account-1")
+                .setGraphId("intake:account-1")
+                .build());
+        assertThat(request.getExpected().hasNone()).isTrue();
+        assertThat(request.getExpected().getNone()).isTrue();
+        assertThat(request.getWritesList()).containsExactly(put(DocumentPart.DOCUMENT_PART_CORE));
+        assertThat(request.getOwner().getIntake().getDatasourceId()).isEqualTo("datasource-1");
+        assertThat(request.getOwner().getIntake().getConnectorId()).isEqualTo("confluence");
+        assertThat(request.getMetadataMap()).containsEntry("crawl_id", "run-1");
 
         var document = request.getDocument();
         assertThat(document.getDocId()).isEqualTo(RepoChangeSink.docIdFor("123"));
@@ -170,18 +220,28 @@ class RepoChangeSinkTest {
 
     @Test
     void reCrawlUpsertsTheSameDocumentId() {
+        fake.enforceCas = true;
         sink.emit(change(pageEntity("123", "v1", "<p>one</p>")).build());
         sink.emit(change(pageEntity("123", "v2", "<p>two</p>")).build());
 
-        assertThat(fake.saves).hasSize(2);
-        assertThat(fake.saves.get(0).getDocument().getDocId())
-                .isEqualTo(fake.saves.get(1).getDocument().getDocId());
+        assertThat(fake.saves).hasSize(3);
+        SaveDocumentRequest firstSave = fake.saves.get(0);
+        SaveDocumentRequest secondInitial = fake.saves.get(1);
+        SaveDocumentRequest secondRetry = fake.saves.get(2);
+
+        assertThat(firstSave.getDocument().getDocId())
+                .isEqualTo(secondRetry.getDocument().getDocId());
+        assertThat(firstSave.getExpected().getNone()).isTrue();
+        assertThat(secondInitial.getExpected().getNone()).isTrue();
+        assertThat(secondRetry.getExpected().getRevision()).isEqualTo(1L);
+        assertThat(firstSave.getOperationId()).isNotEqualTo(secondRetry.getOperationId());
+        assertThat(secondInitial.getOperationId()).isEqualTo(secondRetry.getOperationId());
         assertThat(RepoChangeSink.docIdFor("123")).isEqualTo(RepoChangeSink.docIdFor("123"));
         assertThat(RepoChangeSink.docIdFor("123")).isNotEqualTo(RepoChangeSink.docIdFor("124"));
     }
 
     @Test
-    void attachmentBytesGoThroughPutBlobAndAreReferenced() {
+    void attachmentBytesSaveAsBlobsPartWithInlineData() {
         ConfluenceEntity entity = ConfluenceEntity.newBuilder()
                 .setEntityId("att-9")
                 .setIngestedAt(at(1_753_000_000))
@@ -193,19 +253,22 @@ class RepoChangeSinkTest {
                 .build();
         sink.emit(change(entity.toBuilder()).build());
 
-        assertThat(fake.puts).hasSize(1);
-        PutBlobRequest put = fake.puts.get(0);
-        assertThat(put.getDriveName()).isEqualTo("drive-1");
-        assertThat(put.getData().toStringUtf8()).isEqualTo("png-bytes");
-        assertThat(put.getMimeType()).isEqualTo("image/png");
-
         assertThat(fake.saves).hasSize(1);
-        var blob = fake.saves.get(0).getDocument().getBlobBag().getBlob();
-        assertThat(blob.getStorageRef().getDriveName()).isEqualTo("drive-1");
-        assertThat(blob.getStorageRef().getObjectKey()).isEqualTo("blobs/blob-1");
-        assertThat(blob.getChecksum()).isEqualTo("deadbeef");
+        SaveDocumentRequest request = fake.saves.get(0);
+        assertThat(VALIDATOR.validate(request).valid()).isTrue();
+        assertThat(request.getWritesList()).containsExactly(
+                put(DocumentPart.DOCUMENT_PART_CORE),
+                put(DocumentPart.DOCUMENT_PART_BLOBS));
+
+        var blob = request.getDocument().getBlobBag().getBlob();
+        assertThat(blob.getBlobId()).isEqualTo(RepoChangeSink.docIdFor("att-9"));
+        assertThat(blob.getDriveId()).isEqualTo("drive-1");
+        assertThat(blob.getData().toStringUtf8()).isEqualTo("png-bytes");
+        assertThat(blob.getMimeType()).isEqualTo("image/png");
         assertThat(blob.getFilename()).isEqualTo("diagram.png");
-        assertThat(fake.saves.get(0).getDocument().getSearchMetadata().getDocumentType())
+        assertThat(blob.getSizeBytes()).isEqualTo(9L);
+        assertThat(blob.hasStorageRef()).isFalse();
+        assertThat(request.getDocument().getSearchMetadata().getDocumentType())
                 .isEqualTo("confluence-attachment");
     }
 
@@ -218,13 +281,15 @@ class RepoChangeSinkTest {
                 .build();
         sink.emit(change(entity.toBuilder()).build());
 
-        assertThat(fake.puts).isEmpty();
         assertThat(fake.saves).hasSize(1);
-        assertThat(fake.saves.get(0).getDocument().hasBlobBag()).isFalse();
+        SaveDocumentRequest request = fake.saves.get(0);
+        assertThat(VALIDATOR.validate(request).valid()).isTrue();
+        assertThat(request.getWritesList()).containsExactly(put(DocumentPart.DOCUMENT_PART_CORE));
+        assertThat(request.getDocument().hasBlobBag()).isFalse();
     }
 
     @Test
-    void deleteIssuesALogicalDeleteForTheDerivedId() {
+    void deleteIssuesATombstoneDeleteForTheDerivedId() {
         ConfluenceEntity identityOnly = ConfluenceEntity.newBuilder()
                 .setEntityId("123")
                 .setIngestedAt(at(1_753_000_000))
@@ -235,10 +300,18 @@ class RepoChangeSinkTest {
 
         assertThat(fake.saves).isEmpty();
         assertThat(fake.deletes).hasSize(1);
-        var command = fake.deletes.get(0).getLogicalDocument();
-        assertThat(command.getDocId()).isEqualTo(RepoChangeSink.docIdFor("123"));
-        assertThat(command.getAccountId()).isEqualTo("account-1");
-        assertThat(command.getDatasourceId()).isEqualTo("datasource-1");
+        DeleteDocumentRequest delete = fake.deletes.get(0);
+        assertThat(VALIDATOR.validate(delete).valid()).isTrue();
+        assertThat(delete.getOperationId()).isNotBlank();
+        assertThat(delete.getAddress()).isEqualTo(NodeAddress.newBuilder()
+                .setDocId(RepoChangeSink.docIdFor("123"))
+                .setGraphAddressId("datasource-1")
+                .setAccountId("account-1")
+                .setGraphId("intake:account-1")
+                .build());
+        assertThat(delete.getExpected().hasRevision()).isTrue();
+        assertThat(delete.getExpected().getRevision()).isEqualTo(1L);
+        assertThat(delete.getReason()).isEqualTo("confluence delete 123");
     }
 
     @Test
@@ -251,7 +324,6 @@ class RepoChangeSinkTest {
         sink.emit(change(label.toBuilder()).build());
 
         assertThat(fake.saves).isEmpty();
-        assertThat(fake.puts).isEmpty();
         assertThat(fake.deletes).isEmpty();
     }
 }

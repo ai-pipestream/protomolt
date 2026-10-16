@@ -8,38 +8,49 @@ import ai.protomolt.proto.acquire.confluence.v1.ConfluenceEntity;
 import ai.protomolt.proto.acquire.confluence.v1.ConfluenceSnapshot;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
-import ai.protomolt.proto.repo.v1.ChecksumType;
-import ai.protomolt.proto.repo.v1.DeleteDocumentRequest;
-import ai.protomolt.proto.repo.v1.DeleteLogicalDocumentCommand;
 import ai.protomolt.proto.repo.v1.DocIdDerivation;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentTarget;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartWrite;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.WriteAction;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.protobuf.StatusProto;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
  * The dogfood sink: mirrors Confluence content into the protomolt repo
- * service as {@link Document}s over the {@code DocumentService} gRPC API.
+ * service as {@link Document}s over the v2 {@code DocumentService} gRPC API.
  *
  * <p>Entity-to-Document mapping (kept deliberately small; documented here as
  * the contract):</p>
  * <ul>
  *   <li>Identity: {@code doc_id} is a deterministic name-based UUID of
  *   {@code "confluence|<entityId>"} (the repo service's own
- *   {@code UUID.nameUUIDFromBytes} convention), so re-crawls upsert the same
- *   row instead of duplicating it. The derivation is stamped on
+ *   {@code UUID.nameUUIDFromBytes} convention), so re-crawls target the same
+ *   document address instead of duplicating it. The derivation is stamped on
  *   {@code doc_id_derivation} as SOURCE_DOC_ID.</li>
  *   <li>Pages and blog posts become Documents whose
  *   {@code search_metadata.body} is the first populated body slot (storage,
@@ -47,20 +58,25 @@ import java.util.concurrent.TimeUnit;
  *   {@code source_uri} / dates / author come off the entity, and whose
  *   {@code document_type} is {@code "confluence-page"} or
  *   {@code "confluence-blogpost"}.</li>
- *   <li>Attachments carrying content bytes go through {@code PutBlob} first
- *   (blank object key: the server mints a content-addressed key, so identical
- *   bytes land idempotently) and the Document's {@code blob_bag} references
- *   the returned {@code FileStorageReference}. Attachments without content
- *   save as metadata-only Documents.</li>
+ *   <li>Attachments carrying content bytes populate {@code blob_bag} with an
+ *   inline {@link Blob} ({@code data}, {@code drive_id}, {@code mime_type},
+ *   {@code filename}, {@code size_bytes}) and include a {@code DOCUMENT_PART_BLOBS}
+ *   {@code WRITE_ACTION_PUT} alongside {@code DOCUMENT_PART_CORE} so the
+ *   repository server writes the raw blob to the stack and binds its claim check.
+ *   Attachments without content save as metadata-only Documents with only
+ *   {@code DOCUMENT_PART_CORE}.</li>
  *   <li>Confluence ids ride in {@code search_metadata.metadata}:
  *   {@code confluence.entity_id}, {@code confluence.space_id},
  *   {@code confluence.version}.</li>
  *   <li>Other entity arms (comments, labels, properties, ...) are skipped:
  *   the repo mirror stores content, not crawl exhaust.</li>
- *   <li>DELETE changes issue a logical {@code DeleteDocument} for the derived
- *   doc id; UPSERTs save with {@code use_datasource_id} and
- *   {@code graph_id = "intake:<accountId>"} (an intake save, per the
- *   DocumentService contract).</li>
+ *   <li>DELETE changes issue a tombstone {@code DeleteDocument} for the derived
+ *   {@link NodeAddress}; UPSERTs save against the full intake {@link NodeAddress}
+ *   ({@code graph_address_id = datasourceId}, {@code graph_id = "intake:<accountId>"})
+ *   with {@link SaveOwner} set to {@link IntakeOrigin} and the crawl cursor
+ *   recorded under request metadata key {@link #METADATA_CRAWL_ID}. When an
+ *   existing revision is reported via {@link RevisionConflict}, the sink retries
+ *   with that revision as {@link ExpectedRevision}.</li>
  * </ul>
  *
  * <p>Failure policy: unlike {@link KafkaChangeSink} this sink is fail-loud.
@@ -77,6 +93,23 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
     /** The connector id stamped on saves and ownership. */
     public static final String CONNECTOR_ID = "confluence";
 
+    /** The request metadata key carrying the crawl cursor when non-blank. */
+    public static final String METADATA_CRAWL_ID = "crawl_id";
+
+    private static final String DEFAULT_MIME_TYPE = "application/octet-stream";
+    private static final String INTAKE_GRAPH_PREFIX = "intake:";
+    private static final int MAX_CAS_ATTEMPTS = 4;
+
+    private static final PartWrite PUT_CORE = PartWrite.newBuilder()
+            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+            .setAction(WriteAction.WRITE_ACTION_PUT)
+            .build();
+
+    private static final PartWrite PUT_BLOBS = PartWrite.newBuilder()
+            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS))
+            .setAction(WriteAction.WRITE_ACTION_PUT)
+            .build();
+
     private static final System.Logger LOG = System.getLogger(RepoChangeSink.class.getName());
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
@@ -89,7 +122,7 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
      * A sink over an existing stub; the caller owns the channel and
      * {@link #close()} is a no-op.
      *
-     * @param documents the DocumentService blocking stub
+     * @param documents the v2 DocumentService blocking stub
      * @param drive the repo drive documents save to
      * @param accountId the owning account on saved documents
      * @param datasourceId the datasource id on saved documents
@@ -138,16 +171,28 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 .getBytes(StandardCharsets.UTF_8)).toString();
     }
 
+    /** The canonical intake NodeAddress for a derived document id. */
+    NodeAddress addressFor(String docId) {
+        return NodeAddress.newBuilder()
+                .setDocId(docId)
+                .setGraphAddressId(datasourceId)
+                .setAccountId(accountId)
+                .setGraphId(INTAKE_GRAPH_PREFIX + accountId)
+                .build();
+    }
+
+    private static String operationIdFor(ConfluenceChange change, String entityId, String action) {
+        if (!change.getChangeId().isBlank()) {
+            return "confluence-" + action + "-" + entityId + "-" + change.getChangeId();
+        }
+        return UUID.randomUUID().toString();
+    }
+
     @Override
     public void emit(ConfluenceChange change) {
         ConfluenceEntity entity = change.getEntity();
         if (change.getOperation() == ChangeOperation.CHANGE_OPERATION_DELETE) {
-            documents.deleteDocument(DeleteDocumentRequest.newBuilder()
-                    .setLogicalDocument(DeleteLogicalDocumentCommand.newBuilder()
-                            .setDocId(docIdFor(entity.getEntityId()))
-                            .setAccountId(accountId)
-                            .setDatasourceId(datasourceId))
-                    .build());
+            delete(change, entity);
             return;
         }
         switch (entity.getEntityCase()) {
@@ -178,27 +223,47 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 snapshot.getSnapshotId(), snapshot.getSpaceKey());
     }
 
-    /** Attachments with bytes: PutBlob first, then a Document referencing the stored object. */
+    /** Issues a tombstone DeleteDocument request, retrying with the current revision on conflict. */
+    private void delete(ConfluenceChange change, ConfluenceEntity entity) {
+        String entityId = entity.getEntityId();
+        DeleteDocumentRequest.Builder request = DeleteDocumentRequest.newBuilder()
+                .setOperationId(operationIdFor(change, entityId, "delete"))
+                .setAddress(addressFor(docIdFor(entityId)))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(1))
+                .setReason("confluence delete " + entityId);
+        for (int attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+            try {
+                documents.deleteDocument(request.build());
+                return;
+            } catch (StatusRuntimeException failure) {
+                OptionalLong currentRevision = currentRevisionFromConflict(failure, true);
+                if (currentRevision.isEmpty() || attempt + 1 >= MAX_CAS_ATTEMPTS) {
+                    throw failure;
+                }
+                if (currentRevision.getAsLong() <= 0) {
+                    return;
+                }
+                request.setExpected(ExpectedRevision.newBuilder().setRevision(currentRevision.getAsLong()));
+            }
+        }
+    }
+
+    /** Attachments with bytes populate BlobBag inline and write both CORE and BLOBS parts. */
     private void saveAttachment(ConfluenceEntity entity, Attachment attachment,
             ConfluenceChange change) {
         BlobBag blobBag = null;
         if (!attachment.getContent().isEmpty()) {
-            PutBlobResponse stored = documents.putBlob(PutBlobRequest.newBuilder()
-                    .setDriveName(drive)
-                    .setData(attachment.getContent())
-                    .setMimeType(attachment.getMediaType().isBlank()
-                            ? "application/octet-stream" : attachment.getMediaType())
-                    .build());
-            blobBag = BlobBag.newBuilder().setBlob(Blob.newBuilder()
-                    .setBlobId(docIdFor(entity.getEntityId()))
-                    .setDriveId(drive)
-                    .setStorageRef(stored.getStorageRef())
-                    .setMimeType(attachment.getMediaType())
-                    .setFilename(attachment.getTitle())
-                    .setSizeBytes(stored.getSizeBytes())
-                    .setChecksum(stored.getSha256())
-                    .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256)
-                    .build())
+            String mimeType = attachment.getMediaType().isBlank()
+                    ? DEFAULT_MIME_TYPE : attachment.getMediaType();
+            blobBag = BlobBag.newBuilder()
+                    .setBlob(Blob.newBuilder()
+                            .setBlobId(docIdFor(entity.getEntityId()))
+                            .setDriveId(drive)
+                            .setData(attachment.getContent())
+                            .setMimeType(mimeType)
+                            .setFilename(attachment.getTitle())
+                            .setSizeBytes(attachment.getContent().size())
+                            .build())
                     .build();
         }
         save(toDocument(entity, attachment.getTitle(), "confluence-attachment", "",
@@ -250,18 +315,63 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
         return document.build();
     }
 
-    /** One intake save; the crawl run id (the change cursor on CRAWL) rides as crawl_id. */
+    /** One intake save; the crawl run id (the change cursor on CRAWL) rides in request metadata. */
     private void save(Document document, ConfluenceChange change) {
         SaveDocumentRequest.Builder request = SaveDocumentRequest.newBuilder()
+                .setOperationId(UUID.randomUUID().toString())
+                .setTarget(DocumentTarget.newBuilder().setAddress(addressFor(document.getDocId())))
+                .setExpected(ExpectedRevision.newBuilder().setNone(true))
                 .setDocument(document)
+                .addWrites(PUT_CORE)
                 .setDrive(drive)
-                .setConnectorId(CONNECTOR_ID)
-                .setUseDatasourceId(true)
-                .setGraphId("intake:" + accountId);
-        if (!change.getCursor().isBlank()) {
-            request.setCrawlId(change.getCursor());
+                .setOwner(SaveOwner.newBuilder()
+                        .setIntake(IntakeOrigin.newBuilder()
+                                .setDatasourceId(datasourceId)
+                                .setConnectorId(CONNECTOR_ID)));
+        if (document.hasBlobBag()) {
+            request.addWrites(PUT_BLOBS);
         }
-        documents.saveDocument(request.build());
+        if (!change.getCursor().isBlank()) {
+            request.putMetadata(METADATA_CRAWL_ID, change.getCursor());
+        }
+        for (int attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
+            try {
+                documents.saveDocument(request.build());
+                return;
+            } catch (StatusRuntimeException failure) {
+                OptionalLong currentRevision = currentRevisionFromConflict(failure, false);
+                if (currentRevision.isEmpty() || attempt + 1 >= MAX_CAS_ATTEMPTS) {
+                    throw failure;
+                }
+                request.setExpected( currentRevision.getAsLong() == 0
+                        ? ExpectedRevision.newBuilder().setNone(true).build()
+                        : ExpectedRevision.newBuilder().setRevision(currentRevision.getAsLong()).build());
+            }
+        }
+    }
+
+    private static OptionalLong currentRevisionFromConflict(StatusRuntimeException failure, boolean ignoreIfTombstone) {
+        if (failure.getStatus().getCode() != Status.Code.ABORTED) {
+            return OptionalLong.empty();
+        }
+        com.google.rpc.Status status = StatusProto.fromThrowable(failure);
+        if (status == null) {
+            return OptionalLong.empty();
+        }
+        for (com.google.protobuf.Any detail : status.getDetailsList()) {
+            if (detail.is(RevisionConflict.class)) {
+                try {
+                    RevisionConflict conflict = detail.unpack(RevisionConflict.class);
+                    if (ignoreIfTombstone && conflict.getCurrentIsTombstone()) {
+                        return OptionalLong.of(0L);
+                    }
+                    return OptionalLong.of(conflict.getCurrentRevision());
+                } catch (InvalidProtocolBufferException ignored) {
+                    return OptionalLong.empty();
+                }
+            }
+        }
+        return OptionalLong.empty();
     }
 
     /** The first populated body slot, or "" for a metadata-only record. */
