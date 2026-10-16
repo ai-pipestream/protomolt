@@ -157,8 +157,9 @@ records exact source document/revision lineage; PartSource remains a separate ch
 about reusing bytes, not a mandatory copy operation. Part sources and lineage must name
 a document in the saving document's account, and the caller must be able to read that
 document's current revision, as for a read; otherwise the save is rejected with
-SOURCE_NOT_FOUND (decision 37). Non-derived step creation still
-requires explicit creation authority. There is no intake-only creation restriction.
+SOURCE_NOT_FOUND (decision 37). Every creation under a step grant, derived or not,
+requires `allow_create`; `derived_from` records lineage only and grants nothing
+(decision 46). There is no intake-only creation restriction.
 Changed parts record the SaveOwner; unchanged parts preserve their original writer.
 The accession records its save owner and source lineage, including metadata-only saves.
 
@@ -188,6 +189,17 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
   transaction, that the object is not purged. A read already streaming a purged object
   either completes with verified original bytes or reports a clear failure. There are no
   reader pins.
+- **Raw blob claim checks.**
+  - Each raw blob in `Document.blob_bag` is its own stack object.
+  - The catalog binds `blob_id` to its `StackRef` on the BLOBS part entry
+    (`StoredPartEntry.blob_refs`, table `catalog_blob_refs`).
+  - The server fills `Blob.storage_ref` from that binding. A client can't supply or invent a
+    physical storage reference, and a client-supplied `storage_ref` is refused.
+  - A client can still reuse authorized existing content without re-uploading it, through
+    the supported mechanisms: upload, a `PartSource` source, or carry-forward of an unchanged
+    part. The server resolves and verifies each such reference.
+  - Blob references count as references for purge (§6) and for the carry-forward purge
+    check (§7) (decision 45).
 - **No automatic sweeping in the first slice.** An upload can finish and pause before its
   commit, so "unreferenced and old" is not safe to delete. Objects from failed or
   abandoned saves are left in place and can be reported. Automatic cleanup is a later
