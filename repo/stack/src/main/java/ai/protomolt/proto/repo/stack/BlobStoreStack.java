@@ -33,18 +33,32 @@ public final class BlobStoreStack implements Stack {
     private final int partSize;
     private final AutoCloseable lifetime;
 
+    /**
+     * Creates a stack with {@link #DEFAULT_PART_SIZE} and a no-op close hook.
+     *
+     * @param stackId registered stack identifier
+     * @param store backing byte store (must implement {@link BlobStore#openStream})
+     * @param bucket object storage bucket
+     * @param prefix key prefix without leading or trailing slashes
+     */
     public BlobStoreStack(String stackId, BlobStore store, String bucket, String prefix) {
         this(stackId, store, bucket, prefix, DEFAULT_PART_SIZE, () -> {});
     }
 
     /**
+     * Creates a stack with an explicit multipart buffer size and lifetime hook.
+     *
+     * @param stackId registered stack identifier
+     * @param store backing byte store (must implement {@link BlobStore#openStream})
+     * @param bucket object storage bucket
+     * @param prefix key prefix without leading or trailing slashes
      * @param partSize the streamed put buffer; the provider enforces its own minimum
      * @param lifetime released by {@link #close()}: the provider resources this stack owns
      */
     public BlobStoreStack(String stackId, BlobStore store, String bucket, String prefix, int partSize,
             AutoCloseable lifetime) {
         this.stackId = requireText(stackId, "stackId");
-        this.store = Objects.requireNonNull(store, "store");
+        this.store = requireStreamedReads(Objects.requireNonNull(store, "store"));
         this.bucket = requireText(bucket, "bucket");
         this.prefix = requireText(prefix, "prefix");
         if (prefix.startsWith("/") || prefix.endsWith("/")) throw new IllegalArgumentException("Prefix has no edge slashes");
@@ -60,6 +74,8 @@ public final class BlobStoreStack implements Stack {
         var key = newKey();
         try {
             store.put(new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null), body);
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
         } catch (RuntimeException failure) {
             throw new IOException("Stack write failed", failure);
         }
@@ -80,6 +96,8 @@ public final class BlobStoreStack implements Stack {
             store.putMultipart(new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null), counted, partSize);
         } catch (UncheckedIOException failure) {
             throw failure.getCause();
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
         } catch (RuntimeException failure) {
             throw new IOException("Stack write failed", failure);
         }
@@ -112,6 +130,8 @@ public final class BlobStoreStack implements Stack {
             stored = store.objectLength(bucket, ref.getKey());
         } catch (BlobStore.BlobNotFoundException missing) {
             throw new StackDataLoss("Referenced stack object is missing", missing);
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
         } catch (RuntimeException failure) {
             throw new IOException("Stack head failed", failure);
         }
@@ -124,6 +144,8 @@ public final class BlobStoreStack implements Stack {
         requireOwn(ref);
         try {
             store.delete(bucket, ref.getKey());
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
         } catch (RuntimeException failure) {
             throw new IOException("Stack delete failed", failure);
         }
@@ -144,8 +166,23 @@ public final class BlobStoreStack implements Stack {
             return store.openStream(bucket, ref.getKey(), offset, length);
         } catch (BlobStore.BlobNotFoundException missing) {
             throw new StackDataLoss("Referenced stack object is missing", missing);
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
         } catch (RuntimeException failure) {
             throw new IOException("Stack read failed", failure);
+        }
+    }
+
+    private static BlobStore requireStreamedReads(BlobStore store) {
+        try {
+            var method = store.getClass().getMethod(
+                    "openStream", String.class, String.class, long.class, long.class);
+            if (method.getDeclaringClass() == BlobStore.class) {
+                throw new UnsupportedOperationException("BlobStore does not support streamed object reads");
+            }
+            return store;
+        } catch (NoSuchMethodException impossible) {
+            throw new IllegalStateException("BlobStore.openStream lookup failed", impossible);
         }
     }
 
