@@ -19,11 +19,6 @@ import com.google.protobuf.Message;
 
 /** Internal candidate check under a trusted host's explicit validator and URL policy. */
 final class DocumentPayloadCheck {
-    private static final String CONTROL = "control";
-    private static final String RESOLVER = "resolver";
-    private static final String UNRESOLVED_ANY_TYPE_URL = "unresolved Any type URL: ";
-    private static final String UNSUPPORTED_ANY_ENVELOPE_FIELDS = "unsupported Any envelope fields";
-
     /** A host byte budget, distinct from malformed payload or structural failures. */
     static final class ByteBudgetExceeded extends IllegalArgumentException {
         ByteBudgetExceeded() { super("aggregate payload bytes exceed limit"); }
@@ -93,7 +88,7 @@ final class DocumentPayloadCheck {
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaAssetBinding> resolver, DocumentSchemaOccurrences.Limits evidenceLimits)
             throws InvalidProtocolBufferException {
-        Objects.requireNonNull(resolver, RESOLVER);
+        Objects.requireNonNull(resolver, "resolver");
         var pinned = new LinkedHashMap<String, DocumentSchemaAssetBinding>();
         pinned.put(acceptedTypeUrl, root);
         return checkContextualAssets(root, candidate, acceptedTypeUrl, validator, limits, control,
@@ -146,8 +141,8 @@ final class DocumentPayloadCheck {
     private static AssetSelections assetSelections(DocumentSchemaAssetBinding root, String acceptedTypeUrl,
             Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver, Runnable control) {
         Objects.requireNonNull(root, "root");
-        Objects.requireNonNull(resolver, RESOLVER);
-        Objects.requireNonNull(control, CONTROL);
+        Objects.requireNonNull(resolver, "resolver");
+        Objects.requireNonNull(control, "control");
         active(control);
         if (!root.metadata().getTypeUrl().equals(acceptedTypeUrl)) {
             throw new IllegalArgumentException("schema asset type URL differs from host policy");
@@ -182,7 +177,7 @@ final class DocumentPayloadCheck {
     static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control) throws InvalidProtocolBufferException {
         return check(schema, candidate, acceptedTypeUrl, validator, limits, control, url -> {
-            throw new IllegalArgumentException(UNRESOLVED_ANY_TYPE_URL + url);
+            throw new IllegalArgumentException("unresolved Any type URL: " + url);
         });
     }
 
@@ -195,7 +190,7 @@ final class DocumentPayloadCheck {
     static DocumentPayloadCheck check(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
             ProtoValidator validator, Limits limits, Runnable control,
             Function<String, DocumentSchemaBinding> resolver) throws InvalidProtocolBufferException {
-        Objects.requireNonNull(resolver, RESOLVER);
+        Objects.requireNonNull(resolver, "resolver");
         var pinned = new LinkedHashMap<String, DocumentSchemaBinding>();
         pinned.put(acceptedTypeUrl, schema);
         return check(schema,candidate,acceptedTypeUrl,validator,limits,control,
@@ -230,15 +225,15 @@ final class DocumentPayloadCheck {
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
         Objects.requireNonNull(validator, "validator");
         Objects.requireNonNull(limits, "limits");
-        Objects.requireNonNull(control, CONTROL);
-        Objects.requireNonNull(resolver, RESOLVER);
+        Objects.requireNonNull(control, "control");
+        Objects.requireNonNull(resolver, "resolver");
         active(control);
         requireUrl(acceptedTypeUrl, schema);
         if (!candidate.getTypeUrl().equals(acceptedTypeUrl)) {
             throw new IllegalArgumentException("candidate type URL differs from host policy");
         }
         if (!candidate.getUnknownFields().asMap().isEmpty()) {
-            throw new IllegalArgumentException(UNSUPPORTED_ANY_ENVELOPE_FIELDS);
+            throw new IllegalArgumentException("unsupported Any envelope fields");
         }
         var session = new Session(validator, limits, control, resolver, evidence, evaluatedAt, assess);
         session.bindings.put(new SchemaKey(acceptedTypeUrl, schema.artifactSha256()), schema);
@@ -340,7 +335,7 @@ final class DocumentPayloadCheck {
             Descriptor type = message.getDescriptorForType();
             if (type.getFullName().equals("google.protobuf.Any")) {
                 if (++anyCount > limits.maxWireValues()) throw new IllegalArgumentException("Any occurrence limit exceeded");
-                if (!message.getUnknownFields().asMap().isEmpty()) throw new IllegalArgumentException(UNSUPPORTED_ANY_ENVELOPE_FIELDS);
+                if (!message.getUnknownFields().asMap().isEmpty()) throw new IllegalArgumentException("unsupported Any envelope fields");
                 var urlField = type.findFieldByNumber(1);
                 var valueField = type.findFieldByNumber(2);
                 if (type.getFields().size() != 2 || urlField == null || valueField == null
@@ -361,7 +356,7 @@ final class DocumentPayloadCheck {
                         evidence == null ? java.util.List.of() : evidence.prefix(),
                         evidence == null ? "" : DocumentSchemaOccurrences.sha256(bytes, () -> active(control)), bytes.size()));
                 active(control);
-                if (binding == null) throw new IllegalArgumentException(UNRESOLVED_ANY_TYPE_URL + url);
+                if (binding == null) throw new IllegalArgumentException("unresolved Any type URL: " + url);
                 requireUrl(url, binding);
                 var key = new SchemaKey(url, binding.artifactSha256());
                 var previous = bindings.putIfAbsent(key, binding);

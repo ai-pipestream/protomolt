@@ -17,16 +17,7 @@ import java.util.concurrent.CancellationException;
  * host must keep fragment bytes stable and alive until this owner is closed.
  */
 public final class DocumentSchemaAssessment implements AutoCloseable {
-    /**
-     * Internal identity; paths and rule IDs may contain user text and are not public receipt text.
-     *
-     * @param ordinal member part ordinal
-     * @param root root schema locator
-     * @param occurrence occurrence step path
-     * @param fieldPath failing field path
-     * @param ruleId failing rule identifier
-     * @param rulePath failing rule path
-     */
+    /** Internal identity; paths and rule IDs may contain user text and are not public receipt text. */
     public record Failure(int ordinal, DocumentSchemaRootLocator root, List<RepositorySchemaOccurrenceStep> occurrence,
                           String fieldPath, String ruleId, String rulePath) {
         public Failure { occurrence = List.copyOf(occurrence); }
@@ -55,15 +46,6 @@ public final class DocumentSchemaAssessment implements AutoCloseable {
      * Resolver inputs are borrowed during copying. Serialized assets/evidence are
      * reserved before allocation; decoded graphs and resolver allocations remain
      * bounded by the caller. No registry/provider access occurs after return.
-     *
-     * @param input the preparation input
-     * @param resolver resolver for Any schema occurrences
-     * @param limits admission limits
-     * @param reservations resource reservations for schema and evidence assets
-     * @param evaluatedAt evaluation timestamp
-     * @param control execution cancellation check
-     * @return the completed document schema assessment
-     * @throws InvalidProtocolBufferException if schema preparation or verification fails
      */
     public static DocumentSchemaAssessment prepare(DocumentSchemaAdmission.Preparation input,
             DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Limits limits,
@@ -170,97 +152,21 @@ public final class DocumentSchemaAssessment implements AutoCloseable {
     /** Borrowed access without the ability to release this owner's resources. */
     public final class View {
         private View() {}
-
-        /**
-         * Returns the preparation request.
-         *
-         * @return preparation request
-         */
         public DocumentSchemaAdmission.Preparation request() { return DocumentSchemaAssessment.this.request(); }
-
-        /**
-         * Returns the evaluation timestamp.
-         *
-         * @return evaluation timestamp
-         */
         public Instant evaluatedAt() { return DocumentSchemaAssessment.this.evaluatedAt(); }
-
-        /**
-         * Returns the root evidence list.
-         *
-         * @return list of root evidence
-         */
         public List<DocumentSchemaAdmission.RootEvidence> roots() { return DocumentSchemaAssessment.this.roots(); }
-
-        /**
-         * Returns the schema reference list.
-         *
-         * @return list of schema references
-         */
         public List<DocumentSchemaAdmission.Reference> references() { return DocumentSchemaAssessment.this.references(); }
-
-        /**
-         * Returns the retained schema artifact bytes.
-         *
-         * @return map of artifact SHA-256 digest to bytes
-         */
         public Map<String, ByteString> artifacts() { return DocumentSchemaAssessment.this.artifacts(); }
-
-        /**
-         * Returns the optional payload validation failure.
-         *
-         * @return optional containing the validation failure, or empty if accepted
-         */
         public Optional<Failure> failure() { return DocumentSchemaAssessment.this.failure(); }
     }
 
-    /**
-     * The host must still drain consumers before closing; previously borrowed bytes cannot be revoked.
-     *
-     * @return a borrowed view over this assessment
-     */
+    /** The host must still drain consumers before closing; previously borrowed bytes cannot be revoked. */
     public synchronized View view() { requireOpen(); return new View(); }
-
-    /**
-     * Returns the preparation request.
-     *
-     * @return preparation request
-     */
     public synchronized DocumentSchemaAdmission.Preparation request() { requireOpen(); return request; }
-
-    /**
-     * Returns the evaluation timestamp.
-     *
-     * @return evaluation timestamp
-     */
     public synchronized Instant evaluatedAt() { requireOpen(); return evaluatedAt; }
-
-    /**
-     * Returns the root evidence list.
-     *
-     * @return list of root evidence
-     */
     public synchronized List<DocumentSchemaAdmission.RootEvidence> roots() { requireOpen(); return roots; }
-
-    /**
-     * Returns the schema reference list.
-     *
-     * @return list of schema references
-     */
     public synchronized List<DocumentSchemaAdmission.Reference> references() { requireOpen(); return references; }
-
-    /**
-     * Returns the retained schema artifact bytes.
-     *
-     * @return map of artifact SHA-256 digest to bytes
-     */
     public synchronized Map<String, ByteString> artifacts() { requireOpen(); return artifacts; }
-
-    /**
-     * Returns the optional payload validation failure.
-     *
-     * @return optional containing the validation failure, or empty if accepted
-     */
     public synchronized Optional<Failure> failure() { requireOpen(); return Optional.ofNullable(failure); }
     private void requireOpen() { if (request == null) throw new IllegalStateException("Member assessment is closed"); }
     @Override public synchronized void close() {

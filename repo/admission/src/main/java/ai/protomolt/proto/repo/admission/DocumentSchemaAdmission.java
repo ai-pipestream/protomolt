@@ -24,19 +24,9 @@ public final class DocumentSchemaAdmission {
             List.of(new ProtomoltRuleSource(), new ProtovalidateRuleSource()),
             ai.protomolt.proto.validate.spi.TaxonomyCatalog.empty(),
             ai.protomolt.proto.validate.spi.PostalCodeCatalog.empty());
-    /**
-     * Fixed configuration of this loaded admission implementation, not caller-supplied provenance.
-     *
-     * @param validationProfile the validation profile identifier
-     * @param catalogConfiguration the catalog configuration identifier
-     */
+    /** Fixed configuration of this loaded admission implementation, not caller-supplied provenance. */
     public record RuntimeProfile(String validationProfile, String catalogConfiguration) {}
-
-    /**
-     * Method invocation reads the loaded implementation; public string constants may be inlined by consumers.
-     *
-     * @return the active runtime profile configuration
-     */
+    /** Method invocation reads the loaded implementation; public string constants may be inlined by consumers. */
     public static RuntimeProfile runtimeProfile() {
         return new RuntimeProfile(PROFILE, "empty-taxonomy-and-postal/v1");
     }
@@ -45,19 +35,7 @@ public final class DocumentSchemaAdmission {
 
     /** Retained schema bytes or metadata are absent, corrupt or inconsistent with their recorded identity. */
     public static class DataLoss extends IllegalStateException {
-        /**
-         * Constructs a data loss exception with the specified detail message.
-         *
-         * @param message detail message
-         */
         DataLoss(String message) { super(message); }
-
-        /**
-         * Constructs a data loss exception with the specified detail message and cause.
-         *
-         * @param message detail message
-         * @param cause underlying cause
-         */
         DataLoss(String message, Throwable cause) { super(message, cause); }
     }
 
@@ -67,14 +45,6 @@ public final class DocumentSchemaAdmission {
      * depth to 64, wire values to 1 million per fragment/root, and schema traversal to
      * 4096 types/65536 fields per root. Raw fragments and decoded payloads each
      * have a 256 MiB ceiling. Hosts reserve memory for decoded forms and I/O.
-     *
-     * @param maxFragments maximum allowed fragments in a member
-     * @param maxFragmentBytes maximum combined serialized byte size for all fragments
-     * @param maxRoots maximum number of Any roots in a member
-     * @param maxEvidenceBytes maximum combined serialized byte size for evidence
-     * @param maxBindings maximum number of distinct schema bindings
-     * @param maxRetainedBytes maximum total retained schema asset bytes
-     * @param maxDecodedBytes maximum aggregate decoded payload bytes
      */
     public record Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
                          int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
@@ -88,27 +58,9 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Authoritative absence is empty; I/O and access failures propagate. Bound allocation before returning bytes. */
-    @FunctionalInterface
-    public interface Reader {
-        /**
-         * Reads artifact bytes for the given SHA-256 digest.
-         *
-         * @param sha256 the hexadecimal SHA-256 digest of the artifact
-         * @return optional containing the artifact bytes, or empty if not found
-         */
-        Optional<ByteString> read(String sha256);
-    }
+    @FunctionalInterface public interface Reader { Optional<ByteString> read(String sha256); }
 
-    /**
-     * Exact persisted association; the host authenticates its account/revision context.
-     *
-     * @param typeUrl the protobuf type URL
-     * @param descriptorSha256 hexadecimal SHA-256 digest of descriptor bytes
-     * @param metadataCodec codec identifier for metadata asset
-     * @param metadataVersion encoding version of metadata asset
-     * @param metadataSha256 hexadecimal SHA-256 digest of metadata bytes
-     * @param sourceSha256 optional hexadecimal SHA-256 digest of proto source bytes
-     */
+    /** Exact persisted association; the host authenticates its account/revision context. */
     public record Reference(String typeUrl, String descriptorSha256, String metadataCodec, int metadataVersion,
                             String metadataSha256, Optional<String> sourceSha256) {
         public Reference {
@@ -119,12 +71,7 @@ public final class DocumentSchemaAdmission {
             return new DocumentRetainedSchemaAssets.Reference(typeUrl, descriptorSha256, metadataCodec,
                     metadataVersion, metadataSha256, sourceSha256);
         }
-
-        /**
-         * Wire identity only; it does not verify asset bytes or transfer retention ownership.
-         *
-         * @return the protobuf schema asset reference
-         */
+        /** Wire identity only; it does not verify asset bytes or transfer retention ownership. */
         public RepositorySchemaAssetReference toProto() {
             var value = RepositorySchemaAssetReference.newBuilder().setTypeUrl(typeUrl)
                     .setDescriptorSha256(descriptorSha256).setMetadataCodec(metadataCodec)
@@ -132,14 +79,7 @@ public final class DocumentSchemaAdmission {
             sourceSha256.ifPresent(value::setSourceSha256);
             return value.build();
         }
-
-        /**
-         * Validate the bounded association shape; the reader must still verify all referenced assets.
-         *
-         * @param value the protobuf schema asset reference
-         * @param control execution cancellation check
-         * @return the validated schema reference
-         */
+        /** Validate the bounded association shape; the reader must still verify all referenced assets. */
         public static Reference fromProto(RepositorySchemaAssetReference value, Runnable control) {
             DocumentSchemaEvidenceCodec.measureAndValidate(Objects.requireNonNull(value), control);
             return new Reference(value.getTypeUrl(), value.getDescriptorSha256(), value.getMetadataCodec(),
@@ -148,14 +88,7 @@ public final class DocumentSchemaAdmission {
         }
     }
 
-    /**
-     * Original canonical storage bytes, not an already parsed approximation.
-     *
-     * @param codec codec identifier for evidence encoding
-     * @param version encoding version
-     * @param bytes serialized evidence bytes
-     * @param sha256 hexadecimal SHA-256 digest of bytes
-     */
+    /** Original canonical storage bytes, not an already parsed approximation. */
     public record EncodedEvidence(String codec, int version, ByteString bytes, String sha256) {
         public EncodedEvidence { Objects.requireNonNull(codec); Objects.requireNonNull(bytes); Objects.requireNonNull(sha256); }
     }
@@ -166,15 +99,6 @@ public final class DocumentSchemaAdmission {
      * count checks. Command and policy digests are identity bindings, not grants.
      * References list payload definitions; container is separately required for the
      * Document layout. Every supplied association must be used by the candidate.
-     *
-     * @param commandSha256 SHA-256 digest of the admission command
-     * @param policySha256 SHA-256 digest of the admission policy snapshot
-     * @param requireStructuredRoot whether a structured core root is required
-     * @param member publication member describing destination and parts
-     * @param fragments map of slot ordinal to raw fragment bytes
-     * @param evidence map of slot ordinal to encoded evidence bundles
-     * @param container containing document schema reference
-     * @param references list of payload schema references
      */
     public record Request(ByteString commandSha256, String policySha256, boolean requireStructuredRoot,
                           DocumentPublicationMember member, Map<Integer, ByteString> fragments,
@@ -187,14 +111,7 @@ public final class DocumentSchemaAdmission {
         }
     }
 
-    /**
-     * One verified bundle bound to its complete member ordinal and exact raw fragment.
-     *
-     * @param ordinal member part ordinal
-     * @param locator root schema locator
-     * @param locatorSha256 hexadecimal SHA-256 digest of encoded root locator
-     * @param encoded canonical encoded evidence
-     */
+    /** One verified bundle bound to its complete member ordinal and exact raw fragment. */
     public record RootEvidence(int ordinal, DocumentSchemaRootLocator locator, String locatorSha256,
                                EncodedEvidence encoded) {}
 
@@ -203,13 +120,6 @@ public final class DocumentSchemaAdmission {
      * is not authenticated here; the repository must bind it and the locator to the
      * retained slot. This performs no candidate validation or registry lookup.
      * Encoded bytes and parsed heap remain caller-owned; scratch is reserved and closed.
-     *
-     * @param ordinal member part ordinal
-     * @param encoded the encoded evidence bundle
-     * @param reservations resource reservations for evidence decoding
-     * @param control execution cancellation check
-     * @return the decoded root evidence
-     * @throws InvalidProtocolBufferException if evidence decoding fails
      */
     public static RootEvidence decodeRootEvidence(int ordinal, EncodedEvidence encoded,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
@@ -222,27 +132,12 @@ public final class DocumentSchemaAdmission {
         }
     }
 
-    /**
-     * Complete definition from the host's authorized registry/compiler, never executable code.
-     *
-     * @param metadata the schema asset metadata
-     * @param descriptors raw descriptor set bytes
-     * @param source optional protobuf source archive bytes
-     */
+    /** Complete definition from the host's authorized registry/compiler, never executable code. */
     public record Definition(RepositorySchemaAsset metadata, ByteString descriptors, Optional<ByteString> source) {
         public Definition { Objects.requireNonNull(metadata); Objects.requireNonNull(descriptors); Objects.requireNonNull(source); }
     }
 
-    /**
-     * Host context is captured by the resolver; prefix selects the next Any before its boundary.
-     *
-     * @param ordinal part ordinal
-     * @param root root schema locator
-     * @param typeUrl protobuf type URL
-     * @param prefix occurrence step path prefix
-     * @param valueSha256 hexadecimal SHA-256 digest of the Any payload value
-     * @param valueSizeBytes size in bytes of the Any payload value
-     */
+    /** Host context is captured by the resolver; prefix selects the next Any before its boundary. */
     public record Selection(int ordinal, DocumentSchemaRootLocator root, String typeUrl,
                             List<RepositorySchemaOccurrenceStep> prefix, String valueSha256, long valueSizeBytes) {
         public Selection { Objects.requireNonNull(root); Objects.requireNonNull(typeUrl);
@@ -250,16 +145,7 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Select an authorized immutable definition for this occurrence; failures propagate without fallback. */
-    @FunctionalInterface
-    public interface Resolver {
-        /**
-         * Resolves the schema definition for the given Any occurrence selection.
-         *
-         * @param occurrence the Any occurrence selection
-         * @return the schema definition for the occurrence
-         */
-        Definition select(Selection occurrence);
-    }
+    @FunctionalInterface public interface Resolver { Definition select(Selection occurrence); }
 
     /**
      * Owned resolver scope. Keep it open through admission's budgeted copies; the
@@ -270,32 +156,14 @@ public final class DocumentSchemaAdmission {
         @Override void close();
     }
 
-    /**
-     * Host bounds allocations and keeps collections stable throughout preparation, as for Request.
-     *
-     * @param commandSha256 SHA-256 digest of the admission command
-     * @param policySha256 SHA-256 digest of the admission policy snapshot
-     * @param requireStructuredRoot whether a structured core root is required
-     * @param member publication member describing destination and parts
-     * @param fragments map of slot ordinal to raw fragment bytes
-     * @param container containing document schema definition
-     */
+    /** Host bounds allocations and keeps collections stable throughout preparation, as for Request. */
     public record Preparation(ByteString commandSha256, String policySha256, boolean requireStructuredRoot,
                               DocumentPublicationMember member, Map<Integer, ByteString> fragments, Definition container) {
         public Preparation { Objects.requireNonNull(commandSha256); Objects.requireNonNull(policySha256);
             Objects.requireNonNull(member); Objects.requireNonNull(fragments); Objects.requireNonNull(container); }
     }
 
-    /**
-     * Generate evidence from checked payloads, then independently replay it before delivering a proof.
-     *
-     * @param request the preparation request
-     * @param resolver resolver for Any schema occurrences
-     * @param limits admission limits
-     * @param control execution cancellation check
-     * @return the admitted schema proof
-     * @throws InvalidProtocolBufferException if schema preparation or verification fails
-     */
+    /** Generate evidence from checked payloads, then independently replay it before delivering a proof. */
     public static Proof prepareAndCheck(Preparation request, Resolver resolver, Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
         return DocumentSchemaPreparation.check(request, resolver, limits, control);
@@ -308,14 +176,6 @@ public final class DocumentSchemaAdmission {
      * proof's lifetime, bound resolver input allocations, and budget parsed JVM objects.
      * Resolver bytes must remain stable while preparation copies them. Failure releases
      * every acquired lease and propagates without an unbudgeted retry.
-     *
-     * @param request the preparation request
-     * @param resolver resolver for Any schema occurrences
-     * @param limits admission limits
-     * @param reservations resource reservations for evidence and schema assets
-     * @param control execution cancellation check
-     * @return the prepared proof managing reserved resources
-     * @throws InvalidProtocolBufferException if schema preparation or verification fails
      */
     public static PreparedProof prepareAndCheck(Preparation request, Resolver resolver, Limits limits,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
@@ -339,13 +199,6 @@ public final class DocumentSchemaAdmission {
      * host still owns fragment bytes through the returned proof's lifetime. Keep the
      * view open and inputs stable during this call. This does not authorize a policy
      * or publication. Capacity and integrity failures propagate without fallback.
-     *
-     * @param assessment the assessment view to verify
-     * @param limits admission limits
-     * @param reservations resource reservations for schema and evidence assets
-     * @param control execution cancellation check
-     * @return the prepared proof holding reserved resources
-     * @throws InvalidProtocolBufferException if verification fails
      */
     public static PreparedProof checkAccepted(DocumentSchemaAssessment.View assessment, Limits limits,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
@@ -384,12 +237,7 @@ public final class DocumentSchemaAdmission {
         private PreparedProof(Proof proof, DocumentAdmissionResources resources) {
             this.proof = proof; this.resources = resources;
         }
-
-        /**
-         * Borrow while open. Callers coordinate consumers before closing this owner.
-         *
-         * @return the admitted schema proof
-         */
+        /** Borrow while open. Callers coordinate consumers before closing this owner. */
         public synchronized Proof proof() {
             if (proof == null) throw new IllegalStateException("Prepared proof is closed");
             return proof;
@@ -423,102 +271,23 @@ public final class DocumentSchemaAdmission {
             this.member = request.member(); this.document = document; this.fragments = Map.copyOf(fragments);
             this.roots = List.copyOf(roots); this.references = List.copyOf(references); this.artifacts = Map.copyOf(artifacts);
         }
-
-        /**
-         * Returns the SHA-256 digest of the admission command.
-         *
-         * @return command SHA-256 byte string
-         */
         public ByteString commandSha256() { return commandSha256; }
-
-        /**
-         * Returns the SHA-256 digest of the policy snapshot.
-         *
-         * @return hexadecimal policy SHA-256 digest
-         */
         public String policySha256() { return policySha256; }
-
-        /**
-         * Indicates whether a structured core root was required.
-         *
-         * @return true if structured core root was required
-         */
         public boolean requireStructuredRoot() { return requireStructuredRoot; }
-
-        /**
-         * Returns the admission limits applied during checking.
-         *
-         * @return admission limits
-         */
         public Limits limits() { return limits; }
-
-        /**
-         * Returns the validation profile identifier.
-         *
-         * @return profile identifier string
-         */
         public String validationProfile() { return PROFILE; }
-
-        /**
-         * Returns the admitted publication member.
-         *
-         * @return publication member
-         */
         public DocumentPublicationMember member() { return member; }
-
-        /**
-         * Returns the assembled and validated document.
-         *
-         * @return assembled document message
-         */
         public Document document() { return document; }
-
-        /**
-         * Returns the raw fragment bytes by part ordinal.
-         *
-         * @return map of part ordinal to fragment bytes
-         */
         public Map<Integer, ByteString> fragments() { return fragments; }
-
-        /**
-         * Returns the verified evidence for each Any root.
-         *
-         * @return list of root evidence
-         */
         public List<RootEvidence> roots() { return roots; }
-
-        /**
-         * Exact containing Document association, distinct from aliases used by payloads.
-         *
-         * @return containing document schema reference
-         */
+        /** Exact containing Document association, distinct from aliases used by payloads. */
         public Reference containerReference() { return containerReference; }
-
-        /**
-         * Includes the containing Document definition and all used payload associations.
-         *
-         * @return list of all schema references used by the document
-         */
+        /** Includes the containing Document definition and all used payload associations. */
         public List<Reference> references() { return references; }
-
-        /**
-         * Exact normalized descriptor, metadata and optional source bytes to retain atomically.
-         *
-         * @return map of artifact SHA-256 digest to bytes
-         */
+        /** Exact normalized descriptor, metadata and optional source bytes to retain atomically. */
         public Map<String, ByteString> artifacts() { return artifacts; }
     }
 
-    /**
-     * Replays and verifies candidate schema evidence against retained assets.
-     *
-     * @param request the admission request
-     * @param reader reader to load artifact bytes by digest
-     * @param limits admission limits
-     * @param control execution cancellation check
-     * @return the admitted schema proof
-     * @throws InvalidProtocolBufferException if verification fails
-     */
     public static Proof check(Request request, Reader reader, Limits limits, Runnable control)
             throws InvalidProtocolBufferException {
         return check(request, reader, limits, null, control);

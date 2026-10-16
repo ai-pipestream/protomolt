@@ -20,62 +20,29 @@ import java.util.concurrent.CancellationException;
  * the raw reader instead. Inputs must remain stable during this call; returned bytes are private.
  */
 public final class DocumentSchemaMaterialization {
-    private static final String DECODED_INPUT_BYTES = "decoded input bytes";
     private static final int MIB = 1024 * 1024;
     private DocumentSchemaMaterialization() {}
 
-    /**
-     * Both digests identify canonical retained evidence, not caller-supplied replacement paths.
-     *
-     * @param rootSha256 hexadecimal SHA-256 digest of root schema locator
-     * @param pathSha256 hexadecimal SHA-256 digest of occurrence path
-     */
+    /** Both digests identify canonical retained evidence, not caller-supplied replacement paths. */
     public record Selection(String rootSha256, String pathSha256) {
         public Selection { hash(rootSha256); hash(pathSha256); }
     }
-
-    /**
-     * A host-authenticated retained row for the selected complete-member ordinal.
-     *
-     * @param locatorSha256 hexadecimal SHA-256 digest of root locator
-     * @param fragmentSha256 hexadecimal SHA-256 digest of fragment content
-     * @param fragmentSize byte length of fragment content
-     * @param evidence canonical encoded evidence bundle
-     */
+    /** A host-authenticated retained row for the selected complete-member ordinal. */
     public record Root(String locatorSha256, String fragmentSha256, long fragmentSize,
             DocumentSchemaAdmission.EncodedEvidence evidence) {
         public Root { hash(locatorSha256); hash(fragmentSha256); Objects.requireNonNull(evidence);
             if (fragmentSize < 0) throw new IllegalArgumentException("negative fragment size"); }
     }
-
-    /**
-     * Materialization input describing member, part, and retained schema context.
-     *
-     * @param member publication member describing destination and parts
-     * @param ordinal member part ordinal
-     * @param fragment raw fragment bytes
-     * @param root retained root evidence metadata
-     * @param container container schema reference
-     * @param references list of candidate payload schema references
-     */
     public record Input(DocumentPublicationMember member, int ordinal, ByteString fragment, Root root,
             DocumentSchemaAdmission.Reference container, List<DocumentSchemaAdmission.Reference> references) {
         public Input { Objects.requireNonNull(member); Objects.requireNonNull(fragment); Objects.requireNonNull(root);
             Objects.requireNonNull(container); Objects.requireNonNull(references); }
     }
-
     /**
      * Decoded bytes count evidence, fragment and each traversed Any value (including parents).
      * Reservations cover serialized copies and decoded-input allowances, not JVM object overhead.
      * The host separately bounds concurrent parsed heap. Wire values are capped at one million
      * per fragment/boundary and depth at 64; descriptors at 16 MiB/256 files/4096 edges/depth 64.
-     *
-     * @param maxFragmentBytes maximum fragment size in bytes
-     * @param maxEvidenceBytes maximum evidence size in bytes
-     * @param maxRetainedBytes maximum total retained schema asset bytes
-     * @param maxReferences maximum allowed schema references
-     * @param maxDecodedBytes maximum aggregate decoded bytes budget
-     * @param maxBoundaries maximum Any boundary nesting depth
      */
     public record Limits(long maxFragmentBytes, long maxEvidenceBytes, long maxRetainedBytes,
             int maxReferences, long maxDecodedBytes, int maxBoundaries) {
@@ -86,18 +53,13 @@ public final class DocumentSchemaMaterialization {
                 throw new IllegalArgumentException("invalid materialization limits");
         }
     }
-
-    /** Thrown when materialization exceeds resource or boundary limits. */
     public static final class LimitExceeded extends IllegalArgumentException {
         LimitExceeded(String message) { super(message); }
     }
-
     /** The requested path digest is not a member of the retained evidence. */
     public static final class OccurrenceNotFound extends IllegalStateException {
         OccurrenceNotFound() { super("selected path is absent from retained evidence"); }
     }
-
-    /** Thrown when retained schema data is corrupt, absent, or inconsistent. */
     public static final class DataLoss extends IllegalStateException {
         DataLoss(String message) { super(message); }
         DataLoss(String message, Throwable cause) { super(message, cause); }
@@ -124,70 +86,19 @@ public final class DocumentSchemaMaterialization {
             this.reference = reference; this.metadataArtifact = metadataArtifact;
             this.path = path;
         }
-
-        /**
-         * Returns the original Any message before decoding.
-         *
-         * @return original Any protobuf message
-         */
         public Any original() { return open().original(); }
-
-        /**
-         * Returns the decoded dynamic message.
-         *
-         * @return dynamic message containing decoded payload
-         */
         public DynamicMessage value() { return open().value(); }
-
-        /**
-         * Returns the resolved schema descriptor information.
-         *
-         * @return resolved schema reference
-         */
         public RepositoryResolvedSchema schema() { return open().schema(); }
-
-        /**
-         * Verified original metadata, including compiler provenance; no executable tools are loaded.
-         *
-         * @return schema asset metadata
-         */
+        /** Verified original metadata, including compiler provenance; no executable tools are loaded. */
         public RepositorySchemaAsset metadata() { return open().metadata(); }
-
-        /**
-         * Exact retained FileDescriptorSet bytes, not a re-encoding of linked descriptors. Borrowed until close.
-         *
-         * @return descriptor set byte string
-         */
+        /** Exact retained FileDescriptorSet bytes, not a re-encoding of linked descriptors. Borrowed until close. */
         public ByteString descriptorArtifact() { return open().descriptorArtifact(); }
-
-        /**
-         * Returns the schema asset reference for this materialization.
-         *
-         * @return schema asset reference
-         */
         public RepositorySchemaAssetReference reference() { open(); return reference; }
-
-        /**
-         * Original canonical metadata bytes with the independent digest recorded in reference().
-         *
-         * @return metadata artifact byte string
-         */
+        /** Original canonical metadata bytes with the independent digest recorded in reference(). */
         public ByteString metadataArtifact() { open(); return metadataArtifact; }
-
-        /**
-         * Complete retained path already checked against the requested canonical digest.
-         *
-         * @return schema occurrence path
-         */
+        /** Complete retained path already checked against the requested canonical digest. */
         public RepositorySchemaOccurrencePath path() { open(); return path; }
-
-        /**
-         * Returns the selection details for this occurrence.
-         *
-         * @return occurrence selection
-         */
         public DocumentSchemaAdmission.Selection occurrence() { return open().occurrence(); }
-
         private DocumentAnyMaterialization.Decoded open() {
             if (decoded == null) throw new IllegalStateException("Materialization is closed");
             return decoded;
@@ -200,17 +111,6 @@ public final class DocumentSchemaMaterialization {
         }
     }
 
-    /**
-     * Materializes and decodes one selected occurrence from a retained document part.
-     *
-     * @param input materialization input describing member, part, and retained evidence
-     * @param selection occurrence selection identifying root and path digests
-     * @param reader reader to load artifact bytes
-     * @param limits materialization limits
-     * @param reservations resource reservations for decoded copies and scratch
-     * @param control execution cancellation check
-     * @return the materialized result holding decoded dynamic message and leased resources
-     */
     public static Result read(Input input, Selection selection, DocumentSchemaAdmission.Reader reader,
             Limits limits, DocumentAdmissionReservations reservations, Runnable control) {
         Objects.requireNonNull(input); Objects.requireNonNull(selection); Objects.requireNonNull(reader);
@@ -288,10 +188,10 @@ public final class DocumentSchemaMaterialization {
             for (var step : selected.getStepsList()) if (step.hasAnyBoundary()) {
                 bound(++boundaries, limits.maxBoundaries(), "decoded boundary count");
                 long bytes = step.getAnyBoundary().getValueSizeBytes();
-                bound(bytes, limits.maxDecodedBytes() - decodedBytes, DECODED_INPUT_BYTES);
+                bound(bytes, limits.maxDecodedBytes() - decodedBytes, "decoded input bytes");
                 decodedBytes += bytes;
             }
-            bound(decodedBytes, limits.maxDecodedBytes(), DECODED_INPUT_BYTES);
+            bound(decodedBytes, limits.maxDecodedBytes(), "decoded input bytes");
             leases.add(resources.reserve(decodedBytes - evidenceBytes.size()));
             var copies = new HashMap<String, ByteString>();
             long[] retainedBytes = {0};

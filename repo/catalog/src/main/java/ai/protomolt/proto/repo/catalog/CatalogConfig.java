@@ -2,14 +2,7 @@ package ai.protomolt.proto.repo.catalog;
 
 import java.util.Objects;
 
-/**
- * Connection settings for one PostgreSQL catalog.
- *
- * @param jdbcUrl the JDBC connection URL for PostgreSQL
- * @param username the database user name, or empty/null if unauthenticated
- * @param password the database password, or empty/null if unauthenticated
- * @param maxPoolSize maximum connection pool size; must be positive
- */
+/** Connection settings for one PostgreSQL catalog. */
 public record CatalogConfig(String jdbcUrl, String username, String password, int maxPoolSize) {
     public CatalogConfig {
         Objects.requireNonNull(jdbcUrl, "jdbcUrl");

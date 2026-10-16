@@ -11,11 +11,8 @@ import java.util.Objects;
 
 /** Bounded canonical identity, not asset retention, observed runtime identity or a validation verdict. */
 public final class DocumentAssessmentManifestCodec {
-    /** Codec identifier for assessment manifest. */
     public static final String CODEC = "document-publication-assessment";
-    /** Encoding version for assessment manifest. */
     public static final int VERSION = 1;
-    /** Maximum allowed bytes for serialized assessment manifest. */
     public static final int MAX_BYTES = DocumentSchemaEvidenceCodec.MAX_BYTES;
     private DocumentAssessmentManifestCodec() {}
 
@@ -23,32 +20,12 @@ public final class DocumentAssessmentManifestCodec {
     public static final class Encoded implements AutoCloseable {
         private final DocumentSchemaEvidenceCodec.OwnedEncoded owner;
         private Encoded(DocumentSchemaEvidenceCodec.OwnedEncoded owner) { this.owner = owner; }
-
-        /**
-         * Returns the serialized manifest bytes.
-         *
-         * @return the byte string containing encoded bytes
-         */
         public ByteString bytes() { return owner.value().bytes(); }
-
-        /**
-         * Returns the hexadecimal SHA-256 digest of the encoded bytes.
-         *
-         * @return the hexadecimal SHA-256 digest string
-         */
         public String sha256() { return owner.value().sha256(); }
-
         @Override public void close() { owner.close(); }
     }
 
-    /**
-     * Normalize set order only; duplicates and conflicting associations are errors.
-     *
-     * @param value the manifest to canonicalize and encode
-     * @param reservations resource reservations for output bytes
-     * @param control execution cancellation check
-     * @return the encoded manifest wrapped in a lease-holding AutoCloseable
-     */
+    /** Normalize set order only; duplicates and conflicting associations are errors. */
     public static Encoded encode(DocumentPublicationAssessmentManifest value,
             DocumentAdmissionReservations reservations, Runnable control) {
         Objects.requireNonNull(reservations);
@@ -58,18 +35,7 @@ public final class DocumentAssessmentManifestCodec {
         catch (RuntimeException | Error failed) { owned.close(); throw failed; }
     }
 
-    /**
-     * Checks wire bounds before parse, exact digest, and canonical wire and set order.
-     *
-     * @param codec the codec identifier
-     * @param version the format encoding version
-     * @param bytes the serialized manifest bytes
-     * @param sha256 the expected hexadecimal SHA-256 digest
-     * @param reservations resource reservations for decoded heap
-     * @param control execution cancellation check
-     * @return the decoded and verified manifest
-     * @throws InvalidProtocolBufferException if parsing or validation fails
-     */
+    /** Checks wire bounds before parse, exact digest, and canonical wire and set order. */
     public static DocumentPublicationAssessmentManifest decode(String codec, int version, ByteString bytes, String sha256,
             DocumentAdmissionReservations reservations, Runnable control) throws InvalidProtocolBufferException {
         var parsed = DocumentSchemaEvidenceCodec.decode(CODEC, codec, version, bytes, sha256,

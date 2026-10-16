@@ -11,17 +11,9 @@ import java.util.Objects;
 
 /** Selected wire decoding with exact retained descriptors, without registry discovery or a new admission verdict. */
 public final class DocumentHistoricalResponseMaterialization {
-    private static final String SELECTED_RESPONSE_CLOSED = "Selected response is closed";
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private DocumentHistoricalResponseMaterialization() {}
 
-    /**
-     * Decoding limits for selected historical responses.
-     *
-     * @param maxValueBytes maximum allowed bytes for the decoded value
-     * @param maxWireValues maximum wire value count
-     * @param maxDepth maximum nesting depth
-     */
     public record Limits(int maxValueBytes, long maxWireValues, int maxDepth) {
         public Limits {
             if (maxValueBytes < 0 || maxValueBytes > DocumentHistoricalResponseVerifier.MAX_BYTES
@@ -30,46 +22,23 @@ public final class DocumentHistoricalResponseMaterialization {
         }
     }
 
-    /**
-     * Thrown when selected response decoding exceeds resource limits.
-     */
     public static final class ResourceLimit extends IllegalArgumentException {
-        /**
-         * Constructs a new resource limit exception with the specified message and cause.
-         *
-         * @param message detail message
-         * @param cause underlying cause, or null
-         */
         ResourceLimit(String message, Throwable cause) { super(message, cause); }
     }
 
-    /**
-     * Borrowed until close; an already returned Java view cannot be revoked. Nested Any values remain envelopes.
-     *
-     * @param response the historical occurrence response
-     * @param value the decoded dynamic message
-     * @param metadata the schema asset metadata
-     */
+    /** Borrowed until close; an already returned Java view cannot be revoked. Nested Any values remain envelopes. */
     public record View(ReadHistoricalOccurrenceResponse response, DynamicMessage value, RepositorySchemaAsset metadata) {}
 
-    /** Result holder managing reservations lease and view access. */
     public static final class Result implements AutoCloseable {
         private View view;
         private final DocumentAdmissionReservations.Lease lease;
         private Result(View view, DocumentAdmissionReservations.Lease lease) {
             this.view = view; this.lease = lease;
         }
-
-        /**
-         * Accesses the borrowed view, checking cancellation.
-         *
-         * @param control execution cancellation check
-         * @return the materialized view
-         */
         public synchronized View view(Runnable control) {
-            if (view == null) throw new IllegalStateException(SELECTED_RESPONSE_CLOSED);
+            if (view == null) throw new IllegalStateException("Selected response is closed");
             Objects.requireNonNull(control).run();
-            if (view == null) throw new IllegalStateException(SELECTED_RESPONSE_CLOSED);
+            if (view == null) throw new IllegalStateException("Selected response is closed");
             return view;
         }
         @Override public synchronized void close() {
@@ -84,14 +53,6 @@ public final class DocumentHistoricalResponseMaterialization {
      * must bound transport allocation before calling, and separately bound concurrent parsed
      * heap. Control exceptions propagate unchanged. Verification is not authorization: the
      * transport authenticates the peer and the server authorizes delivery.
-     *
-     * @param request the request describing the selected historical occurrence
-     * @param response the response containing occurrence payload and schema evidence
-     * @param limits decoding limits
-     * @param reservations resource reservations for response and value bytes
-     * @param control execution cancellation check
-     * @return the result containing the materialized view and holding reservations lease
-     * @throws InvalidProtocolBufferException if parsing or validation fails
      */
     public static Result read(ReadHistoricalOccurrenceRequest request, ReadHistoricalOccurrenceResponse response,
             Limits limits, DocumentAdmissionReservations reservations, Runnable control)

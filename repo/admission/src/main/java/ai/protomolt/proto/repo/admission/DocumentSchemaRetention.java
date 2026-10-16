@@ -17,22 +17,11 @@ public final class DocumentSchemaRetention {
 
     private DocumentSchemaRetention() {}
 
-    /**
-     * A reference and its artifacts, keyed by SHA-256.
-     *
-     * @param reference the exact asset reference for the retained schema
-     * @param artifacts the schema artifact bytes keyed by SHA-256
-     */
+    /** A reference and its artifacts, keyed by SHA-256. */
     public record Retained(RepositorySchemaAssetReference reference, Map<String, ByteString> artifacts) {
         public Retained { Objects.requireNonNull(reference); artifacts = Map.copyOf(artifacts); }
     }
 
-    /**
-     * Retains a single definition into its reference and artifact byte map.
-     *
-     * @param definition the definition to retain
-     * @return the retained schema reference and artifacts
-     */
     public static Retained retain(DocumentSchemaAdmission.Definition definition) {
         Objects.requireNonNull(definition);
         try (var resources = new DocumentAdmissionResources(bytes -> () -> {})) {
