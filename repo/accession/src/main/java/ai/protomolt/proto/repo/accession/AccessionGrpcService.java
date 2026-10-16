@@ -4,7 +4,17 @@ import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
-import ai.protomolt.proto.repo.v2.*;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.GetManifestRequest;
+import ai.protomolt.proto.repo.v2.GetManifestResponse;
+import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
+import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
+import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
+import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -26,6 +36,10 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
     private final Function<AuthenticatedCaller, RepositoryCaller> bindings;
 
     /**
+     * Constructs a new gRPC accession service.
+     *
+     * @param saves the document saves coordinator
+     * @param reads the document reads coordinator
      * @param bindings resolves the trusted authentication result into repository
      *        identity; it must preserve principal, authority and credential binding
      */
@@ -85,6 +99,12 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
         observer.onCompleted();
     }
 
+    /**
+     * Converts an accession exception to a gRPC {@link StatusRuntimeException} carrying any error details.
+     *
+     * @param failure the accession exception to convert
+     * @return the corresponding gRPC status runtime exception
+     */
     static StatusRuntimeException toStatus(AccessionException failure) {
         var status = com.google.rpc.Status.newBuilder().setCode(failure.code().value())
                 .setMessage(Optional.ofNullable(failure.getMessage()).orElse(""));
