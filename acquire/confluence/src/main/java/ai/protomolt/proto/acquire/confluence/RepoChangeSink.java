@@ -181,9 +181,16 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 .build();
     }
 
+    private static final int MAX_OPERATION_ID_LENGTH = 200;
+
     private static String operationIdFor(ConfluenceChange change, String entityId, String action) {
         if (!change.getChangeId().isBlank()) {
-            return "confluence-" + action + "-" + entityId + "-" + change.getChangeId();
+            String candidate = "confluence-" + action + "-" + entityId + "-" + change.getChangeId();
+            if (candidate.length() <= MAX_OPERATION_ID_LENGTH) {
+                return candidate;
+            }
+            UUID hashed = UUID.nameUUIDFromBytes(candidate.getBytes(StandardCharsets.UTF_8));
+            return "confluence-" + action + "-" + hashed;
         }
         return UUID.randomUUID().toString();
     }
@@ -196,13 +203,13 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
             return;
         }
         switch (entity.getEntityCase()) {
-            case PAGE -> save(toDocument(entity, entity.getPage().getTitle(),
+            case PAGE -> save(entity.getEntityId(), toDocument(entity, entity.getPage().getTitle(),
                     "confluence-page", bodyText(entity.getPage().getBody()),
                     entity.getPage().getWebUrl(), entity.getPage().getAuthorId(),
                     entity.getPage().getCreatedAt(), entity.getPage().getVersion().getCreatedAt(),
                     entity.getPage().getSpaceId(), entity.getPage().getVersion().getNumber(),
                     null), change);
-            case BLOG_POST -> save(toDocument(entity, entity.getBlogPost().getTitle(),
+            case BLOG_POST -> save(entity.getEntityId(), toDocument(entity, entity.getBlogPost().getTitle(),
                     "confluence-blogpost", bodyText(entity.getBlogPost().getBody()),
                     entity.getBlogPost().getWebUrl(), entity.getBlogPost().getAuthorId(),
                     entity.getBlogPost().getCreatedAt(),
@@ -223,7 +230,12 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 snapshot.getSnapshotId(), snapshot.getSpaceKey());
     }
 
-    /** Issues a tombstone DeleteDocument request, retrying with the current revision on conflict. */
+    /**
+     * Issues a tombstone DeleteDocument request, retrying with the current revision on conflict.
+     * Nonexistent documents (v2 {@code NOT_FOUND}) and already-tombstoned documents are treated
+     * as idempotent no-ops. Reusing {@code operation_id} across CAS retries is safe because
+     * v2 {@code ABORTED} conflicts do not record an operation outcome.
+     */
     private void delete(ConfluenceChange change, ConfluenceEntity entity) {
         String entityId = entity.getEntityId();
         DeleteDocumentRequest.Builder request = DeleteDocumentRequest.newBuilder()
@@ -236,6 +248,9 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 documents.deleteDocument(request.build());
                 return;
             } catch (StatusRuntimeException failure) {
+                if (failure.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                    return;
+                }
                 OptionalLong currentRevision = currentRevisionFromConflict(failure, true);
                 if (currentRevision.isEmpty() || attempt + 1 >= MAX_CAS_ATTEMPTS) {
                     throw failure;
@@ -266,7 +281,7 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                             .build())
                     .build();
         }
-        save(toDocument(entity, attachment.getTitle(), "confluence-attachment", "",
+        save(entity.getEntityId(), toDocument(entity, attachment.getTitle(), "confluence-attachment", "",
                 attachment.getWebUrl(), "", attachment.getCreatedAt(),
                 attachment.getVersion().getCreatedAt(), "",
                 attachment.getVersion().getNumber(), blobBag), change);
@@ -315,10 +330,14 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
         return document.build();
     }
 
-    /** One intake save; the crawl run id (the change cursor on CRAWL) rides in request metadata. */
-    private void save(Document document, ConfluenceChange change) {
+    /**
+     * One intake save; the crawl run id (the change cursor on CRAWL) rides in request metadata.
+     * Reusing {@code operation_id} across CAS retries is safe because v2 {@code ABORTED} conflicts
+     * are not recorded in {@code catalog_operation_outcomes}.
+     */
+    private void save(String entityId, Document document, ConfluenceChange change) {
         SaveDocumentRequest.Builder request = SaveDocumentRequest.newBuilder()
-                .setOperationId(UUID.randomUUID().toString())
+                .setOperationId(operationIdFor(change, entityId, "save"))
                 .setTarget(DocumentTarget.newBuilder().setAddress(addressFor(document.getDocId())))
                 .setExpected(ExpectedRevision.newBuilder().setNone(true))
                 .setDocument(document)
@@ -343,7 +362,7 @@ public final class RepoChangeSink implements ChangeSink, AutoCloseable {
                 if (currentRevision.isEmpty() || attempt + 1 >= MAX_CAS_ATTEMPTS) {
                     throw failure;
                 }
-                request.setExpected( currentRevision.getAsLong() == 0
+                request.setExpected(currentRevision.getAsLong() == 0
                         ? ExpectedRevision.newBuilder().setNone(true).build()
                         : ExpectedRevision.newBuilder().setRevision(currentRevision.getAsLong()).build());
             }

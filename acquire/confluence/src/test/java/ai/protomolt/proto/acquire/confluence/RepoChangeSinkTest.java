@@ -40,6 +40,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -66,6 +67,7 @@ class RepoChangeSinkTest {
         private final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
         private final List<DeleteDocumentRequest> deletes = new CopyOnWriteArrayList<>();
         private final Map<String, Long> currentRevisions = new ConcurrentHashMap<>();
+        private final Set<String> tombstoned = ConcurrentHashMap.newKeySet();
         private boolean enforceCas;
 
         @Override
@@ -86,6 +88,7 @@ class RepoChangeSinkTest {
                                     .setAddress(request.getTarget().getAddress())
                                     .setExpected(request.getExpected())
                                     .setCurrentRevision(current)
+                                    .setCurrentIsTombstone(tombstoned.contains(docId))
                                     .build()))
                             .build();
                     observer.onError(StatusProto.toStatusRuntimeException(status));
@@ -94,6 +97,7 @@ class RepoChangeSinkTest {
             }
             long next = current + 1L;
             currentRevisions.put(docId, next);
+            tombstoned.remove(docId);
             observer.onNext(SaveDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId())
                     .setAccession(Accession.newBuilder()
@@ -108,12 +112,40 @@ class RepoChangeSinkTest {
         public void deleteDocument(DeleteDocumentRequest request,
                 StreamObserver<DeleteDocumentResponse> observer) {
             deletes.add(request);
+            String docId = request.getAddress().getDocId();
+            long current = currentRevisions.getOrDefault(docId, 0L);
+            if (enforceCas) {
+                if (current == 0L) {
+                    observer.onError(Status.NOT_FOUND
+                            .withDescription("Document does not exist")
+                            .asRuntimeException());
+                    return;
+                }
+                boolean isTombstone = tombstoned.contains(docId);
+                if (isTombstone || request.getExpected().getRevision() != current) {
+                    com.google.rpc.Status status = com.google.rpc.Status.newBuilder()
+                            .setCode(Status.Code.ABORTED.value())
+                            .setMessage("Expected revision is stale")
+                            .addDetails(Any.pack(RevisionConflict.newBuilder()
+                                    .setAddress(request.getAddress())
+                                    .setExpected(request.getExpected())
+                                    .setCurrentRevision(current)
+                                    .setCurrentIsTombstone(isTombstone)
+                                    .build()))
+                            .build();
+                    observer.onError(StatusProto.toStatusRuntimeException(status));
+                    return;
+                }
+            }
+            long next = (current == 0L ? request.getExpected().getRevision() : current) + 1L;
+            currentRevisions.put(docId, next);
+            tombstoned.add(docId);
             observer.onNext(DeleteDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId())
                     .setAccession(Accession.newBuilder()
                             .setAddress(request.getAddress())
-                            .setRevision(request.getExpected().getRevision() + 1L)
-                            .setPreviousRevision(request.getExpected().getRevision())
+                            .setRevision(next)
+                            .setPreviousRevision(current == 0L ? request.getExpected().getRevision() : current)
                             .setTombstone(true))
                     .build());
             observer.onCompleted();
@@ -182,7 +214,7 @@ class RepoChangeSinkTest {
         assertThat(fake.saves).hasSize(1);
         SaveDocumentRequest request = fake.saves.get(0);
         assertThat(VALIDATOR.validate(request).valid()).isTrue();
-        assertThat(request.getOperationId()).isNotBlank();
+        assertThat(request.getOperationId()).isEqualTo("confluence-save-123-change-1");
         assertThat(request.getDrive()).isEqualTo("drive-1");
         assertThat(request.getTarget().getAddress()).isEqualTo(NodeAddress.newBuilder()
                 .setDocId(RepoChangeSink.docIdFor("123"))
@@ -221,8 +253,8 @@ class RepoChangeSinkTest {
     @Test
     void reCrawlUpsertsTheSameDocumentId() {
         fake.enforceCas = true;
-        sink.emit(change(pageEntity("123", "v1", "<p>one</p>")).build());
-        sink.emit(change(pageEntity("123", "v2", "<p>two</p>")).build());
+        sink.emit(change(pageEntity("123", "v1", "<p>one</p>")).setChangeId("change-1").build());
+        sink.emit(change(pageEntity("123", "v2", "<p>two</p>")).setChangeId("change-2").build());
 
         assertThat(fake.saves).hasSize(3);
         SaveDocumentRequest firstSave = fake.saves.get(0);
@@ -234,7 +266,8 @@ class RepoChangeSinkTest {
         assertThat(firstSave.getExpected().getNone()).isTrue();
         assertThat(secondInitial.getExpected().getNone()).isTrue();
         assertThat(secondRetry.getExpected().getRevision()).isEqualTo(1L);
-        assertThat(firstSave.getOperationId()).isNotEqualTo(secondRetry.getOperationId());
+        assertThat(firstSave.getOperationId()).isEqualTo("confluence-save-123-change-1");
+        assertThat(secondInitial.getOperationId()).isEqualTo("confluence-save-123-change-2");
         assertThat(secondInitial.getOperationId()).isEqualTo(secondRetry.getOperationId());
         assertThat(RepoChangeSink.docIdFor("123")).isEqualTo(RepoChangeSink.docIdFor("123"));
         assertThat(RepoChangeSink.docIdFor("123")).isNotEqualTo(RepoChangeSink.docIdFor("124"));
@@ -302,7 +335,7 @@ class RepoChangeSinkTest {
         assertThat(fake.deletes).hasSize(1);
         DeleteDocumentRequest delete = fake.deletes.get(0);
         assertThat(VALIDATOR.validate(delete).valid()).isTrue();
-        assertThat(delete.getOperationId()).isNotBlank();
+        assertThat(delete.getOperationId()).isEqualTo("confluence-delete-123-change-1");
         assertThat(delete.getAddress()).isEqualTo(NodeAddress.newBuilder()
                 .setDocId(RepoChangeSink.docIdFor("123"))
                 .setGraphAddressId("datasource-1")
@@ -312,6 +345,44 @@ class RepoChangeSinkTest {
         assertThat(delete.getExpected().hasRevision()).isTrue();
         assertThat(delete.getExpected().getRevision()).isEqualTo(1L);
         assertThat(delete.getReason()).isEqualTo("confluence delete 123");
+    }
+
+    @Test
+    void deleteHandlesCasRetryTombstoneAndNonexistentDocument() {
+        fake.enforceCas = true;
+        ConfluenceEntity identityOnly = ConfluenceEntity.newBuilder()
+                .setEntityId("123")
+                .setIngestedAt(at(1_753_000_000))
+                .build();
+
+        // 1. Deleting a nonexistent document receives v2 NOT_FOUND and returns as a no-op
+        sink.emit(change(identityOnly.toBuilder())
+                .setChangeId("del-missing")
+                .setOperation(ChangeOperation.CHANGE_OPERATION_DELETE)
+                .build());
+        assertThat(fake.deletes).hasSize(1);
+
+        // 2. Save twice so current revision is 2, then delete: retries from expected=1 to expected=2
+        sink.emit(change(pageEntity("123", "v1", "<p>one</p>")).setChangeId("save-1").build());
+        sink.emit(change(pageEntity("123", "v2", "<p>two</p>")).setChangeId("save-2").build());
+        sink.emit(change(identityOnly.toBuilder())
+                .setChangeId("del-rev2")
+                .setOperation(ChangeOperation.CHANGE_OPERATION_DELETE)
+                .build());
+
+        assertThat(fake.deletes).hasSize(3);
+        DeleteDocumentRequest attempt1 = fake.deletes.get(1);
+        DeleteDocumentRequest attempt2 = fake.deletes.get(2);
+        assertThat(attempt1.getExpected().getRevision()).isEqualTo(1L);
+        assertThat(attempt2.getExpected().getRevision()).isEqualTo(2L);
+        assertThat(attempt1.getOperationId()).isEqualTo(attempt2.getOperationId());
+
+        // 3. Deleting an already-tombstoned document receives ABORTED(current_is_tombstone=true) and no-ops
+        sink.emit(change(identityOnly.toBuilder())
+                .setChangeId("del-tombstoned")
+                .setOperation(ChangeOperation.CHANGE_OPERATION_DELETE)
+                .build());
+        assertThat(fake.deletes).hasSize(4);
     }
 
     @Test
