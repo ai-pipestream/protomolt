@@ -5,8 +5,8 @@ import qdrant.Collections.Distance;
 /**
  * One named vector's collection declaration: its name (a sanitized embedding-model id), the
  * vector size, and the distance function. Sizes and distances come from the mapping's VECTOR
- * indexing hints where declared, otherwise from the point data (distance defaulting to
- * {@link Distance#Cosine}).
+ * indexing hints or the source Document's typed embedding sets. Point data alone does not
+ * carry a distance declaration.
  */
 public record QdrantVectorSpec(String name, int size, Distance distance) {
 

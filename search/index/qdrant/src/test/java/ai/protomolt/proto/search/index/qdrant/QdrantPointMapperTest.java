@@ -341,7 +341,7 @@ class QdrantPointMapperTest {
     }
 
     @Test
-    void vectorSpecsFallBackToDataAndCosineWithoutAHint() throws Exception {
+    void projectedPointsRequireExplicitSimilarity() throws Exception {
         List<PointStruct> points = mapper.map(document(), mapping());
 
         // mapping() declares its VECTOR field with dims 2 and default (COSINE) similarity.
@@ -349,21 +349,16 @@ class QdrantPointMapperTest {
                 .containsExactlyInAnyOrder(
                         QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
                         QdrantVectorSpec.cosine("e5_small_onnx", 2));
-        // No mapping at all: pure data inference.
-        assertThat(QdrantPointMapper.vectorSpecs(points, null))
-                .containsExactlyInAnyOrder(
-                        QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
-                        QdrantVectorSpec.cosine("e5_small_onnx", 2));
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(points, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Points do not carry similarity");
     }
 
     @Test
     void vectorSpecsHonorEmbeddingSetSimilarityWithoutAHint() throws Exception {
         Document dotDoc = document(Similarity.SIMILARITY_DOT_PRODUCT);
         List<PointStruct> dotPoints = mapper.map(dotDoc, mappingWithoutVectorHint());
-        assertThat(QdrantPointMapper.vectorSpecs(dotPoints, mappingWithoutVectorHint()))
-                .containsExactlyInAnyOrder(
-                        new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Dot),
-                        new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Dot));
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(dotPoints, mappingWithoutVectorHint()))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThat(QdrantPointMapper.vectorSpecs(dotDoc, null))
                 .containsExactlyInAnyOrder(
                         new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Dot),
@@ -371,14 +366,31 @@ class QdrantPointMapperTest {
 
         Document euclidDoc = document(Similarity.SIMILARITY_EUCLIDEAN);
         List<PointStruct> euclidPoints = mapper.map(euclidDoc, mappingWithoutVectorHint());
-        assertThat(QdrantPointMapper.vectorSpecs(euclidPoints, null))
-                .containsExactlyInAnyOrder(
-                        new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Euclid),
-                        new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Euclid));
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(euclidPoints, null))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThat(QdrantPointMapper.vectorSpecs(euclidDoc, mappingWithoutVectorHint()))
                 .containsExactlyInAnyOrder(
                         new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Euclid),
                         new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Euclid));
+    }
+
+    @Test
+    void equalAndSerializedPointsCannotSupplyUndeclaredSimilarity() throws Exception {
+        var dot = document(Similarity.SIMILARITY_DOT_PRODUCT);
+        var euclid = document(Similarity.SIMILARITY_EUCLIDEAN);
+        var dotPoints = mapper.map(dot, mappingWithoutVectorHint());
+        var euclidPoints = mapper.map(euclid, mappingWithoutVectorHint());
+        // Different source metrics project to identical wire points. A cache keyed by those
+        // points cannot carry the source contract, even before serialization or restart.
+        assertThat(dotPoints).isEqualTo(euclidPoints);
+        var restored = new java.util.ArrayList<PointStruct>();
+        for (var point : dotPoints) restored.add(PointStruct.parseFrom(point.toByteArray()));
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(restored, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Points do not carry similarity");
+        assertThat(QdrantPointMapper.vectorSpecs(dot, null))
+                .allSatisfy(spec -> assertThat(spec.distance()).isEqualTo(qdrant.Collections.Distance.Dot));
+        assertThat(QdrantPointMapper.vectorSpecs(euclid, null))
+                .allSatisfy(spec -> assertThat(spec.distance()).isEqualTo(qdrant.Collections.Distance.Euclid));
     }
 
     @Test

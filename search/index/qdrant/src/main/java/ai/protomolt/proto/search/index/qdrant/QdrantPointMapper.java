@@ -34,14 +34,12 @@ import qdrant.Points.Vectors;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.WeakHashMap;
 
 /**
  * Maps a repo {@link Document} into Qdrant {@link PointStruct}s: one point per semantic
@@ -91,14 +89,6 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     private static final String SEGMENTATIONS_PREFIX = "search_metadata.segmentations";
     private static final String EMBEDDING_SETS_PREFIX = "search_metadata.embedding_sets";
     private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
-
-    /**
-     * Tracks the declared {@link Distance} per named vector on mapped {@link PointStruct}s so
-     * {@link #vectorSpecs(Collection, IndexMapping)} preserves {@link EmbeddingSet#getSimilarity()}
-     * without polluting the Qdrant point payload.
-     */
-    private static final Map<PointStruct, Map<String, Distance>> POINT_DISTANCES =
-            Collections.synchronizedMap(new WeakHashMap<>());
 
     private final ProtoFieldMapper fieldMapper;
     private final AnyIndexing anyIndexing;
@@ -154,9 +144,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
             for (Segment segment : segmentation.getSegmentsList()) {
                 NamedVectors.Builder namedVectors = NamedVectors.newBuilder();
                 List<String> models = new ArrayList<>();
-                Map<String, Distance> pointVectorDistances = new LinkedHashMap<>();
                 for (EmbeddingSet embeddingSet : matchingSets) {
-                    Distance setDistance = distance(embeddingSet.getSimilarity());
                     String name = vectorName(embeddingSet.getModel());
                     for (SegmentVector segmentVector : embeddingSet.getVectorsList()) {
                         if (!segmentVector.getSegmentId().equals(segment.getSegmentId())
@@ -175,7 +163,6 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                                         .addAllData(segmentVector.getValuesList()))
                                 .build());
                         models.add(name);
-                        pointVectorDistances.put(name, setDistance);
                     }
                 }
                 if (namedVectors.getVectorsCount() == 0) {
@@ -200,7 +187,6 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                         .setVectors(Vectors.newBuilder().setVectors(namedVectors))
                         .putAllPayload(payload)
                         .build();
-                POINT_DISTANCES.put(point, Map.copyOf(pointVectorDistances));
                 points.add(point);
             }
         }
@@ -295,37 +281,25 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     }
 
     /**
-     * Named-vector specs for a batch of points, honoring the mapping's VECTOR hint where
-     * declared: size and distance come from the hint ({@code vector_dims},
-     * {@code vector_similarity}) when present, and otherwise from the mapped
-     * {@link EmbeddingSet}s ({@code dimensions}, {@link EmbeddingSet#getSimilarity()}),
-     * falling back to COSINE for synthetic points not produced by {@link #map}. Every point of
-     * one embedding model must agree on the size and similarity, and the data must match any
-     * declared hint.
+     * Specs for already-projected points. Points contain no distance declaration, so a
+     * VECTOR hint is required for a nonempty batch. When the source Document is available,
+     * use {@link #vectorSpecs(Document, IndexMapping)} and pass its specs to the sink.
      *
-     * @throws IllegalArgumentException when two points carry the same named vector at
-     *         different sizes or distances, or the data contradicts the hint
+     * @throws IllegalArgumentException when the hint is missing or dimensions conflict
      */
     public static List<QdrantVectorSpec> vectorSpecs(Collection<PointStruct> points,
                                                      IndexMapping mapping) {
-        Optional<ResolvedFieldHint> hint = mapping == null ? Optional.empty() : vectorHint(mapping);
-        Optional<Distance> hintDistance = hint.map(h -> distance(h.vectorSimilarity()));
-        Map<String, Distance> recordedDistances = recordedDistances(points);
-        if (hintDistance.isPresent()) {
-            for (Map.Entry<String, Distance> entry : recordedDistances.entrySet()) {
-                if (entry.getValue() != hintDistance.get()) {
-                    throw new IllegalArgumentException("Named vector '" + entry.getKey()
-                            + "' has distance " + entry.getValue()
-                            + " from its EmbeddingSet but the mapping's VECTOR hint declares "
-                            + hintDistance.get());
-                }
-            }
-        }
+        var dimensions = vectorDimensions(points);
+        if (dimensions.isEmpty()) return List.of();
+        var hint = (mapping == null ? Optional.<ResolvedFieldHint>empty() : vectorHint(mapping))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Points do not carry similarity; supply a VECTOR hint or derive specs from the source Document"));
         List<QdrantVectorSpec> specs = new ArrayList<>();
-        vectorDimensions(points).forEach((name, size) -> {
-            Distance distance = hintDistance.orElseGet(
-                    () -> recordedDistances.getOrDefault(name, Distance.Cosine));
-            specs.add(new QdrantVectorSpec(name, size, distance));
+        dimensions.forEach((name, size) -> {
+            if (hint.vectorDims() > 0 && hint.vectorDims() != size)
+                throw new IllegalArgumentException("Named vector '" + name + "' has " + size
+                        + " dimensions but the mapping declares " + hint.vectorDims());
+            specs.add(new QdrantVectorSpec(name, size, distance(hint.vectorSimilarity())));
         });
         return specs;
     }
@@ -377,25 +351,6 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
         sizeByVectorName.forEach((name, size) ->
                 specs.add(new QdrantVectorSpec(name, size, distanceByVectorName.get(name))));
         return specs;
-    }
-
-    private static Map<String, Distance> recordedDistances(Collection<PointStruct> points) {
-        Map<String, Distance> distances = new LinkedHashMap<>();
-        for (PointStruct point : points) {
-            Map<String, Distance> pointMap = POINT_DISTANCES.get(point);
-            if (pointMap == null) {
-                continue;
-            }
-            for (Map.Entry<String, Distance> entry : pointMap.entrySet()) {
-                Distance existing = distances.putIfAbsent(entry.getKey(), entry.getValue());
-                if (existing != null && existing != entry.getValue()) {
-                    throw new IllegalArgumentException("Named vector '" + entry.getKey()
-                            + "' has conflicting distances " + existing
-                            + " and " + entry.getValue());
-                }
-            }
-        }
-        return distances;
     }
 
     /** Qdrant distance for a hint similarity; MAX_INNER_PRODUCT maps to Dot like OpenSearch's innerproduct. */

@@ -129,7 +129,7 @@ final class CourtDocuments {
      * segment carrying one {@link SegmentVector}.
      */
     static Document withEmbedding(Document document, String embeddedText, float[] vector, String model) {
-        String resolvedText = embeddedText == null ? "" : embeddedText;
+        String resolvedText = java.util.Objects.requireNonNull(embeddedText, "embeddedText");
         byte[] utf8Bytes = resolvedText.getBytes(StandardCharsets.UTF_8);
         TextSource source = TextSource.newBuilder()
                 .setDerived(DerivedText.newBuilder()

@@ -18,6 +18,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CourtDocumentsTest {
 
+    @Test
+    void missingEmbeddingInputIsNotRecordedAsEmptyText() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> CourtDocuments.withEmbedding(
+                Document.getDefaultInstance(), null, new float[]{1f}, "model"))
+                .isInstanceOf(NullPointerException.class).hasMessage("embeddedText");
+    }
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test
