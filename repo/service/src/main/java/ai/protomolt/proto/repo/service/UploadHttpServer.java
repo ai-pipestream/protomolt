@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.repo.accession.DocumentUploads;
+import ai.protomolt.proto.repo.accession.UploadHttpHandler;
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.engine.ArchiveOperations;
@@ -9,6 +11,7 @@ import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -25,13 +28,16 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * HTTP parsing and receipts for shared raw ingestion and archive operations.
- * Document uploads require a qualified RawIngestionRepository. Legacy constructors
- * remain source compatible but refuse document uploads until that port is supplied.
+ * Document uploads require a qualified RawIngestionRepository, or the parts-based
+ * {@link UploadHttpHandler}, which then owns the document route outright. Legacy
+ * constructors remain source compatible but refuse document uploads until one is supplied.
  * Content-Length is required. Physical keys are immutable per-attempt keys; the
  * receipt returns the committed reference, including on deduplicated uploads.
  */
@@ -47,6 +53,8 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion;
+    /** The parts-based document route; null keeps {@link #UPLOAD_PATH} on the ingestion port. */
+    private final HttpHandler documentUploads;
     private final byte[] expectedToken;
     private final ArchiveRepository archiveOperations;
 
@@ -80,7 +88,31 @@ public final class UploadHttpServer implements AutoCloseable {
     public UploadHttpServer(ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion,
             String apiToken, ArchiveRepository archiveOperations) {
         this.ingestion = ingestion;
+        this.documentUploads = null;
         this.expectedToken = RepositoryNetworkAuthentication.requireOperatorToken(apiToken).getBytes(StandardCharsets.UTF_8);
+        this.archiveOperations = archiveOperations;
+    }
+
+    /**
+     * Serves {@link #UPLOAD_PATH} through the parts-based {@link UploadHttpHandler}
+     * over {@code uploads}; its receipts, status mapping and credential check are the
+     * handler's own. {@link #ARCHIVE_UPLOAD_PATH} keeps routing to
+     * {@code archiveOperations} when one is wired. Both routes demand the same
+     * operator credential.
+     *
+     * @param uploads the parts-based streaming upload coordinator
+     * @param callers supplies the caller a request acts as once its credential matches
+     * @param apiToken the operator credential both routes require
+     * @param archiveOperations the archive rendition upload port, or null to leave
+     *        that route unmounted
+     */
+    public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
+            String apiToken, ArchiveRepository archiveOperations) {
+        String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
+        this.ingestion = null;
+        this.documentUploads = new UploadHttpHandler(Objects.requireNonNull(uploads, "uploads"), token,
+                Objects.requireNonNull(callers, "callers"));
+        this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
     }
 
@@ -126,7 +158,7 @@ public final class UploadHttpServer implements AutoCloseable {
         this.server = created;
         this.executor = pool;
         try {
-            created.createContext(UPLOAD_PATH, this::handle);
+            created.createContext(UPLOAD_PATH, documentUploads != null ? documentUploads : this::handle);
             if (archiveOperations != null) {
                 created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
             }
