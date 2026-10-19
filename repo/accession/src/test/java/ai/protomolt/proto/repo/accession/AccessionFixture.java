@@ -85,6 +85,8 @@ final class AccessionFixture implements AutoCloseable {
     final CountingStack stack;
     final DocumentSaves.Drives drives;
     final DocumentSaves saves;
+    /** The same host with the opaque policy enabled (requirements §9). */
+    final DocumentSaves opaqueSaves;
     final DocumentReads reads;
     final String prefix;
 
@@ -98,6 +100,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(stackId, new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
+        opaqueSaves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC(), true);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
@@ -111,6 +114,7 @@ final class AccessionFixture implements AutoCloseable {
         stack = new CountingStack(new BlobStoreStack(original.stack.stackId(), new S3BlobStore(client), BUCKET, prefix));
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
+        opaqueSaves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC(), true);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
@@ -178,6 +182,17 @@ final class AccessionFixture implements AutoCloseable {
         var grant = WriterGrant.newBuilder().setGrantId("grant-" + UUID.randomUUID()).setAccountId(account)
                 .setCredential(WriterCredential.newBuilder().setIssuer(ISSUER).setCredentialId(credential.toString()))
                 .setStep(StepWriterScope.newBuilder().setModuleId(module)).setAllowCreate(create).build();
+        catalog.installGrant(grant);
+        return grant;
+    }
+
+    /** A step grant with an explicit ID and exact opaque type URLs, for ordering tests. */
+    WriterGrant opaqueStepGrant(String account, UUID credential, String module, boolean create, String grantId,
+            String... opaqueTypeUrls) {
+        var grant = WriterGrant.newBuilder().setGrantId(grantId).setAccountId(account)
+                .setCredential(WriterCredential.newBuilder().setIssuer(ISSUER).setCredentialId(credential.toString()))
+                .setStep(StepWriterScope.newBuilder().setModuleId(module)).setAllowCreate(create)
+                .addAllOpaqueTypeUrls(List.of(opaqueTypeUrls)).build();
         catalog.installGrant(grant);
         return grant;
     }
