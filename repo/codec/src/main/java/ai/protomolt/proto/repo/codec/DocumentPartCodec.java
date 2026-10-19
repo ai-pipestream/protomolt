@@ -26,14 +26,19 @@ import java.util.List;
  * <p>With the default {@link PartLayouts#document()} layout a stored
  * {@code Document} is split into:
  * <ul>
- *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parser_results}
- *       and {@code search_metadata.semantic_results};</li>
+ *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parser_results},
+ *       {@code search_metadata.semantic_results}, {@code search_metadata.segmentations}
+ *       and {@code search_metadata.embedding_sets};</li>
  *   <li><b>BLOBS</b> — {@code doc_id} + {@code blob_bag};</li>
  *   <li><b>CHUNKS</b> — one fragment per <i>chunk set</i>: a consecutive run of
  *       {@code semantic_results} entries sharing a {@code result_id}.
  *       Consecutive-run grouping (not global grouping) preserves the exact
- *       original ordering on reassembly — a byte-fidelity requirement;</li>
- *   <li><b>PARSED</b> — {@code doc_id} + {@code parser_results}.</li>
+ *       original ordering on reassembly — a byte-fidelity requirement; and one
+ *       fragment per {@code segmentations} entry, keyed by its
+ *       {@code segmentation_id};</li>
+ *   <li><b>PARSED</b> — {@code doc_id} + {@code parser_results};</li>
+ *   <li><b>EMBEDDINGS</b> — one fragment per {@code embedding_sets} entry, keyed
+ *       by its {@code segmentation_id} and {@code embedding_set_id}.</li>
  * </ul>
  *
  * <p>Each fragment is itself a valid serialized message of the SAME type
@@ -57,17 +62,21 @@ public final class DocumentPartCodec {
     public static final String PARSED_FILE = "parsed.pb";
     /** Directory of CHUNKS sub-objects under the document's prefix. */
     public static final String CHUNKS_DIR = "chunks";
+    /** Directory of EMBEDDINGS sub-objects under the document's prefix. */
+    public static final String EMBEDDINGS_DIR = "embeddings";
 
     /**
      * Splits a document into its part fragments, in canonical manifest order:
      * CORE first, then the remaining parts in {@link DocumentPart} number
      * order (BLOBS, CHUNKS sub-objects in original repeated-field order,
-     * PARSED). Parts with no content are simply absent from the returned
-     * list — the caller records them as {@code PART_STATE_EMPTY}.
+     * PARSED, EMBEDDINGS in original repeated-field order). Parts with no
+     * content are simply absent from the returned list — the caller records
+     * them as {@code PART_STATE_EMPTY}.
      *
      * @param doc the document to split
      * @param layout the part mapping over the document's message type
      * @return the non-empty part fragments in assembly order
+     * @throws IllegalArgumentException when two elements of a keyed part share a key
      */
     public static List<PartObject> split(Message doc, PartLayout layout) {
         if (!doc.getDescriptorForType().equals(layout.messageType())) {
@@ -84,24 +93,22 @@ public final class DocumentPartCodec {
             core.clearField(pf.field());
         }
         for (PartLayout.ChunkedField cf : layout.chunkedFields()) {
-            if (doc.hasField(cf.parent())) {
-                // Keep the parent set (even if clearing leaves a default
-                // instance) — the parent was set in the original, so CORE
-                // keeps it set.
-                Message parentStripped = ((Message) doc.getField(cf.parent()))
-                        .toBuilder().clearField(cf.repeatedField()).build();
-                core.setField(cf.parent(), parentStripped);
-            }
+            stripNested(doc, core, cf.parent(), cf.repeatedField());
+        }
+        for (PartLayout.KeyedField kf : layout.keyedFields()) {
+            stripNested(doc, core, kf.parent(), kf.repeatedField());
         }
         parts.add(toPartObject(DocumentPart.DOCUMENT_PART_CORE, "", core.build()));
 
-        // Remaining parts in DocumentPart number order (BLOBS < CHUNKS < PARSED).
+        // Remaining parts in DocumentPart number order (BLOBS < CHUNKS < PARSED < EMBEDDINGS).
         List<PartLayout.PartField> partFields = new ArrayList<>(layout.partFields());
         partFields.sort(Comparator.comparingInt(pf -> pf.part().getNumber()));
         List<PartLayout.ChunkedField> chunkedFields = new ArrayList<>(layout.chunkedFields());
         chunkedFields.sort(Comparator.comparingInt(cf -> cf.part().getNumber()));
+        List<PartLayout.KeyedField> keyedFields = new ArrayList<>(layout.keyedFields());
+        keyedFields.sort(Comparator.comparingInt(kf -> kf.part().getNumber()));
 
-        for (DocumentPart part : orderedNonCoreParts(partFields, chunkedFields)) {
+        for (DocumentPart part : orderedNonCoreParts(partFields, chunkedFields, keyedFields)) {
             for (PartLayout.PartField pf : partFields) {
                 if (pf.part() == part && isPresent(doc, pf.field())) {
                     parts.add(toPartObject(part, "", singleFieldFragment(doc, layout, pf.field())));
@@ -109,8 +116,14 @@ public final class DocumentPartCodec {
             }
             for (PartLayout.ChunkedField cf : chunkedFields) {
                 if (cf.part() == part && doc.hasField(cf.parent())
-                        && !elements(doc, cf).isEmpty()) {
+                        && !elements(doc, cf.parent(), cf.repeatedField()).isEmpty()) {
                     parts.addAll(splitChunkSets(doc, layout, cf));
+                }
+            }
+            for (PartLayout.KeyedField kf : keyedFields) {
+                if (kf.part() == part && doc.hasField(kf.parent())
+                        && !elements(doc, kf.parent(), kf.repeatedField()).isEmpty()) {
+                    parts.addAll(splitKeyed(doc, layout, kf));
                 }
             }
         }
@@ -118,8 +131,21 @@ public final class DocumentPartCodec {
         return parts;
     }
 
+    /**
+     * Removes a nested repeated field from CORE while keeping its parent set:
+     * touching an absent parent would materialize an empty message and change
+     * bytes, and a present parent was set in the original, so CORE keeps it set.
+     */
+    private static void stripNested(Message doc, Message.Builder core, Descriptors.FieldDescriptor parent,
+                                    Descriptors.FieldDescriptor repeatedField) {
+        if (!doc.hasField(parent)) return;
+        Message current = (Message) core.getField(parent);
+        core.setField(parent, current.toBuilder().clearField(repeatedField).build());
+    }
+
     private static List<DocumentPart> orderedNonCoreParts(List<PartLayout.PartField> partFields,
-                                                          List<PartLayout.ChunkedField> chunkedFields) {
+                                                          List<PartLayout.ChunkedField> chunkedFields,
+                                                          List<PartLayout.KeyedField> keyedFields) {
         List<DocumentPart> order = new ArrayList<>();
         for (PartLayout.PartField pf : partFields) {
             if (!order.contains(pf.part())) {
@@ -129,6 +155,11 @@ public final class DocumentPartCodec {
         for (PartLayout.ChunkedField cf : chunkedFields) {
             if (!order.contains(cf.part())) {
                 order.add(cf.part());
+            }
+        }
+        for (PartLayout.KeyedField kf : keyedFields) {
+            if (!order.contains(kf.part())) {
+                order.add(kf.part());
             }
         }
         order.sort(Comparator.comparingInt(DocumentPart::getNumber));
@@ -155,8 +186,36 @@ public final class DocumentPartCodec {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Message> elements(Message doc, PartLayout.ChunkedField cf) {
-        return (List<Message>) ((Message) doc.getField(cf.parent())).getField(cf.repeatedField());
+    private static List<Message> elements(Message doc, Descriptors.FieldDescriptor parent,
+                                          Descriptors.FieldDescriptor repeatedField) {
+        return (List<Message>) ((Message) doc.getField(parent)).getField(repeatedField);
+    }
+
+    /**
+     * One fragment per element of a keyed part, in original element order,
+     * carrying the identity field and the parent with that single element.
+     * Two elements with the same key are refused: a key names one object.
+     */
+    private static List<PartObject> splitKeyed(Message doc, PartLayout layout, PartLayout.KeyedField kf) {
+        List<PartObject> out = new ArrayList<>();
+        var seen = new java.util.HashSet<List<String>>();
+        for (Message element : elements(doc, kf.parent(), kf.repeatedField())) {
+            List<String> key = kf.keyOf(element);
+            if (!seen.add(key)) {
+                throw new IllegalArgumentException("Duplicate " + kf.repeatedField().getFullName()
+                        + " key " + key);
+            }
+            Message.Builder frag = doc.newBuilderForType();
+            if (layout.identityField() != null) {
+                frag.setField(layout.identityField(), doc.getField(layout.identityField()));
+            }
+            Message.Builder parentFrag = frag.newBuilderForField(kf.parent());
+            parentFrag.setField(kf.repeatedField(), List.of(element));
+            frag.setField(kf.parent(), parentFrag.build());
+            byte[] bytes = frag.build().toByteArray();
+            out.add(PartObject.keyed(kf.part(), key, bytes, sha256Hex(bytes)));
+        }
+        return out;
     }
 
     /**
@@ -170,7 +229,7 @@ public final class DocumentPartCodec {
     private static List<PartObject> splitChunkSets(Message doc, PartLayout layout,
                                                    PartLayout.ChunkedField cf) {
         List<PartObject> out = new ArrayList<>();
-        List<Message> elements = elements(doc, cf);
+        List<Message> elements = elements(doc, cf.parent(), cf.repeatedField());
 
         var names = new ChunkRunNames();
         int i = 0;
@@ -230,7 +289,7 @@ public final class DocumentPartCodec {
             throw new IllegalStateException("in-memory encoding failed", impossible);
         }
         byte[] bytes = out.toByteArray();
-        return new PartObject(part.part(), part.subKey(), bytes, sha256Hex(bytes));
+        return new PartObject(part.part(), part.subKey(), part.keyValues(), bytes, sha256Hex(bytes));
     }
 
     /**
@@ -312,7 +371,7 @@ public final class DocumentPartCodec {
      *
      * @param basePrefix the address prefix ({@code {keyPrefix}/{accountId}/…/{nodeId}})
      * @param part the part
-     * @param subKey the chunk-set sub key (CHUNKS only; ignored otherwise)
+     * @param subKey the chunk-set or keyed sub key (CHUNKS and EMBEDDINGS only; ignored otherwise)
      * @return the full object key
      */
     public static String objectKey(String basePrefix, DocumentPart part, String subKey) {
@@ -321,6 +380,7 @@ public final class DocumentPartCodec {
             case DOCUMENT_PART_BLOBS -> basePrefix + "/" + BLOBS_FILE;
             case DOCUMENT_PART_PARSED -> basePrefix + "/" + PARSED_FILE;
             case DOCUMENT_PART_CHUNKS -> basePrefix + "/" + CHUNKS_DIR + "/" + chunkFileName(subKey) + ".pb";
+            case DOCUMENT_PART_EMBEDDINGS -> basePrefix + "/" + EMBEDDINGS_DIR + "/" + chunkFileName(subKey) + ".pb";
             default -> throw new IllegalArgumentException("No object key for part " + part);
         };
     }

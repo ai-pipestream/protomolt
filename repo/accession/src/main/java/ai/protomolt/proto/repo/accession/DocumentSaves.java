@@ -6,11 +6,16 @@ import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
 import ai.protomolt.proto.repo.admission.DocumentSchemas;
+import ai.protomolt.proto.repo.admission.DocumentSemanticAdmission;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.catalog.Catalog;
 import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.PartLayouts;
+import ai.protomolt.proto.repo.codec.SegmentationDigests;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -34,7 +39,6 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,9 +55,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * validates the composed candidate, uploads only new bytes, and commits the
  * revision, outcome and outbox event in one catalog transaction.
  * <p>
- * This slice supports CORE, BLOBS and PARSED. Segmentations, embedding sets and
- * legacy semantic results are refused as unsupported rather than stored in CORE;
- * opaque mode is refused by host policy.
+ * Parts are CORE, BLOBS and PARSED, one CHUNKS object per segmentation and one
+ * EMBEDDINGS object per embedding set (requirements §5). Legacy semantic results
+ * (field 13) are refused as unsupported; opaque mode is refused by host policy.
+ * <p>
+ * Semantic parts are checked over the composed candidate by
+ * {@link DocumentSemanticAdmission}. Carried parts are read only where that
+ * needs their content (requirements §9, §15.1): a carried CORE, BLOBS or PARSED
+ * part when a segmentation being verified sources text from it; a carried CHUNKS
+ * part when a written embedding set binds to it (its segment IDs) or when CORE,
+ * BLOBS or PARSED changes in this save (its source may be the changed text, and
+ * only its content says which part that is). A carried EMBEDDINGS part is never
+ * read: its binding is compared by the digests the manifest records.
  */
 public final class DocumentSaves {
     static final ProtoValidator VALIDATOR = ProtoValidator.create();
@@ -61,6 +74,23 @@ public final class DocumentSaves {
             DocumentPart.DOCUMENT_PART_CORE, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CORE,
             DocumentPart.DOCUMENT_PART_BLOBS, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_BLOBS,
             DocumentPart.DOCUMENT_PART_PARSED, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_PARSED);
+    static final PartSelector CORE_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
+    static final PartSelector BLOBS_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS).build();
+    /** The element index a validator reports for a keyed part, in the admitted view's order. */
+    private static final java.util.regex.Pattern KEYED_ELEMENT =
+            java.util.regex.Pattern.compile("^search_metadata\\.(?:segmentations|embedding_sets)\\[(\\d+)\\]");
+    /** Codec order: CORE, BLOBS, CHUNKS by segmentation ID, PARSED, EMBEDDINGS by key, IDs in unsigned UTF-8 order. */
+    static final java.util.Comparator<PartSelector> CODEC_ORDER = (left, right) -> {
+        int order = Integer.compare(rank(left), rank(right));
+        if (order != 0) return order;
+        var leftKey = key(left);
+        var rightKey = key(right);
+        for (int i = 0; i < Math.min(leftKey.size(), rightKey.size()); i++) {
+            int cmp = SegmentationDigests.compareUtf8(leftKey.get(i), rightKey.get(i));
+            if (cmp != 0) return cmp;
+        }
+        return Integer.compare(leftKey.size(), rightKey.size());
+    };
 
     /** Named drives and the stack each currently resolves to. */
     public record Drives(String defaultDrive, Map<String, Stack> stacks) {
@@ -161,20 +191,21 @@ public final class DocumentSaves {
         DocumentReads.requireAccount(caller, account);
 
         // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
-        // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out.
+        // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out
+        // and a stored CHUNKS fragment may gain the server-computed content digest.
         var fragments = split(document, documentType, writes);
-        var storedFragments = new EnumMap<DocumentPart, ByteString>(fragments);
+        var storedFragments = new LinkedHashMap<PartSelector, ByteString>(fragments);
         List<RawBlobs.Raw> rawBlobs = List.of();
-        if (fragments.containsKey(DocumentPart.DOCUMENT_PART_BLOBS)) {
-            var extracted = RawBlobs.extract(fragments.get(DocumentPart.DOCUMENT_PART_BLOBS));
-            storedFragments.put(DocumentPart.DOCUMENT_PART_BLOBS, extracted.stored());
+        if (fragments.containsKey(BLOBS_SELECTOR)) {
+            var extracted = RawBlobs.extract(fragments.get(BLOBS_SELECTOR));
+            storedFragments.put(BLOBS_SELECTOR, extracted.stored());
             rawBlobs = extracted.blobs();
         }
         var contents = new HashMap<Integer, SaveIntents.Content>();
         for (int index = 0; index < request.getWritesCount(); index++) {
             var write = request.getWrites(index);
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
-            var bytes = fragments.get(write.getSelector().getPart());
+            var bytes = fragments.get(write.getSelector());
             contents.put(index, new SaveIntents.Content(sha256(bytes), bytes.size()));
         }
         var intentSha = SaveIntents.sha256(SaveIntents.intent(request, address, contents));
@@ -190,8 +221,7 @@ public final class DocumentSaves {
         if (base.isPresent() && !DocumentAccessPolicy.allows(caller, account, base.get().getOwnership().getSecurity(),
                 null, Access.ACCESS_WRITE))
             throw WriterAuthority.denied("The caller may not write this document");
-        var ownership = ownership(document, address, base,
-                writes.get(DocumentPart.DOCUMENT_PART_CORE) == WriteAction.WRITE_ACTION_PUT);
+        var ownership = ownership(document, address, base, writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT);
         requireOwnerMatches(request.getOwner(), ownership);
         var authorized = authority.authorize(caller, request.getOwner(), account,
                 ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
@@ -208,27 +238,27 @@ public final class DocumentSaves {
 
         // S10: compose the candidate from carried references, sources and writes.
         long revision = currentRevision + 1;
-        var parts = new EnumMap<DocumentPart, StoredPartEntry>(DocumentPart.class);
-        base.ifPresent(stored -> stored.getPartsList().forEach(part -> parts.put(part.getEntry().getSelector().getPart(), part)));
+        var parts = new LinkedHashMap<PartSelector, StoredPartEntry>();
+        base.ifPresent(stored -> stored.getPartsList().forEach(part -> parts.put(part.getEntry().getSelector(), part)));
         var carried = new HashSet<>(parts.keySet());
-        var changes = new ArrayList<PartChange>();
-        var sourced = new LinkedHashMap<DocumentPart, StackRef>();
+        var kinds = new LinkedHashMap<PartSelector, ChangeKind>();
+        var sourced = new LinkedHashMap<PartSelector, StackRef>();
         for (var source : request.getSourcesList()) {
-            var part = source.getSelector().getPart();
+            var selector = source.getSelector();
             var from = readableSource(caller, account, source.getFromAddress(), source.getFromRevision());
             if (from.isEmpty())
                 return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
                         "Source revision " + source.getFromRevision() + " is not readable", List.of());
-            var entry = from.get().getPartsList().stream().filter(p -> p.getEntry().getSelector().getPart() == part).findFirst();
+            var entry = from.get().getPartsList().stream().filter(p -> p.getEntry().getSelector().equals(selector)).findFirst();
             if (entry.isEmpty())
                 return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_SOURCE_NOT_FOUND,
-                        "Source revision has no " + part + " part", List.of());
+                        "Source revision has no " + describe(selector) + " part", List.of());
             var copied = entry.get().toBuilder();
             copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded();
-            parts.put(part, copied.build());
-            carried.remove(part);
-            if (entry.get().hasRef()) sourced.put(part, entry.get().getRef());
-            changes.add(change(part, ChangeKind.CHANGE_KIND_SOURCED, entry.get().getEntry().getSha256()));
+            parts.put(selector, copied.build());
+            carried.remove(selector);
+            if (entry.get().hasRef()) sourced.put(selector, entry.get().getRef());
+            kinds.put(selector, ChangeKind.CHANGE_KIND_SOURCED);
         }
         for (var lineage : request.getDerivedFromList()) {
             if (readableSource(caller, account, lineage.getAddress(), lineage.getRevision()).isEmpty())
@@ -236,45 +266,57 @@ public final class DocumentSaves {
                         "Lineage revision " + lineage.getRevision() + " is not readable", List.of());
         }
         for (var write : request.getWritesList()) {
-            var part = write.getSelector().getPart();
-            var previous = parts.get(part);
-            carried.remove(part);
-            var entry = PartManifestEntry.newBuilder().setSelector(write.getSelector()).setWrittenInRevision(revision)
+            var selector = write.getSelector();
+            var previous = parts.get(selector);
+            carried.remove(selector);
+            var entry = PartManifestEntry.newBuilder().setSelector(selector).setWrittenInRevision(revision)
                     .setOwner(request.getOwner());
             switch (write.getAction()) {
                 case WRITE_ACTION_PUT -> {
-                    var bytes = storedFragments.get(part);
+                    var bytes = storedFragments.get(selector);
                     entry.setState(PartState.PART_STATE_PRESENT).setSizeBytes(bytes.size()).setSha256(sha256(bytes));
-                    changes.add(change(part, previous != null && previous.getEntry().getState() == PartState.PART_STATE_PRESENT
-                            ? ChangeKind.CHANGE_KIND_REPLACED : ChangeKind.CHANGE_KIND_ADDED, entry.getSha256()));
+                    kinds.put(selector, previous != null && previous.getEntry().getState() == PartState.PART_STATE_PRESENT
+                            ? ChangeKind.CHANGE_KIND_REPLACED : ChangeKind.CHANGE_KIND_ADDED);
                 }
                 case WRITE_ACTION_EMPTY -> {
                     entry.setState(PartState.PART_STATE_EMPTY);
-                    changes.add(change(part, ChangeKind.CHANGE_KIND_EMPTIED, ""));
+                    kinds.put(selector, ChangeKind.CHANGE_KIND_EMPTIED);
                 }
                 case WRITE_ACTION_DELETE -> {
                     entry.setState(PartState.PART_STATE_DELETED).setDeletedReason(write.getDeletedReason());
-                    changes.add(change(part, ChangeKind.CHANGE_KIND_DELETED, ""));
+                    kinds.put(selector, ChangeKind.CHANGE_KIND_DELETED);
                 }
                 default -> throw malformedException("Unsupported write action");
             }
-            parts.put(part, StoredPartEntry.newBuilder().setEntry(entry).build());
+            parts.put(selector, StoredPartEntry.newBuilder().setEntry(entry).build());
         }
-        if (!parts.containsKey(DocumentPart.DOCUMENT_PART_CORE)
-                || parts.get(DocumentPart.DOCUMENT_PART_CORE).getEntry().getState() != PartState.PART_STATE_PRESENT)
+        if (!parts.containsKey(CORE_SELECTOR)
+                || parts.get(CORE_SELECTOR).getEntry().getState() != PartState.PART_STATE_PRESENT)
             throw malformedException("A document revision needs a PRESENT CORE part");
+
+        // Sourced bytes are read once, for the semantic rules and for typed admission.
+        var sourcedBytes = new LinkedHashMap<PartSelector, ByteString>();
+        for (var entry : sourced.entrySet()) sourcedBytes.put(entry.getKey(), readVerified(entry.getValue()));
+
+        // S10b: segmentations, source bindings and embedding sets over the composed candidate.
+        var semantic = semantic(documentType, parts, writes, storedFragments, sourcedBytes);
+        if (semantic.rejection() != null)
+            return reject(caller, request, address, intentSha, authorized, semantic.rejection().reason(),
+                    semantic.rejection().message(), semantic.rejection().violations());
 
         // S11: typed validation of written and sourced bytes. Carried parts are not read.
         var admitted = new ArrayList<DocumentCandidateAdmission.Fragment>();
+        var admittedSelectors = new ArrayList<PartSelector>();
         for (var write : request.getWritesList())
-            if (write.getAction() == WriteAction.WRITE_ACTION_PUT)
-                admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(write.getSelector().getPart()),
-                        storedFragments.get(write.getSelector().getPart())));
+            if (write.getAction() == WriteAction.WRITE_ACTION_PUT) {
+                admitted.add(fragment(write.getSelector(), storedFragments.get(write.getSelector())));
+                admittedSelectors.add(write.getSelector());
+            }
         ByteString sourcedCore = null;
-        for (var entry : sourced.entrySet()) {
-            var bytes = readVerified(entry.getValue());
-            admitted.add(new DocumentCandidateAdmission.Fragment(PARTS.get(entry.getKey()), bytes));
-            if (entry.getKey() == DocumentPart.DOCUMENT_PART_CORE) sourcedCore = bytes;
+        for (var entry : sourcedBytes.entrySet()) {
+            admitted.add(fragment(entry.getKey(), entry.getValue()));
+            admittedSelectors.add(entry.getKey());
+            if (entry.getKey().equals(CORE_SELECTOR)) sourcedCore = entry.getValue();
         }
         var validation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
                 .setValidatorProfile(DocumentCandidateAdmission.PROFILE);
@@ -286,7 +328,7 @@ public final class DocumentSaves {
                     resolver, limits, reservations, clock.instant(), () -> {})) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected) {
                     var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
-                            .setPart(PartSelector.newBuilder().setPart(v2(v.part()))).setFieldPath(v.fieldPath())
+                            .setPart(violated(v, admittedSelectors)).setFieldPath(v.fieldPath())
                             .setRuleId(v.ruleId()).setMessage(v.message()).build()).toList();
                     return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
                             "The composed document failed validation", violations);
@@ -331,7 +373,7 @@ public final class DocumentSaves {
         }
         // Gap 9: carried parts keep the expected revision's schema entries; their bytes are unchanged.
         base.ifPresent(stored -> stored.getValidation().getResolvedOccurrencesList().stream()
-                .filter(occurrence -> carried.contains(occurrence.getOccurrence().getPart().getPart()))
+                .filter(occurrence -> carried.contains(occurrence.getOccurrence().getPart()))
                 .forEach(validation::addResolvedOccurrences));
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
@@ -346,12 +388,12 @@ public final class DocumentSaves {
         }
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
-            var part = write.getSelector().getPart();
-            var ref = put(stack, storedFragments.get(part));
+            var selector = write.getSelector();
+            var ref = put(stack, storedFragments.get(selector));
             newObjects.add(ref);
-            var entry = parts.get(part).toBuilder().setRef(ref);
-            if (part == DocumentPart.DOCUMENT_PART_BLOBS) entry.addAllBlobRefs(blobRefs);
-            parts.put(part, entry.build());
+            var entry = parts.get(selector).toBuilder().setRef(ref);
+            if (selector.equals(BLOBS_SELECTOR)) entry.addAllBlobRefs(blobRefs);
+            parts.put(selector, entry.build());
         }
         // Carried and sourced parts reference their objects, raw blobs included, without re-upload.
         var carriedObjects = new ArrayList<StackRef>();
@@ -363,8 +405,8 @@ public final class DocumentSaves {
 
         // S13-S15: build the records for this revision and commit them together.
         var ordered = parts.values().stream()
-                .sorted((left, right) -> Integer.compare(left.getEntry().getSelector().getPartValue(),
-                        right.getEntry().getSelector().getPartValue())).toList();
+                .sorted((left, right) -> CODEC_ORDER.compare(left.getEntry().getSelector(), right.getEntry().getSelector()))
+                .toList();
         var digest = CandidateDigestInput.newBuilder().setEncodingVersion(1);
         for (var part : ordered) {
             var entry = part.getEntry();
@@ -373,7 +415,7 @@ public final class DocumentSaves {
             if (entry.getState() != PartState.PART_STATE_PRESENT) continue;
             // Gap 9: a carried part keeps the binding it was admitted under; written and sourced
             // parts were decoded with the latest registered Document version.
-            var binding = carried.contains(entry.getSelector().getPart())
+            var binding = carried.contains(entry.getSelector())
                     ? base.orElseThrow().getValidation().getPartSchemasList().stream()
                             .filter(schema -> schema.getPart().equals(entry.getSelector())).findFirst()
                             .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS,
@@ -393,7 +435,11 @@ public final class DocumentSaves {
                 .putAllMetadata(request.getMetadataMap()).build();
         var accession = DocumentReads.accession(stored);
         var outcome = RecordedOutcome.newBuilder().setAccession(accession).setRecordedAt(committedAt).build();
-        changes.sort((left, right) -> Integer.compare(left.getSelector().getPartValue(), right.getSelector().getPartValue()));
+        var changes = new ArrayList<PartChange>();
+        for (var change : kinds.entrySet())
+            changes.add(PartChange.newBuilder().setSelector(change.getKey()).setKind(change.getValue())
+                    .setSha256(parts.get(change.getKey()).getEntry().getSha256()).build());
+        changes.sort((left, right) -> CODEC_ORDER.compare(left.getSelector(), right.getSelector()));
         var event = DocumentEvent.newBuilder().setEventId(eventId(address, revision)).setAddress(address)
                 .setRevision(revision).setPreviousRevision(currentRevision).setOperationId(request.getOperationId())
                 .setOccurredAt(committedAt).setAccessioned(Accessioned.newBuilder().addAllChanges(changes)
@@ -441,18 +487,19 @@ public final class DocumentSaves {
         }
     }
 
-    /** Validates the write and source selectors and returns the written parts. */
-    private static Map<DocumentPart, WriteAction> selectors(SaveDocumentRequest request) {
-        var writes = new EnumMap<DocumentPart, WriteAction>(DocumentPart.class);
+    /** Validates the write and source selectors and returns the written parts in request order. */
+    private static Map<PartSelector, WriteAction> selectors(SaveDocumentRequest request) {
+        var writes = new LinkedHashMap<PartSelector, WriteAction>();
         for (var write : request.getWritesList()) {
-            var part = supported(write.getSelector());
-            if (writes.put(part, write.getAction()) != null) throw malformedException("Duplicate write selector " + part);
+            var selector = supported(write.getSelector());
+            if (writes.put(selector, write.getAction()) != null)
+                throw malformedException("Duplicate write selector " + describe(selector));
         }
-        var sourced = new HashSet<DocumentPart>();
+        var sourced = new HashSet<PartSelector>();
         for (var source : request.getSourcesList()) {
-            var part = supported(source.getSelector());
-            if (writes.containsKey(part) || !sourced.add(part))
-                throw malformedException("Selector " + part + " is named twice");
+            var selector = supported(source.getSelector());
+            if (writes.containsKey(selector) || !sourced.add(selector))
+                throw malformedException("Selector " + describe(selector) + " is named twice");
             DocumentReads.requireAddress(source.getFromAddress());
             if (!source.getFromAddress().getDocId().equals(targetDocId(request)))
                 throw malformedException("A source part must come from a document with the same doc_id");
@@ -466,16 +513,18 @@ public final class DocumentSaves {
         return request.getTarget().hasAddress() ? request.getTarget().getAddress().getDocId() : request.getDocument().getDocId();
     }
 
-    private static DocumentPart supported(PartSelector selector) {
-        if (!selector.hasPart()) throw malformedException("Segmentations and embedding sets are not supported by this server yet");
-        return selector.getPart();
+    /** Request validation already proved the selector names exactly one object; this names its kind for messages. */
+    private static PartSelector supported(PartSelector selector) {
+        return switch (selector.getSelectorCase()) {
+            case PART, SEGMENTATION_ID, EMBEDDING_SET -> selector;
+            default -> throw malformedException("A selector names a part, a segmentation or an embedding set");
+        };
     }
 
     private static Document normalizedDocument(SaveDocumentRequest request) {
         var document = request.getDocument();
-        var search = document.getSearchMetadata();
-        if (search.getSemanticResultsCount() > 0 || search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0)
-            throw malformedException("Semantic results, segmentations and embedding sets are not supported by this server yet");
+        if (document.getSearchMetadata().getSemanticResultsCount() > 0)
+            throw malformedException("Legacy semantic results are not supported by this server; write segmentations and embedding sets");
         // Decision 35: fields the compiled Document does not know arrive as unknown fields and
         // are decoded with the latest registered version; one that version does not know either
         // is a recorded SCHEMA_MISSING after authorization, never dropped. Structure bounds and
@@ -516,8 +565,8 @@ public final class DocumentSaves {
      * and refuses content for any part not listed as PUT. Fields that version does not
      * know stay in their fragment as unknown fields for admission to refuse.
      */
-    private static Map<DocumentPart, ByteString> split(Document request, Descriptors.Descriptor documentType,
-            Map<DocumentPart, WriteAction> writes) {
+    private static Map<PartSelector, ByteString> split(Document request, Descriptors.Descriptor documentType,
+            Map<PartSelector, WriteAction> writes) {
         final DynamicMessage document;
         try {
             document = DynamicMessage.parseFrom(documentType, request.toByteString());
@@ -532,10 +581,14 @@ public final class DocumentSaves {
                     + host.getMessage(), null, host);
         }
         var prototype = DynamicMessage.getDefaultInstance(documentType);
-        var fragments = new EnumMap<DocumentPart, ByteString>(DocumentPart.class);
-        var bare = DynamicMessage.newBuilder(documentType).setField(documentType.findFieldByName("doc_id"),
-                request.getDocId()).build().toByteString();
-        for (var split : DocumentPartCodec.split(document, layout)) {
+        var fragments = new LinkedHashMap<PartSelector, ByteString>();
+        final List<ai.protomolt.proto.repo.codec.PartObject> splits;
+        try {
+            splits = DocumentPartCodec.split(document, layout);
+        } catch (IllegalArgumentException duplicate) {
+            throw malformedException(duplicate.getMessage());
+        }
+        for (var split : splits) {
             // Deterministic bytes: a client sending map entries in another order must get
             // the same content digest, the same intent, and a replay on retry.
             final ai.protomolt.proto.repo.codec.PartObject part;
@@ -544,22 +597,263 @@ public final class DocumentSaves {
             } catch (InvalidProtocolBufferException impossible) {
                 throw new IllegalStateException("A freshly split fragment failed to parse", impossible);
             }
-            var selector = switch (part.part()) {
-                case DOCUMENT_PART_CORE -> DocumentPart.DOCUMENT_PART_CORE;
-                case DOCUMENT_PART_BLOBS -> DocumentPart.DOCUMENT_PART_BLOBS;
-                case DOCUMENT_PART_PARSED -> DocumentPart.DOCUMENT_PART_PARSED;
-                default -> throw malformedException("Unsupported document part " + part.part());
-            };
+            var selector = selector(part);
             var bytes = ByteString.copyFrom(part.bytes());
             boolean put = writes.get(selector) == WriteAction.WRITE_ACTION_PUT;
-            if (!put && !(selector == DocumentPart.DOCUMENT_PART_CORE && bytes.equals(bare)))
-                throw malformedException("Content for " + selector + " is present but the part is not written");
+            if (!put && !(selector.equals(CORE_SELECTOR) && !coreHasContent(bytes, documentType, layout)))
+                throw malformedException("Content for " + describe(selector) + " is present but the part is not written");
             if (put) fragments.put(selector, bytes);
         }
         for (var write : writes.entrySet())
             if (write.getValue() == WriteAction.WRITE_ACTION_PUT && !fragments.containsKey(write.getKey()))
-                throw malformedException("PUT " + write.getKey() + " has no content; write EMPTY instead");
+                throw malformedException("PUT " + describe(write.getKey()) + " has no content; write EMPTY instead");
         return fragments;
+    }
+
+    /**
+     * Whether a split CORE fragment carries anything beyond the document identity. A
+     * save that writes only semantic parts sends them inside {@code search_metadata},
+     * and the split keeps that parent set after emptying it; an emptied parent of a
+     * chunked or keyed part is not CORE content.
+     */
+    private static boolean coreHasContent(ByteString core, Descriptors.Descriptor documentType,
+            ai.protomolt.proto.repo.codec.PartLayout layout) {
+        final DynamicMessage fragment;
+        try {
+            fragment = DynamicMessage.parseFrom(documentType, core);
+        } catch (InvalidProtocolBufferException impossible) {
+            throw new IllegalStateException("A freshly split CORE fragment failed to parse", impossible);
+        }
+        if (!fragment.getUnknownFields().asMap().isEmpty()) return true;
+        var parents = new HashSet<Descriptors.FieldDescriptor>();
+        layout.chunkedFields().forEach(field -> parents.add(field.parent()));
+        layout.keyedFields().forEach(field -> parents.add(field.parent()));
+        for (var entry : fragment.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.equals(layout.identityField())) continue;
+            if (parents.contains(field) && entry.getValue() instanceof Message parent
+                    && parent.getAllFields().isEmpty() && parent.getUnknownFields().asMap().isEmpty()) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /** The v2 selector of a split fragment. */
+    private static PartSelector selector(ai.protomolt.proto.repo.codec.PartObject part) {
+        return switch (part.part()) {
+            case DOCUMENT_PART_CORE -> CORE_SELECTOR;
+            case DOCUMENT_PART_BLOBS -> BLOBS_SELECTOR;
+            case DOCUMENT_PART_PARSED -> PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED).build();
+            case DOCUMENT_PART_CHUNKS -> {
+                if (part.keyValues().size() != 1)
+                    throw malformedException("Legacy semantic results are not supported by this server");
+                yield PartSelector.newBuilder().setSegmentationId(part.keyValues().getFirst()).build();
+            }
+            case DOCUMENT_PART_EMBEDDINGS -> PartSelector.newBuilder().setEmbeddingSet(EmbeddingSetKey.newBuilder()
+                    .setSegmentationId(part.keyValues().get(0)).setEmbeddingSetId(part.keyValues().get(1))).build();
+            default -> throw malformedException("Unsupported document part " + part.part());
+        };
+    }
+
+    // ------------------------------------------------------------------ semantic parts
+
+    /** A recorded refusal of the semantic candidate. */
+    private record SemanticRejection(RejectionReason reason, String message, List<FieldViolation> violations) {}
+
+    /** The semantic verdict; {@code rejection} is null when the candidate passed and the stored entries were finalized. */
+    private record SemanticOutcome(SemanticRejection rejection) {}
+
+    /**
+     * Composes the semantic candidate (requirements §5, §9), decides which carried
+     * parts it must read, runs {@link DocumentSemanticAdmission}, and on acceptance
+     * finalizes the written CHUNKS fragments with their computed digests and records
+     * {@code segmentation_digest} on every CHUNKS and EMBEDDINGS entry.
+     */
+    private SemanticOutcome semantic(Descriptors.Descriptor documentType, Map<PartSelector, StoredPartEntry> parts,
+            Map<PartSelector, WriteAction> writes, Map<PartSelector, ByteString> storedFragments,
+            Map<PartSelector, ByteString> sourcedBytes) {
+        var changedParts = new HashSet<ai.protomolt.proto.repo.v1.DocumentPart>();
+        for (var selector : writes.keySet()) if (selector.hasPart()) changedParts.add(v1(selector.getPart()));
+        for (var selector : sourcedBytes.keySet()) if (selector.hasPart()) changedParts.add(v1(selector.getPart()));
+
+        // Every PRESENT semantic entry of the composed candidate, by selector.
+        var present = new LinkedHashMap<PartSelector, StoredPartEntry>();
+        for (var entry : parts.entrySet())
+            if (!entry.getKey().hasPart() && entry.getValue().getEntry().getState() == PartState.PART_STATE_PRESENT)
+                present.put(entry.getKey(), entry.getValue());
+        if (present.isEmpty()) return new SemanticOutcome(null);
+
+        // Written and sourced content is in hand; carried content is read only when a rule needs it.
+        var segmentations = new LinkedHashMap<String, Segmentation>();
+        var verify = new HashMap<String, Boolean>();
+        var carriedDigests = new LinkedHashMap<String, String>();
+        var embeddingSets = new LinkedHashMap<EmbeddingSetKey, EmbeddingSet>();
+        var carriedBindings = new LinkedHashMap<EmbeddingSetKey, String>();
+        var carriedChunks = new LinkedHashMap<String, StoredPartEntry>();
+        for (var entry : present.entrySet()) {
+            var selector = entry.getKey();
+            var bytes = storedFragments.containsKey(selector) ? storedFragments.get(selector) : sourcedBytes.get(selector);
+            if (selector.hasSegmentationId()) {
+                if (bytes != null) {
+                    segmentations.put(selector.getSegmentationId(), segmentation(bytes));
+                    verify.put(selector.getSegmentationId(), true);
+                } else {
+                    carriedChunks.put(selector.getSegmentationId(), entry.getValue());
+                }
+            } else if (bytes != null) {
+                embeddingSets.put(selector.getEmbeddingSet(), embeddingSet(bytes));
+            } else {
+                carriedBindings.put(selector.getEmbeddingSet(), storedDigest(entry.getValue()));
+            }
+        }
+        for (var chunk : carriedChunks.entrySet()) {
+            var id = chunk.getKey();
+            boolean bound = embeddingSets.keySet().stream().anyMatch(key -> key.getSegmentationId().equals(id));
+            if (!bound && changedParts.isEmpty()) {
+                carriedDigests.put(id, storedDigest(chunk.getValue()));
+                continue;
+            }
+            var segmentation = segmentation(readVerified(chunk.getValue().getRef()));
+            if (!segmentation.getSegmentationId().equals(id))
+                throw new AccessionException(Status.Code.DATA_LOSS, "Stored CHUNKS object carries another segmentation", null);
+            var source = segmentation.getSource();
+            segmentations.put(id, segmentation);
+            verify.put(id, source.hasFieldPath() && changedParts.contains(DocumentSemanticAdmission.sourcePart(source.getFieldPath())));
+        }
+
+        // The composed view holds every part a verified field path reads from.
+        var view = DynamicMessage.newBuilder(documentType);
+        var neededParts = new HashSet<ai.protomolt.proto.repo.v1.DocumentPart>();
+        for (var segmentation : segmentations.values())
+            if (verify.get(segmentation.getSegmentationId()) && segmentation.getSource().hasFieldPath())
+                neededParts.add(DocumentSemanticAdmission.sourcePart(segmentation.getSource().getFieldPath()));
+        for (var part : neededParts) {
+            if (part == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS
+                    || part == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_EMBEDDINGS) continue;
+            var selector = PartSelector.newBuilder().setPart(v2(part)).build();
+            var bytes = storedFragments.containsKey(selector) ? storedFragments.get(selector) : sourcedBytes.get(selector);
+            var entry = parts.get(selector);
+            if (bytes == null && entry != null && entry.getEntry().getState() == PartState.PART_STATE_PRESENT && entry.hasRef())
+                bytes = readVerified(entry.getRef());
+            if (bytes == null) continue;
+            try {
+                view.mergeFrom(bytes);
+            } catch (InvalidProtocolBufferException corrupt) {
+                throw new AccessionException(Status.Code.DATA_LOSS, "Stored " + part + " part does not decode", null, corrupt);
+            }
+        }
+
+        var candidate = new DocumentSemanticAdmission.Candidate(
+                segmentations.values().stream().map(segmentation -> new DocumentSemanticAdmission.PresentSegmentation(
+                        segmentation, verify.get(segmentation.getSegmentationId()))).toList(),
+                carriedDigests, List.copyOf(embeddingSets.values()), carriedBindings, view);
+        final DocumentSemanticAdmission.Accepted accepted;
+        switch (DocumentSemanticAdmission.check(candidate)) {
+            case DocumentSemanticAdmission.Rejected rejected -> {
+                var violations = rejected.violations().stream().map(v -> FieldViolation.newBuilder()
+                        .setPart(v.embeddingSetId().isEmpty() ? PartSelector.newBuilder().setSegmentationId(v.segmentationId()).build()
+                                : PartSelector.newBuilder().setEmbeddingSet(EmbeddingSetKey.newBuilder()
+                                        .setSegmentationId(v.segmentationId()).setEmbeddingSetId(v.embeddingSetId())).build())
+                        .setFieldPath(v.fieldPath()).setRuleId(v.ruleId()).setMessage(v.message()).build()).toList();
+                var reason = rejected.kind() == DocumentSemanticAdmission.Kind.SEGMENTATION_MISMATCH
+                        ? RejectionReason.REJECTION_REASON_SEGMENTATION_MISMATCH : RejectionReason.REJECTION_REASON_VALIDATION_FAILED;
+                var message = rejected.kind() == DocumentSemanticAdmission.Kind.SEGMENTATION_MISMATCH
+                        ? "An embedding set does not bind to its segmentation in the composed document"
+                        : "A segmentation failed validation against the composed document";
+                return new SemanticOutcome(new SemanticRejection(reason, message, violations));
+            }
+            case DocumentSemanticAdmission.Accepted ok -> accepted = ok;
+        }
+
+        // Finalize: written CHUNKS fragments carry the computed digest; every semantic entry records its binding.
+        var prototype = DynamicMessage.getDefaultInstance(documentType);
+        for (var entry : present.entrySet()) {
+            var selector = entry.getKey();
+            var stored = entry.getValue();
+            if (selector.hasSegmentationId()) {
+                var id = selector.getSegmentationId();
+                var digest = accepted.digests().get(id);
+                if (storedFragments.containsKey(selector)) {
+                    var finalized = accepted.finalized().get(id);
+                    var bytes = withSegmentation(storedFragments.get(selector), finalized, selector, prototype);
+                    storedFragments.put(selector, bytes);
+                    var builder = stored.toBuilder();
+                    builder.getEntryBuilder().setSizeBytes(bytes.size()).setSha256(sha256(bytes)).setSegmentationDigest(digest);
+                    parts.put(selector, builder.build());
+                } else if (!stored.getEntry().getSegmentationDigest().equals(digest)) {
+                    throw new AccessionException(Status.Code.DATA_LOSS, "Stored segmentation " + id
+                            + " digest differs from its content", null);
+                }
+            } else if (storedFragments.containsKey(selector) || sourcedBytes.containsKey(selector)) {
+                var builder = stored.toBuilder();
+                builder.getEntryBuilder().setSegmentationDigest(embeddingSets.get(selector.getEmbeddingSet()).getSegmentationDigest());
+                parts.put(selector, builder.build());
+            }
+        }
+        return new SemanticOutcome(null);
+    }
+
+    /** The one segmentation a CHUNKS fragment carries. */
+    private static Segmentation segmentation(ByteString fragment) {
+        try {
+            var document = Document.parseFrom(fragment);
+            if (document.getSearchMetadata().getSegmentationsCount() != 1)
+                throw new AccessionException(Status.Code.DATA_LOSS, "CHUNKS object does not hold exactly one segmentation", null);
+            return document.getSearchMetadata().getSegmentations(0);
+        } catch (InvalidProtocolBufferException corrupt) {
+            throw new AccessionException(Status.Code.DATA_LOSS, "CHUNKS object does not decode", null, corrupt);
+        }
+    }
+
+    /** The one embedding set an EMBEDDINGS fragment carries. */
+    private static EmbeddingSet embeddingSet(ByteString fragment) {
+        try {
+            var document = Document.parseFrom(fragment);
+            if (document.getSearchMetadata().getEmbeddingSetsCount() != 1)
+                throw new AccessionException(Status.Code.DATA_LOSS, "EMBEDDINGS object does not hold exactly one embedding set", null);
+            return document.getSearchMetadata().getEmbeddingSets(0);
+        } catch (InvalidProtocolBufferException corrupt) {
+            throw new AccessionException(Status.Code.DATA_LOSS, "EMBEDDINGS object does not decode", null, corrupt);
+        }
+    }
+
+    /** A carried semantic entry's recorded digest; a PRESENT entry without one is a damaged record. */
+    private static String storedDigest(StoredPartEntry entry) {
+        var digest = entry.getEntry().getSegmentationDigest();
+        if (digest.isEmpty())
+            throw new AccessionException(Status.Code.DATA_LOSS, "Stored " + describe(entry.getEntry().getSelector())
+                    + " entry records no segmentation digest", null);
+        return digest;
+    }
+
+    /** The CHUNKS fragment with its segmentation replaced, re-encoded deterministically. */
+    private static ByteString withSegmentation(ByteString fragment, Segmentation finalized, PartSelector selector,
+            Message prototype) {
+        try {
+            var document = Document.parseFrom(fragment).toBuilder();
+            document.getSearchMetadataBuilder().setSegmentations(0, finalized);
+            var part = ai.protomolt.proto.repo.codec.PartObject.keyed(ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS,
+                    List.of(selector.getSegmentationId()), document.build().toByteArray(), "");
+            return ByteString.copyFrom(DocumentPartCodec.deterministic(part, prototype).bytes());
+        } catch (InvalidProtocolBufferException impossible) {
+            throw new IllegalStateException("A written CHUNKS fragment failed to parse again", impossible);
+        }
+    }
+
+    /** The selector a typed-admission violation belongs to: keyed parts by the element index in the admitted view. */
+    private static PartSelector violated(DocumentCandidateAdmission.Violation violation, List<PartSelector> admitted) {
+        var part = violation.part();
+        if (part != ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS
+                && part != ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_EMBEDDINGS)
+            return PartSelector.newBuilder().setPart(v2(part)).build();
+        var keyed = admitted.stream().filter(selector -> part == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS
+                ? selector.hasSegmentationId() : selector.hasEmbeddingSet()).toList();
+        var matcher = KEYED_ELEMENT.matcher(violation.fieldPath());
+        int index = matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+        if (index >= keyed.size())
+            throw new AccessionException(Status.Code.INTERNAL, "Validation names element " + index + " of " + keyed.size()
+                    + " admitted " + part + " fragments", null);
+        return keyed.get(index);
     }
 
     /**
@@ -721,10 +1015,6 @@ public final class DocumentSaves {
         }
     }
 
-    private static PartChange change(DocumentPart part, ChangeKind kind, String sha256) {
-        return PartChange.newBuilder().setSelector(PartSelector.newBuilder().setPart(part)).setKind(kind).setSha256(sha256).build();
-    }
-
     static ai.protomolt.proto.repo.v1.DocumentPart v1(DocumentPart part) {
         var mapped = PARTS.get(part);
         if (mapped == null) throw new AccessionException(Status.Code.DATA_LOSS, "Stored part " + part + " is not supported", null);
@@ -734,6 +1024,47 @@ public final class DocumentSaves {
     private static DocumentPart v2(ai.protomolt.proto.repo.v1.DocumentPart part) {
         return PARTS.entrySet().stream().filter(entry -> entry.getValue() == part).map(Map.Entry::getKey).findFirst()
                 .orElse(DocumentPart.DOCUMENT_PART_CORE);
+    }
+
+    /** The admission fragment of a stored or written object: its layout part and key. */
+    static DocumentCandidateAdmission.Fragment fragment(PartSelector selector, ByteString bytes) {
+        return switch (selector.getSelectorCase()) {
+            case PART -> new DocumentCandidateAdmission.Fragment(v1(selector.getPart()), bytes);
+            case SEGMENTATION_ID -> new DocumentCandidateAdmission.Fragment(
+                    ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS, List.of(selector.getSegmentationId()), bytes);
+            case EMBEDDING_SET -> new DocumentCandidateAdmission.Fragment(
+                    ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_EMBEDDINGS,
+                    List.of(selector.getEmbeddingSet().getSegmentationId(), selector.getEmbeddingSet().getEmbeddingSetId()), bytes);
+            default -> throw new AccessionException(Status.Code.DATA_LOSS, "Stored part has no selector", null);
+        };
+    }
+
+    /** The selector's part number: the first key of codec order. */
+    private static int rank(PartSelector selector) {
+        return switch (selector.getSelectorCase()) {
+            case SEGMENTATION_ID -> DocumentPart.DOCUMENT_PART_CHUNKS_VALUE;
+            case EMBEDDING_SET -> DocumentPart.DOCUMENT_PART_EMBEDDINGS_VALUE;
+            default -> selector.getPartValue();
+        };
+    }
+
+    /** The selector's key values, empty for a part selector. */
+    private static List<String> key(PartSelector selector) {
+        return switch (selector.getSelectorCase()) {
+            case SEGMENTATION_ID -> List.of(selector.getSegmentationId());
+            case EMBEDDING_SET -> List.of(selector.getEmbeddingSet().getSegmentationId(), selector.getEmbeddingSet().getEmbeddingSetId());
+            default -> List.of();
+        };
+    }
+
+    /** A selector for messages: the part name, or the keyed part with its IDs. */
+    static String describe(PartSelector selector) {
+        return switch (selector.getSelectorCase()) {
+            case SEGMENTATION_ID -> "CHUNKS " + selector.getSegmentationId();
+            case EMBEDDING_SET -> "EMBEDDINGS " + selector.getEmbeddingSet().getSegmentationId() + "/"
+                    + selector.getEmbeddingSet().getEmbeddingSetId();
+            default -> selector.getPart().name().replace("DOCUMENT_PART_", "");
+        };
     }
 
     static String eventId(NodeAddress address, long revision) {
