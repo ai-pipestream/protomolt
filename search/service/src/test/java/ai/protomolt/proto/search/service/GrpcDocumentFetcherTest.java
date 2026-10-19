@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -38,7 +38,7 @@ class GrpcDocumentFetcherTest {
 
     static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         @Override
-        public void getDocumentByReference(GetDocumentByReferenceRequest request,
+        public void getDocument(GetDocumentRequest request,
                 StreamObserver<GetDocumentResponse> observer) {
             if ("doc-hung".equals(request.getAddress().getDocId())) {
                 // Never answers until released: the deadline is the only
