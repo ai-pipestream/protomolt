@@ -63,10 +63,13 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
      * @param maxPayloadBytes the service-wide payload cap for the in-memory
      *        gRPC lanes; must be positive (bulk payloads beyond it belong on
      *        the HTTP lane)
+     * @param stepWriters pipeline step module IDs granted read+write on created
+     *        documents (see {@link IntakeServiceConfig#stepWriters})
      */
     public IntakeGrpcService(
-            DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes) {
-        this.ingests = new RawIngests(documents, maxPayloadBytes);
+            DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes,
+            java.util.Set<String> stepWriters) {
+        this.ingests = new RawIngests(documents, maxPayloadBytes, stepWriters);
     }
 
     @Override

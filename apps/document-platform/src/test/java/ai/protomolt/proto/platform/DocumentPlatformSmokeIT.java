@@ -18,13 +18,17 @@ import ai.protomolt.proto.parse.v1.ParseDocumentRequest;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
-import ai.protomolt.proto.repo.v1.DeleteDocumentByReferenceCommand;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetManifestRequest;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -236,10 +240,11 @@ class DocumentPlatformSmokeIT {
         assertThat(status).isEqualTo("COMPLETED");
 
         Document stored = DocumentServiceGrpc.newBlockingStub(repoChannel)
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(receipt.getAddress())
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
-                        .addParts(DocumentPart.DOCUMENT_PART_PARSED)
+                        .setSelection(PartSelection.newBuilder()
+                                .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)))
                         .build())
                 .getDocument();
         assertThat(stored.getParserResultsMap()).containsKey("text");
@@ -301,7 +306,6 @@ class DocumentPlatformSmokeIT {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
         input.put("accountId", ACCOUNT);
         JsonNode replayed = postAction("replay-documents", input);
         assertThat(replayed.path("submitted").asInt()).isGreaterThanOrEqualTo(1);
@@ -544,15 +548,21 @@ class DocumentPlatformSmokeIT {
             assertThat(status).isEqualTo("COMPLETED");
         }
 
-        DocumentServiceGrpc.newBlockingStub(repoChannel).deleteDocument(
-                ai.protomolt.proto.repo.v1.DeleteDocumentRequest.newBuilder()
-                        .setByReference(DeleteDocumentByReferenceCommand.newBuilder()
-                                .setAddress(stale.getAddress()))
-                        .build());
+        var v2Documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
+        long staleRevision = v2Documents.getManifest(GetManifestRequest.newBuilder()
+                        .setAddress(stale.getAddress()).build())
+                .getManifest().getRevision();
+        v2Documents.deleteDocument(DeleteDocumentRequest.newBuilder()
+                .setOperationId(java.util.UUID.randomUUID().toString())
+                .setAddress(stale.getAddress())
+                .setExpected(ExpectedRevision.newBuilder().setRevision(staleRevision))
+                .setReason("prune-test")
+                .build());
 
         ObjectNode reconcile = MAPPER.createObjectNode();
         reconcile.put("workflowName", "parse-and-index");
         reconcile.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        reconcile.put("accountId", ACCOUNT);
         reconcile.put("prune", true);
         JsonNode reconciled = postAction("replay-documents", reconcile);
         // The tombstoned row dropped out of the listing (so it did not

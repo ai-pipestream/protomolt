@@ -64,6 +64,8 @@ dependencies {
     // Parts-based v2 accession: the outbox relay's publisher port and the
     // streaming HTTP upload handler this host mounts.
     implementation project(':protomolt-repo-accession')
+    // Descriptor closures/fingerprints for module-contributed admission schemas.
+    implementation project(':protomolt-descriptors')
 
     runtimeOnly libs.slf4j.simple
 

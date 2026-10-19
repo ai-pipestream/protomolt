@@ -49,11 +49,13 @@ import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.service.RepoServices;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.schema.confluent.ConfluentSchemaPublisher;
 import ai.protomolt.proto.seo.SeoIndexing;
 import ai.protomolt.proto.seo.v1.Article;
@@ -190,6 +192,8 @@ class GoldenPathSystemTest {
                 "golden-docs",
                 0,
                 null, null, null, null, 0, 0L));
+        // The text parser's results embed the fleet document model as typed content.
+        repo.withAdmittedSchemas(java.util.List.of(ai.protomolt.proto.parse.document.v1.DocumentProto.getDescriptor()));
         repo.startInProcess("golden-repo");
         repoChannel = InProcessChannelBuilder.forName("golden-repo").build();
         DriveServiceGrpc.newBlockingStub(repoChannel).createDrive(CreateDriveRequest.newBuilder()
@@ -371,10 +375,11 @@ class GoldenPathSystemTest {
         assertThat(job.status).as("job error: " + job.error).isEqualTo(WorkflowRunRecord.STATUS_COMPLETED);
 
         stored = DocumentServiceGrpc.newBlockingStub(repoChannel)
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(receipt.getAddress())
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
-                        .addParts(DocumentPart.DOCUMENT_PART_PARSED)
+                        .setSelection(PartSelection.newBuilder()
+                                .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)))
                         .build())
                 .getDocument();
         assertThat(stored.getParserResultsMap()).containsKey(TextParserService.PARSER_NAME);
@@ -400,7 +405,7 @@ class GoldenPathSystemTest {
                 "parser_results", "blob_bag", "structured_data", "ownership", "doc_id_derivation"}) {
             catalog.put(Document.getDescriptor().getFullName(), skipped, ResolvedFieldHint.skipped());
         }
-        for (String skipped : new String[] {"semantic_results", "custom_fields", "metadata"}) {
+        for (String skipped : new String[] {"semantic_results", "segmentations", "embedding_sets", "custom_fields", "metadata"}) {
             catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", skipped,
                     ResolvedFieldHint.skipped());
         }
