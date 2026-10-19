@@ -18,44 +18,11 @@ The service assembly uses this factory API for S3 and Redis, including the two
 handles in its cache composition. It registers each acquired resource immediately;
 failed construction releases earlier resources in reverse order. Shutdown attempts
 all owned resources and reports failures with secondary failures suppressed.
-`RemoteBlobStore` now lives in `protomolt-repo-blob-grpc`. Update its import
-from `ai.protomolt.proto.repo.service.client.RemoteBlobStore` to
-`ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore` and recompile. Its public
-constructor borrows a generated blocking stub; the caller owns the channel.
-The client artifact excludes the repository server, SQL, Kafka and provider SDKs.
-The client uses an immutable one-to-one map from local bucket names to remote
-drive names. Single-drive constructors bind the drive name as the local bucket
-name too; passing arbitrary ignored buckets is no longer supported. Unknown
-buckets fail before RPC. Object keys and version IDs are preserved. Uploads accept
-at most 9 MiB of data and a 10 MiB serialized request, leaving room for protobuf
-fields within the service limit. Stream uploads require an exact nonnegative
-length and read at most that length plus one byte; a mismatch, oversized body
-or supplied checksum mismatch fails before the RPC. The caller owns the stream.
-The existing 9 MiB conditional-write limit is unchanged. This does not add
-multi-drive routing or streaming RPCs.
-Each RPC has a fresh 30-second timeout by default; a constructor overload accepts
-a positive `Duration`. Any shorter deadline on the supplied stub or current gRPC
-context remains effective. The client does not retry writes after a timeout,
-because a timed-out call may already have committed remotely.
-Service remote modes require `DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS` as a JSON
-object, for example `{"documents-acct-input":"upstream-input"}`. Embedders use
-`config.withRepoBucketBindings(Map.of(localBucket, remoteDrive))`. The legacy
-`repoDrive` field is retained for Java constructor compatibility but no longer
-selects routing. Operators must map existing ledger buckets to their existing
-remote drives. Each remote drive row must also persist a `RemoteDriveConfig`
-with the exact endpoint and remote drive name. The drive provider records the
-transport. Loaded rows with absent or mismatched binding metadata fail closed;
-changing routing requires an explicit storage migration and verified row update. There is no automatic fallback or key rewriting. Multiple
-local buckets cannot map to the same remote drive. Unmapped persisted drives
-fail with `FAILED_PRECONDITION`. Remote namespace provisioning remains unsupported.
-Startup rejects a remote target matching this process's in-process listener name.
-For TCP, supported targets are `host:port` and `dns:///host:port`; the actual bound
-port is compared with the target, and matching local/loopback addresses are
-rejected. A failed check closes the newly bound listener and its executor.
-This checks direct routing at startup, not later DNS changes or cycles through
-proxies or other nodes; per-call deadlines still bound those calls.
-Remote gRPC storage still uses its explicitly owned channel and is not yet a
-discovered provider.
+`RemoteBlobStore` and the `protomolt-repo-blob-grpc` artifact were retired in
+Step 5A (#320, #388): the gRPC byte-delegation client, the `repo` /
+`repo-inprocess` service blob-store modes, and their bucket-binding routing no
+longer exist. `RepoServices` rejects those modes at construction. Byte storage
+is provider-composed from the S3, Redis, and cache modules described above.
 
 Discovery opens no stores. `open(id, options, requiredCapabilities)` requires an
 installed provider and returns an `OpenedBlobStore` whose lifetime belongs to the
@@ -480,18 +447,13 @@ than running with ignored identity. This is a temporary process-authority bounda
 not completed per-account ownership enforcement. Open listeners retain their
 existing operator default and require the trusted-network deployment boundary.
 
-Remote byte-client transport failures now use `BlobStoreException`, retaining the
-original cause without exposing gRPC as the top-level library exception. The
-engine translates these into repository errors; gRPC translates them back to the
-corresponding status, including transient `UNAVAILABLE` and `DEADLINE_EXCEEDED`.
-Clients that previously caught gRPC failures directly from `RemoteBlobStore` must
-handle provider-neutral errors instead. Not-found and conditional conflict
-specializations on the byte interface remain unchanged.
-
-This translation preserves status codes and descriptions, but does not forward
-downstream gRPC trailers. Library callers can inspect the retained cause for
-diagnostics; transport-independent structured error details need an explicit
-contract before clients can rely on them across a repository proxy.
+Byte-client transport failures use the provider-neutral `BlobStoreException`,
+retaining the original cause without exposing a provider SDK as the top-level
+library exception. The engine translates these into repository errors; gRPC
+translates them back to corresponding statuses. Not-found and conditional
+conflict specializations on the byte interface remain unchanged. (The remote
+gRPC byte client that originally motivated this translation was retired in
+Step 5A; see the codec-extraction note above.)
 
 Tests compare document save, dedupe, both read forms, manifest, list and deletion
 through library and real gRPC paths against SQL and object storage. Existing HTTP,
