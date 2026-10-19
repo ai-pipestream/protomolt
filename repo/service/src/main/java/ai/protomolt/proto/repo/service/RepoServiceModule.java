@@ -65,6 +65,9 @@ public final class RepoServiceModule implements ServiceModule {
         return new ServiceMount() {
             @Override
             public void start() {
+                // All modules are wired by the time any mount starts, so co-mounted
+                // contributions (the parse module's fleet document model) are visible here.
+                services.withAdmittedSchemas(context.contributions().all(com.google.protobuf.Descriptors.FileDescriptor.class));
                 netty = services.startNetty(config.grpcPort(), credential, null);
                 services.seedAccountDrives();
                 services.startLifecycle();

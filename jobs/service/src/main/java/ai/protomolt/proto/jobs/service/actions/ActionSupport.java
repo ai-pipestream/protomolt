@@ -142,11 +142,16 @@ final class ActionSupport {
         if (full) {
             run.set("input", parse(job.input));
             for (JsonNode entry : parse(job.checkpoints == null ? "[]" : job.checkpoints)) {
-                run.append("checkpoints")
+                var checkpoint = run.append("checkpoints")
                         .set("name", entry.path("name").asText())
-                        .set("skipped", entry.path("skipped").asBoolean())
-                        .set("response", entry.path("response"))
-                        .build();
+                        .set("skipped", entry.path("skipped").asBoolean());
+                // A gate-skipped step stores no response; an unset proto3 field
+                // already reads as the output type's default instance.
+                JsonNode response = entry.path("response");
+                if (!response.isMissingNode() && !response.isNull()) {
+                    checkpoint.set("response", response);
+                }
+                checkpoint.build();
             }
             if (job.result != null) {
                 run.set("result", parse(job.result));

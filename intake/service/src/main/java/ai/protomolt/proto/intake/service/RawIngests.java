@@ -38,13 +38,22 @@ final class RawIngests {
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final long maxPayloadBytes;
+    private final java.util.Set<String> stepWriters;
+
+    /** Constructs an intake saver with the default pipeline step writers. */
+    RawIngests(DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes) {
+        this(documents, maxPayloadBytes, IntakeServiceConfig.DEFAULT_STEP_WRITERS);
+    }
 
     /**
      * @param documents the repo-service document stub every save goes through
      * @param maxPayloadBytes the service-wide payload cap for the in-memory
      *        lanes; must be positive
+     * @param stepWriters pipeline step module IDs that gain read+write ACL rules
+     *        on created documents; empty keeps documents process-authority-only
      */
-    RawIngests(DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes) {
+    RawIngests(DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes,
+            java.util.Set<String> stepWriters) {
         if (documents == null) {
             throw new IllegalArgumentException("documents stub must not be null");
         }
@@ -53,6 +62,7 @@ final class RawIngests {
         }
         this.documents = documents;
         this.maxPayloadBytes = maxPayloadBytes;
+        this.stepWriters = java.util.Set.copyOf(stepWriters);
     }
 
     /**
@@ -137,7 +147,7 @@ final class RawIngests {
             }
             content.setBlobBag(bag);
         }
-        document = content.build();
+        document = withStepWriters(content.build());
         var origin = IntakeOrigin.newBuilder().setDatasourceId(targeting.datasourceId());
         if (document.getOwnership().hasConnectorId()) origin.setConnectorId(document.getOwnership().getConnectorId());
         SaveDocumentRequest.Builder request =
@@ -267,6 +277,42 @@ final class RawIngests {
 
     static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
+     * Adds read+write ACL rules for the configured pipeline step writers to a
+     * created document, so a credential-bound step save (the parse coordinator)
+     * passes the mandatory document write check under its writer grant
+     * (requirements §3, W1). A rule the caller already named is left alone.
+     */
+    private Document withStepWriters(Document document) {
+        if (stepWriters.isEmpty()) {
+            return document;
+        }
+        var ownership = document.getOwnership();
+        var security = ownership.getSecurity();
+        var updated = security.toBuilder();
+        boolean changed = false;
+        for (String writer : stepWriters) {
+            boolean named = security.getPermissionsList().stream().anyMatch(rule ->
+                    rule.getIdentityType().equalsIgnoreCase("service") && rule.getIdentity().equalsIgnoreCase(writer));
+            if (named) {
+                continue;
+            }
+            updated.addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
+                    .setIdentityType("service").setIdentity(writer)
+                    .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ));
+            updated.addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
+                    .setIdentityType("service").setIdentity(writer)
+                    .setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE));
+            changed = true;
+        }
+        if (!changed) {
+            return document;
+        }
+        return document.toBuilder()
+                .setOwnership(ownership.toBuilder().setSecurity(updated.build()))
+                .build();
     }
 
     static byte[] sha256(byte[] data) {

@@ -56,6 +56,8 @@ public final class PostgresCatalog implements Catalog {
     private static final String OUTCOME_KEY = "catalog_operation_outcomes_pkey";
     /** Bound on the digests remembered as persisted; past it the set starts again from empty. */
     private static final int KNOWN_ARTIFACTS = 4096;
+    /** A dedicated catalog schema is a plain PostgreSQL identifier; nothing else is accepted. */
+    private static final java.util.regex.Pattern SCHEMA_NAME = java.util.regex.Pattern.compile("[a-z_][a-z0-9_]*");
     private final DataSource dataSource;
     /**
      * Schema artifact digests this process has seen committed. Rows are immutable by
@@ -68,6 +70,20 @@ public final class PostgresCatalog implements Catalog {
 
     /** Opens a pool and applies the baseline. */
     public PostgresCatalog(CatalogConfig config) {
+        this(config, null);
+    }
+
+    /**
+     * Opens a pool whose connections live in {@code schema} and applies the baseline
+     * there. A catalog co-hosted with a repository ledger database needs its own
+     * schema: the ledger's Flyway history occupies the default schema, and the
+     * baseline refuses any schema that already holds objects it did not create.
+     *
+     * @param config the pool configuration
+     * @param schema the catalog's dedicated schema name ({@code [a-z_][a-z0-9_]*}),
+     *        or null or blank for the connection default
+     */
+    public PostgresCatalog(CatalogConfig config, String schema) {
         var hikari = new HikariConfig();
         hikari.setJdbcUrl(config.jdbcUrl());
         hikari.setUsername(config.username());
@@ -78,9 +94,24 @@ public final class PostgresCatalog implements Catalog {
         hikari.setPoolName("repo-catalog");
         // An unreachable catalog surfaces as UNAVAILABLE quickly rather than as a hang.
         hikari.setConnectionTimeout(10_000);
+        String dedicated = schema == null || schema.isBlank() ? null : schema;
+        if (dedicated != null) {
+            if (!SCHEMA_NAME.matcher(dedicated).matches())
+                throw new IllegalArgumentException("Catalog schema must match [a-z_][a-z0-9_]*: " + dedicated);
+            hikari.setSchema(dedicated);
+        }
         this.owned = new HikariDataSource(hikari);
         this.dataSource = owned;
         try {
+            if (dedicated != null) {
+                // The name is validated above; DDL takes no bind parameters.
+                try (var connection = owned.getConnection(); var statement = connection.createStatement()) {
+                    statement.execute("CREATE SCHEMA IF NOT EXISTS " + dedicated);
+                    connection.commit();
+                } catch (java.sql.SQLException failure) {
+                    throw CatalogException.from("Catalog schema creation", failure);
+                }
+            }
             CatalogBaseline.apply(dataSource);
         } catch (RuntimeException failure) {
             owned.close();

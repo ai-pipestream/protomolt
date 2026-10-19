@@ -27,6 +27,7 @@ import ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper;
 import ai.protomolt.proto.repo.container.lifecycle.S3Purger;
 import ai.protomolt.proto.repo.container.lifecycle.StorageReconciler;
 import ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore;
+import ai.protomolt.proto.repo.catalog.PostgresCatalog;
 import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
 import io.grpc.BindableService;
@@ -127,6 +128,187 @@ public final class RepoServices implements AutoCloseable {
     private final KafkaProducer<String, com.google.protobuf.Message> eventProducer;
     private final KafkaProducer<String, com.google.protobuf.Message> purgeProducer;
     private final org.apache.kafka.clients.consumer.KafkaConsumer<String, byte[]> purgeConsumer;
+
+    // The parts-based v2 stack, present only in the full document profile: the catalog
+    // lives in its own schema on the ledger database, and v2 drives resolve per account
+    // through the drive ledger onto this host's blob store.
+    private final ai.protomolt.proto.repo.catalog.PostgresCatalog catalog;
+    private final ai.protomolt.proto.repo.accession.DocumentUploads v2Uploads;
+    private final ai.protomolt.proto.repo.accession.OutboxRelay v2OutboxRelay;
+    private final java.util.concurrent.ConcurrentHashMap<String, ai.protomolt.proto.repo.stack.Stack> v2Stacks =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> stepGrantsInstalled = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Schema the parts-based catalog migrates into when co-hosted with the ledger. */
+    private static final String V2_CATALOG_SCHEMA = "repo_catalog";
+    /** Schemas admitted beyond the repository contract, keyed by type URL; set before serving. */
+    private volatile java.util.Map<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>
+            admittedSchemas = java.util.Map.of();
+
+    /**
+     * Admits the message types of descriptors co-mounted modules contributed (the parse
+     * module's fleet document model), so typed {@code Any} content of those types
+     * resolves at admission instead of refusing. Composition roots call this after
+     * {@code build} and before any transport starts serving.
+     *
+     * @param contributed the contributed file descriptors
+     * @return this instance, for chaining
+     */
+    public RepoServices withAdmittedSchemas(java.util.List<com.google.protobuf.Descriptors.FileDescriptor> contributed) {
+        java.util.Objects.requireNonNull(contributed);
+        if (contributed.isEmpty()) {
+            return this;
+        }
+        var byTypeUrl = new java.util.HashMap<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition>();
+        for (var file : contributed) {
+            for (var type : file.getMessageTypes()) {
+                registerAdmitted(type, byTypeUrl);
+            }
+        }
+        this.admittedSchemas = java.util.Map.copyOf(byTypeUrl);
+        return this;
+    }
+
+    private static void registerAdmitted(com.google.protobuf.Descriptors.Descriptor type,
+            java.util.Map<String, ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition> out) {
+        var closure = ai.protomolt.proto.descriptors.DescriptorFingerprints.closure(type);
+        var bytes = closure.toByteString();
+        String artifactSha;
+        try {
+            artifactSha = java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
+        } catch (java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("SHA-256 unavailable", failure);
+        }
+        var metadata = ai.protomolt.proto.repo.v1.RepositorySchemaAsset.newBuilder()
+                .setTypeUrl("type.googleapis.com/" + type.getFullName())
+                .setArtifactSha256(artifactSha)
+                .setSchema(ai.protomolt.proto.repo.v1.PublicationSchemaCondition.newBuilder()
+                        .setTypeName(type.getFullName())
+                        .setDescriptorFingerprint(ai.protomolt.proto.descriptors.DescriptorFingerprints.fingerprint(closure)))
+                .setCompilation(ai.protomolt.proto.repo.v1.SchemaCompilationProvenance.newBuilder()
+                        .setOrigin(ai.protomolt.proto.repo.v1.SchemaCompilationOrigin.SCHEMA_COMPILATION_ORIGIN_IMPORTED_DESCRIPTOR)
+                        .setEvidence(ai.protomolt.proto.repo.v1.SchemaCompilerEvidence.SCHEMA_COMPILER_EVIDENCE_UNKNOWN)
+                        .setUnknownCompilerReason("Descriptor contributed by a co-mounted module")
+                        .setAdmissionRuntime(ai.protomolt.proto.repo.admission.BuiltinDocumentSchema.admissionRuntime()))
+                .build();
+        out.put(metadata.getTypeUrl(),
+                new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Definition(metadata, bytes, java.util.Optional.empty()));
+        for (var nested : type.getNestedTypes()) {
+            registerAdmitted(nested, out);
+        }
+    }
+
+    /** Deterministic credential the step-save interceptor binds co-mounted step writes to. */
+    private static final java.util.UUID INTERNAL_STEP_CREDENTIAL_ID = java.util.UUID.nameUUIDFromBytes(
+            "repo-service:internal-step-credential".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    /** Carries the account a rebound step save acts on from the interceptor to the binding. */
+    private static final io.grpc.Context.Key<java.util.Set<String>> CURRENT_STEP_ACCOUNT =
+            io.grpc.Context.key("repo-service-step-save-accounts");
+    /** Carries the module ID of a rebound step save from the interceptor to the binding. */
+    private static final io.grpc.Context.Key<String> CURRENT_STEP_MODULE =
+            io.grpc.Context.key("repo-service-step-save-module");
+
+    /**
+     * Rebinds v2 step saves that arrive with process authority (in-process or
+     * operator-token callers, e.g. a co-mounted parse coordinator) to the internal
+     * step credential, so the writer-authority grant check applies to them. The
+     * service reads the caller at half-close, so the rebound context wraps both
+     * {@code onMessage} and {@code onHalfClose}.
+     */
+    private final io.grpc.ServerInterceptor stepSaveInterceptor = new io.grpc.ServerInterceptor() {
+        @Override public <ReqT, RespT> io.grpc.ServerCall.Listener<ReqT> interceptCall(
+                io.grpc.ServerCall<ReqT, RespT> call, io.grpc.Metadata headers,
+                io.grpc.ServerCallHandler<ReqT, RespT> next) {
+            return new io.grpc.ForwardingServerCallListener.SimpleForwardingServerCallListener<>(next.startCall(call, headers)) {
+                private io.grpc.Context stepContext;
+                @Override public void onMessage(ReqT message) {
+                    if (stepContext == null
+                            && ai.protomolt.proto.authz.grpc.CallerContexts.current().unrestricted()
+                            && message instanceof ai.protomolt.proto.repo.v2.SaveDocumentRequest save
+                            && save.getOwner().hasStep()) {
+                        String accountId = save.getTarget().getAddress().getAccountId();
+                        String moduleId = save.getOwner().getStep().getModuleId();
+                        if (!accountId.isBlank() && !moduleId.isBlank()) {
+                            ensureStepGrant(accountId, moduleId);
+                            var stepCaller = ai.protomolt.proto.actions.Caller.scoped("internal-step-writer", java.util.Set.of());
+                            stepContext = io.grpc.Context.current().withValues(
+                                    ai.protomolt.proto.authz.grpc.CallerContexts.CALLER, stepCaller,
+                                    ai.protomolt.proto.authz.grpc.CallerContexts.AUTHENTICATED_CALLER,
+                                            new ai.protomolt.proto.authz.AuthenticatedCaller(stepCaller, java.util.Optional.of(
+                                                    new ai.protomolt.proto.authz.CredentialBinding(
+                                                            "repo-service", INTERNAL_STEP_CREDENTIAL_ID, 1))),
+                                    CURRENT_STEP_ACCOUNT, java.util.Set.of(accountId),
+                                    CURRENT_STEP_MODULE, moduleId);
+                        }
+                    }
+                    if (stepContext != null) stepContext.run(() -> super.onMessage(message));
+                    else super.onMessage(message);
+                }
+                @Override public void onHalfClose() {
+                    if (stepContext != null) stepContext.run(() -> super.onHalfClose());
+                    else super.onHalfClose();
+                }
+            };
+        }
+    };
+
+    /**
+     * v2 caller binding: the general case preserves the authenticated principal exactly
+     * (process authority stays process authority, scoped callers stay scoped to no
+     * repository accounts, as v1 does); the internal step credential rebinds to the
+     * account the step-save interceptor recorded for this call.
+     */
+    private RepositoryCaller bindV2Caller(ai.protomolt.proto.authz.AuthenticatedCaller auth) {
+        var binding = auth.binding();
+        if (binding.isPresent() && "repo-service".equals(binding.get().issuer())
+                && INTERNAL_STEP_CREDENTIAL_ID.equals(binding.get().credentialId()) && binding.get().generation() == 1) {
+            var accounts = CURRENT_STEP_ACCOUNT.get();
+            var moduleId = CURRENT_STEP_MODULE.get();
+            // The step's service identity lets the document's ACL name which pipeline
+            // modules may advance it (intake writes those rules at creation).
+            var identities = moduleId == null ? java.util.Set.<ai.protomolt.proto.repo.v1.Principal>of()
+                    : java.util.Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder()
+                            .setIdentityType("service").setIdentity(moduleId).build());
+            return new RepositoryCaller(auth.caller().name(), false,
+                    accounts == null ? java.util.Set.of() : accounts, identities,
+                    java.util.Optional.of(new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding(
+                            "repo-service", INTERNAL_STEP_CREDENTIAL_ID, 1)));
+        }
+        return new RepositoryCaller(auth.caller().name(), auth.caller().unrestricted(),
+                java.util.Set.of(), java.util.Set.of(),
+                binding.map(b -> new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding(
+                        b.issuer(), b.credentialId(), b.generation())));
+    }
+
+    /** Installs the built-in step-writer grant for (account, module) once per process. */
+    private void ensureStepGrant(String accountId, String moduleId) {
+        if (!stepGrantsInstalled.add(accountId + "|" + moduleId)) return;
+        try {
+            var grant = ai.protomolt.proto.repo.v2.WriterGrant.newBuilder()
+                    .setGrantId("builtin-step:" + accountId + ":" + moduleId)
+                    .setAccountId(accountId)
+                    .setCredential(ai.protomolt.proto.repo.v2.WriterCredential.newBuilder()
+                            .setIssuer("repo-service")
+                            .setCredentialId(INTERNAL_STEP_CREDENTIAL_ID.toString()))
+                    .setStep(ai.protomolt.proto.repo.v2.StepWriterScope.newBuilder().setModuleId(moduleId))
+                    .build();
+            boolean present = catalog.grants(accountId, "repo-service", INTERNAL_STEP_CREDENTIAL_ID).stream()
+                    .anyMatch(existing -> !existing.revoked() && existing.grant().equals(grant));
+            if (!present) {
+                try {
+                    catalog.installGrant(grant);
+                } catch (RuntimeException concurrent) {
+                    boolean nowPresent = catalog.grants(accountId, "repo-service", INTERNAL_STEP_CREDENTIAL_ID).stream()
+                            .anyMatch(existing -> !existing.revoked() && existing.grant().equals(grant));
+                    if (!nowPresent) throw concurrent;
+                }
+            }
+        } catch (RuntimeException failure) {
+            stepGrantsInstalled.remove(accountId + "|" + moduleId);
+            throw failure;
+        }
+    }
 
     private final List<GrpcServerLifetime> servers = new CopyOnWriteArrayList<>();
     private final List<UploadHttpServer> httpServers = new CopyOnWriteArrayList<>();
@@ -358,10 +540,101 @@ public final class RepoServices implements AutoCloseable {
                     managedArchive == null ? null : managedArchive.reader,
                     managedArchive == null ? null : managedArchive.writer, archiveAdmission, archiveReadAdmission);
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
+            ai.protomolt.proto.repo.accession.AccessionGrpcService accession = null;
+            PostgresCatalog v2Catalog = null;
+            ai.protomolt.proto.repo.accession.DocumentUploads v2Uploads = null;
+            ai.protomolt.proto.repo.accession.OutboxRelay v2Relay = null;
+            if (bounded == null && boundedDocuments == null) {
+                // The parts-based v2 document service, mounted next to v1 until Step 5
+                // retires the v1 surface. The catalog shares the ledger's database in
+                // its own schema; the ledger's Flyway history occupies the default one.
+                final PostgresCatalog catalog = owned.add(new PostgresCatalog(
+                        new ai.protomolt.proto.repo.catalog.CatalogConfig(config.ledger().jdbcUrl(),
+                                config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
+                        V2_CATALOG_SCHEMA));
+                v2Catalog = catalog;
+                java.util.function.Function<DriveRecord, ai.protomolt.proto.repo.stack.Stack> stackForDrive = record -> {
+                    String prefix = ai.protomolt.proto.repo.codec.RepositoryNamespaces.under(
+                            record.prefix == null ? "" : record.prefix.replaceFirst("^/+", ""), "documents");
+                    String stackId = catalog.registerStack(ai.protomolt.proto.repo.v2.StackRecord.newBuilder()
+                            .setStackId("stack-" + record.driveId)
+                            .setProvider(selectedDriveProvider)
+                            .setEndpoint(config.s3Endpoint() == null ? "" : config.s3Endpoint())
+                            .setNamespace(record.bucket + "/" + prefix)
+                            .build());
+                    return v2Stacks.computeIfAbsent(stackId,
+                            id -> new ai.protomolt.proto.repo.stack.BlobStoreStack(id, blobStore, record.bucket, prefix));
+                };
+                var v2Drives = ai.protomolt.proto.repo.accession.DocumentSaves.Drives.dynamic("intake",
+                        (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
+                                .or(() -> "default".equals(driveName) ? driveLedger.findByName(accountId, "intake")
+                                        : java.util.Optional.<DriveRecord>empty())
+                                .map(stackForDrive),
+                        stackId -> {
+                            var cached = v2Stacks.get(stackId);
+                            if (cached != null) return java.util.Optional.of(cached);
+                            // A peer host may have written the revision; resolve the drive directly by primary key.
+                            if (!stackId.startsWith("stack-")) return java.util.Optional.empty();
+                            try {
+                                var driveId = java.util.UUID.fromString(stackId.substring("stack-".length()));
+                                return driveLedger.findById(driveId).map(stackForDrive);
+                            } catch (IllegalArgumentException malformed) {
+                                return java.util.Optional.empty();
+                            }
+                        });
+                var limits = new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024,
+                        64, 4L * 1024 * 1024, 32, 32L * 1024 * 1024, 64 * 1024 * 1024);
+                ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolver builtinSchemas =
+                        selection -> {
+                            if (selection.typeUrl().equals("type.googleapis.com/ai.protomolt.proto.repo.v1.SearchMetadata"))
+                                return ai.protomolt.proto.repo.admission.BuiltinDocumentSchema.definition(
+                                        ai.protomolt.proto.repo.v1.SearchMetadata.getDescriptor());
+                            // Module-contributed schemas (the fleet document model).
+                            return admittedSchemas.get(selection.typeUrl());
+                        };
+                var v2Saves = new ai.protomolt.proto.repo.accession.DocumentSaves(catalog, v2Drives, builtinSchemas,
+                        limits, bytes -> () -> {}, java.time.Clock.systemUTC());
+                v2Uploads = new ai.protomolt.proto.repo.accession.DocumentUploads(v2Saves);
+                accession = new ai.protomolt.proto.repo.accession.AccessionGrpcService(v2Saves, v2Uploads,
+                        new ai.protomolt.proto.repo.accession.DocumentReads(catalog, v2Drives, limits,
+                                bytes -> () -> {}, java.time.Clock.systemUTC()),
+                        new ai.protomolt.proto.repo.accession.DocumentDeletes(catalog, java.time.Clock.systemUTC()),
+                        new ai.protomolt.proto.repo.accession.DocumentLists(catalog),
+                        new ai.protomolt.proto.repo.accession.DocumentPurges(catalog, v2Drives,
+                                (identity, tenant) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false),
+                                java.time.Clock.systemUTC()),
+                        this::bindV2Caller);
+                // Co-mounted step writers (the parse coordinator) save with process
+                // authority; the step-save interceptor rebinds those calls to this
+                // credential. Idempotent across nodes sharing this catalog.
+                if (catalog.credential("repo-service", INTERNAL_STEP_CREDENTIAL_ID).isEmpty()) {
+                    try {
+                        catalog.registerCredential("repo-service", INTERNAL_STEP_CREDENTIAL_ID, "internal-step-writer");
+                    } catch (RuntimeException concurrent) {
+                        if (catalog.credential("repo-service", INTERNAL_STEP_CREDENTIAL_ID).isEmpty()) throw concurrent;
+                    }
+                }
+                if (config.kafkaEnabled()) {
+                    var publisher = owned.add(new KafkaOutboxPublisher(config.kafkaBootstrapServers(),
+                            config.kafkaTopic(), config.schemaRegistryUrl()));
+                    v2Relay = new ai.protomolt.proto.repo.accession.OutboxRelay(catalog, publisher);
+                }
+            }
+            this.catalog = v2Catalog;
+            this.v2Uploads = v2Uploads;
+            this.v2OutboxRelay = v2Relay;
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
                     documentService,
                     new ArchiveGrpcService(archiveOperations),
                     new DriveGrpcService(driveOperations)));
+            if (accession != null) {
+                var accessionImpl = accession;
+                configuredServices.add(new BindableService() {
+                    @Override public io.grpc.ServerServiceDefinition bindService() {
+                        return io.grpc.ServerInterceptors.intercept(accessionImpl, stepSaveInterceptor);
+                    }
+                });
+            }
             if (managedArchive != null) configuredServices.add(new ArchiveMutationGrpcService(managedArchive.mutations));
             this.services = List.copyOf(configuredServices);
             // The lifecycle engine (two-phase delete): stateless workers over the
@@ -751,7 +1024,12 @@ public final class RepoServices implements AutoCloseable {
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (rawIngestion != null) startLifecycle();
-        UploadHttpServer http = new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
+        // The default profile has no managed raw ingestion; the parts-based upload
+        // handler owns the document route there. Managed storage keeps the legacy port.
+        UploadHttpServer http = rawIngestion == null && v2Uploads != null
+                ? new UploadHttpServer(v2Uploads, () -> new RepositoryCaller("http-upload", true), apiToken,
+                        archiveOperations)
+                : new UploadHttpServer(rawIngestion, apiToken, archiveOperations);
         httpServers.add(http);
         try {
             http.start(port);
@@ -877,6 +1155,19 @@ public final class RepoServices implements AutoCloseable {
                     // Idle backoff: work left → drain again immediately; empty → wait.
                     if (published == 0) {
                         sleep(config.purgeIntervalMs());
+                    }
+                });
+            }
+            if (v2OutboxRelay != null) {
+                startLifecycleThread("repo-v2-outbox-relay", () -> {
+                    try {
+                        int relayed = v2OutboxRelay.relayOnce(RELAY_BATCH_SIZE);
+                        // Idle backoff: work left → relay again immediately; empty → wait.
+                        if (relayed == 0) {
+                            sleep(config.purgeIntervalMs());
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
                     }
                 });
             }

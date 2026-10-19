@@ -48,7 +48,7 @@ public final class IntakeServices implements AutoCloseable {
         this.ownsRepoChannel = borrowedRepoChannel == null;
         this.repoChannel = ownsRepoChannel ? openRepoChannel(config.repoTarget()) : borrowedRepoChannel;
         this.documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
-        IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes());
+        IntakeGrpcService intake = new IntakeGrpcService(documents, config.maxPayloadBytes(), config.stepWriters());
         this.intakeService =
                 ServerInterceptors.intercept(intake, new ApiKeyServerInterceptor(resolver));
     }
@@ -129,7 +129,7 @@ public final class IntakeServices implements AutoCloseable {
     public IntakeHttpServer startHttp(int port) {
         IntakeHttpServer http =
                 new IntakeHttpServer(
-                        new RawIngests(documents, config.maxPayloadBytes()), resolver);
+                        new RawIngests(documents, config.maxPayloadBytes(), config.stepWriters()), resolver);
         http.start(port);
         httpServers.add(http);
         return http;

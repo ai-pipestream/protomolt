@@ -111,20 +111,48 @@ class UploadHttpServerIT {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("another physical profile");
     }
 
-    @Test void disabledManagedStorageRefusesUploadsWithoutLegacyFallback() throws Exception {
+    @Test void defaultProfileServesUploadsThroughTheV2Handler() throws Exception {
         try (var disabled = RepoServices.build(config)) {
             var endpoint = disabled.startHttp(0, "synthetic-http-operator-key");
+            var body = new byte[] {1};
+            String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
             var request = HttpRequest.newBuilder(URI.create("http://localhost:" + endpoint.port()
                     + UploadHttpServer.UPLOAD_PATH + "?account_id=" + ACCOUNT + "&datasource_id=" + DATASOURCE
-                    + "&drive=" + DRIVE + "&filename=disabled.bin&doc_id=disabled-upload"))
+                    + "&drive=" + DRIVE + "&filename=disabled.bin&doc_id=disabled-upload"
+                    + "&operation_id=op-disabled-upload"))
                     .header("api_token", "synthetic-http-operator-key")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1})).build();
+                    .header("X-Content-Sha256", sha256)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            assertThat(response.statusCode()).isEqualTo(503);
-            assertThat(response.body()).contains("Managed document ingestion is not configured");
+            // The parts-based handler owns the route in the default profile.
+            assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+            assertThat(response.body()).contains("\"doc_id\":\"disabled-upload\"", "\"revision\":1",
+                    "\"replayed\":false", "\"sha256\":\"" + sha256 + "\"");
+            // The v1 ledger stays empty: the parts-based catalog holds the upload.
             assertThat(disabled.documentLedger().findByReference(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder()
                     .setAccountId(ACCOUNT).setDocId("disabled-upload").setGraphId("intake:" + ACCOUNT)
                     .setGraphAddressId(DATASOURCE).build())).isEmpty();
+            // Legacy StorageReconciler must never delete live v2 stack objects.
+            var drive = disabled.driveLedger().findByName(ACCOUNT, DRIVE).orElseThrow();
+            var report = new ai.protomolt.proto.repo.container.lifecycle.StorageReconciler(disabled.documentLedger())
+                    .reconcile(disabled.blobStore(), drive.bucket, drive.prefix, java.time.Duration.ZERO, false);
+            assertThat(report.deleted()).isZero();
+        }
+        // A fresh cold host (empty v2Stacks cache) resolves the persisted stackId by drive primary key and reads back.
+        try (var coldHost = RepoServices.build(config)) {
+            coldHost.startInProcess("it-http-default-cold");
+            var v2Channel = InProcessChannelBuilder.forName("it-http-default-cold").build();
+            try {
+                var readBack = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(v2Channel)
+                        .getDocument(ai.protomolt.proto.repo.v2.GetDocumentRequest.newBuilder()
+                                .setAddress(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder()
+                                        .setAccountId(ACCOUNT).setDocId("disabled-upload")
+                                        .setGraphId("intake:" + ACCOUNT).setGraphAddressId(DATASOURCE))
+                                .build());
+                assertThat(readBack.getManifest().getRevision()).isEqualTo(1);
+            } finally {
+                v2Channel.shutdownNow();
+            }
         }
     }
 

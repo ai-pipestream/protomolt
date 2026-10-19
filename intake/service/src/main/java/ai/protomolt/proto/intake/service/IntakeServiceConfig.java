@@ -14,15 +14,24 @@ package ai.protomolt.proto.intake.service;
  *        means the HTTP lane is off in the standalone main (embedded hosts
  *        call {@code IntakeServices.startHttp(0)} directly for an ephemeral
  *        port)
+ * @param stepWriters pipeline step module IDs (service identities) that gain
+ *        read+write ACL rules on every document intake creates, so a
+ *        credential-bound step save (the parse coordinator) can advance the
+ *        document under its writer grant; empty means intake-created
+ *        documents stay writable by process authority only
  */
 public record IntakeServiceConfig(
-        int grpcPort, String repoTarget, long maxPayloadBytes, int httpPort) {
+        int grpcPort, String repoTarget, long maxPayloadBytes, int httpPort,
+        java.util.Set<String> stepWriters) {
 
     /** Prefix selecting an in-process repo channel: {@code inprocess:<name>}. */
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
 
     /** The default service payload cap: 64 MiB. */
     public static final long DEFAULT_MAX_PAYLOAD_BYTES = 64L * 1024 * 1024;
+
+    /** The default step-writer set: the reference pipeline's parse step. */
+    public static final java.util.Set<String> DEFAULT_STEP_WRITERS = java.util.Set.of("parse-coordinator");
 
     /** Env var naming the repo-service target ({@code host:port}). */
     public static final String ENV_REPO_TARGET = "DOCUMENT_PLATFORM_INTAKE_REPO_TARGET";
@@ -36,15 +45,26 @@ public record IntakeServiceConfig(
     /** Env var for the HTTP upload lane's port ({@code 0}/absent = the lane is off). */
     public static final String ENV_HTTP_PORT = "DOCUMENT_PLATFORM_INTAKE_HTTP_PORT";
 
+    /** Env var for the comma-separated step-writer identities ({@code ""} = none). */
+    public static final String ENV_STEP_WRITERS = "DOCUMENT_PLATFORM_INTAKE_STEP_WRITERS";
+
     /** The default intake gRPC port. */
     public static final int DEFAULT_GRPC_PORT = 9092;
 
     /**
      * Compatibility constructor: the three pre-HTTP-lane components, with the
-     * HTTP lane off.
+     * HTTP lane off and the default step writers.
      */
     public IntakeServiceConfig(int grpcPort, String repoTarget, long maxPayloadBytes) {
         this(grpcPort, repoTarget, maxPayloadBytes, 0);
+    }
+
+    /**
+     * Compatibility constructor: the four pre-step-writer components, with the
+     * default step writers.
+     */
+    public IntakeServiceConfig(int grpcPort, String repoTarget, long maxPayloadBytes, int httpPort) {
+        this(grpcPort, repoTarget, maxPayloadBytes, httpPort, DEFAULT_STEP_WRITERS);
     }
 
     public IntakeServiceConfig {
@@ -60,12 +80,13 @@ public record IntakeServiceConfig(
         if (httpPort < 0) {
             throw new IllegalArgumentException("httpPort must not be negative");
         }
+        stepWriters = java.util.Set.copyOf(stepWriters);
     }
 
     /**
      * Reads the configuration from {@code DOCUMENT_PLATFORM_INTAKE_*}
      * environment variables; the repo target is required, everything else
-     * falls back to defaults (HTTP lane off).
+     * falls back to defaults (HTTP lane off, default step writers).
      */
     public static IntakeServiceConfig fromEnvironment() {
         String repoTarget = System.getenv(ENV_REPO_TARGET);
@@ -75,10 +96,14 @@ public record IntakeServiceConfig(
         String port = System.getenv(ENV_GRPC_PORT);
         String cap = System.getenv(ENV_MAX_PAYLOAD_BYTES);
         String httpPort = System.getenv(ENV_HTTP_PORT);
+        String writers = System.getenv(ENV_STEP_WRITERS);
         return new IntakeServiceConfig(
                 port == null || port.isBlank() ? DEFAULT_GRPC_PORT : Integer.parseInt(port),
                 repoTarget,
                 cap == null || cap.isBlank() ? DEFAULT_MAX_PAYLOAD_BYTES : Long.parseLong(cap),
-                httpPort == null || httpPort.isBlank() ? 0 : Integer.parseInt(httpPort));
+                httpPort == null || httpPort.isBlank() ? 0 : Integer.parseInt(httpPort),
+                writers == null ? DEFAULT_STEP_WRITERS
+                        : java.util.Arrays.stream(writers.split(",")).map(String::trim)
+                                .filter(writer -> !writer.isEmpty()).collect(java.util.stream.Collectors.toSet()));
     }
 }
