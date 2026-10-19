@@ -74,7 +74,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Receipt.</b> 200 with the {@code IngestDocumentResponse} receipt
  * rendered as JSON (proto field names, no-presence fields included) — the
- * same vocabulary every lane answers: {@code doc_id}, {@code node_id},
+ * same vocabulary every lane answers: {@code doc_id}, {@code revision},
  * {@code address}, {@code drive}, {@code size_bytes}, {@code sha256},
  * {@code deduplicated}.
  */
@@ -198,6 +198,15 @@ public final class IntakeHttpServer implements AutoCloseable {
             throw new HttpError(400, "datasource_id is required (query parameter or header)");
         }
         String drive = identity(exchange, query, "drive", "x-drive-name");
+        var expected = ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true);
+        String revision = identity(exchange, query, "expected_revision", "x-expected-revision");
+        if (revision != null) {
+            try { expected.setRevision(Long.parseLong(revision)); }
+            catch (NumberFormatException invalid) {
+                throw new HttpError(400, "expected_revision must be a positive integer");
+            }
+            RawIngests.requireExpected(expected.build());
+        }
         String filename = identity(exchange, query, "filename", "x-filename");
         String contentType = query.get("content_type");
         if (contentType == null || contentType.isBlank()) {
@@ -222,18 +231,18 @@ public final class IntakeHttpServer implements AutoCloseable {
                         ByteString.copyFrom(payload),
                         filename == null ? "" : filename,
                         contentType == null || contentType.isBlank() ? "" : contentType.trim(),
-                        Map.of());
+                        Map.of(), expected.build());
         LOG.debug("HTTP intake saved doc_id={} ({} bytes, sha256={}, deduplicated={})",
-                saved.response().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
-                saved.response().getDeduplicated());
+                saved.response().getAccession().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
+                saved.response().getReplayed());
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAddress().getDocId())
-                .setNodeId(saved.response().getNodeId())
-                .setAddress(saved.response().getAddress())
-                .setDrive(saved.response().getDrive())
+                .setDocId(saved.response().getAccession().getAddress().getDocId())
+                .setRevision(saved.response().getAccession().getRevision())
+                .setAddress(saved.response().getAccession().getAddress())
+                .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getDeduplicated())
+                .setDeduplicated(saved.response().getReplayed())
                 .build();
     }
 

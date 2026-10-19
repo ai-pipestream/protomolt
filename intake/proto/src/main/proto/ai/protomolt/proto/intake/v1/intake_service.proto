@@ -4,6 +4,8 @@ package ai.protomolt.proto.intake.v1;
 
 import "ai/protomolt/proto/repo/v1/address.proto";
 import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/repo/v2/document_service.proto";
 
 option java_multiple_files = true;
 option java_package = "ai.protomolt.proto.intake.v1";
@@ -71,6 +73,9 @@ message IngestDocumentRequest {
   // Drive to save to. Must be within the key's allowed drives; default is
   // the account's "intake" drive.
   optional string drive = 4;
+  // Omit for create. Updates name the last observed revision. Retain this
+  // expectation on retries; intake never retries against a newer revision.
+  ai.protomolt.proto.repo.v2.ExpectedRevision expected = 5;
   // Extensible key-value metadata forwarded onto the repo save
   // (extension-metadata map — see the convention in repo's document.proto).
   map<string, string> metadata = 99;
@@ -80,6 +85,8 @@ message IngestDocumentRequest {
 // FIRST frame of an IngestStream call; mirrors the targeting fields of
 // IngestDocumentRequest plus the RawPayload description fields.
 message IngestMetadata {
+  // Same expectation as the unary lane; omitted means create.
+  ai.protomolt.proto.repo.v2.ExpectedRevision expected = 5;
   // Datasource to ingest under; same scope rule as IngestDocumentRequest.
   string datasource_id = 1;
   // Drive to save to; default is the account's "intake" drive.
@@ -117,9 +124,9 @@ message IngestStreamRequest {
 message IngestDocumentResponse {
   // The document id the row was stored under (caller-preserved or derived).
   string doc_id = 1;
-  // The repository node id assigned to the stored state (derived echo of
-  // `address`; never truth — see repo's address.proto).
-  string node_id = 2;
+  // v1 node identity is replaced by the canonical address and exact revision.
+  reserved 2;
+  reserved "node_id";
   // The stored row's canonical storage address.
   ai.protomolt.proto.repo.v1.NodeAddress address = 3;
   // Drive the document was stored on.
@@ -129,9 +136,10 @@ message IngestDocumentResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when the save was elided by the SHA-256 intake dedupe (identical
-  // content already stored; the existing coordinates are echoed).
+  // True when an identical intake intent replayed its recorded outcome.
   bool deduplicated = 7;
+  // Exact committed repository revision, unchanged on an identical retry.
+  int64 revision = 8;
 }
 
 // The streaming lane's intake receipt. Field-for-field the same receipt as
@@ -140,9 +148,9 @@ message IngestDocumentResponse {
 message IngestStreamResponse {
   // The document id the row was stored under (caller-preserved or derived).
   string doc_id = 1;
-  // The repository node id assigned to the stored state (derived echo of
-  // `address`; never truth — see repo's address.proto).
-  string node_id = 2;
+  // v1 node identity is replaced by the canonical address and exact revision.
+  reserved 2;
+  reserved "node_id";
   // The stored row's canonical storage address.
   ai.protomolt.proto.repo.v1.NodeAddress address = 3;
   // Drive the document was stored on.
@@ -152,9 +160,10 @@ message IngestStreamResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when the save was elided by the SHA-256 intake dedupe (identical
-  // content already stored; the existing coordinates are echoed).
+  // True when an identical intake intent replayed its recorded outcome.
   bool deduplicated = 7;
+  // Exact committed repository revision, unchanged on an identical retry.
+  int64 revision = 8;
 }
 
 // The only authenticated way in: ingest into repo-service.
@@ -164,6 +173,12 @@ message IngestStreamResponse {
 // header for the full auth model and the UNAUTHENTICATED vs
 // PERMISSION_DENIED split.
 service IntakeService {
+  // Tombstone an intake document at the caller's last observed revision.
+  // Account, intake graph and datasource must match the authenticated scope.
+  // Stale deletes fail ABORTED; intake never refreshes the expected revision.
+  rpc DeleteDocument(ai.protomolt.proto.repo.v2.DeleteDocumentRequest)
+      returns (ai.protomolt.proto.repo.v2.DeleteDocumentResponse);
+
   // Ingest one document (typed Document or raw payload) in a single call.
   rpc IngestDocument(IngestDocumentRequest) returns (IngestDocumentResponse);
 

@@ -913,9 +913,16 @@ public final class DocumentSaves {
             newObjects.add(uploaded.getRef());
             blobRefs.add(uploaded);
         }
+        // Reuse only this document's authorized base revision, in the selected
+        // stack. Admission above still validates every PUT; this changes storage
+        // allocation, not the revision, writer evidence or operation identity.
+        var reusable = new HashMap<ContentIdentity, StackRef>();
+        base.ifPresent(stored -> stored.getPartsList().forEach(part -> {
+            if (part.hasRef()) rememberReusable(stack, reusable, part.getRef());
+            part.getBlobRefsList().forEach(blob -> rememberReusable(stack, reusable, blob.getRef()));
+        }));
         for (var raw : rawBlobs) {
-            var ref = put(stack, raw.data());
-            newObjects.add(ref);
+            var ref = putOrReuse(stack, raw.data(), reusable, newObjects);
             blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
         }
         if (!blobRefs.isEmpty() && storedFragments.containsKey(BLOBS_SELECTOR))
@@ -923,8 +930,7 @@ public final class DocumentSaves {
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
             var selector = write.getSelector();
-            var ref = put(stack, storedFragments.get(selector));
-            newObjects.add(ref);
+            var ref = putOrReuse(stack, storedFragments.get(selector), reusable, newObjects);
             var entry = parts.get(selector).toBuilder().setRef(ref);
             if (selector.equals(BLOBS_SELECTOR)) entry.addAllBlobRefs(blobRefs);
             parts.put(selector, entry.build());
@@ -1683,6 +1689,23 @@ public final class DocumentSaves {
         if (types.size() > 64) types.clear();
         types.put(digest, type);
         return type;
+    }
+
+    private record ContentIdentity(String sha256, long length) {}
+
+    private static void rememberReusable(Stack stack, Map<ContentIdentity, StackRef> reusable, StackRef ref) {
+        if (ref.getStackId().equals(stack.stackId()))
+            reusable.putIfAbsent(new ContentIdentity(ref.getSha256(), ref.getLength()), ref);
+    }
+
+    private static StackRef putOrReuse(Stack stack, ByteString bytes, Map<ContentIdentity, StackRef> reusable,
+            List<StackRef> newObjects) {
+        var existing = reusable.get(new ContentIdentity(sha256(bytes), bytes.size()));
+        if (existing != null) return existing;
+        var ref = put(stack, bytes);
+        newObjects.add(ref);
+        rememberReusable(stack, reusable, ref);
+        return ref;
     }
 
     /** Writes one object and checks the stack's reference against the bytes it was given. */

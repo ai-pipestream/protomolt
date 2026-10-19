@@ -111,21 +111,47 @@ class CarryForwardIT {
         assertThat(read(1)).isEqualTo(claimChecked(original, r1));
     }
 
-    // Storage keys are never derived from content: rewriting identical bytes is a new object and a REPLACED change.
-    @Test void rewritingIdenticalBytesIsANewObjectWithTheSameDigest() {
+    // Identical PUT bytes reuse the authorized base object, but still record a REPLACED change.
+    @Test void rewritingIdenticalBytesReusesBaseStackObjectWithReplacedChange() {
         var original = document(account, "doc-carry", "v1");
         f.saves.save(processAuthority(), create("op-1", address, original).build());
+        f.stack.reset();
         var parsed = Document.newBuilder().putAllParserResults(original.getParserResultsMap()).build();
         save("op-2", 2, parsed, put(PARSED));
         var before = entry(manifest(1), PARSED);
         var after = entry(manifest(2), PARSED);
         assertThat(after.getEntry().getSha256()).isEqualTo(before.getEntry().getSha256());
-        assertThat(after.getRef().getKey()).isNotEqualTo(before.getRef().getKey());
+        assertThat(after.getRef()).isEqualTo(before.getRef());
+        assertThat(f.stack.puts.get()).isZero();
         assertThat(after.getEntry().getWrittenInRevision()).isEqualTo(2);
         assertChanges(f.catalog.events(address).get(1), PARSED, ChangeKind.CHANGE_KIND_REPLACED);
         assertThat(manifest(2).getValidation().getCandidateSha256())
                 .as("the candidate is the same parts in the same states")
                 .isEqualTo(manifest(1).getValidation().getCandidateSha256());
+    }
+
+    @Test void identicalBlobsWithinOneSaveShareAnObjectButKeepBothBindings() throws Exception {
+        var bytes = ByteString.copyFromUtf8("shared raw payload");
+        var original = document(account, "doc-carry", "v1").toBuilder()
+                .setBlobBag(BlobBag.newBuilder().setBlobs(ai.protomolt.proto.repo.v1.Blobs.newBuilder()
+                        .addBlob(Blob.newBuilder().setBlobId("left").setData(bytes).setSizeBytes(bytes.size()))
+                        .addBlob(Blob.newBuilder().setBlobId("right").setData(bytes).setSizeBytes(bytes.size()))))
+                .build();
+        f.saves.save(processAuthority(), create("shared", address, original).build());
+        var stored = manifest(1);
+        var refs = entry(stored, BLOBS).getBlobRefsList();
+        assertThat(refs).extracting(BlobObjectRef::getBlobId).containsExactly("left", "right");
+        assertThat(refs.get(0).getRef()).isEqualTo(refs.get(1).getRef());
+        assertThat(f.stack.puts.get()).isEqualTo(4); // CORE, PARSED, BLOBS fragment, one raw object
+        assertThat(f.blobBytes(stored, "left")).isEqualTo(bytes.toByteArray());
+        assertThat(f.blobBytes(stored, "right")).isEqualTo(bytes.toByteArray());
+        assertThat(read(1)).isEqualTo(claimChecked(original, stored));
+
+        var otherAddress = address(account, "other-document");
+        var other = original.toBuilder().setDocId("other-document").build();
+        f.saves.save(processAuthority(), create("other", otherAddress, other).build());
+        var otherStored = f.catalog.manifest(otherAddress, 1).orElseThrow();
+        assertThat(entry(otherStored, BLOBS).getBlobRefs(0).getRef()).isNotEqualTo(refs.get(0).getRef());
     }
 
     // ------------------------------------------------------------------ helpers
