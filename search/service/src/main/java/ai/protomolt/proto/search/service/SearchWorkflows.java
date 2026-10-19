@@ -18,10 +18,13 @@ import java.util.Map;
  * end: the coordinator parses the stored document, then the service indexes
  * it under the request's mapping subject — either step's transient failure
  * requeues with backoff, and a completed run means the document answers
- * queries. Delete-and-unindex is its removal-side mirror: the repository
- * deletes the stored document, then the service removes it from the subject's
- * index, so a completed run means the document neither reads back nor
- * answers queries.
+ * queries. Delete-and-unindex is its removal-side mirror: it reads the
+ * current manifest, tombstones exactly that revision through the
+ * repository v2 {@code DeleteDocument} (whose operation id is derived
+ * deterministically from the address and revision, so a retried step
+ * replays instead of double-deleting), optionally purges, and then removes
+ * the document from the subject's index, so a completed run means the
+ * document neither reads back nor answers queries.
  */
 public final class SearchWorkflows {
 
@@ -113,15 +116,48 @@ public final class SearchWorkflows {
                 .put("descriptorSetBase64", deleteDescriptorSetBase64());
         workflow.put("inputType", DeleteAndUnindexRequest.getDescriptor().getFullName());
         ArrayNode steps = workflow.putArray("steps");
+        ObjectNode head = steps.addObject();
+        head.put("name", "head");
+        head.put("target", repoTarget);
+        head.put("method",
+                "ai.protomolt.proto.repo.v2.DocumentService/GetManifest");
+        head.put("deadlineMs", deadlineMs);
+        head.putArray("rules")
+                .add("address = input.address");
         ObjectNode delete = steps.addObject();
         delete.put("name", "delete");
         delete.put("target", repoTarget);
         delete.put("method",
-                "ai.protomolt.proto.repo.v1.DocumentService/DeleteDocument");
+                "ai.protomolt.proto.repo.v2.DocumentService/DeleteDocument");
         delete.put("deadlineMs", deadlineMs);
         delete.putArray("rules")
-                .add("by_reference.address = input.address")
-                .add("purge_storage = input.purge_storage");
+                .add("address = input.address")
+                .add("expected.revision = head.manifest.revision");
+        ArrayNode deleteCel = delete.putArray("celRules");
+        deleteCel.addObject()
+                .put("target", "operation_id")
+                .put("selector", "'search-delete-' + input.address.graph_address_id + '-'"
+                        + " + input.address.doc_id + '-' + string(head.manifest.revision)");
+        deleteCel.addObject()
+                .put("target", "reason")
+                .put("selector", "'search delete-and-unindex'");
+        ObjectNode purge = steps.addObject();
+        purge.put("name", "purge");
+        purge.put("target", repoTarget);
+        purge.put("method",
+                "ai.protomolt.proto.repo.v2.DocumentService/PurgeDocument");
+        purge.put("when", "input.purge_storage");
+        purge.put("deadlineMs", deadlineMs);
+        purge.putArray("rules")
+                .add("address = input.address");
+        ArrayNode purgeCel = purge.putArray("celRules");
+        purgeCel.addObject()
+                .put("target", "purge_id")
+                .put("selector", "'search-purge-' + input.address.graph_address_id + '-'"
+                        + " + input.address.doc_id + '-' + string(head.manifest.revision)");
+        purgeCel.addObject()
+                .put("target", "reason")
+                .put("selector", "'search delete-and-unindex purge'");
         ObjectNode unindex = steps.addObject();
         unindex.put("name", "unindex");
         unindex.put("target", searchTarget);
@@ -158,7 +194,7 @@ public final class SearchWorkflows {
     public static String deleteDescriptorSetBase64() {
         return descriptorSetBase64(
                 DeleteAndUnindexRequest.getDescriptor().getFile(),
-                ai.protomolt.proto.repo.v1.DeleteDocumentRequest.getDescriptor().getFile());
+                ai.protomolt.proto.repo.v2.DeleteDocumentRequest.getDescriptor().getFile());
     }
 
     private static String descriptorSetBase64(FileDescriptor... roots) {

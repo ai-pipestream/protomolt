@@ -232,19 +232,24 @@ message SearchResponse {
   repeated SearchHit hits = 1;
 }
 
-// A request to replay a repository's documents through a stored workflow.
+// A request to replay one account's documents through a stored workflow.
 //
 // Replay runs one workflow per document, which is how a subject is rebuilt
 // after its mapping or its chunking policy changes. Reconciliation is the
-// second mode: it replays the whole repository listing and removes indexed
+// second mode: it replays the account's whole listing and removes indexed
 // documents the listing no longer contains, so a subject converges on what
-// the repository actually holds.
+// the repository actually holds. The repository v2 listing is
+// account-scoped (documents carry no drive identity in v2; a drive is a
+// write-time stack choice), so every replay names its account.
 message ReplayDocumentsRequest {
+  reserved 3;
+  reserved "drive";
+
   option (ai.protomolt.proto.validate.v1.message) = {
     cel: {
       id: "replay.scope_or_reconcile"
-      message: "a scoped replay sets drive; a replay with prune covers the whole repository and must not set drive or accountId"
-      expression: "this.prune ? (this.drive == '' && this.account_id == '') : this.drive != ''"
+      message: "a replay with prune covers the whole account and must not set graphAddressId"
+      expression: "!this.prune || this.graph_address_id == ''"
     }
   };
 
@@ -262,18 +267,12 @@ message ReplayDocumentsRequest {
       string: {min_len: 1, max_len: 200}
     }
   ];
-  // Drive whose documents replay. Required for a scoped replay and refused
-  // for a reconciling one, which is unscoped by definition.
-  string drive = 3 [
-    (ai.protomolt.proto.validate.v1.field) = {
-      string: {max_len: 200}
-    }
-  ];
-  // Restricts a scoped replay to one account. Refused for a reconciling
-  // replay for the same reason as the drive.
+  // Account whose documents replay. The repository v2 listing is
+  // account-scoped, so every replay names its account.
   string account_id = 4 [
     (ai.protomolt.proto.validate.v1.field) = {
-      string: {max_len: 200}
+      required: true
+      string: {min_len: 1, max_len: 200}
     }
   ];
   // Names this replay. Each document's run then takes a job identifier
@@ -284,9 +283,17 @@ message ReplayDocumentsRequest {
       string: {max_len: 200}
     }
   ];
-  // Reconcile rather than replay a scope: cover the whole repository listing
+  // Reconcile rather than replay a scope: cover the account's whole listing
   // and unindex documents it no longer contains.
   bool prune = 6;
+  // Optional datasource scope within the account (the address's
+  // graph_address_id). Refused for a reconciling replay, which covers the
+  // whole account by definition.
+  string graph_address_id = 7 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {max_len: 200}
+    }
+  ];
 }
 
 // What one replay submitted, and what it removed.

@@ -1,12 +1,14 @@
 package ai.protomolt.proto.search.service;
 
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.ListDocumentsRequest;
-import ai.protomolt.proto.repo.v1.ListDocumentsResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -68,10 +70,13 @@ public final class GrpcDocumentFetcher implements DocumentFetcher, DocumentListe
     @Override
     public Document fetch(NodeAddress address) {
         return stub()
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(address)
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
-                        .addParts(DocumentPart.DOCUMENT_PART_PARSED)
+                        .setSelection(PartSelection.newBuilder()
+                                .addSelectors(PartSelector.newBuilder()
+                                        .setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                .addSelectors(PartSelector.newBuilder()
+                                        .setPart(DocumentPart.DOCUMENT_PART_PARSED)))
                         .build())
                 .getDocument();
     }
