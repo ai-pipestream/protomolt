@@ -632,6 +632,70 @@ class RealisticPipelineAndEdgeCasesIT {
         }
     }
 
+    @Test
+    void dynamicPerAccountDrivesIsolateStacksAcrossAccounts() {
+        var accountB = "acct-b-" + UUID.randomUUID();
+        var addressB = NodeAddress.newBuilder()
+                .setDocId("doc-b-" + UUID.randomUUID())
+                .setGraphId("graph-1")
+                .setGraphAddressId("node-1")
+                .setAccountId(accountB)
+                .build();
+        var stackBPrefix = "acct-b/" + UUID.randomUUID();
+        var stackBId = f.catalog.registerStack(StackRecord.newBuilder()
+                .setStackId("stack-b-" + UUID.randomUUID())
+                .setProvider("s3")
+                .setEndpoint(S3.getEndpoint().toString())
+                .setNamespace(BUCKET + "/" + stackBPrefix)
+                .build());
+        var stackB = new CountingStack(new BlobStoreStack(stackBId, new S3BlobStore(s3()), BUCKET, stackBPrefix));
+
+        var byAccountAndDrive = Map.of(
+                account + "|default", f.stack,
+                account + "|tenant-only", f.stack,
+                accountB + "|default", stackB);
+        var byStackId = Map.of(
+                f.stack.stackId(), f.stack,
+                stackB.stackId(), stackB);
+        var dynamicDrives = DocumentSaves.Drives.dynamic(
+                "default",
+                (acct, drv) -> java.util.Optional.ofNullable(byAccountAndDrive.get(acct + "|" + drv)),
+                id -> java.util.Optional.ofNullable(byStackId.get(id)));
+
+        var saves = new DocumentSaves(f.catalog, dynamicDrives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
+        var reads = new DocumentReads(f.catalog, dynamicDrives, limits(), bytes -> () -> {}, Clock.systemUTC());
+
+        // Account A saves to "tenant-only" -> routes to f.stack (1 raw blob + CORE + BLOBS + PARSED = 4 puts)
+        saves.save(processAuthority(), create("dyn-a-1", address, document(account, address.getDocId(), "A-title"))
+                .setDrive("tenant-only")
+                .build());
+        assertThat(f.stack.puts.get()).isEqualTo(4);
+        assertThat(stackB.puts.get()).isZero();
+
+        // Account B attempts "tenant-only" (not provisioned for Account B) -> rejected unrecorded
+        var unprovisioned = create("dyn-b-unprov", addressB, document(accountB, addressB.getDocId(), "B-title"))
+                .setDrive("tenant-only")
+                .build();
+        assertThatThrownBy(() -> saves.save(processAuthority(), unprovisioned))
+                .isInstanceOfSatisfying(AccessionException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+                    assertThat(failure.getMessage()).contains("Unknown drive tenant-only");
+                });
+        assertThat(f.catalog.outcome(accountB, "dyn-b-unprov")).isEmpty();
+        assertThat(stackB.puts.get()).isZero();
+
+        // Account B saves to default drive ("") -> routes to stackB
+        saves.save(processAuthority(), create("dyn-b-1", addressB, document(accountB, addressB.getDocId(), "B-title")).build());
+        assertThat(f.stack.puts.get()).isEqualTo(4);
+        assertThat(stackB.puts.get()).isEqualTo(4);
+
+        // Reads resolve each revision's stackId via dynamicDrives.byId(...)
+        assertThat(reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("A-title");
+        assertThat(reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(addressB).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("B-title");
+    }
+
     // #335 Section 4 item 4
     @Test
     void malformedPageTokensAreRejectedWithInvalidArgument() {
