@@ -40,6 +40,11 @@ final class RawIngests {
     private final long maxPayloadBytes;
     private final java.util.Set<String> stepWriters;
 
+    /** Constructs an intake saver with the default pipeline step writers. */
+    RawIngests(DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes) {
+        this(documents, maxPayloadBytes, IntakeServiceConfig.DEFAULT_STEP_WRITERS);
+    }
+
     /**
      * @param documents the repo-service document stub every save goes through
      * @param maxPayloadBytes the service-wide payload cap for the in-memory
@@ -127,7 +132,7 @@ final class RawIngests {
             Map<String, String> metadata,
             String sha256,
             long payloadSize, ExpectedRevision expected) {
-        requireExpected(expected);
+        if (expected != null) requireExpected(expected);
         var content = document.toBuilder();
         if (document.hasBlobBag()) {
             var bag = document.getBlobBag().toBuilder();
@@ -150,7 +155,6 @@ final class RawIngests {
                         .setDocument(document)
                         .setDrive(targeting.drive())
                         .setTarget(DocumentTarget.newBuilder().setUseDatasourceId(targeting.datasourceId()))
-                        .setExpected(expected)
                         .setOwner(SaveOwner.newBuilder().setIntake(origin))
                         .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
                         .putAllMetadata(metadata);
@@ -164,11 +168,67 @@ final class RawIngests {
                     ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey.newBuilder()
                             .setSegmentationId(embedding.getSegmentationId()).setEmbeddingSetId(embedding.getEmbeddingSetId())))
                     .setAction(WriteAction.WRITE_ACTION_PUT));
+        if (expected == null) {
+            var address = ai.protomolt.proto.repo.v1.NodeAddress.newBuilder().setAccountId(scope.accountId())
+                    .setGraphId(IntakeGrpcService.INTAKE_GRAPH_PREFIX + scope.accountId())
+                    .setGraphAddressId(targeting.datasourceId()).setDocId(document.getDocId()).build();
+            var selection = PartSelection.newBuilder();
+            request.getWritesList().forEach(write -> selection.addSelectors(write.getSelector()));
+            GetDocumentResponse existing = null;
+            try {
+                existing = documents.getDocument(GetDocumentRequest.newBuilder()
+                        .setAddress(address).setSelection(selection).build());
+            } catch (io.grpc.StatusRuntimeException failure) {
+                if (failure.getStatus().getCode() != io.grpc.Status.Code.NOT_FOUND) throw failure;
+            }
+            if (existing == null) expected = ExpectedRevision.newBuilder().setNone(true).build();
+            else {
+                var owner = existing.getDocument().getOwnership();
+                if (!owner.getAccountId().equals(scope.accountId())
+                        || !owner.getDatasourceId().equals(targeting.datasourceId())
+                        || (document.getOwnership().hasConnectorId()
+                            && !owner.getConnectorId().equals(document.getOwnership().getConnectorId())))
+                    throw GrpcErrors.permissionDenied("Existing document ownership differs from intake source");
+                long revision = existing.getManifest().getRevision();
+                if (!existing.getManifest().getAddress().equals(address) || revision <= 0)
+                    throw io.grpc.Status.DATA_LOSS.withDescription("Repository returned an invalid document identity").asRuntimeException();
+                if (existing.getMetadataMap().equals(metadata)
+                        && IngestComparisons.same(documents, address, revision, document, existing.getDocument()))
+                    return new Saved(address, revision, true, targeting.drive(), sha256, payloadSize);
+                expected = ExpectedRevision.newBuilder().setRevision(revision).build();
+            }
+        }
+        request.setExpected(expected);
         // Include the full typed intent, including metadata and target, in retry identity.
         // The shared fingerprint helper uses deterministic protobuf encoding, never JSON.
         request.setOperationId("intake-v2:" + MessageFingerprints.fingerprint(request.build()));
         SaveDocumentResponse response = documents.saveDocument(request.build());
-        return new Saved(response, targeting.drive(), sha256, payloadSize);
+        return new Saved(response.getAccession().getAddress(), response.getAccession().getRevision(),
+                response.getReplayed(), targeting.drive(), sha256, payloadSize);
+    }
+
+    /** Null denotes UPSERT; every explicit expectation remains a repository CAS. */
+    static ExpectedRevision resolveExpected(ai.protomolt.proto.intake.v1.IngestMode mode, ExpectedRevision expected) {
+        if (expected != null) requireExpected(expected);
+        return switch (mode) {
+            case INGEST_MODE_UNSPECIFIED -> expected == null
+                    ? ExpectedRevision.newBuilder().setNone(true).build() : expected;
+            case INGEST_MODE_CREATE_ONLY -> {
+                if (expected != null && !expected.getNone())
+                    throw GrpcErrors.invalidArgument("CREATE_ONLY requires none=true when expected is supplied");
+                yield ExpectedRevision.newBuilder().setNone(true).build();
+            }
+            case INGEST_MODE_EXPECTED_REVISION -> {
+                if (expected == null || !expected.hasRevision())
+                    throw GrpcErrors.invalidArgument("EXPECTED_REVISION requires a positive observed revision");
+                yield expected;
+            }
+            case INGEST_MODE_UPSERT -> {
+                if (expected != null) throw GrpcErrors.invalidArgument("UPSERT mode resolves the current revision; do not also set expected");
+                yield null;
+            }
+            default -> throw GrpcErrors.invalidArgument("Unknown intake mode");
+        };
     }
 
     static void requireExpected(ExpectedRevision expected) {
@@ -268,10 +328,13 @@ final class RawIngests {
     }
 
     /** A completed repo save plus the receipt's integrity fields. */
-    record Saved(SaveDocumentResponse response, String drive, String sha256, long payloadSize) {}
+    record Saved(ai.protomolt.proto.repo.v1.NodeAddress address, long revision, boolean deduplicated,
+                 String drive, String sha256, long payloadSize) {}
 
     private static Blob inlineBlob(Blob blob, String drive) {
         if (blob.hasStorageRef()) throw GrpcErrors.invalidArgument("Intake blobs must carry bytes, not storage references");
+        if (blob.getContentCase() != Blob.ContentCase.DATA)
+            throw GrpcErrors.invalidArgument("Intake blobs must carry inline data");
         return blob.toBuilder().setDriveId(drive).build();
     }
 

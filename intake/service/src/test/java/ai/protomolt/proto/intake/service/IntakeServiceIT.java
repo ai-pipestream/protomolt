@@ -175,6 +175,88 @@ class IntakeServiceIT {
     }
 
     @Test
+    void upsertCreatesDeduplicatesAndVersionsWithoutRewritingIdenticalBytes() throws Exception {
+        var doc = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("upsert-source")
+                .setBlobBag(ai.protomolt.proto.repo.v1.BlobBag.newBuilder().setBlob(
+                        ai.protomolt.proto.repo.v1.Blob.newBuilder().setBlobId("source")
+                                .setData(ByteString.copyFromUtf8("first bytes")))).build();
+        var request = IngestDocumentRequest.newBuilder().setDatasourceId("ds-upsert")
+                .setMode(ai.protomolt.proto.intake.v1.IngestMode.INGEST_MODE_UPSERT).setDocument(doc).build();
+        var created = intakeStub.ingestDocument(request);
+        assertThat(created.getRevision()).isEqualTo(1);
+        int before = repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount();
+        var duplicate = intakeStub.ingestDocument(request);
+        assertThat(duplicate.getRevision()).isEqualTo(1);
+        assertThat(duplicate.getDeduplicated()).isTrue();
+        assertThat(repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount()).isEqualTo(before);
+        var metadataChanged = request.toBuilder().putMetadata("crawl", "second").build();
+        var second = intakeStub.ingestDocument(metadataChanged);
+        assertThat(second.getRevision()).isEqualTo(2);
+        assertThat(second.getDeduplicated()).isFalse();
+        assertThat(repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount()).isEqualTo(before);
+        var changed = metadataChanged.toBuilder().setDocument(doc.toBuilder().setBlobBag(
+                doc.getBlobBag().toBuilder().setBlob(doc.getBlobBag().getBlob().toBuilder()
+                        .setData(ByteString.copyFromUtf8("other bytes"))))).build();
+        var third = intakeStub.ingestDocument(changed);
+        assertThat(third.getRevision()).isEqualTo(3);
+        assertThat(repo.retainedBlob(created.getAddress(), 1)).isEqualTo("first bytes".getBytes());
+        assertThat(repo.retainedBlob(created.getAddress(), 3)).isEqualTo("other bytes".getBytes());
+        assertThat(intakeStub.ingestDocument(changed).getRevision()).isEqualTo(3);
+    }
+
+    @Test
+    void upsertSurfacesAConcurrentUpdateWithoutRetryingTheSave() throws Exception {
+        var initial = IngestDocumentRequest.newBuilder().setDatasourceId("ds-upsert-race")
+                .setDocument(ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("upsert-race")
+                        .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("first")))
+                .build();
+        var created = intakeStub.ingestDocument(initial);
+        var documents = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel);
+        var original = documents.getDocument(GetDocumentRequest.newBuilder().setAddress(created.getAddress()).build());
+        var saves = new java.util.concurrent.atomic.AtomicInteger();
+        // A forwarding transport places a real competing commit precisely after the read.
+        // Both writes and all reads still use the real PostgreSQL/S3 repository.
+        var forwarding = new ai.protomolt.proto.repo.v2.DocumentServiceGrpc.DocumentServiceImplBase() {
+            @Override public void getDocument(GetDocumentRequest request,
+                    io.grpc.stub.StreamObserver<GetDocumentResponse> observer) {
+                var snapshot = documents.getDocument(request);
+                intakeStub.ingestDocument(initial.toBuilder().setExpected(
+                        ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(1))
+                        .setDocument(initial.getDocument().toBuilder().setSearchMetadata(
+                                ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("winner"))).build());
+                observer.onNext(snapshot);
+                observer.onCompleted();
+            }
+            @Override public void saveDocument(ai.protomolt.proto.repo.v2.SaveDocumentRequest request,
+                    io.grpc.stub.StreamObserver<ai.protomolt.proto.repo.v2.SaveDocumentResponse> observer) {
+                saves.incrementAndGet();
+                try {
+                    observer.onNext(documents.saveDocument(request));
+                    observer.onCompleted();
+                } catch (StatusRuntimeException failure) { observer.onError(failure); }
+            }
+        };
+        var name = io.grpc.inprocess.InProcessServerBuilder.generateName();
+        var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(forwarding).build().start();
+        var channel = InProcessChannelBuilder.forName(name).build();
+        try {
+            var ingest = new RawIngests(ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(channel),
+                    IntakeServiceConfig.DEFAULT_MAX_PAYLOAD_BYTES);
+            var scope = IntakeScope.unrestricted(ACCOUNT);
+            var candidate = original.getDocument().toBuilder().setSearchMetadata(
+                    ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("loser")).build();
+            assertThatThrownBy(() -> ingest.save(scope, RawIngests.Targeting.of(scope, "ds-upsert-race", "intake"),
+                    candidate, java.util.Map.of(), "", 0, null))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class,
+                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+            assertThat(saves.get()).isEqualTo(1);
+            assertThat(repo.catalog.revisions(created.getAddress(), Long.MAX_VALUE, 10)).hasSize(2);
+            assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setAddress(created.getAddress()).build())
+                    .getDocument().getSearchMetadata().getTitle()).isEqualTo("winner");
+        } finally { channel.shutdownNow(); server.shutdownNow(); }
+    }
+
+    @Test
     void updateUsesObservedRevisionAndRetryKeepsItsReceipt() throws Exception {
         var firstRequest = IngestDocumentRequest.newBuilder().setDatasourceId("ds-update")
                 .setDocument(ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("update-doc")

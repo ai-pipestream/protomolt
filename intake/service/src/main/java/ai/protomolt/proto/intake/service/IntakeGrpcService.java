@@ -94,9 +94,8 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         IntakeScope scope = ApiKeyServerInterceptor.currentScope();
         RawIngests.Targeting targeting = RawIngests.Targeting.of(scope, request.getDatasourceId(),
                 request.hasDrive() ? request.getDrive() : null);
-        ExpectedRevision expected = request.hasExpected() ? request.getExpected()
-                : ExpectedRevision.newBuilder().setNone(true).build();
-        RawIngests.requireExpected(expected);
+        ExpectedRevision expected = RawIngests.resolveExpected(request.getMode(),
+                request.hasExpected() ? request.getExpected() : null);
         RawIngests.Saved saved =
                 switch (request.getContentCase()) {
                     case DOCUMENT -> saveTypedDocument(
@@ -112,13 +111,13 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                             "content is required: set document or raw");
                 };
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAccession().getAddress().getDocId())
-                .setRevision(saved.response().getAccession().getRevision())
-                .setAddress(saved.response().getAccession().getAddress())
+                .setDocId(saved.address().getDocId())
+                .setRevision(saved.revision())
+                .setAddress(saved.address())
                 .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getReplayed())
+                .setDeduplicated(saved.deduplicated())
                 .build();
     }
 
@@ -229,7 +228,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                 throw GrpcErrors.invalidArgument(
                         "metadata frame after the first frame; only the first frame carries metadata");
             }
-            if (first.hasExpected()) RawIngests.requireExpected(first.getExpected());
+            RawIngests.resolveExpected(first.getMode(), first.hasExpected() ? first.getExpected() : null);
             metadata = first;
             targeting = RawIngests.Targeting.of(scope, first.getDatasourceId(),
                     first.hasDrive() ? first.getDrive() : null);
@@ -267,17 +266,17 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                         ByteString.copyFrom(payload.toByteArray()),
                         metadata.getFilename(),
                         metadata.getMimeType(),
-                        metadata.getMetadataMap(), metadata.hasExpected() ? metadata.getExpected()
-                                : ExpectedRevision.newBuilder().setNone(true).build());
+                        metadata.getMetadataMap(), RawIngests.resolveExpected(metadata.getMode(),
+                                metadata.hasExpected() ? metadata.getExpected() : null));
                 observer.onNext(
                         IngestStreamResponse.newBuilder()
-                                .setDocId(saved.response().getAccession().getAddress().getDocId())
-                                .setRevision(saved.response().getAccession().getRevision())
-                                .setAddress(saved.response().getAccession().getAddress())
+                                .setDocId(saved.address().getDocId())
+                                .setRevision(saved.revision())
+                                .setAddress(saved.address())
                                 .setDrive(saved.drive())
                                 .setSizeBytes(saved.payloadSize())
                                 .setSha256(saved.sha256())
-                                .setDeduplicated(saved.response().getReplayed())
+                                .setDeduplicated(saved.deduplicated())
                                 .build());
                 observer.onCompleted();
             } catch (Throwable t) {

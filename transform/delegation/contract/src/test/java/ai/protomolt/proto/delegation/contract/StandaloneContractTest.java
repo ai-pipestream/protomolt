@@ -46,7 +46,7 @@ class StandaloneContractTest {
         for (String name : new String[] {
                 "ai.protomolt.proto.delegation.InProcessDelegationCoordinator",
                 "ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository",
-                "ai.protomolt.proto.repo.v1.DocumentServiceGrpc",
+                "ai.protomolt.proto.repo.v2.DocumentServiceGrpc",
                 "ai.protomolt.proto.receipt.WorkRecords"}) {
             assertThatThrownBy(() -> Class.forName(name)).isInstanceOf(ClassNotFoundException.class);
         }

@@ -9,16 +9,10 @@ import ai.protomolt.proto.intake.service.IntakeServices;
 import ai.protomolt.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
-import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.service.RepoServiceConfig;
-import ai.protomolt.proto.repo.service.RepoServices;
-import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.ManagedChannel;
@@ -50,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * updated row replaces its own document), placeholder-bound incremental pulls, the
  * contradiction and ordering refusals, and repository dedupe on re-pull.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class JdbcPullIT {
 
@@ -71,7 +65,7 @@ class JdbcPullIT {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
                     .withServices("s3");
 
-    static RepoServices repo;
+    static V2RepositoryFixture repo;
     static IntakeServices intake;
     static ManagedChannel repoChannel;
     static RecordingFeed feed;
@@ -81,25 +75,8 @@ class JdbcPullIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        RepoServiceConfig config = new RepoServiceConfig(
-                0,
-                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                LOCALSTACK.getEndpoint().toString(),
-                LOCALSTACK.getRegion(),
-                LOCALSTACK.getAccessKey(),
-                LOCALSTACK.getSecretKey(),
-                "jdbc-pull-it-docs",
-                0,
-                null, null, null, null, 0, 0L);
-        repo = RepoServices.build(config);
-        repo.startInProcess("jdbc-pull-it-repo");
+        repo = new V2RepositoryFixture(POSTGRES, LOCALSTACK, "jdbc-pull-it-repo");
         repoChannel = InProcessChannelBuilder.forName("jdbc-pull-it-repo").build();
-        DriveServiceGrpc.newBlockingStub(repoChannel).createDrive(
-                CreateDriveRequest.newBuilder()
-                        .setName("intake")
-                        .setAccountId(ACCOUNT)
-                        .setDriveType(DriveType.DRIVE_TYPE_INTAKE)
-                        .build());
 
         intake = IntakeServices.build(
                 new IntakeServiceConfig(
@@ -143,22 +120,51 @@ class JdbcPullIT {
         IngestDocumentResponse receipt = feed.receipts.get(docId);
         assertThat(receipt).as("no intake receipt recorded for " + docId).isNotNull();
         return DocumentServiceGrpc.newBlockingStub(repoChannel)
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(receipt.getAddress())
                         .build())
                 .getDocument();
     }
 
+    static byte[] blobBytes(String docId) {
+        var receipt = feed.receipts.get(docId);
+        var blob = fetch(docId).getBlobBag().getBlob();
+        assertThat(blob.getData()).isEmpty();
+        assertThat(blob.hasStorageRef()).isTrue();
+        var frames = DocumentServiceGrpc.newBlockingStub(repoChannel).readBlob(
+                ai.protomolt.proto.repo.v2.ReadBlobRequest.newBuilder()
+                        .setAddress(receipt.getAddress())
+                        .setRevision(ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(receipt.getRevision()))
+                        .setBlobId(blob.getBlobId()).build());
+        assertThat(frames.hasNext()).isTrue();
+        var first = frames.next();
+        assertThat(first.hasHeader()).isTrue();
+        var bytes = new java.io.ByteArrayOutputStream();
+        while (frames.hasNext()) {
+            var frame = frames.next();
+            assertThat(frame.hasData()).isTrue();
+            bytes.writeBytes(frame.getData().toByteArray());
+        }
+        assertThat(bytes.size()).isEqualTo(first.getHeader().getTotalLength());
+        try {
+            assertThat(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(bytes.toByteArray()))).isEqualTo(first.getHeader().getSha256());
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+        return bytes.toByteArray();
+    }
+
     static int totalDocuments() {
         return DocumentServiceGrpc.newBlockingStub(repoChannel)
                 .listDocuments(ListDocumentsRequest.newBuilder()
-                        .setDrive("intake").setAccountId(ACCOUNT).setLimit(100).build())
-                .getTotalCount();
+                        .setAccountId(ACCOUNT).setPageSize(100).build())
+                .getDocumentsCount();
     }
 
     static JsonNode rowJson(String docId) throws Exception {
         return new ObjectMapper().readTree(
-                fetch(docId).getBlobBag().getBlob().getData().toByteArray());
+                blobBytes(docId));
     }
 
     @Test
@@ -195,7 +201,7 @@ class JdbcPullIT {
         }
         PullReport report = pull.pull(
                 INCREMENTAL_QUERY, "id", "updated_at", DATASOURCE, "", watermark, 0);
-        assertThat(report.submitted()).isEqualTo(1);
+        assertThat(report.submitted()).as("pull errors: %s", report.errors()).isEqualTo(1);
         watermark = report.watermark();
         assertThat(totalDocuments()).isEqualTo(3);
     }
@@ -210,7 +216,7 @@ class JdbcPullIT {
         }
         PullReport report = pull.pull(
                 INCREMENTAL_QUERY, "id", "updated_at", DATASOURCE, "", watermark, 0);
-        assertThat(report.submitted()).isEqualTo(1);
+        assertThat(report.submitted()).as("pull errors: %s", report.errors()).isEqualTo(1);
         watermark = report.watermark();
 
         assertThat(totalDocuments())

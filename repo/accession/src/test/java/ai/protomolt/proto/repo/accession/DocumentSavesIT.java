@@ -42,6 +42,26 @@ class DocumentSavesIT {
 
     @AfterEach void close() { f.close(); }
 
+    @Test void readMetadataBelongsToTheAuthorizedRevision() {
+        var address = address(account, "metadata");
+        f.saves.save(processAuthority(), create("metadata-1", address, document(account, "metadata", "first"))
+                .putMetadata("crawl", "first").build());
+        f.saves.save(processAuthority(), create("metadata-2", address, document(account, "metadata", "second"))
+                .setExpected(at(1)).putMetadata("crawl", "second").build());
+        var request = GetDocumentRequest.newBuilder().setAddress(address)
+                .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
+                        .setPart(DocumentPart.DOCUMENT_PART_CORE))).build();
+        assertThat(f.reads.getDocument(processAuthority(), request).getMetadataMap())
+                .containsExactlyEntriesOf(java.util.Map.of("crawl", "second"));
+        var historical = request.toBuilder().setRevision(RevisionSelector.newBuilder().setRevision(1)).build();
+        assertThat(f.reads.getDocument(processAuthority(), historical).getMetadataMap())
+                .containsExactlyEntriesOf(java.util.Map.of("crawl", "first"));
+        assertThatThrownBy(() -> f.reads.getDocument(
+                new ai.protomolt.proto.repo.spi.RepositoryCaller("outsider", false), historical))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Status.Code.PERMISSION_DENIED));
+    }
+
     // §15.1 (on PARSED): a partial save writes one object and reads none.
     @Test void partialSaveCarriesSiblingReferencesWithoutReadingOrWritingThem() {
         var address = address(account, "doc-1");
