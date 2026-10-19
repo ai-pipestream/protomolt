@@ -133,10 +133,13 @@ class QdrantSinkTest {
     }
 
     @Test
-    void ensureCollectionForPointsDerivesTheVectorSizes() {
+    void collectionCreationRequiresAnExplicitMetric() {
         PointStruct point = point("p-1", "mini", 3);
 
-        assertThat(sink.ensureCollectionForPoints("chunks", List.of(point))).isTrue();
+        assertThatThrownBy(() -> sink.ensureCollectionForPoints("chunks", List.of(point)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Points do not carry similarity");
+        assertThat(collections.existsChecks).isEmpty();
+        assertThat(sink.ensureCollection("chunks", List.of(QdrantVectorSpec.cosine("mini", 3)))).isTrue();
         assertThat(collections.creates.get(0).getVectorsConfig().getParamsMap().getMapMap()
                 .get("mini").getSize()).isEqualTo(3);
 

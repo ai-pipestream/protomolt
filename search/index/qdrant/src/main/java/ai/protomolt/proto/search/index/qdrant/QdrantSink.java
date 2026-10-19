@@ -158,7 +158,9 @@ public final class QdrantSink implements AutoCloseable {
     /**
      * {@link #ensureCollection(String, Collection)} with the named-vector specs derived from
      * the points about to be written, honoring the mapping's VECTOR hint (declared dims and
-     * similarity) where present. An empty batch creates nothing.
+     * similarity). A nonempty batch requires that hint because PointStruct has no distance
+     * declaration. Alternatively pass specs derived from the source Document to
+     * {@link #ensureCollection(String, Collection)}. An empty batch creates nothing.
      *
      * @return {@code true} when this call created the collection
      */
@@ -172,8 +174,8 @@ public final class QdrantSink implements AutoCloseable {
     }
 
     /**
-     * {@link #ensureCollectionForPoints(String, List, IndexMapping)} with no mapping: sizes from
-     * the data, COSINE distances.
+     * Empty-batch convenience. Nonempty points alone cannot establish their similarity and
+     * are refused; supply a mapping or explicit {@link QdrantVectorSpec}s instead.
      */
     public boolean ensureCollectionForPoints(String collection, List<PointStruct> pointsBatch) {
         return ensureCollectionForPoints(collection, pointsBatch, null);

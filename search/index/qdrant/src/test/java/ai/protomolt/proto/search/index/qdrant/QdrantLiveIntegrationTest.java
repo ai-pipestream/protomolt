@@ -5,11 +5,17 @@ import ai.protomolt.proto.search.index.spi.IndexFieldKind;
 import ai.protomolt.proto.search.index.spi.IndexMapping;
 import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
-import ai.protomolt.proto.repo.v1.ChunkEmbedding;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
+import ai.protomolt.proto.repo.semantic.v1.OffsetUnit;
+import ai.protomolt.proto.repo.semantic.v1.Segment;
+import ai.protomolt.proto.repo.semantic.v1.SegmentVector;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
+import ai.protomolt.proto.repo.semantic.v1.Similarity;
+import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
+import ai.protomolt.proto.repo.semantic.v1.TextSource;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import org.junit.jupiter.api.AfterAll;
@@ -49,6 +55,8 @@ class QdrantLiveIntegrationTest {
 
     private static final String MODEL = "sentence-transformers/all-MiniLM-L6-v2";
     private static final String VECTOR_NAME = QdrantPointMapper.vectorName(MODEL);
+    private static final String DIGEST =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     @Container
     static final GenericContainer<?> QDRANT = new GenericContainer<>(
@@ -75,18 +83,37 @@ class QdrantLiveIntegrationTest {
                 .setSearchMetadata(SearchMetadata.newBuilder()
                         .setTitle("Vector Databases")
                         .setSourceUri("s3://bucket/vector-databases.html")
-                        .addSemanticResults(SemanticProcessingResult.newBuilder()
-                                .setResultId("rs-1")
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-apples")
-                                        .setChunkNumber(0)
+                        .addSegmentations(Segmentation.newBuilder()
+                                .setSegmentationId("rs-1")
+                                .setContentDigest(DIGEST)
+                                .setKind(SegmentationKind.SEGMENTATION_KIND_PARAGRAPH)
+                                .setOffsetUnit(OffsetUnit.OFFSET_UNIT_UTF8_BYTE)
+                                .setSource(TextSource.newBuilder()
+                                        .setFieldPath("search_metadata.body")
+                                        .setBinding(SourceTextBinding.newBuilder()
+                                                .setResolvedTextSha256(DIGEST)
+                                                .setUtf8Length(38)))
+                                .addSegments(Segment.newBuilder()
+                                        .setSegmentId("c-apples")
+                                        .setOrdinal(0)
                                         .setText("apples and orchards")
-                                        .addEmbeddings(embedding(1f, 0f, 0f, 0f)))
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-oranges")
-                                        .setChunkNumber(1)
+                                        .setStart(0)
+                                        .setEnd(19))
+                                .addSegments(Segment.newBuilder()
+                                        .setSegmentId("c-oranges")
+                                        .setOrdinal(1)
                                         .setText("oranges and groves")
-                                        .addEmbeddings(embedding(0f, 1f, 0f, 0f)))))
+                                        .setStart(20)
+                                        .setEnd(38)))
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-1")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel(MODEL)
+                                .setDimensions(4)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(segmentVector("c-apples", 1f, 0f, 0f, 0f))
+                                .addVectors(segmentVector("c-oranges", 0f, 1f, 0f, 0f))))
                 .build();
         IndexMapping indexMapping = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
                 new IndexMapping.IndexedField("search_metadata.title", "title",
@@ -96,7 +123,7 @@ class QdrantLiveIntegrationTest {
                 // The declared vector hint drives collection creation: dims enforced on the
                 // embeddings, similarity rendered as the collection's distance.
                 new IndexMapping.IndexedField(
-                        "search_metadata.semantic_results.chunks.embeddings.vector", "embedding",
+                        "search_metadata.embedding_sets.vectors.values", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(4).build())));
         mapping = indexMapping;
         points = new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()))
@@ -114,13 +141,11 @@ class QdrantLiveIntegrationTest {
         }
     }
 
-    private static ChunkEmbedding embedding(float... vector) {
-        ChunkEmbedding.Builder builder = ChunkEmbedding.newBuilder()
-                .setEmbeddingId("e-" + UUID.randomUUID().toString().substring(0, 8))
-                .setModel(MODEL)
-                .setDimensions(vector.length);
+    private static SegmentVector segmentVector(String segmentId, float... vector) {
+        SegmentVector.Builder builder = SegmentVector.newBuilder()
+                .setSegmentId(segmentId);
         for (float component : vector) {
-            builder.addVector(component);
+            builder.addValues(component);
         }
         return builder.build();
     }

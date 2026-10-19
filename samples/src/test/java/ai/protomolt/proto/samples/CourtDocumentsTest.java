@@ -1,19 +1,29 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CourtDocumentsTest {
+
+    @Test
+    void missingEmbeddingInputIsNotRecordedAsEmptyText() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> CourtDocuments.withEmbedding(
+                Document.getDefaultInstance(), null, new float[]{1f}, "model"))
+                .isInstanceOf(NullPointerException.class).hasMessage("embeddedText");
+    }
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -114,6 +124,46 @@ class CourtDocumentsTest {
                 .isEqualTo("ansys-inc-v-computational-dynamics-north-america");
         assertThat(CourtDocuments.slug("Morrissette v. Teledyne Princeton, Inc."))
                 .isEqualTo("morrissette-v-teledyne-princeton-inc");
+    }
+
+    @Test
+    void attachesValidSegmentationAndEmbeddingSet() throws Exception {
+        Document base = CourtDocuments.toDocument(opinion("""
+                {
+                  "opinion_id": "10",
+                  "cluster_id": "20",
+                  "case_name": "Smith v. Jones",
+                  "plain_text": "Opinion text."
+                }
+                """));
+        assertThat(CourtDocuments.firstDocumentEmbedding(base)).isEmpty();
+
+        float[] vector = new float[] {0.25f, -0.5f, 0.75f};
+        String expectedText = CourtDocumentIndexSample.embedText(base);
+        assertThat(expectedText).isEqualTo("Smith v. Jones\nOpinion text.");
+        byte[] expectedBytes = expectedText.getBytes(StandardCharsets.UTF_8);
+        String expectedSha256 = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(expectedBytes));
+
+        Document embedded = CourtDocuments.withEmbedding(base, vector, "model2vec-sample");
+
+        assertThat(ValidationResult.validate(embedded).valid()).isTrue();
+        assertThat(CourtDocuments.firstDocumentEmbedding(embedded)).containsExactly(vector);
+        assertThat(embedded.getSearchMetadata().getSegmentationsCount()).isEqualTo(1);
+        assertThat(embedded.getSearchMetadata().getEmbeddingSetsCount()).isEqualTo(1);
+        assertThat(embedded.getSearchMetadata().getSemanticResultsCount()).isZero();
+
+        var segmentation = embedded.getSearchMetadata().getSegmentations(0);
+        assertThat(segmentation.getSource().getDerived().getText()).isEqualTo(expectedText);
+        assertThat(segmentation.getSource().getBinding().getUtf8Length())
+                .isEqualTo(expectedBytes.length);
+        assertThat(segmentation.getSource().getBinding().getResolvedTextSha256())
+                .isEqualTo(expectedSha256);
+        assertThat(segmentation.getSegmentsCount()).isEqualTo(1);
+        var segment = segmentation.getSegments(0);
+        assertThat(segment.getText()).isEqualTo(expectedText);
+        assertThat(segment.getStart()).isZero();
+        assertThat(segment.getEnd()).isEqualTo(expectedBytes.length);
     }
 
     private static JsonNode opinion(String json) throws Exception {

@@ -5,14 +5,20 @@ import ai.protomolt.proto.search.index.spi.IndexFieldKind;
 import ai.protomolt.proto.search.index.spi.IndexMapping;
 import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
+import ai.protomolt.proto.repo.semantic.v1.OffsetUnit;
+import ai.protomolt.proto.repo.semantic.v1.Segment;
+import ai.protomolt.proto.repo.semantic.v1.SegmentVector;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
+import ai.protomolt.proto.repo.semantic.v1.Similarity;
+import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
+import ai.protomolt.proto.repo.semantic.v1.TextSource;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Blobs;
-import ai.protomolt.proto.repo.v1.ChunkEmbedding;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import org.junit.jupiter.api.Test;
@@ -30,6 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * represent — or leave out.
  */
 class QdrantPointMapperFanOutTest {
+
+    private static final String DIGEST =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
@@ -121,17 +130,33 @@ class QdrantPointMapperFanOutTest {
         return Document.newBuilder()
                 .setDocId("doc-1")
                 .setSearchMetadata(SearchMetadata.newBuilder()
-                        .addSemanticResults(SemanticProcessingResult.newBuilder()
-                                .setResultId("rs-1")
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-1")
+                        .addSegmentations(Segmentation.newBuilder()
+                                .setSegmentationId("rs-1")
+                                .setContentDigest(DIGEST)
+                                .setKind(SegmentationKind.SEGMENTATION_KIND_PARAGRAPH)
+                                .setOffsetUnit(OffsetUnit.OFFSET_UNIT_UTF8_BYTE)
+                                .setSource(TextSource.newBuilder()
+                                        .setFieldPath("search_metadata.body")
+                                        .setBinding(SourceTextBinding.newBuilder()
+                                                .setResolvedTextSha256(DIGEST)
+                                                .setUtf8Length(14)))
+                                .addSegments(Segment.newBuilder()
+                                        .setSegmentId("c-1")
+                                        .setOrdinal(0)
                                         .setText("the only chunk")
-                                        .addEmbeddings(ChunkEmbedding.newBuilder()
-                                                .setEmbeddingId("e-1")
-                                                .setModel("m")
-                                                .setDimensions(2)
-                                                .addVector(0.1f)
-                                                .addVector(0.2f)))))
+                                        .setStart(0)
+                                        .setEnd(14)))
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("e-1")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel("m")
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(SegmentVector.newBuilder()
+                                        .setSegmentId("c-1")
+                                        .addValues(0.1f)
+                                        .addValues(0.2f))))
                 .build();
     }
 }
