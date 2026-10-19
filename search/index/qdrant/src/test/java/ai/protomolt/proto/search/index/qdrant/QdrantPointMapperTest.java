@@ -58,8 +58,8 @@ class QdrantPointMapperTest {
                         "flattened_chunk_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 new IndexMapping.IndexedField("search_metadata.embedding_sets.model",
                         "flattened_model", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
-                new IndexMapping.IndexedField("search_metadata.semantic_results.chunks.text",
-                        "legacy_flattened_chunk_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
+                new IndexMapping.IndexedField("search_metadata.segmentations.segments.text",
+                        "selected_segment_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 // Vector hints are excluded: vectors come from the embeddings.
                 new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(2).build())));
@@ -172,7 +172,7 @@ class QdrantPointMapperTest {
                 .containsExactly(MINILM_VECTOR, "e5_small_onnx");
         assertThat(payload).doesNotContainKeys(
                 "body", "flattened_chunk_text", "flattened_model",
-                "legacy_flattened_chunk_text", "embedding");
+                "selected_segment_text", "embedding");
 
         // The second point carries only the one model it was embedded with.
         assertThat(points.get(1).getVectors().getVectors().getVectorsMap())

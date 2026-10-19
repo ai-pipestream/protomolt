@@ -566,8 +566,6 @@ project(':protomolt-delegation-repository').projectDir = file('transform/delegat
 include 'protomolt-delegation-receipt'
 project(':protomolt-delegation-receipt').projectDir = file('transform/delegation/receipt')
 
-include 'protomolt-repo-blob-grpc'
-project(':protomolt-repo-blob-grpc').projectDir = file('repo/blob/grpc')
 
 include 'protomolt-repo-spi'
 project(':protomolt-repo-spi').projectDir = file('repo/spi')

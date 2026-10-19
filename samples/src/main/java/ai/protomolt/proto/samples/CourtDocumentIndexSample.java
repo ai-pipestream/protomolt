@@ -215,7 +215,6 @@ public final class CourtDocumentIndexSample {
                 .put(metadata, "processed_date", ResolvedFieldHint.skipped())
                 .put(metadata, "category", ResolvedFieldHint.skipped())
                 .put(metadata, "metadata", ResolvedFieldHint.skipped())
-                .put(metadata, "semantic_results", ResolvedFieldHint.skipped())
                 .put(metadata, "segmentations", ResolvedFieldHint.skipped())
                 .put(metadata, "embedding_sets", ResolvedFieldHint.skipped())
                 .put(metadata, "custom_fields", ResolvedFieldHint.skipped())

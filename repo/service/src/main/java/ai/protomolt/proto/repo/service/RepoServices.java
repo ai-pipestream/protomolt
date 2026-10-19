@@ -26,17 +26,12 @@ import ai.protomolt.proto.repo.container.lifecycle.PurgeQueue;
 import ai.protomolt.proto.repo.container.lifecycle.PurgeSweeper;
 import ai.protomolt.proto.repo.container.lifecycle.S3Purger;
 import ai.protomolt.proto.repo.container.lifecycle.StorageReconciler;
-import ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore;
 import ai.protomolt.proto.repo.catalog.PostgresCatalog;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
 import io.grpc.BindableService;
-import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
-import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
 import io.grpc.services.HealthStatusManager;
@@ -48,7 +43,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The repo service set, transport-agnostic: one factory wires the whole
@@ -67,9 +61,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Boot order (in {@link #build(RepoServiceConfig)}): ledger database
  * (pool → Flyway migration → validated JPA mappings) → transaction wrapper +
- * ledgers → S3 client → blob store (S3 direct, or the dogfood
- * {@code RemoteBlobStore} when {@code DOCUMENT_PLATFORM_BLOB_STORE} selects a
- * repo mode) → part storage → the two gRPC service impls. Construction fails
+ * ledgers → blob provider (S3, Redis, or S3 with Redis cache) → part storage → the two gRPC service impls. Construction fails
  * fast (migrations, mapping validation) — nothing starts lazily. Every
  * server's call executor is a virtual-thread-per-task executor: every handler
  * is plain blocking code (JDBC, S3), and a blocked call parks its virtual
@@ -102,7 +94,6 @@ public final class RepoServices implements AutoCloseable {
     private final PurgeQueue purgeQueue;
     private final OwnedResources owned = new OwnedResources();
     private final BlobStore blobStore;
-    private final ManagedChannel remoteChannel;
     private final PartStorage partStorage;
     private final DocumentGrpcService documentService;
     private final ai.protomolt.proto.repo.spi.RawIngestionRepository rawIngestion;
@@ -368,6 +359,9 @@ public final class RepoServices implements AutoCloseable {
             ai.protomolt.proto.repo.blob.spi.BlobStores providers, HistoricalReadAccess historicalAccess,
             ManagedSchemaAccess schemaAccess, BoundedArchiveProfile bounded, ManagedDocumentServices.Journaled journaled,
             BoundedDocumentProfile boundedDocuments, ReaderHostOptions readerHost) {
+        if (RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
+                || RepoServiceConfig.BLOB_STORE_REPO_INPROCESS.equals(config.blobStore()))
+            throw new IllegalArgumentException("Remote repository blob storage is retired: " + config.blobStore());
         this.readerHost = readerHost;
         if (readerHost != null && !config.managedStorage().retentionQualified())
             throw new IllegalArgumentException("Host-bound readers require qualified managed storage");
@@ -442,7 +436,6 @@ public final class RepoServices implements AutoCloseable {
                     var selected = selectedBacking.handle();
                     this.blobStore = selected.store();
                     namespaces = selected::ensureNamespace;
-                    this.remoteChannel = null;
                 }
                 case RepoServiceConfig.BLOB_STORE_REDIS -> {
                     selectedBacking = SelectedBlobBacking.open(providers, "redis", redisOptions(config, bounded != null || boundedDocuments != null),
@@ -450,7 +443,6 @@ public final class RepoServices implements AutoCloseable {
                     var selected = selectedBacking.handle();
                     this.blobStore = selected.store();
                     namespaces = selected::ensureNamespace;
-                    this.remoteChannel = null;
                 }
                 case RepoServiceConfig.BLOB_STORE_S3_REDIS_CACHE -> {
                     selectedBacking = SelectedBlobBacking.open(providers, "s3", s3Options(config),
@@ -461,24 +453,9 @@ public final class RepoServices implements AutoCloseable {
                             config.redisTtlSeconds(), config.redisMaxObjectBytes());
                     selectedBacking = selectedBacking.withReclaimer(((CachingBlobStore) blobStore).reclaimer(backing.reclaimer()));
                     namespaces = backing::ensureNamespace;
-                    this.remoteChannel = null;
                 }
-                default -> {
-                    this.remoteChannel = RepoServiceConfig.BLOB_STORE_REPO.equals(config.blobStore())
-                            ? NettyChannelBuilder.forTarget(config.repoTarget()).usePlaintext().build()
-                            : InProcessChannelBuilder.forName(config.repoTarget()).build();
-                    owned.add(() -> {
-                        remoteChannel.shutdownNow();
-                        if (!remoteChannel.awaitTermination(10, TimeUnit.SECONDS))
-                            throw new IllegalStateException("Repository client channel did not terminate");
-                    });
-                    var remoteStub = DocumentServiceGrpc.newBlockingStub(remoteChannel);
-                    if (config.repoCredential() != null)
-                        remoteStub = remoteStub.withInterceptors(config.repoCredential().interceptor());
-                    this.blobStore = new RemoteBlobStore(remoteStub,
-                            config.repoBucketBindings(), java.time.Duration.ofSeconds(30));
-                    namespaces = blobStore::headBucket;
-                }
+                default -> throw new IllegalArgumentException(
+                        "Remote repository blob storage is retired: " + config.blobStore());
             }
             this.partStorage = new PartStorage();
             // Kafka eventing (DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS): the

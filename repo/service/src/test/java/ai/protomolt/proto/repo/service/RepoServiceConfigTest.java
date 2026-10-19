@@ -13,6 +13,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the pre-existing fields.
  */
 class RepoServiceConfigTest {
+    @Test void retiredRemoteStorageFailsBeforeOpeningTheLedger() {
+        for (var mode : java.util.List.of("repo", "repo-inprocess")) {
+            var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, mode,
+                    RepoServiceConfig.ENV_REPO_TARGET, "localhost:1"));
+            assertThatThrownBy(() -> RepoServices.build(config))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Remote repository blob storage is retired: " + mode);
+        }
+    }
 
     @Test
     void upstreamCredentialIsExplicitRedactedAndPreservedByCopies() {
