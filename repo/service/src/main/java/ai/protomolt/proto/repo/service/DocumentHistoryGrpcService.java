@@ -91,7 +91,7 @@ public final class DocumentHistoryGrpcService extends DocumentHistoryServiceGrpc
         } catch (RuntimeException failure) {
             if (call != null && !handlersInstalled) call.terminated();
             if (failure instanceof RepositoryException || failure instanceof io.grpc.StatusRuntimeException)
-                observer.onError(GrpcErrors.map(failure));
+                observer.onError(DocumentGrpcErrors.map(failure));
             else {
                 LOG.warn("Historical read failed", failure);
                 observer.onError(Status.INTERNAL.withDescription("Historical read failed").asRuntimeException());

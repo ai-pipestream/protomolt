@@ -49,7 +49,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public GetBlobResponse get(RepositoryCaller caller, GetBlobRequest request) {
         requireAdministrator(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
             DriveRecord drive = driveOrThrow(ref.getDriveName());
             BlobStore.GetResult got = missingAsRepositoryError(() -> blobStore.get(drive.bucket, ref.getObjectKey(),
@@ -67,7 +67,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public PutBlobResponse put(RepositoryCaller caller, PutBlobRequest request) {
         requireAdministrator(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             if (request.getDriveName().isBlank()) {
                 throw invalidArgument("drive_name is required");
             }
@@ -97,7 +97,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public GetBlobForUpdateResponse getForUpdate(RepositoryCaller caller, GetBlobForUpdateRequest request) {
         requireAdministrator(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             request(request);
             ConditionalBlobKey key = request.getKey();
             DriveRecord drive = driveOrThrow(key.getDriveName());
@@ -123,7 +123,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public CompareAndPutBlobResponse compareAndPut(RepositoryCaller caller, CompareAndPutBlobRequest request) {
         requireAdministrator(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             request(request);
             ConditionalBlobKey key = request.getKey();
             requireUnmanaged(key.getObjectKey());
@@ -218,7 +218,7 @@ public final class BlobOperations implements ai.protomolt.proto.repo.spi.BlobRep
 
     @Override public DeleteBlobResponse delete(RepositoryCaller caller, DeleteBlobRequest request) {
         requireAdministrator(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             FileStorageReference ref = storageRef(request.hasStorageRef(), request.getStorageRef());
             requireUnmanaged(ref.getObjectKey());
             DriveRecord drive = driveOrThrow(ref.getDriveName());

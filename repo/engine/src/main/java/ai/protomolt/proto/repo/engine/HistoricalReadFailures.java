@@ -27,7 +27,7 @@ final class HistoricalReadFailures {
         Objects.requireNonNull(failure);
         return switch (failure) {
             case RepositoryException repository -> repository;
-            case BlobStoreException provider -> RepositoryErrors.historicalProvider(provider);
+            case BlobStoreException provider -> DocumentErrors.historicalProvider(provider);
             case BlobStore.BlobNotFoundException missing ->
                     new RepositoryException(DATA_LOSS, "Published document part is missing from its original backend", missing);
             case BlobStore.BlobReadLimitException oversized ->

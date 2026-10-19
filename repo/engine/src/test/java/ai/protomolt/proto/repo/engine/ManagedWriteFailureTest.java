@@ -11,7 +11,7 @@ class ManagedWriteFailureTest {
     private static void check(Throwable cause, RepositoryException.Code expected) {
         var attempt = UUID.randomUUID();
         var wrapper = new RuntimeException("staging envelope", cause);
-        var mapped = RepositoryErrors.managedFailure(attempt, "publication", wrapper);
+        var mapped = DocumentErrors.managedFailure(attempt, "publication", wrapper);
         assertThat(mapped.code()).isEqualTo(expected);
         assertThat(mapped.getCause()).isSameAs(wrapper);
         assertThat(mapped.getMessage()).contains(attempt.toString(), "publication", "reconcile");

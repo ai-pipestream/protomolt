@@ -240,7 +240,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     public SaveDocumentResponse saveDocument(RepositoryCaller caller, SaveDocumentRequest request, RepositoryOperationControl control) {
         control.check();
         requireReadBinding(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             return saveBlocking(caller, request, null, control);
         });
     }
@@ -254,7 +254,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         RepositoryErrors.requireProcessAuthority(caller);
         if (!request.getPartsWrittenList().isEmpty())
             throw invalidArgument("Raw ingestion publishes a full intake document");
-        return RepositoryErrors.call(() -> saveBlocking(caller, request,
+        return DocumentErrors.call(() -> saveBlocking(caller, request,
                 new IngestionAdmission(rawId, token, expectedRevision, driveId, driveState), RepositoryOperationControl.NONE));
     }
 
@@ -273,7 +273,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
         DocumentRecord destination = documents.findByNodeId(nodeId).orElse(null);
         if (admission != null && (admission.expectedRevision() == null ? destination != null
                 : destination == null || destination.mutationRevision != admission.expectedRevision()))
-            throw RepositoryErrors.revisionConflict();
+            throw DocumentErrors.revisionConflict();
         boolean writesCore = request.getPartsWrittenList().isEmpty()
                 || request.getPartsWrittenList().contains(DocumentPart.DOCUMENT_PART_CORE);
         requireWrite(caller, destination, r.doc(), request, writesCore);
@@ -322,7 +322,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             // which itself mutates bookkeeping even without writing object bytes.
             if (destination == null ? existing.isPresent()
                     : existing.isEmpty() || existing.get().mutationRevision != destination.mutationRevision)
-                throw RepositoryErrors.revisionConflict();
+                throw DocumentErrors.revisionConflict();
             if (existing.isEmpty()) {
                 return new Decision(false, null, 1L);
             }
@@ -632,7 +632,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
         control.check();
         requireReadBinding(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
             DocumentRecord row = documents.findByNodeId(nodeId)
                     .orElseThrow(() -> readMissing(caller, "no document row for node_id " + nodeId));
@@ -647,7 +647,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
             ai.protomolt.proto.repo.spi.RepositoryReadControl control) {
         control.check();
         requireReadBinding(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             NodeAddress address = DocumentRequests.validateAddress(request.getAddress(), "address");
             requireReadAccount(caller, address.getAccountId());
             DocumentRecord row = documents.findByReference(address)
@@ -702,7 +702,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     @Override
     public GetDocumentManifestResponse getDocumentManifest(RepositoryCaller caller, GetDocumentManifestRequest request) {
         requireReadBinding(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             DocumentRecord row = switch (request.getCoordinateCase()) {
                 case NODE_ID -> {
                     UUID nodeId = DocumentRequests.parseUuid(request.getNodeId(), "node_id");
@@ -812,7 +812,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     @Override
     public DeleteDocumentResponse deleteDocument(RepositoryCaller caller, DeleteDocumentRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             return delete(request);
         });
     }
@@ -987,7 +987,7 @@ public final class DocumentOperations implements ai.protomolt.proto.repo.spi.Doc
     @Override
     public ListDocumentsResponse listDocuments(RepositoryCaller caller, ListDocumentsRequest request) {
         requireReadBinding(caller);
-        return RepositoryErrors.call(() -> {
+        return DocumentErrors.call(() -> {
             int limit = request.getLimit() <= 0 ? DEFAULT_LIST_LIMIT
                     : Math.min(request.getLimit(), MAX_LIST_LIMIT);
             long offset = DocumentRequests.parseContinuationToken(request.getContinuationToken());

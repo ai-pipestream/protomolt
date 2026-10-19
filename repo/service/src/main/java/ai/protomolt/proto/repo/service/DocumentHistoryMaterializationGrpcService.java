@@ -80,7 +80,7 @@ public final class DocumentHistoryMaterializationGrpcService
         } catch (RuntimeException failure) {
             if (call != null && !installed) call.terminated();
             if (failure instanceof RepositoryException || failure instanceof io.grpc.StatusRuntimeException)
-                observer.onError(GrpcErrors.map(failure));
+                observer.onError(DocumentGrpcErrors.map(failure));
             else {
                 LOG.warn("Selected historical read failed", failure);
                 observer.onError(Status.INTERNAL.withDescription("Selected historical read failed").asRuntimeException());

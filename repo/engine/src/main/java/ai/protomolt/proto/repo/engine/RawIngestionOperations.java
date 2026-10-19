@@ -62,7 +62,7 @@ public final class RawIngestionOperations implements RawIngestionRepository {
         String declared = blank(request.declaredSha256()) ? null : request.declaredSha256().trim().toLowerCase(java.util.Locale.ROOT);
         if (declared != null && !declared.matches("[0-9a-f]{64}"))
             throw RepositoryErrors.invalidArgument("declaredSha256 must be 64 hexadecimal characters");
-        try { return RepositoryErrors.call(() -> ingest(caller, request, body, knownLength, declared)); }
+        try { return DocumentErrors.call(() -> ingest(caller, request, body, knownLength, declared)); }
         catch (RepositoryException domain) { throw domain; }
         catch (RuntimeException failure) {
             // Providers and persistence adapters may throw their own exceptions.
