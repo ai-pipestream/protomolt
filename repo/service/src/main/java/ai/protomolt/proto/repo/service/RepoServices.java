@@ -531,7 +531,8 @@ public final class RepoServices implements AutoCloseable {
                         V2_CATALOG_SCHEMA));
                 v2Catalog = catalog;
                 java.util.function.Function<DriveRecord, ai.protomolt.proto.repo.stack.Stack> stackForDrive = record -> {
-                    String prefix = record.prefix == null ? "" : record.prefix;
+                    String prefix = ai.protomolt.proto.repo.codec.RepositoryNamespaces.under(
+                            record.prefix == null ? "" : record.prefix.replaceFirst("^/+", ""), "documents");
                     String stackId = catalog.registerStack(ai.protomolt.proto.repo.v2.StackRecord.newBuilder()
                             .setStackId("stack-" + record.driveId)
                             .setProvider(selectedDriveProvider)
@@ -549,9 +550,14 @@ public final class RepoServices implements AutoCloseable {
                         stackId -> {
                             var cached = v2Stacks.get(stackId);
                             if (cached != null) return java.util.Optional.of(cached);
-                            // A peer host may have written the revision; re-resolve every known drive.
-                            for (DriveRecord record : driveLedger.listAll(1000)) stackForDrive.apply(record);
-                            return java.util.Optional.ofNullable(v2Stacks.get(stackId));
+                            // A peer host may have written the revision; resolve the drive directly by primary key.
+                            if (!stackId.startsWith("stack-")) return java.util.Optional.empty();
+                            try {
+                                var driveId = java.util.UUID.fromString(stackId.substring("stack-".length()));
+                                return driveLedger.findById(driveId).map(stackForDrive);
+                            } catch (IllegalArgumentException malformed) {
+                                return java.util.Optional.empty();
+                            }
                         });
                 var limits = new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024,
                         64, 4L * 1024 * 1024, 32, 32L * 1024 * 1024, 64 * 1024 * 1024);
