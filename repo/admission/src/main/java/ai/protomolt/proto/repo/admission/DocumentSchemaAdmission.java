@@ -42,18 +42,30 @@ public final class DocumentSchemaAdmission {
     /**
      * Member-wide serialized byte/count budgets, not a heap reservation. V1 additionally
      * limits descriptor artifacts to 16 MiB/256 files/4096 edges/depth 64, structural
-     * depth to 64, wire values to 1 million per fragment/root, and schema traversal to
-     * 4096 types/65536 fields per root. Raw fragments and decoded payloads each
+     * depth to 64, and schema traversal to 4096 types/65536 fields per root. Wire values
+     * per fragment or root, wire depth and parser entries are host budgets defaulting to
+     * 1 million, 64 and 10 thousand. Raw fragments and decoded payloads each
      * have a 256 MiB ceiling. Hosts reserve memory for decoded forms and I/O.
      */
     public record Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
-                         int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
+                         int maxBindings, long maxRetainedBytes, int maxDecodedBytes,
+                         long maxWireValues, int maxWireDepth, int maxParserEntries) {
         public Limits {
             if (maxFragments < 1 || maxFragments > 10000 || maxFragmentBytes < 1 || maxFragmentBytes > 256L * MIB
                     || maxRoots < 1 || maxRoots > 1024 || maxEvidenceBytes < 1 || maxEvidenceBytes > 16L * MIB
                     || maxBindings < 1 || maxBindings > 64 || maxRetainedBytes < 1 || maxRetainedBytes > 64L * MIB
-                    || maxDecodedBytes < 1 || maxDecodedBytes > 256 * MIB)
+                    || maxDecodedBytes < 1 || maxDecodedBytes > 256 * MIB
+                    || maxWireValues < 1 || maxWireValues > 1_000_000_000L
+                    || maxWireDepth < 1 || maxWireDepth > 100
+                    || maxParserEntries < 1 || maxParserEntries > 1_000_000)
                 throw new IllegalArgumentException("invalid member admission limits");
+        }
+
+        /** The v1 wire budgets: one million wire values, wire depth 64, ten thousand parser entries. */
+        public Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
+                      int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
+            this(maxFragments, maxFragmentBytes, maxRoots, maxEvidenceBytes, maxBindings, maxRetainedBytes,
+                    maxDecodedBytes, 1_000_000, 64, 10_000);
         }
     }
 

@@ -197,9 +197,9 @@ public final class DocumentCandidateAdmission {
                     throw new BudgetExhausted("candidate fragments exceed byte limit", null);
                 total += fragment.bytes().size();
                 try {
-                    new MessageWireBudget(1_000_000, 64, active).check(fragment.bytes(), type);
+                    new MessageWireBudget(limits.maxWireValues(), limits.maxWireDepth(), active).check(fragment.bytes(), type);
                     var input = fragment.bytes().newCodedInput();
-                    input.setRecursionLimit(64);
+                    input.setRecursionLimit(limits.maxWireDepth());
                     var parsed = DynamicMessage.getDefaultInstance(type).getParserForType().parseFrom(input);
                     input.checkLastTagWas(0);
                     if (input.getTotalBytesRead() != fragment.bytes().size())
@@ -235,7 +235,8 @@ public final class DocumentCandidateAdmission {
                 final DocumentAnyRootInventory.Result inventory;
                 try {
                     inventory = DocumentAnyRootInventory.inspect(container.schema(), slot, fragment.bytes(), request.docId(),
-                            new DocumentAnyRootInventory.Limits(Integer.MAX_VALUE, 1_000_000, 64, limits.maxRoots(), 10000), active);
+                            new DocumentAnyRootInventory.Limits(Integer.MAX_VALUE, limits.maxWireValues(),
+                                    limits.maxWireDepth(), limits.maxRoots(), limits.maxParserEntries()), active);
                 } catch (DocumentAnyRootInventory.LimitExceeded | MessageWireBudget.LimitExceededException budget) {
                     throw new BudgetExhausted(fragment.part() + " roots: " + budget.getMessage(), budget);
                 } catch (IllegalArgumentException refused) {
@@ -253,7 +254,8 @@ public final class DocumentCandidateAdmission {
                     try {
                         assessment = DocumentPayloadCheck.assessContextualAssets(selected, envelope, envelope.getTypeUrl(),
                                 DocumentSchemaAdmission.VALIDATOR,
-                                new DocumentPayloadCheck.Limits((int) decodedRemaining, 1_000_000, 64, 4096, 65536), active,
+                                new DocumentPayloadCheck.Limits((int) decodedRemaining, limits.maxWireValues(),
+                                        limits.maxWireDepth(), 4096, 65536), active,
                                 nested -> select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
                                         nested.typeUrl(), DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
                                                 definitions.schemas, active), nested.valueSha256(), nested.valueSizeBytes())),
