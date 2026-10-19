@@ -607,19 +607,6 @@ This is a navigation inventory, not a claim that each file was individually revi
 - [java/ai/protomolt/proto/repo/blob/cache/CacheCloseTest.java](../../repo/blob/cache/src/test/java/ai/protomolt/proto/repo/blob/cache/CacheCloseTest.java)
 - [java/ai/protomolt/proto/repo/blob/cache/CacheProviderIT.java](../../repo/blob/cache/src/test/java/ai/protomolt/proto/repo/blob/cache/CacheProviderIT.java)
 
-## repo/blob/grpc
-
-### Production sources, contracts and SPI registrations
-
-- [java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStore.java](../../repo/blob/grpc/src/main/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStore.java)
-
-### Existing test sources (not executed in this audit)
-
-- [java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreConditionalTest.java](../../repo/blob/grpc/src/test/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreConditionalTest.java)
-- [java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreCoordinateTest.java](../../repo/blob/grpc/src/test/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreCoordinateTest.java)
-- [java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreDeadlineTest.java](../../repo/blob/grpc/src/test/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreDeadlineTest.java)
-- [java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreUploadTest.java](../../repo/blob/grpc/src/test/java/ai/protomolt/proto/repo/blob/grpc/RemoteBlobStoreUploadTest.java)
-
 ## repo/blob/redis
 
 ### Production sources, contracts and SPI registrations
