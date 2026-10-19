@@ -20,7 +20,7 @@ option java_package = "ai.protomolt.proto.repo.v1";
 // decomposed the same way.
 // ============================================================================
 
-// The four addressable sections of a stored Document.
+// The addressable sections of a stored Document. Numbers match repo.v2.DocumentPart.
 enum DocumentPart {
   // Unset; never a stored part selector.
   DOCUMENT_PART_UNSPECIFIED = 0;
@@ -31,10 +31,15 @@ enum DocumentPart {
   // parsers; tombstoned post-parse under the source-blob policy.
   DOCUMENT_PART_BLOBS = 2;
   // search_metadata.semantic_results — chunk texts, embeddings, analytics.
-  // Sub-keyed per chunk set (see PartManifestEntry.sub_key).
+  // Sub-keyed per chunk set (see PartManifestEntry.sub_key). The v2 parts
+  // codec also stores each search_metadata.segmentations entry as one
+  // CHUNKS object keyed by segmentation_id.
   DOCUMENT_PART_CHUNKS = 3;
   // parser_results — append-only parser exhaust.
   DOCUMENT_PART_PARSED = 4;
+  // search_metadata.embedding_sets — one object per embedding set, keyed by
+  // segmentation_id and embedding_set_id.
+  DOCUMENT_PART_EMBEDDINGS = 5;
 }
 
 // Lifecycle state of one part object.

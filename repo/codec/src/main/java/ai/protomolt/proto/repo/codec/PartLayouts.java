@@ -12,10 +12,15 @@ public final class PartLayouts {
     }
 
     /**
-     * The default four-part layout for {@link Document}: identity field
+     * The default part layout for {@link Document}: identity field
      * {@code doc_id}; BLOBS ← {@code blob_bag}; PARSED ← {@code parser_results};
-     * CHUNKS ← {@code search_metadata.semantic_results} keyed by
-     * {@code result_id}. CORE is implicit — everything unmapped lands there.
+     * CHUNKS ← {@code search_metadata.semantic_results} chunked by
+     * {@code result_id} runs, and one CHUNKS object per
+     * {@code search_metadata.segmentations} entry keyed by
+     * {@code segmentation_id}; EMBEDDINGS ← one object per
+     * {@code search_metadata.embedding_sets} entry keyed by
+     * {@code segmentation_id} and {@code embedding_set_id}. CORE is implicit:
+     * everything unmapped lands there.
      *
      * @return the default Document part layout
      */
@@ -38,6 +43,10 @@ public final class PartLayouts {
                 .partField(DocumentPart.DOCUMENT_PART_PARSED, "parser_results")
                 .chunkedPart(DocumentPart.DOCUMENT_PART_CHUNKS,
                         "search_metadata.semantic_results", "result_id")
+                .keyedPart(DocumentPart.DOCUMENT_PART_CHUNKS,
+                        "search_metadata.segmentations", "segmentation_id")
+                .keyedPart(DocumentPart.DOCUMENT_PART_EMBEDDINGS,
+                        "search_metadata.embedding_sets", "segmentation_id", "embedding_set_id")
                 .build();
     }
 }

@@ -21,8 +21,9 @@ Two design choices explain almost everything else.
 
 First, a stored document is not one blob. It is split along clean protobuf
 field boundaries into independently addressable **parts** — CORE, BLOBS,
-CHUNKS (one object per chunk set), PARSED — each written as its own object
-under a shared prefix, with a manifest that lists them. A reader fetches only
+CHUNKS (one object per segmentation), PARSED, EMBEDDINGS (one object per
+embedding set) — each written as its own object under a shared prefix, with a
+manifest that lists them. A reader fetches only
 the parts it needs (CORE without multi-megabyte BLOBS), and the full document
 reassembles byte-for-byte from the parts.
 

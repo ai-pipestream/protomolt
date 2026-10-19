@@ -193,7 +193,7 @@ public final class DocumentReads {
                 if (previous != null && !previous.equals(definition))
                     throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
             }
-            var fragment = new DocumentCandidateAdmission.Fragment(DocumentSaves.v1(part.getPart()), bytes);
+            var fragment = DocumentSaves.fragment(part, bytes);
             try (var result = DocumentCandidateAdmission.check(new DocumentCandidateAdmission.Request(
                     stored.getAddress().getDocId(), List.of(fragment), container),
                     selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {})) {
