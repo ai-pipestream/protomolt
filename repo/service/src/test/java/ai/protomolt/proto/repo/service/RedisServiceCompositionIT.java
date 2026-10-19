@@ -67,16 +67,7 @@ class RedisServiceCompositionIT {
                 old.driveType = "CUSTOM";
                 old.status = "ACTIVE";
                 services.driveLedger().insert(old);
-                assertThatThrownBy(() -> ai.protomolt.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(channel)
-                        .getBlob(ai.protomolt.proto.repo.v1.GetBlobRequest.newBuilder()
-                                .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
-                                        .setDriveName("legacy").setObjectKey("anything")).build()))
-                        .isInstanceOf(io.grpc.StatusRuntimeException.class).hasMessageContaining("FAILED_PRECONDITION");
-                var local = new ai.protomolt.proto.repo.engine.BlobOperations(services.blobStore(), services.driveLedger());
-                assertThatThrownBy(() -> local.get(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true),
-                        ai.protomolt.proto.repo.v1.GetBlobRequest.newBuilder().setStorageRef(
-                                ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
-                                        .setDriveName("legacy").setObjectKey("anything")).build()))
+                assertThatThrownBy(() -> services.driveLedger().findUniqueByName("legacy"))
                         .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
                                 failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION));
                 assertThatThrownBy(() -> services.driveLedger().findById(old.driveId))

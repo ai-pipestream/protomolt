@@ -440,17 +440,25 @@ class ArchiveRetentionConcurrencyIT {
         return liveObject(tx, generation);
     }
 
+    /** Row the database guards register in repository_physical_locations at archive admission. */
+    private static Object[] physicalLocation(Tx tx, UUID objectId) {
+        return tx.readOnly(em -> (Object[]) em.createNativeQuery("""
+                SELECT object_id,backend_generation,storage_namespace,object_key
+                FROM repository_physical_locations WHERE object_id=:id
+                """).setParameter("id", objectId).getSingleResult());
+    }
+
     private static ObjectFixture liveObject(Tx tx, String generation) {
         var uploads = new ArchiveUploadLedger(tx);
         UUID entry = UUID.randomUUID();
         var admitted = uploads.begin(new ArchiveObjectLedger.Location(entry, "account", "archive",
                 generation, "namespace", "object-" + entry), 0, "application/octet-stream", Duration.ofMinutes(1));
         UUID id = admitted.binding().objectId();
-        var catalogLocation = new PhysicalObjectLedger(tx).find(id).orElseThrow();
-        assertThat(catalogLocation.objectId()).isEqualTo(id);
-        assertThat(catalogLocation.backendGeneration()).isEqualTo(generation);
-        assertThat(catalogLocation.namespace()).isEqualTo("namespace");
-        assertThat(catalogLocation.key()).isEqualTo(admitted.binding().location().objectKey());
+        var catalogLocation = physicalLocation(tx, id);
+        assertThat(catalogLocation[0]).isEqualTo(id);
+        assertThat(catalogLocation[1]).isEqualTo(generation);
+        assertThat(catalogLocation[2]).isEqualTo("namespace");
+        assertThat(catalogLocation[3]).isEqualTo(admitted.binding().location().objectKey());
         // Synthetic SQL metadata only. This isolates the retention trigger from provider I/O.
         uploads.verify(id, admitted.upload().leaseToken(), 0,
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", null, null);

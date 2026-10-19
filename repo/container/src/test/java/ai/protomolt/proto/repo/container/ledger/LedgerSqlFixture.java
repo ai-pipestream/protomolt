@@ -1,50 +1,39 @@
 package ai.protomolt.proto.repo.container.ledger;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.Persistence;
 import java.sql.Connection;
-import java.sql.DriverManager;
+import java.util.Map;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
-import org.junit.jupiter.api.Test;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.*;
 
-/** Populated SQL lifecycle fixtures; no provider verification is asserted. */
-@Testcontainers
-class RepositoryRetentionMigrationIT {
-    @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
+/** Migrated ledger schema in a per-test PostgreSQL schema, the pool and transaction wrapper over it, and raw SQL row fixtures. */
+final class LedgerSqlFixture {
 
-    @Test void backfillsRetainedOwnersAndCleanupTombstonesWithoutReopeningObjects() throws Exception {
-        var config = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .locations("classpath:db/migration/repo");
-        config.target("25").load().migrate();
-        try (var connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
-            execute(connection, """
-                    INSERT INTO managed_backend_profiles(generation,provider,endpoint,region,path_style,storage_realm)
-                    VALUES('retention-original','s3','https://storage.example','us-east-1',true,'retention-realm')
-                    """);
-            UUID retained = archive(connection, false);
-            UUID deleted = archive(connection, true);
-            UUID document = abandonedDocument(connection);
-            Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                    .locations("classpath:db/migration/repo").load().migrate();
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_retention")).isEqualTo(3);
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_retention WHERE reclaiming")).isEqualTo(2);
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_references WHERE object_id='" + retained + "'")).isEqualTo(1);
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_retention WHERE object_id='" + deleted + "' AND reclaiming")).isEqualTo(1);
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_retention r JOIN document_part_attempt_objects o ON o.physical_object_id=r.object_id WHERE o.attempt_id='" + document + "' AND r.reclaiming")).isEqualTo(1);
-            assertThatThrownBy(() -> execute(connection, "DELETE FROM repository_object_references WHERE object_id='" + retained + "'"))
-                    .hasMessageContaining("cannot release a retained native owner");
-            assertThatThrownBy(() -> execute(connection, "UPDATE repository_object_retention SET reclaiming=false WHERE object_id='" + deleted + "'"))
-                    .hasMessageContaining("fence is permanent");
-            assertThatThrownBy(() -> execute(connection, "INSERT INTO repository_object_references VALUES ('" + deleted + "','ARCHIVE_VERSION',gen_random_uuid(),1)"))
-                    .hasMessageContaining("permanently fenced");
-            execute(connection, "DELETE FROM archive_version_object_refs WHERE object_id='" + retained + "'");
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_references")).isZero();
-            execute(connection, "UPDATE archive_object_uploads SET state='DELETING',cleanup_token=gen_random_uuid(),cleanup_attempts=1 WHERE object_id='" + retained + "'");
-            assertThat(number(connection, "SELECT count(*) FROM repository_object_retention WHERE reclaiming")).isEqualTo(3);
-        }
+    record Context(HikariDataSource pool, EntityManagerFactory emf, Tx tx) implements AutoCloseable {
+        public void close() { try { emf.close(); } finally { pool.close(); } }
+    }
+
+    static Context context(PostgreSQLContainer postgres) {
+        return context(postgres, "latest");
+    }
+
+    static Context context(PostgreSQLContainer postgres, String target) {
+        String schema = "ledger_" + UUID.randomUUID().toString().replace("-", "");
+        Flyway.configure().dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration/repo").target(target).load().migrate();
+        var config = new HikariConfig(); config.setJdbcUrl(postgres.getJdbcUrl()); config.setUsername(postgres.getUsername());
+        config.setPassword(postgres.getPassword()); config.setSchema(schema); config.setMaximumPoolSize(3);
+        var pool = new HikariDataSource(config);
+        try {
+            var emf = Persistence.createEntityManagerFactory("document-ledger",
+                    Map.of("hibernate.connection.datasource", pool, "hibernate.hbm2ddl.auto", "validate"));
+            return new Context(pool, emf, new Tx(emf));
+        } catch (RuntimeException | Error failure) { pool.close(); throw failure; }
     }
 
     static UUID archive(Connection connection, boolean deleted) throws Exception {

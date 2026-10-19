@@ -75,9 +75,7 @@ class BoundedArchiveHostIT {
                     .isEqualTo(ByteString.copyFromUtf8("second"));
             assertThat(budget.reservedBytes()).isZero();
             assertThatThrownBy(host::services).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(host::repository).isInstanceOf(UnsupportedOperationException.class);
             assertThatThrownBy(() -> host.startHttp(0, "synthetic-operator-key")).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(host::historicalRepository).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(() -> archive.bridgeEntry(CALLER, BridgeEntryRequest.getDefaultInstance()))
                     .isInstanceOfSatisfying(RepositoryException.class, e -> assertThat(e.code()).isEqualTo(RepositoryException.Code.UNSUPPORTED));
         }

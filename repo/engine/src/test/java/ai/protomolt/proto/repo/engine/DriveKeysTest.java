@@ -48,13 +48,6 @@ class DriveKeysTest {
         assertThat(DriveKeys.under(drive("a/b/c").prefix, "blobs/x")).isEqualTo("a/b/c/blobs/x");
     }
 
-    @Test
-    void theDocumentKeyRootCarriesTheAccountAndNode() {
-        UUID node = UUID.fromString("00000000-0000-0000-0000-00000000beef");
-        assertThat(SaveResolution.basePrefix(drive("tenant"), "acct-1", node))
-                .isEqualTo("tenant/documents/acct-1/00000000-0000-0000-0000-00000000beef");
-    }
-
     /**
      * The default blob key is derived from the content digest, so the same bytes put twice
      * overwrite one object instead of accumulating randomly-keyed copies.
@@ -67,13 +60,6 @@ class DriveKeysTest {
         assertThat(first).isEqualTo(DriveKeys.blob(drive("tenant").prefix, digest));
         assertThat(first).startsWith("tenant/blobs/");
         assertThat(DriveKeys.blob(drive("tenant").prefix, digest.replace('e', 'f'))).isNotEqualTo(first);
-    }
-
-    @Test
-    void blobsAndDocumentsDoNotShareAKeyspace() {
-        UUID node = UUID.fromString("00000000-0000-0000-0000-00000000beef");
-        assertThat(DriveKeys.blob(drive("t").prefix, "abc"))
-                .isNotEqualTo(SaveResolution.basePrefix(drive("t"), "acct-1", node));
     }
 
     @Test

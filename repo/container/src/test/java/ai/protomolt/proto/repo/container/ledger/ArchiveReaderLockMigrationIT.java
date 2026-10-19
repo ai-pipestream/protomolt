@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.RepositoryRetentionMigrationIT.*;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.*;
 import static org.assertj.core.api.Assertions.*;
 
 /** SQL lifecycle fixtures; this migration must preserve existing reader protection. */

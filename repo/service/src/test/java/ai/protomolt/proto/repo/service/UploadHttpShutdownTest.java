@@ -17,18 +17,25 @@ class UploadHttpShutdownTest {
         var entered = new CountDownLatch(1);
         var finish = new CountDownLatch(1);
         var released = new AtomicBoolean();
-        // Fault-only ingestion boundary: never fabricates a successful storage result.
-        var server = new UploadHttpServer((caller, request, body, length) -> {
-            entered.countDown();
-            while (finish.getCount() != 0) {
-                try { finish.await(); }
-                catch (InterruptedException ignored) { /* Deliberately uncooperative handler. */ }
-            }
-            throw new IllegalStateException("Injected ingestion failure");
-        }, "synthetic-http-operator-key", null);
+        // Fault-only archive boundary: never fabricates a successful storage result.
+        var archive = (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
+                UploadHttpShutdownTest.class.getClassLoader(),
+                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
+                (proxy, method, args) -> {
+                    if (method.getName().equals("uploadStream")) {
+                        entered.countDown();
+                        while (finish.getCount() != 0) {
+                            try { finish.await(); }
+                            catch (InterruptedException ignored) { /* Deliberately uncooperative handler. */ }
+                        }
+                        throw new IllegalStateException("Injected archive failure");
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        var server = new UploadHttpServer(null, null, "synthetic-http-operator-key", archive);
         var client = HttpClient.newHttpClient();
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.start(0)
-                + UploadHttpServer.UPLOAD_PATH + "?account_id=a&datasource_id=d&drive=d&filename=x"))
+                + UploadHttpServer.ARCHIVE_UPLOAD_PATH + "?account_id=a&archive=ar&entry_id=e"))
                 .header("api_token", "synthetic-http-operator-key")
                 .POST(HttpRequest.BodyPublishers.ofString("x")).build();
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
