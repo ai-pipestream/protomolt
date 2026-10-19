@@ -12,8 +12,11 @@ generations are mounted side by side by `RepoServices` (full profile):
 and `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`,
 the parts-based Repository Service v2; see
 [the design requirements](../docs/design/parts-based-repository-requirements.md)).
-See the [current document guide](../docs/repo/publication.md). The separate
-publication transport is removed; internal publication and recovery
+The side-by-side mounting is transitional: Step 5B (#392) retires the v1
+document service, after which `RepoServices` mounts the v2
+`AccessionGrpcService` alongside the frozen `Archive*` and `Drive*` services
+only. See the [current document guide](../docs/repo/publication.md). The
+separate publication transport is removed; internal publication and recovery
 components remain.
 
 When any part of the pipeline needs to persist a `Document` (the platform's
@@ -499,12 +502,15 @@ the entry UUID, version, SHA-256, size, object key, and root checksum.
 
 ### HTTP `POST /v1/documents:upload`
 
-The streaming raw-upload route. The request body flows through a SHA-256
-`DigestInputStream` straight into object storage — **no buffering in
-memory** — then the assembled `Document` runs through the same intake save
-as gRPC `SaveDocument`.
+The streaming raw-upload route, served by the v2 `UploadHttpHandler`
+(`repo/accession`): the request body streams into the document's drive
+stack through `DocumentUploads` — **no buffering in memory** — and lands as
+a raw blob of a new revision saved through the same accession pipeline as
+gRPC `UploadDocument`. Authentication comes first: every request must
+present the configured API token as an `api_token` header or as
+`Authorization: Bearer <token>`; anything else is `401` before routing.
 
-Identity comes from query parameters or headers (query wins):
+Identity comes from query parameters or headers (query takes precedence):
 
 | Param | Header | Required |
 |-------|--------|----------|
@@ -512,34 +518,49 @@ Identity comes from query parameters or headers (query wins):
 | `datasource_id` | `x-datasource-id` | yes |
 | `drive` | `x-drive-name` | yes |
 | `filename` | `x-filename` | yes |
-| `content_type` | `Content-Type` | no (default `application/octet-stream`) |
+| `operation_id` | `x-operation-id` | no (blank generates a random UUID) |
+| `doc_id` | `x-doc-id` | no (see identity rules below) |
+| `blob_id` | `x-blob-id` | no (blank derives from the document ID and filename) |
 | `connector_id` | `x-connector-id` | no |
-| `crawl_id` | `x-crawl-id` | no |
-| `doc_id` | `x-doc-id` | no (blank derives a name-based UUID from the content SHA-256) |
+| `content_type` | `Content-Type` | no (default `application/octet-stream`) |
+| `expected_revision` | `x-expected-revision` | no (integer `> 0` pins that exact revision; omitted or `0` means `ExpectedRevision.none`, a create) |
+| `sha256` | `X-Content-Sha256` | no (declared digest, verified while streaming) |
 
-**`Content-Length` is required** — a deliberate contract: the S3 sync client
-streams a PUT only with a known length, so chunked/absent-length requests
-get `411 Length Required` before any byte is read.
+**`Content-Length` is required** — chunked transfer and absent, blank, or
+duplicated length headers are refused (`411`, duplicates `400`) before any
+byte is read, because the length bounds the streamed write.
 
-An `X-Content-Sha256` header is verified against the digest computed while
-streaming; a mismatch is a 400 and the landed object is best-effort deleted.
+Identity and retry rules: with no `doc_id`, the document ID derives
+deterministically from the declared `sha256` when one is supplied, else
+from the supplied `operation_id`, else it is a fresh random UUID — so a
+retry that repeats neither creates a new document on every attempt.
+Retries should supply a stable `operation_id`: a retry with the same
+`operation_id` and the same intent replays the recorded outcome and answers
+with `replayed: true` instead of writing a duplicate revision. Updates to
+an existing document should also pin `expected_revision` to the revision
+they mean to advance; a concurrent write then conflicts (`409`) instead of
+being overwritten.
 
 Success is `200` with a JSON receipt:
 
 ```json
 {
-  "node_id": "3f8a…",
+  "operation_id": "…",
   "doc_id": "…",
-  "deduplicated": false,
+  "revision": 1,
+  "replayed": false,
   "size_bytes": 8388608,
-  "sha256": "…",
-  "storage_ref": {"drive_name": "intake", "object_key": "intake/blobs/<accountId>/<blobId>.bin"}
+  "sha256": "…"
 }
 ```
 
-Errors: 400 (names the offending parameter, or a checksum mismatch), 404
-(unknown drive), 405 (non-POST), 411 (absent/invalid Content-Length), 502
-(backing-store or intake-save failure).
+Errors are `{"error": "…"}` JSON: `400` (missing required parameter,
+invalid `expected_revision` or `Content-Length`, unknown drive, digest or
+length mismatch against the streamed bytes), `401` (missing or invalid API
+token), `403` (the caller may not write this document), `404` (wrong path,
+or a referenced document does not exist), `405` (non-POST), `409`
+(revision or operation conflict), `411` (missing `Content-Length`), `429`
+(capacity exhausted), `503` (stack or catalog unavailable).
 
 ## Retired: the dogfood blob store
 
