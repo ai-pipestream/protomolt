@@ -119,6 +119,112 @@ class StreamingUploadAndReadIT {
         if (f != null) f.close();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void listenerSetupFailureClosesPreparedBlob(boolean failCancelHandler, boolean failClose) throws Exception {
+        var address = address(account, "listener-failure");
+        f.saves.save(processAuthority(), create("save", address,
+                document(account, "listener-failure", "title")).build());
+        var closeFailure = new IOException("provider close failed");
+        var opened = new java.util.concurrent.atomic.AtomicInteger();
+        var closed = new java.util.concurrent.atomic.AtomicInteger();
+        var tracking = new ForwardingStack(f.stack) {
+            @Override public java.io.InputStream open(StackRef ref) throws IOException {
+                var stream = super.open(ref);
+                opened.incrementAndGet();
+                return new java.io.FilterInputStream(stream) {
+                    @Override public void close() throws IOException {
+                        closed.incrementAndGet();
+                        super.close();
+                        if (failClose && ref.getSha256().equals(SaveIntents.sha256Hex("raw bytes of title".getBytes(StandardCharsets.UTF_8)))) throw closeFailure;
+                    }
+                };
+            }
+        };
+        var reads = new DocumentReads(f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", tracking)),
+                limits(), bytes -> () -> {}, java.time.Clock.systemUTC());
+        var failure = new IllegalStateException("listener setup failed");
+        var observer = new io.grpc.stub.ServerCallStreamObserver<ReadBlobResponse>() {
+            @Override public boolean isCancelled() { return false; }
+            @Override public boolean isReady() { return false; }
+            @Override public void setOnCancelHandler(Runnable handler) {
+                if (failCancelHandler) throw failure;
+            }
+            @Override public void setOnReadyHandler(Runnable handler) { throw failure; }
+            @Override public void setCompression(String compression) {}
+            @Override public void request(int count) {}
+            @Override public void setMessageCompression(boolean enabled) {}
+            @Override public void disableAutoInboundFlowControl() {}
+            @Override public void onNext(ReadBlobResponse value) { throw new AssertionError("unexpected frame"); }
+            @Override public void onError(Throwable error) { throw new AssertionError("unexpected callback", error); }
+            @Override public void onCompleted() { throw new AssertionError("unexpected completion"); }
+        };
+        assertThatThrownBy(() -> reads.readBlob(processAuthority(),
+                ReadBlobRequest.newBuilder().setAddress(address).setBlobId("b1").build(), observer))
+                .isSameAs(failure);
+        if (failClose) assertThat(failure.getSuppressed()).containsExactly(closeFailure);
+        else assertThat(failure.getSuppressed()).isEmpty();
+        assertThat(opened.get()).isGreaterThan(0);
+        assertThat(closed.get()).as("each prepared stream closes exactly once").isEqualTo(opened.get());
+    }
+
+    @Test
+    void readyListenerFailureClosesPartOpenedBySynchronousCallbackAndReleasesLease() throws Exception {
+        var address = address(account, "listener-part");
+        var document = document(account, "listener-part", "title").toBuilder()
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle("title").setBody("x".repeat(90_000)))
+                .build();
+        f.saves.save(processAuthority(), create("save-part", address, document).build());
+        var opens = new java.util.concurrent.atomic.AtomicInteger();
+        var closes = new java.util.concurrent.atomic.AtomicInteger();
+        var reserved = new java.util.concurrent.atomic.AtomicLong();
+        var released = new java.util.concurrent.atomic.AtomicLong();
+        var tracking = new ForwardingStack(f.stack) {
+            @Override public java.io.InputStream open(StackRef ref) throws IOException {
+                var stream = super.open(ref);
+                opens.incrementAndGet();
+                return new java.io.FilterInputStream(stream) {
+                    @Override public void close() throws IOException {
+                        closes.incrementAndGet();
+                        super.close();
+                    }
+                };
+            }
+        };
+        var reads = new DocumentReads(f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", tracking)),
+                limits(), bytes -> { reserved.addAndGet(bytes); return () -> released.addAndGet(bytes); },
+                java.time.Clock.systemUTC());
+        var failure = new IllegalStateException("ready registration failed after callback");
+        var observer = new io.grpc.stub.ServerCallStreamObserver<ReadDocumentResponse>() {
+            private boolean ready = true;
+            @Override public boolean isCancelled() { return false; }
+            @Override public boolean isReady() { return ready; }
+            @Override public void setOnCancelHandler(Runnable handler) {}
+            @Override public void setOnReadyHandler(Runnable handler) {
+                handler.run();
+                assertThat(reserved.get()).isGreaterThan(0);
+                assertThat(released.get()).isZero();
+                assertThat(opens.get()).isGreaterThan(closes.get());
+                throw failure;
+            }
+            @Override public void setCompression(String compression) {}
+            @Override public void request(int count) {}
+            @Override public void setMessageCompression(boolean enabled) {}
+            @Override public void disableAutoInboundFlowControl() {}
+            @Override public void onNext(ReadDocumentResponse value) {
+                if (value.hasPartData()) ready = false;
+            }
+            @Override public void onError(Throwable error) { throw new AssertionError("unexpected callback", error); }
+            @Override public void onCompleted() { throw new AssertionError("unexpected completion"); }
+        };
+        assertThatThrownBy(() -> reads.readDocument(processAuthority(),
+                ReadDocumentRequest.newBuilder().setAddress(address).build(), observer)).isSameAs(failure);
+        assertThat(closes.get()).isEqualTo(opens.get());
+        assertThat(released.get()).isEqualTo(reserved.get());
+    }
+
     @Test
     void uploadDocumentRawBlobAndStreamedReadsVerifyContentAndClaimChecks() throws Exception {
         var address = address(account, "doc-stream-raw");

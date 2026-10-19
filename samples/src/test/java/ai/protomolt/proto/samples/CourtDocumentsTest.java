@@ -151,7 +151,6 @@ class CourtDocumentsTest {
         assertThat(CourtDocuments.firstDocumentEmbedding(embedded)).containsExactly(vector);
         assertThat(embedded.getSearchMetadata().getSegmentationsCount()).isEqualTo(1);
         assertThat(embedded.getSearchMetadata().getEmbeddingSetsCount()).isEqualTo(1);
-        assertThat(embedded.getSearchMetadata().getSemanticResultsCount()).isZero();
 
         var segmentation = embedded.getSearchMetadata().getSegmentations(0);
         assertThat(segmentation.getSource().getDerived().getText()).isEqualTo(expectedText);
@@ -164,6 +163,39 @@ class CourtDocumentsTest {
         assertThat(segment.getText()).isEqualTo(expectedText);
         assertThat(segment.getStart()).isZero();
         assertThat(segment.getEnd()).isEqualTo(expectedBytes.length);
+    }
+
+    @Test
+    void repeatedEmbeddingReplacesOnlyItsOwnEntriesAndPreservesMetadata() {
+        var original = CourtDocuments.withEmbedding(Document.newBuilder().setDocId("doc").build(),
+                "original", new float[]{1f, 2f}, "first-model");
+        var metadata = original.getSearchMetadata();
+        var otherSegmentation = metadata.getSegmentations(0).toBuilder().setSegmentationId("other").build();
+        var otherEmbedding = metadata.getEmbeddingSets(0).toBuilder()
+                .setEmbeddingSetId("other").setSegmentationId("other").build();
+        var before = original.toBuilder().setSearchMetadata(metadata.toBuilder()
+                .addSegmentations(0, otherSegmentation).addEmbeddingSets(0, otherEmbedding)
+                .setTitle("preserved").putMetadata("key", "value")
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(999, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(42).build())
+                        .build())).build();
+        var after = CourtDocuments.withEmbedding(before, "replacement", new float[]{3f, 4f}, "second-model");
+        var result = after.getSearchMetadata();
+        assertThat(result.getSegmentationsCount()).isEqualTo(2);
+        assertThat(result.getEmbeddingSetsCount()).isEqualTo(2);
+        assertThat(result.getSegmentations(0)).isEqualTo(otherSegmentation);
+        assertThat(result.getEmbeddingSets(0)).isEqualTo(otherEmbedding);
+        assertThat(result.toBuilder().clearSegmentations().clearEmbeddingSets().build())
+                .isEqualTo(before.getSearchMetadata().toBuilder().clearSegmentations().clearEmbeddingSets().build());
+        var replacement = result.getSegmentations(1);
+        assertThat(replacement.getSegmentationId()).isEqualTo(CourtDocuments.EMBEDDING_RESULT_ID);
+        assertThat(replacement.getSource().getDerived().getDerivationId()).isEqualTo("document-embedding-source");
+        assertThat(replacement.getSource().getDerived().getText()).isEqualTo("replacement");
+        assertThat(replacement.getContentDigest()).isNotEqualTo(metadata.getSegmentations(0).getContentDigest());
+        assertThat(result.getEmbeddingSets(1).getSegmentationDigest()).isEqualTo(replacement.getContentDigest());
+        assertThat(result.getEmbeddingSets(1).getModel()).isEqualTo("second-model");
+        assertThat(result.getEmbeddingSets(1).getVectors(0).getValuesList()).containsExactly(3f, 4f);
+        assertThat(ValidationResult.validate(after).valid()).isTrue();
     }
 
     private static JsonNode opinion(String json) throws Exception {

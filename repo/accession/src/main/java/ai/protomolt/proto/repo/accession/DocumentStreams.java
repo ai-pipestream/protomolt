@@ -91,11 +91,20 @@ public final class DocumentStreams {
                 prepared.stored(),
                 prepared.manifest(),
                 prepared.selectedParts());
-        if (serverObserver != null) {
-            serverObserver.setOnCancelHandler(session::cancel);
-            serverObserver.setOnReadyHandler(session::pump);
+        try {
+            if (serverObserver != null) {
+                serverObserver.setOnCancelHandler(session::cancel);
+                serverObserver.setOnReadyHandler(session::pump);
+            }
+            session.pump();
+        } catch (Throwable failure) {
+            try {
+                session.cancel(failure);
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
         }
-        session.pump();
     }
 
     /**
@@ -130,11 +139,20 @@ public final class DocumentStreams {
 
         var serverObserver = observer instanceof ServerCallStreamObserver<ReadBlobResponse> s ? s : null;
         var session = new BlobStreamSession(observer, serverObserver, prepared.header(), prepared.stream());
-        if (serverObserver != null) {
-            serverObserver.setOnCancelHandler(session::cancel);
-            serverObserver.setOnReadyHandler(session::pump);
+        try {
+            if (serverObserver != null) {
+                serverObserver.setOnCancelHandler(session::cancel);
+                serverObserver.setOnReadyHandler(session::pump);
+            }
+            session.pump();
+        } catch (Throwable failure) {
+            try {
+                session.cancel(failure);
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
         }
-        session.pump();
     }
 
     private PreparedDocumentRead prepareDocumentRead(RepositoryCaller caller, ReadDocumentRequest request) {
@@ -273,10 +291,15 @@ public final class DocumentStreams {
         }
 
         void cancel() {
+            cancel(null);
+        }
+
+        void cancel(Throwable failure) {
             cancelled = true;
             var stream = activeStream;
             activeStream = null;
-            closeOnCancel(stream);
+            if (failure == null) closeOnCancel(stream);
+            else closeOnFailure(stream, failure);
             DocumentAdmissionReservations.Lease leaseToRelease = null;
             synchronized (stateLock) {
                 cancelled = true;
@@ -555,8 +578,13 @@ public final class DocumentStreams {
         }
 
         void cancel() {
+            cancel(null);
+        }
+
+        void cancel(Throwable failure) {
             cancelled = true;
-            closeOnCancel(stream);
+            if (failure == null) closeOnCancel(stream);
+            else closeOnFailure(stream, failure);
         }
 
         synchronized void pump() {

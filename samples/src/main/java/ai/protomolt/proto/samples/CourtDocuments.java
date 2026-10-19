@@ -11,11 +11,8 @@ import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
 import ai.protomolt.proto.repo.semantic.v1.Similarity;
 import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
 import ai.protomolt.proto.repo.semantic.v1.TextSource;
-import ai.protomolt.proto.repo.v1.ChunkEmbedding;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.protobuf.Timestamp;
 
@@ -36,6 +33,8 @@ final class CourtDocuments {
 
     /** Segmentation, segment, and embedding-set ID of the single document-level embedding: {@value}. */
     static final String EMBEDDING_RESULT_ID = "court-sample-doc-embedding";
+
+    private static final String DERIVATION_ID = "document-embedding-source";
 
     /** Maximum number of body characters included in the document-level embedding input. */
     static final int EMBED_BODY_CHARS = 2000;
@@ -133,7 +132,7 @@ final class CourtDocuments {
         byte[] utf8Bytes = resolvedText.getBytes(StandardCharsets.UTF_8);
         TextSource source = TextSource.newBuilder()
                 .setDerived(DerivedText.newBuilder()
-                        .setDerivationId(EMBEDDING_RESULT_ID)
+                        .setDerivationId(DERIVATION_ID)
                         .setText(resolvedText))
                 .setBinding(SourceTextBinding.newBuilder()
                         .setResolvedTextSha256(sha256Hex(utf8Bytes))
@@ -175,11 +174,26 @@ final class CourtDocuments {
                 .setSimilarity(Similarity.SIMILARITY_COSINE)
                 .addVectors(segmentVector)
                 .build();
-        return document.toBuilder()
-                .setSearchMetadata(document.getSearchMetadata().toBuilder()
-                        .addSegmentations(segmentation)
-                        .addEmbeddingSets(embeddingSet))
-                .build();
+        var metadata = document.getSearchMetadata().toBuilder();
+        int segmentationIndex = -1;
+        for (int i = metadata.getSegmentationsCount() - 1; i >= 0; i--) {
+            if (metadata.getSegmentations(i).getSegmentationId().equals(EMBEDDING_RESULT_ID)) {
+                segmentationIndex = i;
+                metadata.removeSegmentations(i);
+            }
+        }
+        if (segmentationIndex < 0) metadata.addSegmentations(segmentation);
+        else metadata.addSegmentations(segmentationIndex, segmentation);
+        int embeddingIndex = -1;
+        for (int i = metadata.getEmbeddingSetsCount() - 1; i >= 0; i--) {
+            if (metadata.getEmbeddingSets(i).getEmbeddingSetId().equals(EMBEDDING_RESULT_ID)) {
+                embeddingIndex = i;
+                metadata.removeEmbeddingSets(i);
+            }
+        }
+        if (embeddingIndex < 0) metadata.addEmbeddingSets(embeddingSet);
+        else metadata.addEmbeddingSets(embeddingIndex, embeddingSet);
+        return document.toBuilder().setSearchMetadata(metadata).build();
     }
 
     /** Vector of the first document-level embedding, or an empty array when none is attached. */
@@ -192,19 +206,6 @@ final class CourtDocuments {
                         vector[i] = segmentVector.getValues(i);
                     }
                     return vector;
-                }
-            }
-        }
-        for (SemanticProcessingResult result : document.getSearchMetadata().getSemanticResultsList()) {
-            for (SemanticChunk chunk : result.getChunksList()) {
-                for (ChunkEmbedding embedding : chunk.getEmbeddingsList()) {
-                    if (embedding.getVectorCount() > 0) {
-                        float[] vector = new float[embedding.getVectorCount()];
-                        for (int i = 0; i < vector.length; i++) {
-                            vector[i] = embedding.getVector(i);
-                        }
-                        return vector;
-                    }
                 }
             }
         }
