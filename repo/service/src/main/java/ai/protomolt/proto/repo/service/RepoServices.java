@@ -595,7 +595,7 @@ public final class RepoServices implements AutoCloseable {
                         new ai.protomolt.proto.repo.accession.DocumentDeletes(catalog, java.time.Clock.systemUTC()),
                         new ai.protomolt.proto.repo.accession.DocumentLists(catalog),
                         new ai.protomolt.proto.repo.accession.DocumentPurges(catalog, v2Drives,
-                                (identity, tenant) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(true, true),
+                                (identity, tenant) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false),
                                 java.time.Clock.systemUTC()),
                         this::bindV2Caller);
                 // Co-mounted step writers (the parse coordinator) save with process
