@@ -14,18 +14,20 @@ import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
 import ai.protomolt.proto.workflow.authoring.v1.PrepareWorkflowCandidateRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationServiceGrpc;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
+import ai.protomolt.proto.repo.v2.Accession;
+import ai.protomolt.proto.repo.v2.DocumentManifest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartManifestEntry;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveOwner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -310,11 +312,6 @@ class AuthoringCoordinatorPreparationProcessTest {
                 .digest(text.getBytes(StandardCharsets.UTF_8)));
     }
 
-    private static String sha256(byte[] bytes) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
-        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
-    }
-
     private static void stop(Process process) throws InterruptedException {
         if (process == null) return;
         process.destroy();
@@ -324,66 +321,61 @@ class AuthoringCoordinatorPreparationProcessTest {
         }
     }
 
+    /**
+     * The v2 DocumentService contract over in-memory documents: current-revision reads
+     * and compare-and-set saves answering ABORTED with a RevisionConflict detail on a
+     * stale expectation.
+     */
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private final Map<String, ByteString> objects = new java.util.concurrent.ConcurrentHashMap<>();
-        private final Map<String, String> mimeTypes = new java.util.concurrent.ConcurrentHashMap<>();
+        private final Map<String, ai.protomolt.proto.repo.v1.Document> documents =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        private final Map<String, Long> revisions = new java.util.concurrent.ConcurrentHashMap<>();
 
-        @Override public synchronized void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-            ByteString bytes = objects.get(key(request.getStorageRef().getDriveName(),
-                    request.getStorageRef().getObjectKey()));
-            if (bytes == null) {
+        @Override public void getDocument(GetDocumentRequest request,
+                StreamObserver<GetDocumentResponse> observer) {
+            String key = key(request.getAddress());
+            var document = documents.get(key);
+            if (document == null) {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            observer.onNext(GetBlobResponse.newBuilder().setData(bytes).setSizeBytes(bytes.size())
-                    .setMimeType(mimeTypes.get(key(request.getStorageRef().getDriveName(),
-                            request.getStorageRef().getObjectKey()))).build());
+            var manifest = DocumentManifest.newBuilder().setAddress(request.getAddress())
+                    .setRevision(revisions.get(key))
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
+                            .setOwner(SaveOwner.newBuilder().setIntake(
+                                    IntakeOrigin.newBuilder().setDatasourceId("samples-test"))));
+            observer.onNext(GetDocumentResponse.newBuilder().setDocument(document)
+                    .setManifest(manifest).build());
             observer.onCompleted();
         }
 
-        @Override public synchronized void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-            ByteString bytes = request.getData();
-            objects.put(key(request.getDriveName(), request.getObjectKey()), bytes);
-            mimeTypes.put(key(request.getDriveName(), request.getObjectKey()), request.getMimeType());
-            observer.onNext(PutBlobResponse.newBuilder().setStorageRef(
-                    FileStorageReference.newBuilder().setDriveName(request.getDriveName())
-                            .setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(bytes.size()).setSha256(sha256(bytes.toByteArray())).build());
+        @Override public synchronized void saveDocument(SaveDocumentRequest request,
+                StreamObserver<SaveDocumentResponse> observer) {
+            String key = key(request.getTarget().getAddress());
+            long current = revisions.getOrDefault(key, 0L);
+            long expected = request.getExpected().hasNone() ? 0 : request.getExpected().getRevision();
+            if (current != expected) {
+                var detail = RevisionConflict.newBuilder().setAddress(request.getTarget().getAddress())
+                        .setExpected(request.getExpected()).setCurrentRevision(current).build();
+                observer.onError(io.grpc.protobuf.StatusProto.toStatusRuntimeException(
+                        com.google.rpc.Status.newBuilder().setCode(Status.Code.ABORTED.value())
+                                .setMessage("conditional write conflict")
+                                .addDetails(com.google.protobuf.Any.pack(detail)).build()));
+                return;
+            }
+            documents.put(key, request.getDocument());
+            revisions.put(key, current + 1);
+            observer.onNext(SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
+                    .setAccession(Accession.newBuilder().setAddress(request.getTarget().getAddress())
+                            .setRevision(current + 1).setPreviousRevision(current))
+                    .build());
             observer.onCompleted();
         }
 
-        @Override public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
-                StreamObserver<GetBlobForUpdateResponse> observer) {
-            String address = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
-            ByteString bytes = objects.get(address);
-            if (bytes == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobForUpdateResponse.newBuilder().setData(bytes)
-                    .setVersion(version(request.getKey(), bytes)).setMimeType(mimeTypes.get(address)).build());
-            observer.onCompleted();
+        private static String key(ai.protomolt.proto.repo.v1.NodeAddress address) {
+            return address.getAccountId() + "/" + address.getDocId();
         }
-
-        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
-                StreamObserver<CompareAndPutBlobResponse> observer) {
-            String address = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
-            ByteString current = objects.get(address);
-            boolean matches = switch (request.getPreconditionCase()) {
-                case IF_ABSENT -> request.getIfAbsent() && current == null;
-                case EXPECTED_ETAG -> current != null && tag(current).equals(request.getExpectedEtag());
-                default -> false;
-            };
-            if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
-            objects.put(address, request.getData());
-            mimeTypes.put(address, request.getMimeType());
-            observer.onNext(CompareAndPutBlobResponse.newBuilder()
-                    .setVersion(version(request.getKey(), request.getData())).build());
-            observer.onCompleted();
-        }
-
-        private static ConditionalBlobVersion version(ConditionalBlobKey key, ByteString bytes) {
-            return ConditionalBlobVersion.newBuilder().setKey(key).setEtag(tag(bytes))
-                    .setSizeBytes(bytes.size()).setSha256(sha256(bytes.toByteArray())).build();
-        }
-        private static String tag(ByteString bytes) { return "\"" + sha256(bytes.toByteArray()) + "\""; }
-        private static String key(String drive, String object) { return drive + "/" + object; }
     }
 }
