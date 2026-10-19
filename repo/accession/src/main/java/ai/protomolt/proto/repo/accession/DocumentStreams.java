@@ -41,7 +41,9 @@ import java.util.Objects;
  * reaching the client, matching the frame contract documented on
  * {@link DocumentReads#readDocument(RepositoryCaller, ReadDocumentRequest, java.util.function.Consumer)}.
  * The per-part buffer is bounded by an admission reservation taken before the part is
- * read. {@code ReadBlob} streams raw bytes as they arrive and verifies the digest at
+ * read and held until the part's final {@link PartData} frame callback returns (after
+ * {@code onNext} returns, any remaining transport buffering is governed by gRPC flow
+ * control). {@code ReadBlob} streams raw bytes as they arrive and verifies the digest at
  * end of stream, since a raw blob may far exceed what a host can buffer.
  */
 public final class DocumentStreams {
@@ -364,11 +366,11 @@ public final class DocumentStreams {
                             .setLast(isLast)
                             .build();
                     currentOffset += length;
+                    observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
                     if (isLast) {
                         releaseLease();
                         partIndex++;
                     }
-                    observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
                 }
             } catch (AccessionException failure) {
                 failWith(failure, AccessionGrpcService.toStatus(failure));
@@ -403,7 +405,7 @@ public final class DocumentStreams {
          * Reads one part in full and verifies it before any of its frames go out: the
          * stack stream checks length and digest at end of stream, and a non-opaque part
          * is then decoded against its retained schemas. The buffered bytes are bounded
-         * by an admission reservation held until the part's last frame is emitted.
+         * by an admission reservation held until the part's final frame callback returns.
          */
         private void loadPart(StoredPartEntry part) {
             var entry = part.getEntry();
@@ -453,7 +455,11 @@ public final class DocumentStreams {
             }
         }
 
-        /** Drains the stream to end of stream, where a stack stream verifies length and digest. */
+        /**
+         * Drains the stream to end of stream, where the verifying stack stream enforces
+         * that the stored object matches {@code expectedLength} and its recorded digest,
+         * so pre-sizing the output from {@code expectedLength} cannot be silently exceeded.
+         */
         private ByteString readFully(InputStream stream, long expectedLength) throws IOException {
             var output = ByteString.newOutput((int) Math.min(Math.max(expectedLength, 0L), Integer.MAX_VALUE));
             var chunk = new byte[CHUNK_SIZE];

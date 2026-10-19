@@ -1190,6 +1190,49 @@ class StreamingUploadAndReadIT {
                 .as("cancel() must release the buffered part's reservation")
                 .isEqualTo(readReserved.get());
 
+        // 2b. Full multi-chunk ReadDocument holds the part reservation inside every PartData callback
+        // (including the final frame where last == true) and releases it once the final callback returns.
+        readReserved.set(0L);
+        readReleased.set(0L);
+        var partFrames = new java.util.concurrent.atomic.AtomicInteger();
+        var sawLastPartFrame = new java.util.concurrent.atomic.AtomicBoolean();
+        var sawCompleteFrame = new java.util.concurrent.atomic.AtomicBoolean();
+        customReads.readDocument(
+                processAuthority(),
+                ReadDocumentRequest.newBuilder().setAddress(address).build(),
+                new StreamObserver<>() {
+                    @Override
+                    public void onNext(ReadDocumentResponse value) {
+                        if (value.hasPartData()) {
+                            partFrames.incrementAndGet();
+                            assertThat(readReserved.get() - readReleased.get())
+                                    .as("part reservation must remain live inside PartData callback; last=%s",
+                                            value.getPartData().getLast())
+                                    .isEqualTo(coreFragmentBytes.length);
+                            if (value.getPartData().getLast()) {
+                                sawLastPartFrame.set(true);
+                            }
+                        } else if (value.hasComplete()) {
+                            sawCompleteFrame.set(true);
+                            assertThat(readReserved.get() - readReleased.get())
+                                    .as("part reservation must be released after final PartData callback returns")
+                                    .isZero();
+                        }
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        throw new AssertionError("unexpected onError during full read", t);
+                    }
+
+                    @Override
+                    public void onCompleted() {}
+                });
+        assertThat(partFrames.get()).isGreaterThanOrEqualTo(2);
+        assertThat(sawLastPartFrame.get()).isTrue();
+        assertThat(sawCompleteFrame.get()).isTrue();
+        assertThat(readReleased.get()).isEqualTo(readReserved.get());
+
         // 3. Concurrent cancellation while pump() is actively executing does not release the reservation
         // until the in-flight reader unwinds.
         var inReader = new CountDownLatch(1);
