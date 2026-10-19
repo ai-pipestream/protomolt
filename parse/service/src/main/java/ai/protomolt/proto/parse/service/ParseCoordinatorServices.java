@@ -1,6 +1,6 @@
 package ai.protomolt.proto.parse.service;
 
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.inprocess.InProcessChannelBuilder;

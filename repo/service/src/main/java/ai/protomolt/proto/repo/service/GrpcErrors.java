@@ -1,7 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
-import ai.protomolt.proto.repo.container.blob.PartStorage;
 import io.grpc.Status;
 import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
@@ -24,11 +23,13 @@ import java.util.function.Supplier;
  *   slipped through, e.g. the storage-identity guards in
  *   {@code DocumentIds});</li>
  *   <li>{@link BlobStore.BlobNotFoundException} → NOT_FOUND;</li>
- *   <li>{@link PartStorage.PartObjectMissingException} → FAILED_PRECONDITION
- *   (the manifest claims a part is PRESENT but its object is gone);</li>
  *   <li>anything else → INTERNAL with only the exception message — never a
  *   stack trace — in the status description.</li>
  * </ul>
+ *
+ * <p>This class names no v1 document type, so the frozen archive services do not
+ * depend on the v1 document closure; the v1 document services map through
+ * {@link DocumentGrpcErrors}.
  */
 final class GrpcErrors {
 
@@ -75,12 +76,16 @@ final class GrpcErrors {
 
             case IllegalArgumentException _ -> Status.INVALID_ARGUMENT;
             case BlobStore.BlobNotFoundException _ -> Status.NOT_FOUND;
-            case PartStorage.PartObjectMissingException _ -> Status.FAILED_PRECONDITION;
             default -> {
                 LOG.error("Unhandled handler failure", t);
                 yield Status.INTERNAL;
             }
         };
+        return describe(status, t);
+    }
+
+    /** Raises {@code status} carrying only the failure's message, when it has one. */
+    static StatusRuntimeException describe(Status status, Throwable t) {
         String message = t.getMessage();
         if (message != null && !message.isBlank()) {
             status = status.withDescription(message);

@@ -86,7 +86,7 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
             @Override public boolean isCancelled() { return read.isCancelled(); }
             @Override public long remainingNanos() { return read.remainingNanos(); }
         };
-        GrpcErrors.run(observer, () -> {
+        DocumentGrpcErrors.run(observer, () -> {
             var search = request.getDocument().getSearchMetadata();
             if (search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0) {
                 throw new RepositoryException(RepositoryException.Code.INVALID_ARGUMENT,
@@ -98,12 +98,12 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
 
     @Override public void getDocument(GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
         var control = readControl();
-        GrpcErrors.run(observer, () -> documents.getDocument(caller(), request, control));
+        DocumentGrpcErrors.run(observer, () -> documents.getDocument(caller(), request, control));
     }
 
     @Override public void getDocumentByReference(GetDocumentByReferenceRequest request, StreamObserver<GetDocumentResponse> observer) {
         var control = readControl();
-        GrpcErrors.run(observer, () -> documents.getDocumentByReference(caller(), request, control));
+        DocumentGrpcErrors.run(observer, () -> documents.getDocumentByReference(caller(), request, control));
     }
 
     private static RepositoryReadControl readControl() {
@@ -118,35 +118,35 @@ public final class DocumentGrpcService extends DocumentServiceGrpc.DocumentServi
     }
 
     @Override public void getDocumentManifest(GetDocumentManifestRequest request, StreamObserver<GetDocumentManifestResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.getDocumentManifest(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> documents.getDocumentManifest(caller(), request));
     }
 
     @Override public void deleteDocument(DeleteDocumentRequest request, StreamObserver<DeleteDocumentResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.deleteDocument(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> documents.deleteDocument(caller(), request));
     }
 
     @Override public void listDocuments(ListDocumentsRequest request, StreamObserver<ListDocumentsResponse> observer) {
-        GrpcErrors.run(observer, () -> documents.listDocuments(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> documents.listDocuments(caller(), request));
     }
 
     @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.get(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> blobs.get(caller(), request));
     }
 
     @Override public void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.put(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> blobs.put(caller(), request));
     }
 
     @Override public void deleteBlob(DeleteBlobRequest request, StreamObserver<DeleteBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.delete(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> blobs.delete(caller(), request));
     }
 
     @Override public void getBlobForUpdate(GetBlobForUpdateRequest request, StreamObserver<GetBlobForUpdateResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.getForUpdate(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> blobs.getForUpdate(caller(), request));
     }
 
     @Override public void compareAndPutBlob(CompareAndPutBlobRequest request, StreamObserver<CompareAndPutBlobResponse> observer) {
-        GrpcErrors.run(observer, () -> blobs.compareAndPut(caller(), request));
+        DocumentGrpcErrors.run(observer, () -> blobs.compareAndPut(caller(), request));
     }
 
 }

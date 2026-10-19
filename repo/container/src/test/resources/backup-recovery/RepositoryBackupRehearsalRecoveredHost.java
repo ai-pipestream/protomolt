@@ -376,7 +376,7 @@ public final class RepositoryBackupRehearsalRecoveredHost {
         }
         // Composition binds the backend identity from the ledger without a provider call, so the host starts;
         // the first provider read is where the credential is refused. Both facts are asserted, not just recorded.
-        // The refusal is the typed historical-read translation (RepositoryErrors.historicalProvider): the member's
+        // The refusal is the typed historical-read translation (DocumentErrors.historicalProvider): the member's
         // authorization already passed, so the provider's 403 is FAILED_PRECONDITION with the PERMISSION_DENIED
         // provider failure on the cause chain, never a caller authorization code and never a substitute read.
         try (var host = open(config, offline, bundle)) {

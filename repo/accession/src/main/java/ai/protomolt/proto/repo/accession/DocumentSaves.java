@@ -100,19 +100,93 @@ public final class DocumentSaves {
         return Integer.compare(leftKey.size(), rightKey.size());
     };
 
-    /** Named drives and the stack each currently resolves to. */
-    public record Drives(String defaultDrive, Map<String, Stack> stacks) {
-        public Drives {
-            stacks = Map.copyOf(stacks);
-            if (!stacks.containsKey(defaultDrive)) throw new IllegalArgumentException("Default drive has no stack");
+    /**
+     * Named drives and the {@link Stack} each resolves to, supporting either a fixed
+     * host-wide map or dynamic per-account drive resolution backed by a drive ledger.
+     */
+    public static final class Drives {
+        private final String defaultDrive;
+        private final Map<String, Stack> stacks;
+        private final java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive;
+        private final java.util.function.Function<String, Optional<Stack>> byStackId;
+
+        /**
+         * Creates a static drive table shared across all accounts.
+         *
+         * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
+         * @param stacks the configured drive-name to {@link Stack} mappings
+         */
+        public Drives(String defaultDrive, Map<String, Stack> stacks) {
+            this.defaultDrive = Objects.requireNonNull(defaultDrive, "defaultDrive");
+            this.stacks = Map.copyOf(stacks);
+            if (!this.stacks.containsKey(defaultDrive)) {
+                throw new IllegalArgumentException("Default drive has no stack");
+            }
+            this.byAccountAndDrive = (account, drive) -> Optional.ofNullable(this.stacks.get(drive));
+            this.byStackId = stackId -> this.stacks.values().stream()
+                    .filter(stack -> stack.stackId().equals(stackId))
+                    .findFirst();
         }
+
+        private Drives(
+                String defaultDrive,
+                java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
+                java.util.function.Function<String, Optional<Stack>> byStackId) {
+            if (defaultDrive == null || defaultDrive.isBlank()) {
+                throw new IllegalArgumentException("Default drive must not be blank");
+            }
+            this.defaultDrive = defaultDrive;
+            this.stacks = Map.of();
+            this.byAccountAndDrive = Objects.requireNonNull(byAccountAndDrive, "byAccountAndDrive");
+            this.byStackId = Objects.requireNonNull(byStackId, "byStackId");
+        }
+
+        /**
+         * Creates a dynamic drive resolver that resolves {@code (accountId, driveName)} on each save
+         * and {@code stackId} on each read or purge.
+         *
+         * @param defaultDrive the drive name used when a save request leaves {@code drive} empty
+         * @param byAccountAndDrive resolves an account ID and effective drive name to a {@link Stack}
+         * @param byStackId resolves a recorded stack ID to a {@link Stack}
+         * @return the dynamic drive resolver
+         */
+        public static Drives dynamic(
+                String defaultDrive,
+                java.util.function.BiFunction<String, String, Optional<Stack>> byAccountAndDrive,
+                java.util.function.Function<String, Optional<Stack>> byStackId) {
+            return new Drives(defaultDrive, byAccountAndDrive, byStackId);
+        }
+
+        /**
+         * Returns the default drive name used when a save request omits {@code drive}.
+         *
+         * @return the default drive name
+         */
+        public String defaultDrive() {
+            return defaultDrive;
+        }
+
+        /**
+         * Returns the static drive table, or an empty map when configured dynamically.
+         *
+         * @return the static drive map
+         */
+        public Map<String, Stack> stacks() {
+            return stacks;
+        }
+
         Stack resolve(String drive) {
-            var stack = stacks.get(drive.isEmpty() ? defaultDrive : drive);
-            if (stack == null) throw malformedException("Unknown drive " + drive);
-            return stack;
+            return resolve("", drive);
         }
+
+        Stack resolve(String account, String drive) {
+            var target = drive.isEmpty() ? defaultDrive : drive;
+            return byAccountAndDrive.apply(account, target)
+                    .orElseThrow(() -> malformedException("Unknown drive " + drive));
+        }
+
         Stack byId(String stackId) {
-            return stacks.values().stream().filter(stack -> stack.stackId().equals(stackId)).findFirst()
+            return byStackId.apply(stackId)
                     .orElseThrow(() -> new AccessionException(Status.Code.UNAVAILABLE,
                             "Stack " + stackId + " is not configured on this host", null));
         }
@@ -244,7 +318,6 @@ public final class DocumentSaves {
                 throw malformedException("Invalid save request: " + structure.violations().getFirst());
             DocumentReads.requireBinding(caller);
             var writes = selectors(request);
-            var stack = drives.resolve(request.getDrive());
             var document = normalizedDocument(request);
 
             final DocumentSchemaAdmission.Definition container;
@@ -261,6 +334,7 @@ public final class DocumentSaves {
             var address = resolveAddress(request, document);
             var account = address.getAccountId();
             DocumentReads.requireAccount(caller, account);
+            var stack = drives.resolve(account, request.getDrive());
 
             final Map<PartSelector, ByteString> fragments;
             final Map<PartSelector, ByteString> storedFragments;
@@ -590,10 +664,11 @@ public final class DocumentSaves {
             throw new AccessionException(Status.Code.INTERNAL, "Document schema host failure: " + host.getMessage(), null, host);
         }
 
-        // S3-S4: call number and account scope.
+        // S3-S4: call number, account scope and drive existence.
         var address = resolveAddress(request, document);
         var account = address.getAccountId();
         DocumentReads.requireAccount(caller, account);
+        drives.resolve(account, request.getDrive());
 
         // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
         // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out
@@ -906,16 +981,23 @@ public final class DocumentSaves {
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
-        var stack = drives.resolve(request.getDrive());
+        var stack = drives.resolve(account, request.getDrive());
         var newObjects = new ArrayList<StackRef>();
         var blobRefs = new ArrayList<BlobObjectRef>();
         for (var uploaded : preUploadedBlobs) {
             newObjects.add(uploaded.getRef());
             blobRefs.add(uploaded);
         }
+        // Reuse only this document's authorized base revision, in the selected
+        // stack. Admission above still validates every PUT; this changes storage
+        // allocation, not the revision, writer evidence or operation identity.
+        var reusable = new HashMap<ContentIdentity, StackRef>();
+        base.ifPresent(stored -> stored.getPartsList().forEach(part -> {
+            if (part.hasRef()) rememberReusable(stack, reusable, part.getRef());
+            part.getBlobRefsList().forEach(blob -> rememberReusable(stack, reusable, blob.getRef()));
+        }));
         for (var raw : rawBlobs) {
-            var ref = put(stack, raw.data());
-            newObjects.add(ref);
+            var ref = putOrReuse(stack, raw.data(), reusable, newObjects);
             blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
         }
         if (!blobRefs.isEmpty() && storedFragments.containsKey(BLOBS_SELECTOR))
@@ -923,8 +1005,7 @@ public final class DocumentSaves {
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
             var selector = write.getSelector();
-            var ref = put(stack, storedFragments.get(selector));
-            newObjects.add(ref);
+            var ref = putOrReuse(stack, storedFragments.get(selector), reusable, newObjects);
             var entry = parts.get(selector).toBuilder().setRef(ref);
             if (selector.equals(BLOBS_SELECTOR)) entry.addAllBlobRefs(blobRefs);
             parts.put(selector, entry.build());
@@ -1683,6 +1764,23 @@ public final class DocumentSaves {
         if (types.size() > 64) types.clear();
         types.put(digest, type);
         return type;
+    }
+
+    private record ContentIdentity(String sha256, long length) {}
+
+    private static void rememberReusable(Stack stack, Map<ContentIdentity, StackRef> reusable, StackRef ref) {
+        if (ref.getStackId().equals(stack.stackId()))
+            reusable.putIfAbsent(new ContentIdentity(ref.getSha256(), ref.getLength()), ref);
+    }
+
+    private static StackRef putOrReuse(Stack stack, ByteString bytes, Map<ContentIdentity, StackRef> reusable,
+            List<StackRef> newObjects) {
+        var existing = reusable.get(new ContentIdentity(sha256(bytes), bytes.size()));
+        if (existing != null) return existing;
+        var ref = put(stack, bytes);
+        newObjects.add(ref);
+        rememberReusable(stack, reusable, ref);
+        return ref;
     }
 
     /** Writes one object and checks the stack's reference against the bytes it was given. */

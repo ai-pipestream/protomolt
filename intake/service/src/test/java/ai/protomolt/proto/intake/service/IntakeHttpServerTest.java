@@ -8,7 +8,7 @@ import ai.protomolt.proto.intake.service.identity.IntakeScope;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import com.google.protobuf.util.JsonFormat;
 import io.grpc.Server;
 import io.grpc.Status;
@@ -116,7 +116,7 @@ class IntakeHttpServerTest {
         assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
         // The receipt speaks proto field names, every field present.
         assertThat(response.body())
-                .contains("\"doc_id\"", "\"node_id\"", "\"address\"", "\"drive\"",
+                .contains("\"doc_id\"", "\"revision\"", "\"address\"", "\"drive\"",
                         "\"size_bytes\"", "\"sha256\"", "\"deduplicated\"");
         IngestDocumentResponse receipt = parseReceipt(response.body());
 
@@ -124,7 +124,7 @@ class IntakeHttpServerTest {
         String expectedSha = HexFormat.of().formatHex(digest);
         String expectedDocId = UUID.nameUUIDFromBytes(digest).toString();
         assertThat(receipt.getDocId()).isEqualTo(expectedDocId);
-        assertThat(receipt.getNodeId()).isNotBlank();
+        assertThat(receipt.getRevision()).isEqualTo(1);
         assertThat(receipt.getSha256()).isEqualTo(expectedSha);
         assertThat(receipt.getSizeBytes()).isEqualTo(payload.length);
         assertThat(receipt.getDrive()).isEqualTo("intake");
@@ -137,11 +137,13 @@ class IntakeHttpServerTest {
         // The pinned save: identical to the gRPC raw lane's.
         assertThat(repo.saves).hasSize(1);
         SaveDocumentRequest save = repo.saves.getFirst();
-        assertThat(save.getUseDatasourceId()).isTrue();
-        assertThat(save.getGraphId()).isEqualTo("intake:" + ACCOUNT);
+        assertThat(save.getTarget().getUseDatasourceId()).isEqualTo(save.getDocument().getOwnership().getDatasourceId());
+        assertThat(save.getExpected().getNone()).isTrue();
+        assertThat(save.getOperationId()).isNotBlank();
+        assertThat(save.getOwner().getIntake().getDatasourceId()).isEqualTo(save.getDocument().getOwnership().getDatasourceId());
         assertThat(save.getDrive()).isEqualTo("intake");
-        assertThat(save.getConnectorId()).isEqualTo("intake");
-        assertThat(save.getWrittenBy().getModuleId()).isEqualTo("intake");
+        assertThat(save.getOwner().getIntake().getConnectorId()).isEqualTo("intake");
+        assertThat(save.getOwner().getIntake().getConnectorId()).isEqualTo("intake");
         Document saved = save.getDocument();
         assertThat(saved.getDocId()).isEqualTo(expectedDocId);
         assertThat(saved.getOwnership().getAccountId()).isEqualTo(ACCOUNT);

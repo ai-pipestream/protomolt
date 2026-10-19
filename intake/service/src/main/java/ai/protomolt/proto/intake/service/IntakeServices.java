@@ -2,7 +2,7 @@ package ai.protomolt.proto.intake.service;
 
 import ai.protomolt.proto.intake.service.identity.ApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.ApiKeyServerInterceptor;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;

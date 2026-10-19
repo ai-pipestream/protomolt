@@ -190,7 +190,8 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
 
 ## 6. Stacks
 
-- **Write-once.** Every object gets a new key and is never overwritten.
+- **Write-once.** Every newly allocated object gets a new key and is never overwritten.
+  Reusing an existing object does not allocate or overwrite a key.
 - **Stable references.** The catalog records each object as (stack ID, key, SHA-256,
   length). A stack ID is a catalog record naming one configured storage namespace
   (endpoint plus bucket or container). Pointing configuration at a different namespace
@@ -208,7 +209,8 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
   either completes with verified original bytes or reports a clear failure. There are no
   reader pins.
 - **Raw blob claim checks.**
-  - Each raw blob in `Document.blob_bag` is its own stack object.
+  - Each raw blob in `Document.blob_bag` has its own logical binding to a stack object;
+    identical bytes may share that object under the reuse rule below.
   - The catalog binds `blob_id` to its `StackRef` on the BLOBS part entry
     (`StoredPartEntry.blob_refs`, table `catalog_blob_refs`).
   - The server fills `Blob.storage_ref` from that binding. A client can't supply or invent a
@@ -216,6 +218,16 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
   - A client can still reuse authorized existing content without re-uploading it, through
     the supported mechanisms: upload, a `PartSource` source, or carry-forward of an unchanged
     part. The server resolves and verifies each such reference.
+  - **Digest-based PUT reuse.** For `WRITE_ACTION_PUT`, the server reuses identical
+    `(SHA-256, length)` bytes from the same document's authorized base revision in the
+    selected stack, or from an object newly written by this save in that stack. This
+    applies to raw blobs and encoded part fragments, not a global or cross-document
+    digest lookup. The server computes identity from the submitted bytes. A PUT still
+    records a new revision, updates `written_in_revision` and owner metadata, validates
+    the candidate, and emits `CHANGE_KIND_REPLACED` for an existing present part.
+    Base references enter the commit's `carriedObjects` purge check; newly written
+    shared objects are registered once as new objects. Storage reuse does not make
+    a PUT an unchanged part or an operation replay.
   - Blob references count as references for purge (§6) and for the carry-forward purge
     check (§7) (decision 45).
 - **No automatic sweeping in the first slice.** An upload can finish and pause before its

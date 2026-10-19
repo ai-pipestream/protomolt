@@ -1,8 +1,6 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
-import ai.protomolt.proto.repo.container.blob.PartStorage;
-import ai.protomolt.proto.repo.v1.DocumentPart;
 import io.grpc.Status;
 import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
@@ -11,7 +9,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -50,15 +47,6 @@ class GrpcErrorsTest {
         Status status = Status.fromThrowable(mapped);
         assertThat(status.getCode()).isEqualTo(Status.Code.NOT_FOUND);
         assertThat(status.getDescription()).isEqualTo("no object at bucket/k");
-    }
-
-    @Test
-    void partObjectMissingMapsToFailedPrecondition() {
-        Throwable mapped = GrpcErrors.map(new PartStorage.PartObjectMissingException(
-                "manifest PRESENT but object gone", Set.of(DocumentPart.DOCUMENT_PART_CORE)));
-        Status status = Status.fromThrowable(mapped);
-        assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-        assertThat(status.getDescription()).isEqualTo("manifest PRESENT but object gone");
     }
 
     @Test

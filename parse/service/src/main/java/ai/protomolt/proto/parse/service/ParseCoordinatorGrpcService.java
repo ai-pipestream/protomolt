@@ -15,15 +15,21 @@ import ai.protomolt.proto.parse.v1.SearchMetadataFold;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentTarget;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartWrite;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.WriteAction;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.ParseStatus;
 import ai.protomolt.proto.repo.v1.ParserResult;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import com.google.protobuf.Descriptors.FieldDescriptor;
@@ -38,12 +44,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The parsing coordinator: routes stored documents to parsers by CEL rule,
@@ -51,13 +55,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@link ParserResult} per parser (a failed parse is stored, never silently
  * absent), folds the parsers' document claims into the arbitrated
  * {@link SearchMetadata}, and persists the PARSED part (and folded CORE)
- * back through repo-service.
+ * back through the v2 document service.
  *
- * <p>Reads are part-masked: the coordinator fetches CORE+BLOBS only — PARSED
- * and CHUNKS are its outputs, not its inputs. Writes are serialized per
- * document node (a per-address lock) because parser results share the PARSED
- * part: until repo grows a {@code parser_results_written} selector,
- * concurrent partial saves of the same row would drop sibling entries.
+ * <p>Reads select CORE, BLOBS and PARSED so existing parser results survive a partial
+ * update. Blob reads and the save are pinned to that revision. Catalog compare-and-set
+ * refuses concurrent changes across coordinator instances rather than losing updates.
  */
 public final class ParseCoordinatorGrpcService
         extends ParseCoordinatorServiceGrpc.ParseCoordinatorServiceImplBase {
@@ -73,15 +75,13 @@ public final class ParseCoordinatorGrpcService
     private final ParserRegistry parsers;
     private final String fallbackDrive;
     private final Duration parseDeadline;
-    private final ConcurrentHashMap<String, ReentrantLock> saveLocks = new ConcurrentHashMap<>();
 
     /**
      * @param documents the repo-service document stub every read and save
      *        goes through
      * @param rules the compiled routing-rule set
      * @param parsers the parser fleet
-     * @param fallbackDrive drive for the parsed-part save when the loaded
-     *        document's read response does not name one
+     * @param fallbackDrive explicit drive for newly written parts
      * @param parseDeadline per-parser deadline of one {@code Parse} stream
      */
     public ParseCoordinatorGrpcService(
@@ -127,13 +127,13 @@ public final class ParseCoordinatorGrpcService
     // ------------------------------------------------------------- RouteDocument
 
     private RouteDocumentResponse route(RouteDocumentRequest request) {
-        Document document = switch (request.getSourceCase()) {
-            case ADDRESS -> load(requireAddress(request.getAddress())).document();
-            case DOCUMENT -> request.getDocument();
+        Loaded loaded = switch (request.getSourceCase()) {
+            case ADDRESS -> load(requireAddress(request.getAddress()));
+            case DOCUMENT -> new Loaded(request.getDocument(), null, 0);
             case SOURCE_NOT_SET -> throw GrpcErrors.invalidArgument(
                     "source is required: set address or document");
         };
-        Routing routing = routingOf(document);
+        Routing routing = routingOf(loaded);
         return RouteDocumentResponse.newBuilder()
                 .addAllPlannedParses(rules.get().plan(routing.context()))
                 .setContentType(routing.sniff().mimeType())
@@ -146,7 +146,7 @@ public final class ParseCoordinatorGrpcService
     private ParseDocumentResponse parse(ParseDocumentRequest request) {
         NodeAddress address = requireAddress(request.getAddress());
         Loaded loaded = load(address);
-        Routing routing = routingOf(loaded.document());
+        Routing routing = routingOf(loaded);
 
         List<PlannedParse> planned = request.getParserOverrideCount() > 0
                 ? overridePlan(request.getParserOverrideList())
@@ -323,7 +323,7 @@ public final class ParseCoordinatorGrpcService
      * Persists the run: the loaded document plus the new parser_results and
      * the folded SearchMetadata fields, saved as a partial write of
      * [PARSED, CORE] with everything else carried forward from the source
-     * address. Serialized per document node — see the class javadoc.
+     * revision. A stale revision is refused by the repository.
      */
     private void persist(NodeAddress address, Loaded loaded, List<TaskResult> outcomes, Fold fold) {
         Document.Builder merged = loaded.document().toBuilder();
@@ -333,41 +333,44 @@ public final class ParseCoordinatorGrpcService
             fold.values().forEach((name, value) -> metadata
                     .setField(SearchMetadata.getDescriptor().findFieldByName(name), value));
         }
-        SaveDocumentRequest save = SaveDocumentRequest.newBuilder()
-                .setDocument(merged.build())
-                .setDrive(loaded.drive().isBlank() ? fallbackDrive : loaded.drive())
-                .setConnectorId(CONNECTOR_ID)
-                .setUseDatasourceId(true)
-                .setGraphId(address.getGraphId())
-                .setWrittenBy(WriteProvenance.newBuilder().setModuleId(CONNECTOR_ID))
-                .addPartsWritten(DocumentPart.DOCUMENT_PART_PARSED)
-                .addPartsWritten(DocumentPart.DOCUMENT_PART_CORE)
-                .setCopyUnwrittenPartsFrom(address)
-                .build();
-        ReentrantLock lock = saveLocks.computeIfAbsent(lockKey(address), key -> new ReentrantLock());
-        lock.lock();
-        try {
-            documents.saveDocument(save);
-        } finally {
-            lock.unlock();
+        boolean coreChanged = !merged.getSearchMetadata().equals(loaded.document().getSearchMetadata());
+        Document content;
+        if (coreChanged) {
+            // The read selects CORE, BLOBS and PARSED only. Never PUT unchanged blob bytes.
+            content = merged.clearBlobBag().build();
+        } else {
+            content = Document.newBuilder().putAllParserResults(merged.getParserResultsMap()).build();
         }
+        SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
+                .setOperationId(java.util.UUID.randomUUID().toString())
+                .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(loaded.revision()))
+                .setDocument(content)
+                .setDrive(fallbackDrive)
+                .setOwner(SaveOwner.newBuilder().setStep(WriteProvenance.newBuilder()
+                        .setModuleId(CONNECTOR_ID)))
+                .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED));
+        if (coreChanged) save.addWrites(put(DocumentPart.DOCUMENT_PART_CORE));
+        // Catalog CAS protects across coordinator instances; no process-local lock can do that.
+        documents.saveDocument(save.build());
     }
 
-    private static String lockKey(NodeAddress address) {
-        return address.getDocId() + '|' + address.getGraphAddressId() + '|'
-                + address.getAccountId() + '|' + address.getGraphId();
+    private static PartWrite put(DocumentPart part) {
+        return PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setPart(part))
+                .setAction(WriteAction.WRITE_ACTION_PUT).build();
     }
-
-    // ------------------------------------------------------------- loading
 
     private Loaded load(NodeAddress address) {
-        GetDocumentResponse response = documents.getDocumentByReference(
-                GetDocumentByReferenceRequest.newBuilder()
-                        .setAddress(address)
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
-                        .addParts(DocumentPart.DOCUMENT_PART_BLOBS)
-                        .build());
-        return new Loaded(response.getDocument(), response.getDrive());
+        GetDocumentResponse response = documents.getDocument(GetDocumentRequest.newBuilder()
+                .setAddress(address).setSelection(PartSelection.newBuilder()
+                        .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                        .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS))
+                        .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)))
+                .build());
+        if (!response.getManifest().getAddress().equals(address) || response.getManifest().getRevision() <= 0)
+            throw io.grpc.Status.DATA_LOSS.withDescription("Repository returned an invalid document revision")
+                    .asRuntimeException();
+        return new Loaded(response.getDocument(), address, response.getManifest().getRevision());
     }
 
     private static NodeAddress requireAddress(NodeAddress address) {
@@ -389,9 +392,10 @@ public final class ParseCoordinatorGrpcService
     // ------------------------------------------------------------- routing context
 
     /** Builds the routing context (sniff + declared + identity) for one document. */
-    private Routing routingOf(Document document) {
+    private Routing routingOf(Loaded loaded) {
+        Document document = loaded.document();
         Blob blob = firstBlob(document);
-        byte[] payload = payloadOf(document);
+        byte[] payload = payloadOf(loaded);
         byte[] head = payload.length <= SNIFF_HEAD_BYTES
                 ? payload
                 : Arrays.copyOf(payload, SNIFF_HEAD_BYTES);
@@ -422,22 +426,21 @@ public final class ParseCoordinatorGrpcService
 
     /**
      * The payload bytes of the document's first blob: inline data verbatim,
-     * a storage_ref fetched through {@code DocumentService.GetBlob} (the
+     * a storage_ref fetched through {@code DocumentService.ReadBlob} (the
      * coordinator never touches object storage itself). No blob → empty.
      */
-    private byte[] payloadOf(Document document) {
-        Blob blob = firstBlob(document);
-        if (blob == null) {
-            return new byte[0];
-        }
+    private byte[] payloadOf(Loaded loaded) {
+        Blob blob = firstBlob(loaded.document());
+        if (blob == null) return new byte[0];
         return switch (blob.getContentCase()) {
             case DATA -> blob.getData().toByteArray();
-            case STORAGE_REF -> documents.getBlob(GetBlobRequest.newBuilder()
-                            .setStorageRef(blob.getStorageRef())
-                            .build())
-                    .getData()
-                    .toByteArray();
-            case CONTENT_NOT_SET -> new byte[0];
+            case STORAGE_REF -> {
+                if (loaded.address() == null)
+                    throw GrpcErrors.invalidArgument("A stored blob requires a document address and revision");
+                yield RepositoryBlobReads.read(documents, loaded.address(), loaded.revision(), blob);
+            }
+            case CONTENT_NOT_SET -> throw io.grpc.Status.DATA_LOSS
+                    .withDescription("Blob has no content").asRuntimeException();
         };
     }
 
@@ -459,8 +462,8 @@ public final class ParseCoordinatorGrpcService
                 .build();
     }
 
-    /** A document loaded by reference, with the drive the row lives on. */
-    private record Loaded(Document document, String drive) {
+    /** A document and the exact revision used for its subsequent blob reads and save. */
+    private record Loaded(Document document, NodeAddress address, long revision) {
     }
 
     /** The routing decision inputs for one document. */

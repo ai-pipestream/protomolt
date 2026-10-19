@@ -6,24 +6,18 @@ import ai.protomolt.proto.parse.v1.ParseCoordinatorServiceGrpc;
 import ai.protomolt.proto.parse.v1.ParseDocumentRequest;
 import ai.protomolt.proto.parse.v1.ParseDocumentResponse;
 import ai.protomolt.proto.parse.v1.RoutingRule;
-import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.service.RepoServiceConfig;
-import ai.protomolt.proto.repo.service.RepoServices;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
-import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v1.ParseStatus;
 import ai.protomolt.proto.repo.v1.ParserDocument;
 import ai.protomolt.proto.repo.v1.ParserResult;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
@@ -47,13 +41,13 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * End-to-end integration test of the coordinator against a REAL repo-service:
- * testcontainers PostgreSQL 17 + LocalStack S3 behind {@link RepoServices},
+ * testcontainers PostgreSQL 18 + LocalStack S3 behind {@link V2RepositoryFixture},
  * the coordinator mounted in front over the in-process transport, one fake
  * parser plugin at the end of the fan-out. Proves the persisted run is
  * honest: the PARSED part round-trips out of the repository and the folded
  * title landed on CORE, with the untouched BLOBS carried forward.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ParseCoordinatorIT {
 
     static final String ACCOUNT = "acct-parse-it";
@@ -73,7 +67,7 @@ class ParseCoordinatorIT {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
                     .withServices("s3");
 
-    static RepoServices repo;
+    static V2RepositoryFixture repo;
     static ManagedChannel repoChannel;
     static DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     static FakeParserPlugin parser;
@@ -84,26 +78,9 @@ class ParseCoordinatorIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        RepoServiceConfig config = new RepoServiceConfig(
-                0,
-                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                LOCALSTACK.getEndpoint().toString(),
-                LOCALSTACK.getRegion(),
-                LOCALSTACK.getAccessKey(),
-                LOCALSTACK.getSecretKey(),
-                "parse-it-docs",
-                0,
-                null, null, null, null, 0, 0L);
-        repo = RepoServices.build(config);
-        repo.startInProcess("parse-it-repo");
+        repo = new V2RepositoryFixture(POSTGRES, LOCALSTACK, "parse-it-repo", ACCOUNT);
         repoChannel = InProcessChannelBuilder.forName("parse-it-repo").build();
         documents = DocumentServiceGrpc.newBlockingStub(repoChannel);
-        DriveServiceGrpc.newBlockingStub(repoChannel)
-                .createDrive(CreateDriveRequest.newBuilder()
-                        .setName("intake")
-                        .setAccountId(ACCOUNT)
-                        .setDriveType(DriveType.DRIVE_TYPE_INTAKE)
-                        .build());
 
         parser = new FakeParserPlugin("textract", "9.9.0");
         parserServer = InProcessServerBuilder.forName("parse-it-parser")
@@ -149,7 +126,12 @@ class ParseCoordinatorIT {
                         .setOwnership(OwnershipContext.newBuilder()
                                 .setAccountId(ACCOUNT)
                                 .setDatasourceId("ds-parse")
-                                .setConnectorId("it"))
+                                .setConnectorId("it")
+                                .setSecurity(ai.protomolt.proto.repo.v1.DocumentSecurity.newBuilder()
+                                        .addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
+                                                .setIdentityType("service").setIdentity("parse-coordinator").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_READ))
+                                        .addPermissions(ai.protomolt.proto.repo.v1.AccessRule.newBuilder()
+                                                .setIdentityType("service").setIdentity("parse-coordinator").setAccess(ai.protomolt.proto.repo.v1.Access.ACCESS_WRITE))))
                         .setSearchMetadata(SearchMetadata.newBuilder()
                                 .setSourceMimeType("text/plain"))
                         .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder()
@@ -159,16 +141,19 @@ class ParseCoordinatorIT {
                                 .setFilename("note.txt")
                                 .setSizeBytes(PAYLOAD.length))))
                 .setDrive("intake")
-                .setConnectorId("it")
-                .setUseDatasourceId(true)
-                .setGraphId("intake:" + ACCOUNT)
+                .setOperationId("seed-parse-it")
+                .setTarget(ai.protomolt.proto.repo.v2.DocumentTarget.newBuilder().setAddress(ADDRESS))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .setOwner(ai.protomolt.proto.repo.v2.SaveOwner.newBuilder().setIntake(
+                        ai.protomolt.proto.repo.v2.IntakeOrigin.newBuilder().setDatasourceId("ds-parse").setConnectorId("it")))
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).addWrites(put(DocumentPart.DOCUMENT_PART_BLOBS))
                 .build());
 
         parser.claimsToEmit = List.of(Struct.newBuilder()
                 .putFields("title", Value.newBuilder().setStringValue("Folded Title").build())
                 .build());
         parser.outputDocument = ParserDocument.newBuilder()
-                .setShape(Any.pack(StringValue.of("textract-exhaust")))
+                .setShape(Any.pack(SearchMetadata.newBuilder().setBody("textract-exhaust").build()))
                 .putMetadata("pages", "1")
                 .build();
 
@@ -182,9 +167,9 @@ class ParseCoordinatorIT {
         assertThat(parser.payloadsSeen.getFirst()).isEqualTo(PAYLOAD);
 
         // The PARSED part round-trips out of the repository.
-        Document parsed = documents.getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+        Document parsed = documents.getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(ADDRESS)
-                        .addParts(DocumentPart.DOCUMENT_PART_PARSED)
+                        .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder().addSelectors(ai.protomolt.proto.repo.v2.PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED)))
                         .build())
                 .getDocument();
         assertThat(parsed.getParserResultsMap()).containsOnlyKeys("textract");
@@ -193,24 +178,30 @@ class ParseCoordinatorIT {
         assertThat(stored.getParserVersion()).isEqualTo("9.9.0");
         assertThat(stored.getConfigFingerprint())
                 .isEqualTo(ConfigFingerprints.fingerprint("r-text", Struct.getDefaultInstance()));
-        assertThat(stored.getDocument().getShape().unpack(StringValue.class).getValue())
+        assertThat(stored.getDocument().getShape().unpack(SearchMetadata.class).getBody())
                 .isEqualTo("textract-exhaust");
 
         // The folded title landed on CORE.
-        Document core = documents.getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+        Document core = documents.getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(ADDRESS)
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
+                        .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder().addSelectors(ai.protomolt.proto.repo.v2.PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)))
                         .build())
                 .getDocument();
         assertThat(core.getSearchMetadata().getTitle()).isEqualTo("Folded Title");
         assertThat(core.getSearchMetadata().getSourceMimeType()).isEqualTo("text/plain");
 
         // The untouched BLOBS part was carried forward, not lost.
-        Document blobs = documents.getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+        Document blobs = documents.getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(ADDRESS)
-                        .addParts(DocumentPart.DOCUMENT_PART_BLOBS)
+                        .setSelection(ai.protomolt.proto.repo.v2.PartSelection.newBuilder().addSelectors(ai.protomolt.proto.repo.v2.PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS)))
                         .build())
                 .getDocument();
-        assertThat(blobs.getBlobBag().getBlob().getData().toByteArray()).isEqualTo(PAYLOAD);
+        assertThat(blobs.getBlobBag().getBlob().hasStorageRef()).isTrue();
+        assertThat(repo.retainedBlob(ADDRESS, 2)).isEqualTo(PAYLOAD);
+    }
+    private static ai.protomolt.proto.repo.v2.PartWrite put(DocumentPart part) {
+        return ai.protomolt.proto.repo.v2.PartWrite.newBuilder().setSelector(
+                ai.protomolt.proto.repo.v2.PartSelector.newBuilder().setPart(part))
+                .setAction(ai.protomolt.proto.repo.v2.WriteAction.WRITE_ACTION_PUT).build();
     }
 }

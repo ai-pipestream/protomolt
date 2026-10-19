@@ -146,3 +146,39 @@ exists, a coordinator must serialize parser-result writes per document.
 
 See [document platform architecture](document-platform.md) for service,
 identity, storage, and eventing boundaries.
+
+## Intake revision expectations and deletes (D8)
+
+Unary ingestion and streaming metadata accept the existing repository v2
+`ExpectedRevision`. Omitted means create (`none=true`); an update must carry the
+revision previously observed by the caller. The HTTP lane accepts
+`expected_revision` (or `x-expected-revision`). Retrying a request keeps the same
+expectation and typed intent. Intake does not replace a stale expectation with
+the latest revision. A changed intent at a stale revision fails `ABORTED`.
+
+Intake's `DeleteDocument` delegates the existing v2 request and response to the
+repository, after checking the authenticated account, intake graph and datasource
+scope. It requires a positive observed revision. It creates a tombstone, not a
+physical purge. A delayed delete cannot delete a newer revision: the repository
+checks the expectation in its commit transaction. A retry retains its operation
+ID and expectation and returns the recorded tombstone receipt.
+
+The older `DocumentOperations.saveFull` used the root SHA of the split document
+for intake deduplication. `S3Purger.eligible` rejected obsolete physical purge
+work using the repository's body-write timestamp, or the purge generation. That
+was not a source `last_modified_date` ordering policy. Those implementations were
+not deleted by D8. The v2 migration must preserve their safety properties through
+revision checks, immutable objects and reference-aware purge, without mounting
+that legacy service.
+
+Binary reuse and operation replay are distinct. The save path can reuse identical
+SHA-256/length objects from the authorized base revision in the selected stack.
+It still validates the candidate and records a new accession for a fresh update;
+metadata changes are not discarded. It does not claim global cross-document or
+cross-stack deduplication. Intake's existing `deduplicated` receipt field denotes
+operation replay, as its contract comment states; it is not an object-upload count.
+
+Both intake and parse fixtures mount the integrated v2 upload/read, delete, list
+and purge coordinators. The full intake and parse checks include real-repository
+delete/replay/history and parsing through ReadBlob; no replacement test RPC is
+used. Production-host cutover and streaming parser inputs remain separate work.
