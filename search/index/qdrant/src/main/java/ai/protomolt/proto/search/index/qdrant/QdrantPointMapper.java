@@ -251,27 +251,29 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     public static String vectorName(String model) {
         int len = model.length();
         StringBuilder out = null;
-        for (int i = 0; i < len; i++) {
-            char c = model.charAt(i);
-            if (!isVectorNameChar(c)) {
+        for (int i = 0; i < len; ) {
+            int cp = model.codePointAt(i);
+            int charCount = Character.charCount(cp);
+            if (!isVectorNameChar(cp)) {
                 if (out == null) {
                     out = new StringBuilder(len);
                     out.append(model, 0, i);
                 }
                 out.append('_');
             } else if (out != null) {
-                out.append(c);
+                out.append((char) cp);
             }
+            i += charCount;
         }
         return out == null ? model : out.toString();
     }
 
-    private static boolean isVectorNameChar(char c) {
-        return (c >= 'A' && c <= 'Z')
-                || (c >= 'a' && c <= 'z')
-                || (c >= '0' && c <= '9')
-                || c == '_'
-                || c == '-';
+    private static boolean isVectorNameChar(int cp) {
+        return (cp >= 'A' && cp <= 'Z')
+                || (cp >= 'a' && cp <= 'z')
+                || (cp >= '0' && cp <= '9')
+                || cp == '_'
+                || cp == '-';
     }
 
     /**

@@ -390,23 +390,24 @@ public final class DocumentPartCodec {
      */
     static String chunkFileName(String subKey) {
         String trimmed = subKey.trim();
-        int len = Math.min(trimmed.length(), 96);
-        StringBuilder safe = new StringBuilder(len);
-        for (int i = 0; i < len; i++) {
-            char c = trimmed.charAt(i);
-            safe.append(isSafeChunkChar(c) ? c : '_');
+        int len = trimmed.length();
+        StringBuilder safe = new StringBuilder(Math.min(len, 96));
+        for (int i = 0; i < len && safe.length() < 96; ) {
+            int cp = trimmed.codePointAt(i);
+            safe.append(isSafeChunkChar(cp) ? (char) cp : '_');
+            i += Character.charCount(cp);
         }
         return (safe.isEmpty() ? "set" : safe.toString()) + "-"
                 + sha256Hex(subKey.getBytes(StandardCharsets.UTF_8)).substring(0, 8);
     }
 
-    private static boolean isSafeChunkChar(char c) {
-        return (c >= 'A' && c <= 'Z')
-                || (c >= 'a' && c <= 'z')
-                || (c >= '0' && c <= '9')
-                || c == '.'
-                || c == '_'
-                || c == '-';
+    private static boolean isSafeChunkChar(int cp) {
+        return (cp >= 'A' && cp <= 'Z')
+                || (cp >= 'a' && cp <= 'z')
+                || (cp >= '0' && cp <= '9')
+                || cp == '.'
+                || cp == '_'
+                || cp == '-';
     }
 
     /**

@@ -51,8 +51,20 @@ public final class OutboxRelay {
                 relayed.add(pending.eventId());
             }
         } finally {
-            if (!attempted.isEmpty()) catalog.markAttempts(attempted);
-            if (!relayed.isEmpty()) count = catalog.markRelayed(relayed);
+            RuntimeException attemptFailure = null;
+            if (!attempted.isEmpty()) {
+                try {
+                    catalog.markAttempts(attempted);
+                } catch (RuntimeException failure) {
+                    attemptFailure = failure;
+                }
+            }
+            if (!relayed.isEmpty()) {
+                count = catalog.markRelayed(relayed);
+            }
+            if (attemptFailure != null) {
+                throw attemptFailure;
+            }
         }
         return count;
     }
