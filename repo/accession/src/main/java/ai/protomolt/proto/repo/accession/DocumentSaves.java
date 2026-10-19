@@ -74,6 +74,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * read: its binding is compared by the digests the manifest records.
  */
 public final class DocumentSaves {
+    private static final System.Logger LOG = System.getLogger(DocumentSaves.class.getName());
     static final ProtoValidator VALIDATOR = ProtoValidator.create();
     /** Rule recorded once per opaque occurrence: its payload rules were not evaluated. */
     static final String OPAQUE_NOT_EVALUATED_RULE = "protomolt.opaque/v1:payload-not-evaluated";
@@ -176,9 +177,387 @@ public final class DocumentSaves {
         this(catalog, drives, resolver, limits, reservations, clock, () -> containerDefinition);
     }
 
+    /** The committed upload response together with the verified payload digest and byte length. */
+    record UploadResult(UploadDocumentResponse response, String sha256, long sizeBytes) {}
+
+    /** Pre-validated and pre-authorized upload state ready to consume the payload stream. */
+    record PreparedUpload(
+            RepositoryCaller caller,
+            UploadHeader header,
+            SaveDocumentRequest request,
+            NodeAddress address,
+            DocumentSchemaAdmission.Definition container,
+            Descriptors.Descriptor documentType,
+            Map<PartSelector, WriteAction> writes,
+            Map<PartSelector, ByteString> fragments,
+            Map<PartSelector, ByteString> storedFragments,
+            List<RawBlobs.Raw> rawBlobs,
+            Stack stack,
+            Optional<CatalogRecords.Current> current,
+            Optional<StoredManifest> base,
+            OwnershipContext ownership,
+            WriterAuthority.Authorized authorized,
+            CatalogRecords.Outcome recorded) {}
+
+    /**
+     * Commits one unary document save.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the save request
+     * @return the committed save response
+     */
     public SaveDocumentResponse save(RepositoryCaller caller, SaveDocumentRequest request) {
+        return guarded(() -> saveChecked(caller, request));
+    }
+
+    /**
+     * Streams a raw blob or an encoded part fragment and commits the save in one
+     * accession operation (requirements §11).
+     *
+     * @param caller the authenticated repository caller
+     * @param header the upload header carrying the save request and payload selector
+     * @param body the payload stream
+     * @return the committed upload response
+     */
+    public UploadDocumentResponse upload(RepositoryCaller caller, UploadHeader header, java.io.InputStream body) {
+        return uploadResult(caller, header, body, () -> false).response();
+    }
+
+    UploadResult uploadResult(RepositoryCaller caller, UploadHeader header, java.io.InputStream body,
+            java.util.function.BooleanSupplier cancelled) {
+        Objects.requireNonNull(body, "body");
+        Objects.requireNonNull(cancelled, "cancelled");
+        var prepared = precheckUpload(caller, header);
+        return executeUpload(prepared, body, cancelled);
+    }
+
+    PreparedUpload precheckUpload(RepositoryCaller caller, UploadHeader header) {
+        return guarded(() -> {
+            Objects.requireNonNull(header, "header");
+            var headerStructure = VALIDATOR.validate(header);
+            if (!headerStructure.valid())
+                throw malformedException("Invalid upload header: " + headerStructure.violations().getFirst());
+            requireNoUnknownCommandFields(header);
+            var request = header.getSave();
+            var structure = VALIDATOR.validate(request);
+            if (!structure.valid())
+                throw malformedException("Invalid save request: " + structure.violations().getFirst());
+            DocumentReads.requireBinding(caller);
+            var writes = selectors(request);
+            var stack = drives.resolve(request.getDrive());
+            var document = normalizedDocument(request);
+
+            final DocumentSchemaAdmission.Definition container;
+            final Descriptors.Descriptor documentType;
+            try {
+                container = schemas.latest();
+                documentType = documentType(container);
+            } catch (DocumentCandidateAdmission.SchemaUnavailable unavailable) {
+                throw new AccessionException(Status.Code.UNAVAILABLE, "Schema registry unavailable", null, unavailable);
+            } catch (DocumentCandidateAdmission.HostFailure host) {
+                throw new AccessionException(Status.Code.INTERNAL, "Document schema host failure: " + host.getMessage(), null, host);
+            }
+
+            var address = resolveAddress(request, document);
+            var account = address.getAccountId();
+            DocumentReads.requireAccount(caller, account);
+
+            final Map<PartSelector, ByteString> fragments;
+            final Map<PartSelector, ByteString> storedFragments;
+            List<RawBlobs.Raw> rawBlobs = List.of();
+            PartSelector streamedPart = null;
+
+            if (header.hasBlobId()) {
+                var blobId = header.getBlobId();
+                if (blobId.isBlank()) throw malformedException("Uploaded blob_id must not be blank");
+                if (writes.get(BLOBS_SELECTOR) != WriteAction.WRITE_ACTION_PUT)
+                    throw malformedException("Uploading a raw blob requires a BLOBS PUT write");
+                fragments = split(document, documentType, writes, null);
+                var extracted = RawBlobs.extractForUpload(fragments.get(BLOBS_SELECTOR), blobId);
+                storedFragments = new LinkedHashMap<>(fragments);
+                storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                rawBlobs = extracted.blobs();
+            } else if (header.hasEncodedPart()) {
+                streamedPart = supported(header.getEncodedPart().getSelector());
+                if (writes.get(streamedPart) != WriteAction.WRITE_ACTION_PUT)
+                    throw malformedException("Streamed part " + describe(streamedPart) + " must be listed as a PUT write");
+                fragments = split(document, documentType, writes, streamedPart);
+                storedFragments = new LinkedHashMap<>(fragments);
+                if (!streamedPart.equals(BLOBS_SELECTOR) && fragments.containsKey(BLOBS_SELECTOR)) {
+                    var extracted = RawBlobs.extract(fragments.get(BLOBS_SELECTOR));
+                    storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                    rawBlobs = extracted.blobs();
+                }
+            } else {
+                throw malformedException("An upload carries a raw blob or an encoded part");
+            }
+
+            var recorded = catalog.outcome(account, request.getOperationId());
+            if (recorded.isPresent()) {
+                if (recorded.get().outcome().hasRejection()) {
+                    RejectionAccess.require(catalog, caller, recorded.get());
+                } else {
+                    var outcomeAddress = recorded.get().outcome().getAccession().getAddress();
+                    var cur = catalog.current(outcomeAddress).flatMap(state -> catalog.manifest(outcomeAddress, state.revision()));
+                    if (cur.isEmpty() || !DocumentReads.canRead(caller, outcomeAddress, cur.get().getOwnership()))
+                        throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
+                }
+                return new PreparedUpload(caller, header, request, address, container, documentType, writes,
+                        fragments, storedFragments, rawBlobs, stack, Optional.empty(), Optional.empty(), null, null,
+                        recorded.get());
+            }
+
+            var current = catalog.current(address);
+            boolean creating = request.getExpected().hasNone();
+            var base = current.map(state -> catalog.manifest(address, state.revision())
+                    .orElseThrow(() -> new IllegalStateException("Current revision has no manifest")));
+            if (base.isPresent() && !DocumentAccessPolicy.allows(caller, account, base.get().getOwnership().getSecurity(),
+                    null, Access.ACCESS_WRITE))
+                throw WriterAuthority.denied("The caller may not write this document");
+
+            final OwnershipContext ownership;
+            final WriterAuthority.Authorized authorized;
+            if (header.hasBlobId() || !CORE_SELECTOR.equals(streamedPart)) {
+                ownership = ownership(document, address, base,
+                        writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT);
+                requireOwnerMatches(request.getOwner(), ownership);
+                authorized = authority.authorize(caller, request.getOwner(), account,
+                        ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
+            } else if (base.isPresent()) {
+                ownership = base.get().getOwnership();
+                requireOwnerMatches(request.getOwner(), ownership);
+                authorized = authority.authorize(caller, request.getOwner(), account,
+                        ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), false);
+            } else {
+                ownership = document.hasOwnership() ? ownership(document, address, base, true) : null;
+                if (ownership != null) requireOwnerMatches(request.getOwner(), ownership);
+                Optional<String> preConnector = ownership != null && ownership.hasConnectorId()
+                        ? Optional.of(ownership.getConnectorId())
+                        : (request.getOwner().hasIntake() && request.getOwner().getIntake().hasConnectorId()
+                                ? Optional.of(request.getOwner().getIntake().getConnectorId())
+                                : Optional.empty());
+                authorized = authority.authorize(caller, request.getOwner(), account, preConnector, true);
+            }
+            if (caller.processAuthority() && request.getOpaqueAttestationsCount() > 0)
+                throw WriterAuthority.denied("Process authority may not attest opaque content");
+
+            long currentRevision = current.map(CatalogRecords.Current::revision).orElse(0L);
+            if ((!creating && current.isEmpty())
+                    || (creating ? current.isPresent() : currentRevision != request.getExpected().getRevision()))
+                throw aborted(address, request.getExpected(), currentRevision,
+                        current.map(CatalogRecords.Current::tombstone).orElse(false));
+
+            return new PreparedUpload(caller, header, request, address, container, documentType, writes,
+                    fragments, storedFragments, rawBlobs, stack, current, base, ownership, authorized, null);
+        });
+    }
+
+    UploadResult executeUpload(PreparedUpload p, java.io.InputStream body, java.util.function.BooleanSupplier cancelled) {
+        return guarded(() -> {
+            long expectedLength = p.header().hasDeclaredLength() ? p.header().getDeclaredLength() : Stack.UNKNOWN_LENGTH;
+            var tracker = new UploadStreamTracker(body, expectedLength, cancelled);
+
+            if (p.recorded() != null) {
+                byte[] buffer = new byte[64 * 1024];
+                try {
+                    while (tracker.read(buffer) >= 0) {
+                        // Drain in bounded chunks to compute the retry stream's digest and byte count.
+                    }
+                    tracker.verifyAtEnd();
+                } catch (CancelledUploadException cancel) {
+                    throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, cancel);
+                } catch (UploadProtocolException protocol) {
+                    throw protocol.accession();
+                } catch (UploadMismatchException mismatch) {
+                    throw rejectionException(rejection(
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH, mismatch.getMessage()));
+                } catch (IOException failure) {
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                        throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, failure);
+                    throw new AccessionException(Status.Code.UNAVAILABLE, "Upload stream read failed", null, failure);
+                }
+                var actualSha256 = tracker.sha256Hex();
+                long actualLength = tracker.count();
+                var intentSha = uploadIntentSha(p, actualSha256, actualLength);
+                var replayed = replay(p.caller(), p.request(), intentSha, p.recorded());
+                if (!p.header().getExpectedSha256().isEmpty()
+                        && !actualSha256.equalsIgnoreCase(p.header().getExpectedSha256())) {
+                    throw rejectionException(rejection(
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH,
+                            "Uploaded SHA-256 " + actualSha256 + " differs from expected "
+                                    + p.header().getExpectedSha256()));
+                }
+                return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
+                        actualSha256, actualLength);
+            }
+
+            if (p.header().hasBlobId()) {
+                final StackRef uploadedRef;
+                try {
+                    uploadedRef = p.stack().put(tracker, tracker.expectedLength());
+                    tracker.verifyAtEnd();
+                } catch (CancelledUploadException cancel) {
+                    throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, cancel);
+                } catch (UploadProtocolException protocol) {
+                    throw protocol.accession();
+                } catch (UploadMismatchException mismatch) {
+                    var intentSha = uploadIntentSha(p, tracker.sha256Hex(), tracker.count());
+                    reject(p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH, mismatch.getMessage(), List.of());
+                    throw new AssertionError("unreachable");
+                } catch (IOException failure) {
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                        throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, failure);
+                    throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
+                }
+                if (p.header().hasDeclaredLength() && uploadedRef.getLength() != p.header().getDeclaredLength()) {
+                    var cleanupFailure = deleteUnreferenced(p.stack(), uploadedRef);
+                    var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
+                    withCleanupSuppressed(cleanupFailure, () -> reject(
+                            p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH,
+                            "Uploaded length " + uploadedRef.getLength() + " differs from declared length "
+                                    + p.header().getDeclaredLength(), List.of()));
+                }
+                if (!p.header().getExpectedSha256().isEmpty()
+                        && !uploadedRef.getSha256().equalsIgnoreCase(p.header().getExpectedSha256())) {
+                    var cleanupFailure = deleteUnreferenced(p.stack(), uploadedRef);
+                    var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
+                    withCleanupSuppressed(cleanupFailure, () -> reject(
+                            p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH,
+                            "Uploaded SHA-256 " + uploadedRef.getSha256() + " differs from expected "
+                                    + p.header().getExpectedSha256(), List.of()));
+                }
+                var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
+                var concurrent = catalog.outcome(p.address().getAccountId(), p.request().getOperationId());
+                if (concurrent.isPresent()) {
+                    var cleanupFailure = deleteUnreferenced(p.stack(), uploadedRef);
+                    var replayed = withCleanupSuppressed(
+                            cleanupFailure, () -> replay(p.caller(), p.request(), intentSha, concurrent.get()));
+                    return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
+                            uploadedRef.getSha256(), uploadedRef.getLength());
+                }
+                var blobRef = BlobObjectRef.newBuilder().setBlobId(p.header().getBlobId()).setRef(uploadedRef).build();
+                var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
+                        p.current(), p.base(), p.ownership(), p.authorized(), p.storedFragments(),
+                        p.rawBlobs(), List.of(blobRef));
+                return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
+                        uploadedRef.getSha256(), uploadedRef.getLength());
+            }
+
+            var streamedPart = supported(p.header().getEncodedPart().getSelector());
+            long maxBytes = limits.maxFragmentBytes();
+            var leases = new ArrayList<DocumentAdmissionReservations.Lease>();
+            try {
+                var out = ByteString.newOutput();
+                byte[] buffer = new byte[64 * 1024];
+                boolean budgetExceeded = false;
+                try {
+                    int r;
+                    while ((r = tracker.read(buffer)) >= 0) {
+                        if (!budgetExceeded) {
+                            if (out.size() + r > maxBytes) {
+                                budgetExceeded = true;
+                            } else {
+                                if (r > 0) {
+                                    leases.add(Objects.requireNonNull(
+                                            reservations.reserve(r), "reservation lease"));
+                                }
+                                out.write(buffer, 0, r);
+                            }
+                        }
+                    }
+                    tracker.verifyAtEnd();
+                } catch (CancelledUploadException cancel) {
+                    throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, cancel);
+                } catch (UploadProtocolException protocol) {
+                    throw protocol.accession();
+                } catch (UploadMismatchException mismatch) {
+                    var intentSha = uploadIntentSha(p, tracker.sha256Hex(), tracker.count());
+                    reject(p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH, mismatch.getMessage(), List.of());
+                    throw new AssertionError("unreachable");
+                } catch (IOException failure) {
+                    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                        throw new AccessionException(Status.Code.CANCELLED, "Upload cancelled", null, failure);
+                    throw new AccessionException(Status.Code.UNAVAILABLE, "Upload stream read failed", null, failure);
+                }
+                var actualSha256 = tracker.sha256Hex();
+                long actualLength = tracker.count();
+                if (!p.header().getExpectedSha256().isEmpty()
+                        && !actualSha256.equalsIgnoreCase(p.header().getExpectedSha256())) {
+                    var intentSha = uploadIntentSha(p, actualSha256, actualLength);
+                    reject(p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH,
+                            "Uploaded SHA-256 " + actualSha256 + " differs from expected "
+                                    + p.header().getExpectedSha256(), List.of());
+                }
+                if (budgetExceeded)
+                    throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                            "Admission host budget exhausted: candidate fragments exceed byte limit", null);
+                var streamedBytes = out.toByteString();
+                if (streamedBytes.isEmpty())
+                    throw malformedException("PUT " + describe(streamedPart) + " has no content; write EMPTY instead");
+
+                var intentSha = uploadIntentSha(p, actualSha256, actualLength);
+                var concurrent = catalog.outcome(p.address().getAccountId(), p.request().getOperationId());
+                if (concurrent.isPresent()) {
+                    var replayed = replay(p.caller(), p.request(), intentSha, concurrent.get());
+                    return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(replayed).build(),
+                            actualSha256, actualLength);
+                }
+
+                final Document parsedFragment;
+                try {
+                    parsedFragment = Document.parseFrom(streamedBytes);
+                } catch (InvalidProtocolBufferException invalid) {
+                    reject(p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                            "The composed document cannot be admitted: " + describe(streamedPart) + " fragment does not parse", List.of());
+                    throw new AssertionError("unreachable");
+                }
+                var search = parsedFragment.getSearchMetadata();
+                if (search.getSemanticResultsCount() > 0 || search.getSegmentationsCount() > 0 || search.getEmbeddingSetsCount() > 0)
+                    throw malformedException("Semantic results, segmentations and embedding sets are not supported by this server yet");
+                try {
+                    DocumentCandidateAdmission.requireStructure(parsedFragment);
+                } catch (DocumentCandidateAdmission.ContentRefused refused) {
+                    throw malformedException(refused.getMessage());
+                }
+                var ownership = p.ownership();
+                var authorized = p.authorized();
+                if (streamedPart.equals(CORE_SELECTOR)) {
+                    ownership = ownership(parsedFragment, p.address(), p.base(), true);
+                    requireOwnerMatches(p.request().getOwner(), ownership);
+                    authorized = authority.authorize(p.caller(), p.request().getOwner(), p.address().getAccountId(),
+                            ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(),
+                            p.request().getExpected().hasNone());
+                }
+                var storedFragments = new LinkedHashMap<>(p.storedFragments());
+                var rawBlobs = p.rawBlobs();
+                if (streamedPart.equals(BLOBS_SELECTOR)) {
+                    var extracted = RawBlobs.extract(streamedBytes);
+                    storedFragments.put(BLOBS_SELECTOR, extracted.stored());
+                    rawBlobs = extracted.blobs();
+                } else {
+                    storedFragments.put(streamedPart, streamedBytes);
+                }
+                var saved = finishSave(p.caller(), p.request(), p.address(), intentSha, p.container(), p.documentType(), p.writes(),
+                        p.current(), p.base(), ownership, authorized, storedFragments, rawBlobs, List.of());
+                return new UploadResult(UploadDocumentResponse.newBuilder().setSaved(saved).build(),
+                        actualSha256, actualLength);
+            } finally {
+                for (int i = leases.size() - 1; i >= 0; i--) {
+                    leases.get(i).close();
+                }
+            }
+        });
+    }
+
+    private static <T> T guarded(java.util.function.Supplier<T> call) {
         try {
-            return saveChecked(caller, request);
+            return call.get();
         } catch (ai.protomolt.proto.repo.catalog.CatalogDataLoss loss) {
             throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
         } catch (CatalogException failure) {
@@ -219,7 +598,7 @@ public final class DocumentSaves {
         // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
         // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out
         // and a stored CHUNKS fragment may gain the server-computed content digest.
-        var fragments = split(document, documentType, writes);
+        var fragments = split(document, documentType, writes, null);
         var storedFragments = new LinkedHashMap<PartSelector, ByteString>(fragments);
         List<RawBlobs.Raw> rawBlobs = List.of();
         if (fragments.containsKey(BLOBS_SELECTOR)) {
@@ -256,6 +635,18 @@ public final class DocumentSaves {
                 || request.getOpaqueAttestationsCount() > 0))
             throw WriterAuthority.denied("Process authority may not save opaque content");
 
+        return finishSave(caller, request, address, intentSha, container, documentType, writes, current, base,
+                ownership, authorized, storedFragments, rawBlobs, List.of());
+    }
+
+    private SaveDocumentResponse finishSave(RepositoryCaller caller, SaveDocumentRequest request, NodeAddress address,
+            String intentSha, DocumentSchemaAdmission.Definition container, Descriptors.Descriptor documentType,
+            Map<PartSelector, WriteAction> writes, Optional<CatalogRecords.Current> current,
+            Optional<StoredManifest> base, OwnershipContext ownership, WriterAuthority.Authorized authorized,
+            Map<PartSelector, ByteString> storedFragments, List<RawBlobs.Raw> rawBlobs,
+            List<BlobObjectRef> preUploadedBlobs) {
+        var account = address.getAccountId();
+        boolean creating = request.getExpected().hasNone();
         // The writer is authorized: from here on refusals are recorded outcomes.
         long currentRevision = current.map(CatalogRecords.Current::revision).orElse(0L);
         if (creating ? current.isPresent() : currentRevision != request.getExpected().getRevision())
@@ -518,11 +909,17 @@ public final class DocumentSaves {
         var stack = drives.resolve(request.getDrive());
         var newObjects = new ArrayList<StackRef>();
         var blobRefs = new ArrayList<BlobObjectRef>();
+        for (var uploaded : preUploadedBlobs) {
+            newObjects.add(uploaded.getRef());
+            blobRefs.add(uploaded);
+        }
         for (var raw : rawBlobs) {
             var ref = put(stack, raw.data());
             newObjects.add(ref);
             blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
         }
+        if (!blobRefs.isEmpty() && storedFragments.containsKey(BLOBS_SELECTOR))
+            blobRefs = new ArrayList<>(RawBlobs.orderRefs(storedFragments.get(BLOBS_SELECTOR), blobRefs));
         for (var write : request.getWritesList()) {
             if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
             var selector = write.getSelector();
@@ -606,20 +1003,66 @@ public final class DocumentSaves {
         };
     }
 
+    private static String uploadIntentSha(PreparedUpload p, String payloadSha256, long payloadLength) {
+        var contents = new HashMap<Integer, SaveIntents.Content>();
+        var streamedPart = p.header().hasEncodedPart()
+                ? supported(p.header().getEncodedPart().getSelector()) : null;
+        for (int index = 0; index < p.request().getWritesCount(); index++) {
+            var write = p.request().getWrites(index);
+            if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
+            var selector = write.getSelector();
+            if (p.header().hasBlobId() && selector.equals(BLOBS_SELECTOR)) {
+                contents.put(index, RawBlobs.uploadedContent(p.storedFragments().get(BLOBS_SELECTOR),
+                        p.rawBlobs(), p.header().getBlobId(), payloadSha256, payloadLength));
+            } else if (selector.equals(streamedPart)) {
+                contents.put(index, new SaveIntents.Content(payloadSha256, payloadLength));
+            } else {
+                var bytes = p.fragments().get(selector);
+                contents.put(index, new SaveIntents.Content(sha256(bytes), bytes.size()));
+            }
+        }
+        return SaveIntents.sha256(SaveIntents.intent(p.request(), p.address(), contents));
+    }
+
+    private static Exception deleteUnreferenced(Stack stack, StackRef ref) {
+        try {
+            stack.delete(ref);
+            return null;
+        } catch (IOException | RuntimeException cleanupFailure) {
+            LOG.log(
+                    System.Logger.Level.WARNING,
+                    () -> "Failed to delete unreferenced upload object stack_id="
+                            + ref.getStackId() + " key=" + ref.getKey(),
+                    cleanupFailure);
+            return cleanupFailure;
+        }
+    }
+
+    private static <T> T withCleanupSuppressed(Exception cleanupFailure, java.util.function.Supplier<T> action) {
+        try {
+            return action.get();
+        } catch (RuntimeException | Error primary) {
+            if (cleanupFailure != null && primary != cleanupFailure) {
+                primary.addSuppressed(cleanupFailure);
+            }
+            throw primary;
+        }
+    }
+
     // ------------------------------------------------------------------ structure
 
-    private static void requireNoUnknownCommandFields(SaveDocumentRequest request) {
+    static void requireNoUnknownCommandFields(Message root) {
         var pending = new java.util.ArrayDeque<Message>();
-        pending.add(request);
+        pending.add(root);
         while (!pending.isEmpty()) {
             var message = pending.removeFirst();
             if (!message.getUnknownFields().asMap().isEmpty())
-                throw malformedException("Unsupported field in the save command: " + message.getDescriptorForType().getName());
+                throw malformedException("Unsupported field in the command: " + message.getDescriptorForType().getName());
             for (var entry : message.getAllFields().entrySet()) {
                 var field = entry.getKey();
                 // Content has its own schema admission rules. This walk checks
                 // only commands, including nested owners, selectors and locators.
-                if (message == request && field.getNumber() == SaveDocumentRequest.DOCUMENT_FIELD_NUMBER) continue;
+                if (message instanceof SaveDocumentRequest && field.getNumber() == SaveDocumentRequest.DOCUMENT_FIELD_NUMBER) continue;
                 if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
                 if (field.isRepeated()) {
                     for (var child : (List<?>) entry.getValue()) pending.add((Message) child);
@@ -723,11 +1166,12 @@ public final class DocumentSaves {
 
     /**
      * Splits the request document, decoded with the latest registered Document version,
-     * and refuses content for any part not listed as PUT. Fields that version does not
+     * and refuses content for any part not listed as PUT (or for a part supplied via
+     * an {@code UploadDocument} encoded-part stream). Fields that version does not
      * know stay in their fragment as unknown fields for admission to refuse.
      */
     private static Map<PartSelector, ByteString> split(Document request, Descriptors.Descriptor documentType,
-            Map<PartSelector, WriteAction> writes) {
+            Map<PartSelector, WriteAction> writes, PartSelector streamedPart) {
         final DynamicMessage document;
         try {
             document = DynamicMessage.parseFrom(documentType, request.toByteString());
@@ -760,13 +1204,18 @@ public final class DocumentSaves {
             }
             var selector = selector(part);
             var bytes = ByteString.copyFrom(part.bytes());
+            if (selector.equals(streamedPart)) {
+                if (selector.equals(CORE_SELECTOR) && !coreHasContent(bytes, documentType, layout)) continue;
+                throw malformedException("Streamed part " + describe(selector) + " must not also carry inline content in document");
+            }
             boolean put = writes.get(selector) == WriteAction.WRITE_ACTION_PUT;
             if (!put && !(selector.equals(CORE_SELECTOR) && !coreHasContent(bytes, documentType, layout)))
                 throw malformedException("Content for " + describe(selector) + " is present but the part is not written");
             if (put) fragments.put(selector, bytes);
         }
         for (var write : writes.entrySet())
-            if (write.getValue() == WriteAction.WRITE_ACTION_PUT && !fragments.containsKey(write.getKey()))
+            if (write.getValue() == WriteAction.WRITE_ACTION_PUT && !write.getKey().equals(streamedPart)
+                    && !fragments.containsKey(write.getKey()))
                 throw malformedException("PUT " + describe(write.getKey()) + " has no content; write EMPTY instead");
         return fragments;
     }
@@ -1184,7 +1633,13 @@ public final class DocumentSaves {
         var result = catalog.recordRejection(address.getAccountId(), request.getOperationId(), intentSha, outcome,
                 authorized.grantIds(), authorized.credential(), address, request.getExpected().hasNone());
         return switch (result) {
-            case CatalogRecords.Recorded stored -> replay(caller, request, intentSha, stored.outcome());
+            case CatalogRecords.Recorded stored -> {
+                var replayed = replay(caller, request, intentSha, stored.outcome());
+                if (reason == RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH) {
+                    throw rejectionException(rejection);
+                }
+                yield replayed;
+            }
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
         };
     }
@@ -1317,5 +1772,96 @@ public final class DocumentSaves {
 
     static Timestamp timestamp(Instant instant) {
         return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();
+    }
+
+    static final class CancelledUploadException extends IOException {
+        CancelledUploadException(String message) { super(message); }
+    }
+
+    static final class UploadMismatchException extends IOException {
+        UploadMismatchException(String message) { super(message); }
+    }
+
+    static final class UploadProtocolException extends IOException {
+        private final AccessionException accession;
+        UploadProtocolException(AccessionException accession) {
+            super(accession.getMessage(), accession);
+            this.accession = accession;
+        }
+        AccessionException accession() { return accession; }
+    }
+
+    private static final class UploadStreamTracker extends java.io.InputStream {
+        private final java.io.InputStream in;
+        private final long declaredLength;
+        private final java.util.function.BooleanSupplier cancelled;
+        private final java.security.MessageDigest digest = SaveIntents.newSha256();
+        private long count;
+        private boolean eofSeen;
+
+        UploadStreamTracker(java.io.InputStream in, long declaredLength, java.util.function.BooleanSupplier cancelled) {
+            this.in = Objects.requireNonNull(in, "in");
+            this.declaredLength = declaredLength;
+            this.cancelled = Objects.requireNonNull(cancelled, "cancelled");
+        }
+
+        long expectedLength() { return declaredLength; }
+        long count() { return count; }
+
+        String sha256Hex() {
+            try {
+                var clone = (java.security.MessageDigest) digest.clone();
+                return java.util.HexFormat.of().formatHex(clone.digest());
+            } catch (CloneNotSupportedException fallback) {
+                return java.util.HexFormat.of().formatHex(digest.digest());
+            }
+        }
+
+        @Override public int read() throws IOException {
+            byte[] one = new byte[1];
+            return read(one, 0, 1) < 0 ? -1 : one[0] & 0xff;
+        }
+
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            checkActive();
+            if (length == 0) return 0;
+            final int read;
+            try {
+                read = in.read(buffer, offset, length);
+            } catch (CancelledUploadException | UploadProtocolException | UploadMismatchException passthrough) {
+                throw passthrough;
+            } catch (IOException failure) {
+                if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                    throw new CancelledUploadException("Upload stream cancelled");
+                throw failure;
+            }
+            checkActive();
+            if (read < 0) {
+                eofSeen = true;
+                if (declaredLength >= 0 && count < declaredLength)
+                    throw new UploadMismatchException("Uploaded stream ended at " + count + " of " + declaredLength + " declared bytes");
+                return -1;
+            }
+            digest.update(buffer, offset, read);
+            count += read;
+            if (declaredLength >= 0 && count > declaredLength)
+                throw new UploadMismatchException("Uploaded stream exceeded declared length of " + declaredLength + " bytes");
+            return read;
+        }
+
+        void verifyAtEnd() throws IOException {
+            checkActive();
+            if (!eofSeen) {
+                if (read() >= 0)
+                    throw new UploadMismatchException("Uploaded stream exceeded declared length of " + declaredLength + " bytes");
+            }
+            if (declaredLength >= 0 && count != declaredLength)
+                throw new UploadMismatchException("Uploaded stream length " + count + " differs from declared length " + declaredLength);
+        }
+
+        private void checkActive() throws CancelledUploadException {
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                throw new CancelledUploadException("Upload stream cancelled");
+        }
     }
 }

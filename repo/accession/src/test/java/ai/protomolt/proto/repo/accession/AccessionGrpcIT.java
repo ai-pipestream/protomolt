@@ -146,6 +146,7 @@ class AccessionGrpcIT {
                 stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
                         .forEachRemaining(frames::add);
                 assertThat(frames.getFirst().hasManifest()).isTrue();
+                assertThat(frames.getFirst().getManifest().getRevision()).isEqualTo(1);
                 assertThat(frames.getLast().hasComplete()).isTrue();
                 var partFrames = frames.subList(1, frames.size() - 1);
                 assertThat(partFrames).allSatisfy(frame -> assertThat(frame.hasPartData()).isTrue());
@@ -154,6 +155,10 @@ class AccessionGrpcIT {
                                 DocumentPart.DOCUMENT_PART_PARSED);
                 assertThat(partFrames.stream().map(frame -> frame.getPartData().getLast()).toList())
                         .containsExactly(true, true, true);
+                // Slice 4 asserted ListDocuments UNIMPLEMENTED before slice 5 wired it;
+                // the integrated service lists for real (DocumentListsIT covers it deeply).
+                assertThat(stub.listDocuments(ListDocumentsRequest.newBuilder()
+                        .setAccountId(account).setPageSize(10).build()).getDocumentsCount()).isEqualTo(1);
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
                         .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build()).getDocument().hasBlobBag()).isTrue();

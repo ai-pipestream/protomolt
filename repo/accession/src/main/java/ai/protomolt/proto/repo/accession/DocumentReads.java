@@ -52,6 +52,15 @@ public final class DocumentReads {
     private final DocumentAdmissionReservations reservations;
     private final Clock clock;
 
+    /**
+     * Constructs the v2 document read coordinator.
+     *
+     * @param catalog the repository catalog
+     * @param drives the configured stacks
+     * @param limits the admission structural limits
+     * @param reservations the admission memory reservation tracker
+     * @param clock the clock used when evaluating retained schema conditions
+     */
     public DocumentReads(Catalog catalog, DocumentSaves.Drives drives, DocumentSchemaAdmission.Limits limits,
             DocumentAdmissionReservations reservations, Clock clock) {
         this.catalog = Objects.requireNonNull(catalog);
@@ -61,6 +70,13 @@ public final class DocumentReads {
         this.clock = Objects.requireNonNull(clock);
     }
 
+    /**
+     * Reads and merges the selected parts of a document revision.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the document read request
+     * @return the merged document, manifest, and validation record
+     */
     public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request) {
         return guarded(() -> {
             valid(request);
@@ -91,6 +107,41 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * Streams the manifest, selected part data frames, and completion marker for a document revision.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the streaming document read request
+     * @param observer the response stream observer
+     */
+    public void readDocument(
+            RepositoryCaller caller,
+            ReadDocumentRequest request,
+            io.grpc.stub.StreamObserver<ReadDocumentResponse> observer) {
+        new DocumentStreams(this).readDocument(caller, request, observer);
+    }
+
+    /**
+     * Streams a raw blob's header and byte range from its stack object.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the streaming blob read request
+     * @param observer the response stream observer
+     */
+    public void readBlob(
+            RepositoryCaller caller,
+            ReadBlobRequest request,
+            io.grpc.stub.StreamObserver<ReadBlobResponse> observer) {
+        new DocumentStreams(this).readBlob(caller, request, observer);
+    }
+
+    /**
+     * Reads a document revision's manifest without opening any stack object.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the manifest request
+     * @return the manifest and validation record
+     */
     public GetManifestResponse getManifest(RepositoryCaller caller, GetManifestRequest request) {
         return guarded(() -> {
             valid(request);
@@ -148,6 +199,13 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * Lists a document's revisions in descending order.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the revision listing request
+     * @return a page of revision summaries
+     */
     public ListRevisionsResponse listRevisions(RepositoryCaller caller, ListRevisionsRequest request) {
         return guarded(() -> {
             valid(request);
@@ -186,6 +244,13 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * Looks up a recorded operation outcome in an account.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the operation outcome lookup request
+     * @return the recorded outcome or {@code NoRecordedOutcome}
+     */
     public GetOperationOutcomeResponse outcome(RepositoryCaller caller, GetOperationOutcomeRequest request) {
         return guarded(() -> {
             valid(request);
@@ -199,6 +264,14 @@ public final class DocumentReads {
             else if (outcome.hasRejection()) RejectionAccess.require(catalog, caller, recorded.get());
             return GetOperationOutcomeResponse.newBuilder().setCommitted(outcome).build();
         });
+    }
+
+    DocumentSaves.Drives drives() {
+        return drives;
+    }
+
+    DocumentAdmissionReservations reservations() {
+        return reservations;
     }
 
     // ------------------------------------------------------------------ resolution
@@ -217,7 +290,7 @@ public final class DocumentReads {
         return stored;
     }
 
-    private StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
+    StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
         var latest = current(caller, address);
         if (!selector.hasRevision() && latest.getTombstone()) throw notFound("Document is deleted");
         var stored = (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) ? latest
@@ -234,7 +307,7 @@ public final class DocumentReads {
      * fragment schema and every recorded Any occurrence's schema, through the same
      * admission engine a save runs. The occurrences found must be the ones recorded.
      */
-    private void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
+    void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
         var validation = stored.getValidation();
         var binding = validation.getPartSchemasList().stream().filter(schema -> schema.getPart().equals(part)).findFirst()
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
@@ -293,7 +366,7 @@ public final class DocumentReads {
         return new AccessionException(Status.Code.DATA_LOSS, message, null, cause);
     }
 
-    private ByteString read(StackRef ref) {
+    ByteString read(StackRef ref) {
         try (var stream = drives.byId(ref.getStackId()).open(ref)) {
             return ByteString.readFrom(stream);
         } catch (StackDataLoss loss) {
@@ -303,7 +376,7 @@ public final class DocumentReads {
         }
     }
 
-    private static Function<PartSelector, Boolean> selected(PartSelection selection) {
+    static Function<PartSelector, Boolean> selected(PartSelection selection) {
         if (selection.getSelectorsCount() == 0
                 && !selection.getAllSegmentations() && !selection.getAllEmbeddingSets()) return selector -> true;
         var selectors = new HashSet<PartSelector>();
@@ -314,7 +387,7 @@ public final class DocumentReads {
                 || (selection.getAllEmbeddingSets() && selector.hasEmbeddingSet());
     }
 
-    private static DocumentManifest manifest(StoredManifest stored, Function<PartSelector, Boolean> included) {
+    static DocumentManifest manifest(StoredManifest stored, Function<PartSelector, Boolean> included) {
         var manifest = DocumentManifest.newBuilder().setAddress(stored.getAddress()).setRevision(stored.getRevision())
                 .setTombstone(stored.getTombstone());
         for (var part : stored.getPartsList())
@@ -374,17 +447,17 @@ public final class DocumentReads {
         return new AccessionException(code, failure.getMessage(), null, failure);
     }
 
-    private static void valid(com.google.protobuf.Message request) {
+    static void valid(com.google.protobuf.Message request) {
         var result = DocumentSaves.VALIDATOR.validate(request);
         if (!result.valid())
             throw new AccessionException(Status.Code.INVALID_ARGUMENT, "Invalid request: " + result.violations().getFirst(), null);
     }
 
-    private static AccessionException notFound(String message) {
+    static AccessionException notFound(String message) {
         return new AccessionException(Status.Code.NOT_FOUND, message, null);
     }
 
-    private static <T> T guarded(java.util.function.Supplier<T> read) {
+    static <T> T guarded(java.util.function.Supplier<T> read) {
         try {
             return read.get();
         } catch (CatalogDataLoss loss) {

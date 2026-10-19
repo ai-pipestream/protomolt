@@ -87,6 +87,7 @@ final class AccessionFixture implements AutoCloseable {
     final DocumentSaves saves;
     /** The same host with the opaque policy enabled (requirements §9). */
     final DocumentSaves opaqueSaves;
+    final DocumentUploads uploads;
     final DocumentReads reads;
     final String prefix;
 
@@ -101,6 +102,7 @@ final class AccessionFixture implements AutoCloseable {
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
         opaqueSaves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC(), true);
+        uploads = new DocumentUploads(saves);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
@@ -115,6 +117,7 @@ final class AccessionFixture implements AutoCloseable {
         drives = new DocumentSaves.Drives("default", Map.of("default", stack));
         saves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC());
         opaqueSaves = new DocumentSaves(catalog, drives, resolver(), limits(), bytes -> () -> {}, Clock.systemUTC(), true);
+        uploads = new DocumentUploads(saves);
         reads = new DocumentReads(catalog, drives, limits(), bytes -> () -> {}, Clock.systemUTC());
     }
 
