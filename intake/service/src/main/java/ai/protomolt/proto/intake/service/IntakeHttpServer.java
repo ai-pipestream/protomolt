@@ -198,6 +198,15 @@ public final class IntakeHttpServer implements AutoCloseable {
             throw new HttpError(400, "datasource_id is required (query parameter or header)");
         }
         String drive = identity(exchange, query, "drive", "x-drive-name");
+        var expected = ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true);
+        String revision = identity(exchange, query, "expected_revision", "x-expected-revision");
+        if (revision != null) {
+            try { expected.setRevision(Long.parseLong(revision)); }
+            catch (NumberFormatException invalid) {
+                throw new HttpError(400, "expected_revision must be a positive integer");
+            }
+            RawIngests.requireExpected(expected.build());
+        }
         String filename = identity(exchange, query, "filename", "x-filename");
         String contentType = query.get("content_type");
         if (contentType == null || contentType.isBlank()) {
@@ -222,7 +231,7 @@ public final class IntakeHttpServer implements AutoCloseable {
                         ByteString.copyFrom(payload),
                         filename == null ? "" : filename,
                         contentType == null || contentType.isBlank() ? "" : contentType.trim(),
-                        Map.of());
+                        Map.of(), expected.build());
         LOG.debug("HTTP intake saved doc_id={} ({} bytes, sha256={}, deduplicated={})",
                 saved.response().getAccession().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
                 saved.response().getReplayed());

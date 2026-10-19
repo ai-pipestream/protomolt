@@ -175,6 +175,113 @@ class IntakeServiceIT {
     }
 
     @Test
+    void updateUsesObservedRevisionAndRetryKeepsItsReceipt() throws Exception {
+        var firstRequest = IngestDocumentRequest.newBuilder().setDatasourceId("ds-update")
+                .setDocument(ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("update-doc")
+                        .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("first")))
+                .build();
+        var first = intakeStub.ingestDocument(firstRequest);
+        var update = firstRequest.toBuilder().setExpected(
+                ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(first.getRevision()))
+                .setDocument(firstRequest.getDocument().toBuilder().setSearchMetadata(
+                        firstRequest.getDocument().getSearchMetadata().toBuilder().setTitle("second")))
+                .build();
+        var second = intakeStub.ingestDocument(update);
+        assertThat(second.getRevision()).isEqualTo(2);
+        var replay = intakeStub.ingestDocument(update);
+        assertThat(replay.getRevision()).isEqualTo(second.getRevision());
+        assertThat(replay.getDeduplicated()).isTrue();
+        assertThat(repo.catalog.revisions(first.getAddress(), Long.MAX_VALUE, 10)).hasSize(2);
+        var documents = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel);
+        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setAddress(first.getAddress())
+                .setRevision(ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(1)).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("first");
+        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setAddress(first.getAddress()).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("second");
+        var stale = update.toBuilder().putMetadata("different", "intent").build();
+        assertThatThrownBy(() -> intakeStub.ingestDocument(stale))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+        assertThat(repo.catalog.revisions(first.getAddress(), Long.MAX_VALUE, 10)).hasSize(2);
+    }
+
+    @Test
+    void identicalBinaryReusesStoredObjectsEvenWhenMetadataCreatesANewRevision() throws Exception {
+        var request = IngestDocumentRequest.newBuilder().setDatasourceId("ds-sha-reuse")
+                .setRaw(RawPayload.newBuilder().setData(ByteString.copyFromUtf8("same bytes"))
+                        .setMimeType("text/plain").setFilename("same.txt")).build();
+        var first = intakeStub.ingestDocument(request);
+        var original = repo.catalog.manifest(first.getAddress(), first.getRevision()).orElseThrow();
+        int objectsBefore = repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount();
+        var update = request.toBuilder().putMetadata("crawler", "new observation")
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(first.getRevision()))
+                .build();
+        var second = intakeStub.ingestDocument(update);
+        var current = repo.catalog.manifest(first.getAddress(), second.getRevision()).orElseThrow();
+        assertThat(second.getRevision()).isEqualTo(2);
+        assertThat(current.getMetadataOrThrow("crawler")).isEqualTo("new observation");
+        // A fresh revision is not an operation replay, even though all binary objects were reused.
+        assertThat(second.getDeduplicated()).isFalse();
+        assertThat(current.getPartsList().stream().map(p -> p.getRef()).toList())
+                .isEqualTo(original.getPartsList().stream().map(p -> p.getRef()).toList());
+        assertThat(current.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream()).toList())
+                .isEqualTo(original.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream()).toList());
+        assertThat(repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount()).isEqualTo(objectsBefore);
+        assertThat(repo.retainedBlob(first.getAddress(), 1)).isEqualTo("same bytes".getBytes());
+        assertThat(repo.retainedBlob(second.getAddress(), 2)).isEqualTo("same bytes".getBytes());
+        assertThat(intakeStub.ingestDocument(update).getRevision()).isEqualTo(2);
+        assertThat(repo.catalog.revisions(first.getAddress(), Long.MAX_VALUE, 10)).hasSize(2);
+        var documents = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel);
+        var retained = documents.getDocument(GetDocumentRequest.newBuilder().setAddress(first.getAddress()).build())
+                .getDocument();
+        var changedBytes = ByteString.copyFromUtf8("diff bytes");
+        var changed = retained.toBuilder().setBlobBag(retained.getBlobBag().toBuilder().setBlob(
+                retained.getBlobBag().getBlob().toBuilder().clearStorageRef().setData(changedBytes)
+                        .setChecksum(RawIngests.sha256Hex(changedBytes.toByteArray())))).build();
+        var third = intakeStub.ingestDocument(IngestDocumentRequest.newBuilder().setDatasourceId("ds-sha-reuse")
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(2))
+                .setDocument(changed).build());
+        assertThat(third.getRevision()).isEqualTo(3);
+        assertThat(repo.retainedBlob(first.getAddress(), 1)).isEqualTo("same bytes".getBytes());
+        assertThat(repo.retainedBlob(third.getAddress(), 3)).isEqualTo("diff bytes".getBytes());
+        assertThat(intakeStub.ingestDocument(update).getRevision()).isEqualTo(2);
+        assertThat(repo.catalog.revisions(first.getAddress(), Long.MAX_VALUE, 10)).hasSize(3);
+    }
+
+    @Test
+    void delayedDeleteCannotRemoveANewerUpdateAndCurrentDeleteReplays() {
+        var create = IngestDocumentRequest.newBuilder().setDatasourceId("ds-delete")
+                .setDocument(ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("delete-doc")
+                        .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("first")))
+                .build();
+        var first = intakeStub.ingestDocument(create);
+        var delayed = ai.protomolt.proto.repo.v2.DeleteDocumentRequest.newBuilder().setOperationId("old-delete")
+                .setAddress(first.getAddress()).setExpected(
+                        ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(first.getRevision())).build();
+        var update = create.toBuilder().setExpected(delayed.getExpected())
+                .setDocument(create.getDocument().toBuilder().setSearchMetadata(
+                        create.getDocument().getSearchMetadata().toBuilder().setTitle("newer"))).build();
+        var second = intakeStub.ingestDocument(update);
+        assertThatThrownBy(() -> intakeStub.deleteDocument(delayed))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+        var documents = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(repoChannel);
+        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setAddress(first.getAddress()).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("newer");
+        var currentDelete = delayed.toBuilder().setOperationId("current-delete").setExpected(
+                ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(second.getRevision())).build();
+        var deleted = intakeStub.deleteDocument(currentDelete);
+        assertThat(deleted.getAccession().getTombstone()).isTrue();
+        assertThat(deleted.getAccession().getRevision()).isEqualTo(3);
+        var replay = intakeStub.deleteDocument(currentDelete);
+        assertThat(replay.getReplayed()).isTrue();
+        assertThat(replay.getAccession()).isEqualTo(deleted.getAccession());
+        assertThat(documents.getDocument(GetDocumentRequest.newBuilder().setAddress(first.getAddress())
+                .setRevision(ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(2)).build())
+                .getDocument().getSearchMetadata().getTitle()).isEqualTo("newer");
+    }
+
+    @Test
     void unknownDriveSurfacesRepoErrorUnchanged() {
         assertThatThrownBy(
                         () ->

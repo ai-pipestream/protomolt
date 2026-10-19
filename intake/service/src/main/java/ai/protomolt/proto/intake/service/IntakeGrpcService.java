@@ -14,6 +14,9 @@ import ai.protomolt.proto.repo.v1.DocIdDerivation;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
@@ -67,6 +70,11 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
     }
 
     @Override
+    public void deleteDocument(DeleteDocumentRequest request, StreamObserver<DeleteDocumentResponse> observer) {
+        GrpcErrors.run(observer, () -> ingests.delete(ApiKeyServerInterceptor.currentScope(), request));
+    }
+
+    @Override
     public void ingestDocument(
             IngestDocumentRequest request, StreamObserver<IngestDocumentResponse> observer) {
         GrpcErrors.run(observer, () -> ingest(request));
@@ -83,17 +91,20 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         IntakeScope scope = ApiKeyServerInterceptor.currentScope();
         RawIngests.Targeting targeting = RawIngests.Targeting.of(scope, request.getDatasourceId(),
                 request.hasDrive() ? request.getDrive() : null);
+        ExpectedRevision expected = request.hasExpected() ? request.getExpected()
+                : ExpectedRevision.newBuilder().setNone(true).build();
+        RawIngests.requireExpected(expected);
         RawIngests.Saved saved =
                 switch (request.getContentCase()) {
                     case DOCUMENT -> saveTypedDocument(
-                            scope, targeting, request.getDocument(), request.getMetadataMap());
+                            scope, targeting, request.getDocument(), request.getMetadataMap(), expected);
                     case RAW -> ingests.saveRawPayload(
                             scope,
                             targeting,
                             request.getRaw().getData(),
                             request.getRaw().getFilename(),
                             request.getRaw().getMimeType(),
-                            request.getMetadataMap());
+                            request.getMetadataMap(), expected);
                     case CONTENT_NOT_SET -> throw GrpcErrors.invalidArgument(
                             "content is required: set document or raw");
                 };
@@ -112,7 +123,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
             IntakeScope scope,
             RawIngests.Targeting targeting,
             Document caller,
-            Map<String, String> metadata) {
+            Map<String, String> metadata, ExpectedRevision expected) {
         long inlineBytes = totalInlineBlobBytes(caller);
         ingests.requirePayloadWithinCaps(scope, inlineBytes);
         requireBlobMimeTypesWithinScope(scope, caller);
@@ -138,7 +149,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         Document toSave = document.build();
         byte[] canonical = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(toSave);
         return ingests.save(
-                scope, targeting, toSave, metadata, RawIngests.sha256Hex(canonical), canonical.length);
+                scope, targeting, toSave, metadata, RawIngests.sha256Hex(canonical), canonical.length, expected);
     }
 
     private static void requireBlobMimeTypesWithinScope(IntakeScope scope, Document document) {
@@ -215,6 +226,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                 throw GrpcErrors.invalidArgument(
                         "metadata frame after the first frame; only the first frame carries metadata");
             }
+            if (first.hasExpected()) RawIngests.requireExpected(first.getExpected());
             metadata = first;
             targeting = RawIngests.Targeting.of(scope, first.getDatasourceId(),
                     first.hasDrive() ? first.getDrive() : null);
@@ -252,7 +264,8 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                         ByteString.copyFrom(payload.toByteArray()),
                         metadata.getFilename(),
                         metadata.getMimeType(),
-                        metadata.getMetadataMap());
+                        metadata.getMetadataMap(), metadata.hasExpected() ? metadata.getExpected()
+                                : ExpectedRevision.newBuilder().setNone(true).build());
                 observer.onNext(
                         IngestStreamResponse.newBuilder()
                                 .setDocId(saved.response().getAccession().getAddress().getDocId())

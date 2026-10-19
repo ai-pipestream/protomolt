@@ -18,9 +18,22 @@ import java.util.concurrent.CopyOnWriteArrayList;
 final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
 
     final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
+    final List<ai.protomolt.proto.repo.v2.DeleteDocumentRequest> deletes = new CopyOnWriteArrayList<>();
     volatile boolean deduplicated;
     /** When set, every save fails with this status instead of answering (repo-failure tests). */
     volatile StatusRuntimeException failure;
+
+    @Override
+    public void deleteDocument(ai.protomolt.proto.repo.v2.DeleteDocumentRequest request,
+            StreamObserver<ai.protomolt.proto.repo.v2.DeleteDocumentResponse> observer) {
+        deletes.add(request);
+        if (failure != null) { observer.onError(failure); return; }
+        observer.onNext(ai.protomolt.proto.repo.v2.DeleteDocumentResponse.newBuilder()
+                .setOperationId(request.getOperationId())
+                .setAccession(ai.protomolt.proto.repo.v2.Accession.newBuilder().setAddress(request.getAddress())
+                        .setRevision(request.getExpected().getRevision() + 1).setTombstone(true)).build());
+        observer.onCompleted();
+    }
 
     @Override
     public void saveDocument(

@@ -67,7 +67,7 @@ final class RawIngests {
             ByteString data,
             String filename,
             String mimeType,
-            Map<String, String> metadata) {
+            Map<String, String> metadata, ExpectedRevision expected) {
         requirePayloadWithinCaps(scope, data.size());
         requireDeclaredMimeTypeWithinScope(scope, mimeType);
         byte[] digest = sha256(data.toByteArray());
@@ -107,7 +107,7 @@ final class RawIngests {
                                         .setMethod(DocIdDerivationMethod.DOC_ID_DERIVATION_METHOD_CONTENT_HASH)
                                         .setSourceValue(sha256))
                         .build();
-        return save(scope, targeting, document, metadata, sha256, data.size());
+        return save(scope, targeting, document, metadata, sha256, data.size(), expected);
     }
 
     /**
@@ -121,7 +121,8 @@ final class RawIngests {
             Document document,
             Map<String, String> metadata,
             String sha256,
-            long payloadSize) {
+            long payloadSize, ExpectedRevision expected) {
+        requireExpected(expected);
         var content = document.toBuilder();
         if (document.hasBlobBag()) {
             var bag = document.getBlobBag().toBuilder();
@@ -144,7 +145,7 @@ final class RawIngests {
                         .setDocument(document)
                         .setDrive(targeting.drive())
                         .setTarget(DocumentTarget.newBuilder().setUseDatasourceId(targeting.datasourceId()))
-                        .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                        .setExpected(expected)
                         .setOwner(SaveOwner.newBuilder().setIntake(origin))
                         .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
                         .putAllMetadata(metadata);
@@ -163,6 +164,28 @@ final class RawIngests {
         request.setOperationId("intake-v2:" + MessageFingerprints.fingerprint(request.build()));
         SaveDocumentResponse response = documents.saveDocument(request.build());
         return new Saved(response, targeting.drive(), sha256, payloadSize);
+    }
+
+    static void requireExpected(ExpectedRevision expected) {
+        if ((!expected.hasNone() || !expected.getNone())
+                && (!expected.hasRevision() || expected.getRevision() <= 0))
+            throw GrpcErrors.invalidArgument("Expected revision must be none=true or a positive revision");
+        if (!expected.getUnknownFields().asMap().isEmpty())
+            throw GrpcErrors.invalidArgument("Unknown expected-revision fields");
+    }
+
+    DeleteDocumentResponse delete(IntakeScope scope, DeleteDocumentRequest request) {
+        var address = request.getAddress();
+        if (!address.getAccountId().equals(scope.accountId())
+                || !address.getGraphId().equals(IntakeGrpcService.INTAKE_GRAPH_PREFIX + scope.accountId())
+                || !scope.allowsDatasource(address.getGraphAddressId()))
+            throw GrpcErrors.permissionDenied("Delete address is outside the intake key's scope");
+        if (address.getDocId().isBlank() || address.getGraphAddressId().isBlank()
+                || !request.getExpected().hasRevision())
+            throw GrpcErrors.invalidArgument("Delete requires a document, datasource and last observed revision");
+        requireExpected(request.getExpected());
+        // No conflict retry: a delayed delete must never target a newer revision.
+        return documents.deleteDocument(request);
     }
 
     /** RESOURCE_EXHAUSTED when {@code sizeBytes} breaches the service or per-key cap. */

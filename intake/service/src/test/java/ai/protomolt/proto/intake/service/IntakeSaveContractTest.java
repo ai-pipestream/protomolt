@@ -102,7 +102,9 @@ class IntakeSaveContractTest {
     @BeforeEach
     void reset() {
         repo.saves.clear();
+        repo.deletes.clear();
         repo.deduplicated = false;
+        repo.failure = null;
     }
 
     static IntakeServiceGrpc.IntakeServiceBlockingStub stub(String apiKey) {
@@ -505,4 +507,52 @@ class IntakeSaveContractTest {
                         assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
         assertThat(repo.saves).hasSize(1);
     }
+    @Test
+    void streamUpdateKeepsItsObservedRevision() throws Exception {
+        var expected = ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(7).build();
+        streamIngest(KEY_UNRESTRICTED, IngestMetadata.newBuilder().setDatasourceId("ds-stream-update")
+                .setExpected(expected).build(), "bytes");
+        assertThat(repo.saves).hasSize(1);
+        assertThat(repo.saves.getFirst().getExpected()).isEqualTo(expected);
+        assertThatThrownBy(() -> stub(KEY_UNRESTRICTED).ingestDocument(IngestDocumentRequest.newBuilder()
+                .setDatasourceId("ds-stream-update").setRaw(RawPayload.newBuilder().setData(ByteString.copyFromUtf8("x")))
+                .setExpected(expected.toBuilder().setRevision(0)).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+        assertThat(repo.saves).hasSize(1);
+    }
+
+    @Test
+    void deleteForwardsObservedRevisionAndNeverRetriesAStaleDelete() {
+        var request = ai.protomolt.proto.repo.v2.DeleteDocumentRequest.newBuilder().setOperationId("delete-1")
+                .setAddress(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder().setAccountId(ACCOUNT)
+                        .setGraphId("intake:" + ACCOUNT).setGraphAddressId("ds-allowed").setDocId("doc"))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(3)).build();
+        repo.failure = Status.ABORTED.withDescription("stale revision").asRuntimeException();
+        assertThatThrownBy(() -> stub(KEY_UNRESTRICTED).deleteDocument(request))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+        assertThat(repo.deletes).containsExactly(request);
+    }
+
+    @Test
+    void deleteRefusesMissingRevisionAndOutOfScopeAddressesBeforeRepositoryCall() {
+        var request = ai.protomolt.proto.repo.v2.DeleteDocumentRequest.newBuilder().setOperationId("delete-2")
+                .setAddress(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder().setAccountId(ACCOUNT)
+                        .setGraphId("intake:" + ACCOUNT).setGraphAddressId("ds-allowed").setDocId("doc"))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(3)).build();
+        assertThatThrownBy(() -> stub(KEY_UNRESTRICTED).deleteDocument(request.toBuilder().clearExpected().build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT));
+        for (var address : java.util.List.of(
+                request.getAddress().toBuilder().setAccountId("other").build(),
+                request.getAddress().toBuilder().setGraphId("other").build(),
+                request.getAddress().toBuilder().setGraphAddressId("denied").build())) {
+            assertThatThrownBy(() -> stub(KEY_NARROW).deleteDocument(request.toBuilder().setAddress(address).build()))
+                    .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                            assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.PERMISSION_DENIED));
+        }
+        assertThat(repo.deletes).isEmpty();
+    }
+
 }
