@@ -178,6 +178,7 @@ metadata changes are not discarded. It does not claim global cross-document or
 cross-stack deduplication. Intake's existing `deduplicated` receipt field denotes
 operation replay, as its contract comment states; it is not an object-upload count.
 
-PR #375 remains dependent on the real #365 delete handler and #370 streaming
-handler being integrated into its fixtures. Temporary dependency-combination
-qualification does not make the standalone draft ready to merge.
+Both intake and parse fixtures mount the integrated v2 upload/read, delete, list
+and purge coordinators. The full intake and parse checks include real-repository
+delete/replay/history and parsing through ReadBlob; no replacement test RPC is
+used. Production-host cutover and streaming parser inputs remain separate work.

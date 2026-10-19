@@ -56,7 +56,10 @@ final class V2RepositoryFixture implements AutoCloseable {
         var caller = ai.protomolt.proto.actions.Caller.scoped("parse-coordinator", java.util.Set.of());
         var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(caller,
                 java.util.Optional.of(new ai.protomolt.proto.authz.CredentialBinding("d8-test", credentialId, 1)));
-        var service = new AccessionGrpcService(saves, reads, auth -> new RepositoryCaller(auth.caller().name(), false,
+        var service = new AccessionGrpcService(saves, new DocumentUploads(saves), reads,
+                new DocumentDeletes(catalog, Clock.systemUTC()), new DocumentLists(catalog),
+                new DocumentPurges(catalog, drives, (identity, tenant) ->
+                        new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false), Clock.systemUTC()), auth -> new RepositoryCaller(auth.caller().name(), false,
                 java.util.Set.of(account), java.util.Set.of(ai.protomolt.proto.repo.v1.Principal.newBuilder()
                         .setIdentityType("service").setIdentity("parse-coordinator").build()),
                 java.util.Optional.of(new ai.protomolt.proto.repo.spi.RepositoryCredentialBinding("d8-test", credentialId, 1))));

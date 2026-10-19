@@ -42,7 +42,10 @@ final class V2RepositoryFixture implements AutoCloseable {
                 4L * 1024 * 1024, 32, 32L * 1024 * 1024, 64 * 1024 * 1024);
         var saves = new DocumentSaves(catalog, drives, selection -> null, limits, bytes -> () -> {}, Clock.systemUTC());
         var reads = new DocumentReads(catalog, drives, limits, bytes -> () -> {}, Clock.systemUTC());
-        server = InProcessServerBuilder.forName(name).addService(new AccessionGrpcService(saves, reads,
+        server = InProcessServerBuilder.forName(name).addService(new AccessionGrpcService(saves, new DocumentUploads(saves), reads,
+                new DocumentDeletes(catalog, Clock.systemUTC()), new DocumentLists(catalog),
+                new DocumentPurges(catalog, drives, (identity, tenant) ->
+                        new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false), Clock.systemUTC()),
                 authentication -> new RepositoryCaller(authentication.caller().name(), authentication.caller().unrestricted())))
                 .build().start();
     }
