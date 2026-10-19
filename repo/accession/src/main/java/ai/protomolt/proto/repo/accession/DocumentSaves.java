@@ -1704,6 +1704,7 @@ public final class DocumentSaves {
         if (existing != null) return existing;
         var ref = put(stack, bytes);
         newObjects.add(ref);
+        rememberReusable(stack, reusable, ref);
         return ref;
     }
 
