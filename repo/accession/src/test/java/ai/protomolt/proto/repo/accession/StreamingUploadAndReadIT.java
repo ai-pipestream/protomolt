@@ -205,8 +205,12 @@ class StreamingUploadAndReadIT {
             @Override public void setOnReadyHandler(Runnable handler) {
                 handler.run();
                 assertThat(reserved.get()).isGreaterThan(0);
-                assertThat(released.get()).isZero();
-                assertThat(opens.get()).isGreaterThan(closes.get());
+                assertThat(reserved.get())
+                        .as("the buffered part's lease is still outstanding while frames are pending")
+                        .isGreaterThan(released.get());
+                assertThat(opens.get())
+                        .as("the part is drained and verified before its first frame, so its stream is closed")
+                        .isEqualTo(closes.get());
                 throw failure;
             }
             @Override public void setCompression(String compression) {}
@@ -766,6 +770,56 @@ class StreamingUploadAndReadIT {
                 .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
                         assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS));
         assertThat(docFrames).noneMatch(ReadDocumentResponse::hasComplete);
+        assertThat(docFrames)
+                .as("no frame of the corrupt PARSED part may reach the client")
+                .noneMatch(frame -> frame.hasPartData()
+                        && frame.getPartData().getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED);
+    }
+
+    @Test
+    void readDocumentEmitsNoFrameOfACorruptPartLargerThanOneChunk() throws Exception {
+        // A CORE part larger than one 64 KiB frame: a read that verified only at end of
+        // stream would already have emitted the part's first frame when the digest fails.
+        var address = address(account, "doc-corrupt-large");
+        var document = Document.newBuilder()
+                .setDocId("doc-corrupt-large")
+                .setOwnership(ownership(account))
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .setTitle("large corrupt core")
+                        .setBody("z".repeat(150_000)))
+                .build();
+        blockingStub.saveDocument(create("op-corrupt-large", address, document)
+                .clearWrites()
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                .setDocument(document)
+                .build());
+        var stored = f.catalog.manifest(address, 1).orElseThrow();
+        var coreEntry = stored.getPartsList().stream()
+                .filter(p -> p.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_CORE)
+                .findFirst()
+                .orElseThrow();
+        assertThat(coreEntry.getRef().getLength()).isGreaterThan(DocumentStreams.CHUNK_SIZE);
+
+        // Flip one byte in the middle of the stored object, keeping its length, so only
+        // the digest check at end of stream can catch the corruption.
+        var coreKey = coreEntry.getRef().getKey();
+        byte[] storedBytes = s3().getObject(
+                software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                        .bucket(BUCKET).key(coreKey).build())
+                .readAllBytes();
+        storedBytes[storedBytes.length / 2] ^= 0x55;
+        s3().putObject(
+                PutObjectRequest.builder().bucket(BUCKET).key(coreKey).build(),
+                RequestBody.fromBytes(storedBytes));
+
+        var frames = new ArrayList<ReadDocumentResponse>();
+        assertThatThrownBy(() -> blockingStub.readDocument(ReadDocumentRequest.newBuilder()
+                .setAddress(address)
+                .build()).forEachRemaining(frames::add))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
+                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS));
+        assertThat(frames).noneMatch(ReadDocumentResponse::hasPartData);
+        assertThat(frames).noneMatch(ReadDocumentResponse::hasComplete);
     }
 
     @Test
@@ -1122,18 +1176,19 @@ class StreamingUploadAndReadIT {
         assertThat(frames.get(0).hasManifest()).isTrue();
         assertThat(frames.get(1).hasPartData()).isTrue();
         assertThat(frames.get(1).getPartData().getLast()).isFalse();
-        assertThat(streamClosed.getCount())
-                .as("active Stack InputStream remains open while paused mid-part")
-                .isEqualTo(1L);
-        assertThat(readReserved.get()).isEqualTo(coreFragmentBytes.length);
-        assertThat(readReleased.get()).isZero();
+        assertThat(streamClosed.await(1, TimeUnit.SECONDS))
+                .as("the part is fully drained and verified, so its Stack InputStream is closed before its first frame")
+                .isTrue();
+        assertThat(readReserved.get()).isGreaterThanOrEqualTo(coreFragmentBytes.length);
+        assertThat(readReserved.get() - readReleased.get())
+                .as("the part's reservation bounds the buffered bytes until its last frame goes out")
+                .isEqualTo(coreFragmentBytes.length);
 
         cancelHandler.get().run();
 
-        assertThat(streamClosed.await(1, TimeUnit.SECONDS))
-                .as("cancel() must immediately close the active Stack InputStream")
-                .isTrue();
-        assertThat(readReleased.get()).isEqualTo(readReserved.get());
+        assertThat(readReleased.get())
+                .as("cancel() must release the buffered part's reservation")
+                .isEqualTo(readReserved.get());
 
         // 3. Concurrent cancellation while pump() is actively executing does not release the reservation
         // until the in-flight reader unwinds.
