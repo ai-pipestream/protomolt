@@ -68,12 +68,16 @@ final class SaveIntents {
 
     static String sha256(SaveIntent intent) { return ai.protomolt.proto.descriptors.MessageFingerprints.fingerprint(intent); }
 
-    static String sha256Hex(byte[] bytes) {
+    static MessageDigest newSha256() {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException("SHA-256 unavailable", impossible);
         }
+    }
+
+    static String sha256Hex(byte[] bytes) {
+        return HexFormat.of().formatHex(newSha256().digest(bytes));
     }
 
     /** Unsigned UTF-8 byte order, which equals code point order. */

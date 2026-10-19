@@ -19,6 +19,15 @@ public final class CatalogRecords {
     private CatalogRecords() {}
 
     /** A document's current-revision pointer. */
+    public record ListedDocument(NodeAddress address, long revision, boolean tombstone,
+            com.google.protobuf.Timestamp committedAt, ai.protomolt.proto.repo.v2.CatalogEntry entry) {}
+
+    public record PurgeState(ai.protomolt.proto.repo.v2.CatalogPurge record, boolean completed) {}
+    /** An idempotency key already belongs to a different document. */
+    public static final class PurgeConflict extends IllegalStateException {
+        public PurgeConflict() { super("Purge ID belongs to another document"); }
+    }
+
     public record Current(long revision, boolean tombstone) {}
 
     /** A recorded terminal outcome and the intent it was recorded for. */
@@ -69,6 +78,8 @@ public final class CatalogRecords {
     public record Conflict(long currentRevision, boolean currentTombstone) implements CommitResult {}
     /** A carried-forward object was purged before the commit. */
     public record SourcePurged(StackRef ref) implements CommitResult {}
+    /** The destination address was permanently purged and cannot accept another revision. */
+    public record TargetPurged() implements CommitResult {}
     /** The writer grant or credential was revoked or rotated before the commit. */
     public record WriteDenied(String reason) implements CommitResult, RejectionResult {}
 
@@ -80,6 +91,20 @@ public final class CatalogRecords {
 
     /** One outbox row awaiting relay. */
     public record OutboxEvent(String eventId, String key, DocumentEvent event, int attempts) {}
+
+    /**
+     * The outbox partition key of an event: every address component in canonical
+     * order (account, graph, graph address, document), each prefixed by its UTF-8
+     * length so separators inside a component stay unambiguous and two documents
+     * never share a key, whatever characters their addresses hold.
+     */
+    public static String eventKey(NodeAddress address) {
+        var key = new StringBuilder();
+        for (var component : List.of(address.getAccountId(), address.getGraphId(), address.getGraphAddressId(),
+                address.getDocId()))
+            key.append(component.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).append('/').append(component);
+        return key.toString();
+    }
 
     /** Unsigned UTF-8 byte order, which equals code point order. */
     public static int compareUtf8(String left, String right) {

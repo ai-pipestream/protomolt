@@ -43,12 +43,24 @@ import java.util.function.Function;
  * catalog, or fails its digest, is DATA_LOSS.
  */
 public final class DocumentReads {
+    /** Largest payload of one part-data frame of a streamed read. */
+    private static final int READ_FRAME_BYTES = 1024 * 1024;
+
     private final Catalog catalog;
     private final DocumentSaves.Drives drives;
     private final DocumentSchemaAdmission.Limits limits;
     private final DocumentAdmissionReservations reservations;
     private final Clock clock;
 
+    /**
+     * Constructs the v2 document read coordinator.
+     *
+     * @param catalog the repository catalog
+     * @param drives the configured stacks
+     * @param limits the admission structural limits
+     * @param reservations the admission memory reservation tracker
+     * @param clock the clock used when evaluating retained schema conditions
+     */
     public DocumentReads(Catalog catalog, DocumentSaves.Drives drives, DocumentSchemaAdmission.Limits limits,
             DocumentAdmissionReservations reservations, Clock clock) {
         this.catalog = Objects.requireNonNull(catalog);
@@ -58,6 +70,13 @@ public final class DocumentReads {
         this.clock = Objects.requireNonNull(clock);
     }
 
+    /**
+     * Reads and merges the selected parts of a document revision.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the document read request
+     * @return the merged document, manifest, and validation record
+     */
     public GetDocumentResponse getDocument(RepositoryCaller caller, GetDocumentRequest request) {
         return guarded(() -> {
             valid(request);
@@ -71,8 +90,9 @@ public final class DocumentReads {
                     throw new AccessionException(Status.Code.FAILED_PRECONDITION,
                             "The revision holds opaque content; request its opaque representation explicitly", null);
                 var bytes = read(part.getRef());
-                // Opaque content makes no typed claim and is not decoded (requirements §9).
-                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                // Opaque occurrences are verified undecoded against their record inside
+                // decodeRetained; typed siblings in the same part still decode (§9).
+                decodeRetained(stored, entry.getSelector(), bytes);
                 // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
                 if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
                     bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
@@ -87,6 +107,41 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * Streams the manifest, selected part data frames, and completion marker for a document revision.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the streaming document read request
+     * @param observer the response stream observer
+     */
+    public void readDocument(
+            RepositoryCaller caller,
+            ReadDocumentRequest request,
+            io.grpc.stub.StreamObserver<ReadDocumentResponse> observer) {
+        new DocumentStreams(this).readDocument(caller, request, observer);
+    }
+
+    /**
+     * Streams a raw blob's header and byte range from its stack object.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the streaming blob read request
+     * @param observer the response stream observer
+     */
+    public void readBlob(
+            RepositoryCaller caller,
+            ReadBlobRequest request,
+            io.grpc.stub.StreamObserver<ReadBlobResponse> observer) {
+        new DocumentStreams(this).readBlob(caller, request, observer);
+    }
+
+    /**
+     * Reads a document revision's manifest without opening any stack object.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the manifest request
+     * @return the manifest and validation record
+     */
     public GetManifestResponse getManifest(RepositoryCaller caller, GetManifestRequest request) {
         return guarded(() -> {
             valid(request);
@@ -96,6 +151,61 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * The streamed read of one pinned revision (requirements §8, §11): the manifest
+     * frame first, then each selected PRESENT part's bytes in one or more frames,
+     * then the completion frame. Every part's bytes are verified against their
+     * stack reference, and non-opaque parts against their retained schemas, before
+     * any of its frames are emitted; raw blobs go out with their claim checks
+     * filled (decision 45). An opaque part the request does not allow fails the
+     * item before any frame is emitted. A prefix without the completion frame is
+     * not a successful read.
+     */
+    public void readDocument(RepositoryCaller caller, ReadDocumentRequest request,
+            java.util.function.Consumer<ReadDocumentResponse> frames) {
+        Objects.requireNonNull(frames);
+        guarded(() -> {
+            valid(request);
+            var stored = resolve(caller, request.getAddress(), request.getRevision());
+            var selected = selected(request.getSelection());
+            var parts = new java.util.ArrayList<StoredPartEntry>();
+            for (var part : stored.getPartsList()) {
+                var entry = part.getEntry();
+                if (!selected.apply(entry.getSelector()) || entry.getState() != PartState.PART_STATE_PRESENT) continue;
+                if (entry.getOpaque() && !request.getAllowOpaque())
+                    throw new AccessionException(Status.Code.FAILED_PRECONDITION,
+                            "The revision holds opaque content; request its opaque representation explicitly", null);
+                parts.add(part);
+            }
+            frames.accept(ReadDocumentResponse.newBuilder().setManifest(manifest(stored, selected)).build());
+            for (var part : parts) {
+                var entry = part.getEntry();
+                var bytes = read(part.getRef());
+                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
+                long offset = 0;
+                do {
+                    int length = (int) Math.min(READ_FRAME_BYTES, (long) bytes.size() - offset);
+                    frames.accept(ReadDocumentResponse.newBuilder().setPartData(PartData.newBuilder()
+                            .setSelector(entry.getSelector()).setOffset(offset)
+                            .setData(bytes.substring((int) offset, (int) offset + length))
+                            .setLast(offset + length == bytes.size())).build());
+                    offset += length;
+                } while (offset < bytes.size());
+            }
+            frames.accept(ReadDocumentResponse.newBuilder().setComplete(ReadComplete.getDefaultInstance()).build());
+            return null;
+        });
+    }
+
+    /**
+     * Lists a document's revisions in descending order.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the revision listing request
+     * @return a page of revision summaries
+     */
     public ListRevisionsResponse listRevisions(RepositoryCaller caller, ListRevisionsRequest request) {
         return guarded(() -> {
             valid(request);
@@ -134,6 +244,13 @@ public final class DocumentReads {
         });
     }
 
+    /**
+     * Looks up a recorded operation outcome in an account.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the operation outcome lookup request
+     * @return the recorded outcome or {@code NoRecordedOutcome}
+     */
     public GetOperationOutcomeResponse outcome(RepositoryCaller caller, GetOperationOutcomeRequest request) {
         return guarded(() -> {
             valid(request);
@@ -149,6 +266,14 @@ public final class DocumentReads {
         });
     }
 
+    DocumentSaves.Drives drives() {
+        return drives;
+    }
+
+    DocumentAdmissionReservations reservations() {
+        return reservations;
+    }
+
     // ------------------------------------------------------------------ resolution
 
     /** The current revision's manifest, after read access is checked against it. */
@@ -161,15 +286,20 @@ public final class DocumentReads {
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Current revision has no manifest", null));
         if (!canRead(caller, address, stored.getOwnership()))
             throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
-        if (stored.getTombstone()) throw notFound("Document is deleted");
+
         return stored;
     }
 
-    private StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
+    StoredManifest resolve(RepositoryCaller caller, NodeAddress address, RevisionSelector selector) {
         var latest = current(caller, address);
-        if (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) return latest;
-        return catalog.manifest(address, selector.getRevision())
-                .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));
+        if (!selector.hasRevision() && latest.getTombstone()) throw notFound("Document is deleted");
+        var stored = (!selector.hasRevision() || selector.getRevision() == latest.getRevision()) ? latest
+                : catalog.manifest(address, selector.getRevision())
+                        .orElseThrow(() -> notFound("Revision " + selector.getRevision() + " does not exist"));
+        // §15.22: reading a revision fails closed on corrupt retained grant evidence.
+        for (var occurrence : stored.getValidation().getOpaqueOccurrencesList())
+            DocumentSaves.requireGrantEvidenceIntact(occurrence.getWriterGrant());
+        return stored;
     }
 
     /**
@@ -177,11 +307,13 @@ public final class DocumentReads {
      * fragment schema and every recorded Any occurrence's schema, through the same
      * admission engine a save runs. The occurrences found must be the ones recorded.
      */
-    private void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
+    void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
         var validation = stored.getValidation();
         var binding = validation.getPartSchemasList().stream().filter(schema -> schema.getPart().equals(part)).findFirst()
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
         var recorded = validation.getResolvedOccurrencesList().stream()
+                .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
+        var recordedOpaque = validation.getOpaqueOccurrencesList().stream()
                 .filter(occurrence -> occurrence.getOccurrence().getPart().equals(part)).toList();
         DocumentRetainedDefinitions.Reader retained = catalog::artifact;
         try {
@@ -194,20 +326,33 @@ public final class DocumentReads {
                     throw lost("The revision retains two schemas for " + occurrence.getSchema().getTypeUrl(), null);
             }
             var fragment = DocumentSaves.fragment(part, bytes);
+            var attested = new HashSet<DocumentCandidateAdmission.AttestedOpaque>();
+            for (var occurrence : recordedOpaque)
+                attested.add(new DocumentCandidateAdmission.AttestedOpaque(fragment.part(),
+                        occurrence.getOccurrence().getStepsList(), occurrence.getTypeUrl()));
             try (var result = DocumentCandidateAdmission.check(new DocumentCandidateAdmission.Request(
-                    stored.getAddress().getDocId(), List.of(fragment), container),
+                    stored.getAddress().getDocId(), List.of(fragment), container, attested),
                     selection -> byTypeUrl.get(selection.typeUrl()), limits, reservations, clock.instant(), () -> {})) {
                 if (result instanceof DocumentCandidateAdmission.Rejected rejected)
                     throw lost("Stored part fails its retained rules: " + rejected.violations().getFirst().message(), null);
+                var accepted = (DocumentCandidateAdmission.Accepted) result;
                 var found = new HashSet<ResolvedOccurrence>();
-                for (var occurrence : ((DocumentCandidateAdmission.Accepted) result).occurrences())
+                for (var occurrence : accepted.occurrences())
                     found.add(ResolvedOccurrence.newBuilder().setOccurrence(OccurrenceLocator.newBuilder().setPart(part)
                                     .addAllSteps(occurrence.steps())).setSchema(occurrence.schema())
                             .setPayloadSha256(occurrence.payloadSha256()).setPayloadLength(occurrence.payloadLength()).build());
                 if (!found.equals(new HashSet<>(recorded)))
                     throw lost("Stored part's Any occurrences differ from the retained record", null);
+                var expectedOpaque = new HashSet<DocumentCandidateAdmission.OpaqueFound>();
+                for (var occurrence : recordedOpaque)
+                    expectedOpaque.add(new DocumentCandidateAdmission.OpaqueFound(fragment.part(),
+                            occurrence.getOccurrence().getStepsList(), occurrence.getTypeUrl(),
+                            occurrence.getSha256(), occurrence.getLength()));
+                if (!new HashSet<>(accepted.opaque()).equals(expectedOpaque))
+                    throw lost("Stored part's opaque occurrences differ from the retained record", null);
             }
         } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.SchemaMissing
+                 | DocumentCandidateAdmission.OpaqueMismatch
                  | DocumentCandidateAdmission.InvalidPayload | DocumentCandidateAdmission.ContentRefused
                  | DocumentCandidateAdmission.HostFailure | InvalidProtocolBufferException failure) {
             throw lost("Stored part does not decode with its retained schema: " + failure.getMessage(), failure);
@@ -221,7 +366,7 @@ public final class DocumentReads {
         return new AccessionException(Status.Code.DATA_LOSS, message, null, cause);
     }
 
-    private ByteString read(StackRef ref) {
+    ByteString read(StackRef ref) {
         try (var stream = drives.byId(ref.getStackId()).open(ref)) {
             return ByteString.readFrom(stream);
         } catch (StackDataLoss loss) {
@@ -231,7 +376,7 @@ public final class DocumentReads {
         }
     }
 
-    private static Function<PartSelector, Boolean> selected(PartSelection selection) {
+    static Function<PartSelector, Boolean> selected(PartSelection selection) {
         if (selection.getSelectorsCount() == 0
                 && !selection.getAllSegmentations() && !selection.getAllEmbeddingSets()) return selector -> true;
         var selectors = new HashSet<PartSelector>();
@@ -242,7 +387,7 @@ public final class DocumentReads {
                 || (selection.getAllEmbeddingSets() && selector.hasEmbeddingSet());
     }
 
-    private static DocumentManifest manifest(StoredManifest stored, Function<PartSelector, Boolean> included) {
+    static DocumentManifest manifest(StoredManifest stored, Function<PartSelector, Boolean> included) {
         var manifest = DocumentManifest.newBuilder().setAddress(stored.getAddress()).setRevision(stored.getRevision())
                 .setTombstone(stored.getTombstone());
         for (var part : stored.getPartsList())
@@ -302,17 +447,17 @@ public final class DocumentReads {
         return new AccessionException(code, failure.getMessage(), null, failure);
     }
 
-    private static void valid(com.google.protobuf.Message request) {
+    static void valid(com.google.protobuf.Message request) {
         var result = DocumentSaves.VALIDATOR.validate(request);
         if (!result.valid())
             throw new AccessionException(Status.Code.INVALID_ARGUMENT, "Invalid request: " + result.violations().getFirst(), null);
     }
 
-    private static AccessionException notFound(String message) {
+    static AccessionException notFound(String message) {
         return new AccessionException(Status.Code.NOT_FOUND, message, null);
     }
 
-    private static <T> T guarded(java.util.function.Supplier<T> read) {
+    static <T> T guarded(java.util.function.Supplier<T> read) {
         try {
             return read.get();
         } catch (CatalogDataLoss loss) {

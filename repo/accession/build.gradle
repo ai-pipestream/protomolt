@@ -18,11 +18,14 @@ dependencies {
     testImplementation project(':protomolt-repo-blob-s3')
     testImplementation project(':protomolt-repo-container')
     testImplementation project(':protomolt-repo-schema-registry')
+    testImplementation project(':protomolt-kafka-serde')
     testImplementation libs.awssdk.s3
     testImplementation libs.awssdk.url.connection.client
     testImplementation libs.grpc.inprocess
+    testImplementation libs.kafka.clients
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
 }

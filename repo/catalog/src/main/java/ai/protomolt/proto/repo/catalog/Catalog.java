@@ -55,6 +55,10 @@ public interface Catalog extends AutoCloseable {
      */
     Optional<ByteString> artifact(String sha256);
 
+    /** Current metadata rows in unsigned UTF-8 address order, strictly after the cursor. */
+    List<CatalogRecords.ListedDocument> documents(String accountId, String graphId, String graphAddressId,
+            boolean includeTombstoned, Optional<NodeAddress> after, int limit);
+
     // ------------------------------------------------------------------ commit
 
     /** Commits one accession, or reports why it did not. Never partial. */
@@ -68,6 +72,13 @@ public interface Catalog extends AutoCloseable {
      */
     RejectionResult recordRejection(String accountId, String operationId, String intentSha256, RecordedOutcome outcome,
             List<String> grantIds, Optional<CredentialCheck> credential, NodeAddress address, boolean creating);
+
+    /** Marks all document references and durably records exact deletion targets; empty if the address is absent. */
+    Optional<CatalogRecords.PurgeState> markPurged(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
+            com.google.protobuf.Timestamp markedAt);
+
+    /** Completes a recorded purge once, after its provider deletes have succeeded. */
+    void completePurge(String accountId, String purgeId, com.google.protobuf.Timestamp completedAt);
 
     // ------------------------------------------------------------------ writer authority
 

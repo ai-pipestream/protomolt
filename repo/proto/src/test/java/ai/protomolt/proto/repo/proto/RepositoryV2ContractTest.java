@@ -159,7 +159,7 @@ class RepositoryV2ContractTest {
         assertThat(RevisionValidation.getDescriptor().findFieldByNumber(7)).isNull();
     }
 
-    @Test void accessionsRequireOwnerAndAuthorityUnlessTombstoned() throws Exception {
+    @Test void accessionsRequireAuthorityAndTombstonesMakeNoValidationClaim() throws Exception {
         var accession = Accession.newBuilder().setAddress(ADDRESS).setRevision(1)
                 .setCommittedAt(Timestamp.newBuilder().setSeconds(1))
                 .setManifest(DocumentManifest.newBuilder().setAddress(ADDRESS).setRevision(1))
@@ -167,8 +167,21 @@ class RepositoryV2ContractTest {
         check(accession.build(), true);
         check(accession.clone().clearOwner().build(), false);
         check(accession.clone().setValidation(validation().clearProcessAuthority()).build(), false);
-        check(accession.clone().clearOwner().setValidation(validation().clearProcessAuthority())
-                .setTombstone(true).build(), true);
+        var tombstoneValidation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_NOT_APPLICABLE)
+                .setProcessAuthority(ProcessAuthorityEvidence.newBuilder().setPrincipal("deleter"));
+        var tombstone = accession.clone().clearOwner().setTombstone(true).setValidation(tombstoneValidation)
+                .setManifest(accession.getManifest().toBuilder().setTombstone(true));
+        check(tombstone.build(), true);
+        check(DeleteDocumentRequest.newBuilder().setOperationId("delete").setAddress(ADDRESS)
+                .setExpected(ExpectedRevision.newBuilder().setRevision(1)).build(), true);
+        check(DeleteDocumentRequest.newBuilder().setOperationId("delete").setAddress(ADDRESS)
+                .setExpected(ExpectedRevision.newBuilder().setNone(true)).build(), false);
+        check(tombstone.clone().setValidation(tombstoneValidation.clone().clearProcessAuthority()).build(), false);
+        check(tombstone.clone().setValidation(validation()).build(), false);
+        check(accession.clone().setValidation(tombstoneValidation).build(), false);
+        check(tombstone.clone().setValidation(tombstoneValidation.clone().setCandidateSha256(SHA)).build(), false);
+        check(tombstone.clone().setValidation(tombstoneValidation.clone().setValidatorProfile("typed")).build(), false);
+        check(DeleteDocumentResponse.newBuilder().setOperationId("delete").setAccession(tombstone).build(), true);
         check(accession.clone().setRevision(0).build(), false);
         check(SaveDocumentResponse.newBuilder().setOperationId("op").setAccession(accession).build(), true);
         check(SaveDocumentResponse.newBuilder().setOperationId("op")
@@ -183,6 +196,8 @@ class RepositoryV2ContractTest {
                         .addChanges(PartChange.newBuilder().setSelector(part(DocumentPart.DOCUMENT_PART_PARSED))
                                 .setKind(ChangeKind.CHANGE_KIND_REPLACED).setSha256(SHA)));
         check(event.build(), true);
+        check(event.clone().setAccessioned(event.getAccessioned().toBuilder()
+                .setValidationStatus(ValidationStatus.VALIDATION_STATUS_NOT_APPLICABLE)).build(), false);
         check(event.clone().clearOperationId().build(), false);
         check(event.clone().setRevision(0).build(), false);
         check(event.clone().clearAccessioned().build(), false);

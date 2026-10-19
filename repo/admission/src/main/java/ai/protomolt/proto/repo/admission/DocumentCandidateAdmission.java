@@ -61,12 +61,38 @@ public final class DocumentCandidateAdmission {
         public Fragment(DocumentPart part, ByteString bytes) { this(part, List.of(), bytes); }
     }
 
+    /**
+     * One Any occurrence the caller attests as opaque. Admission matches it against the
+     * actual envelope at the locator steps with an equal type URL and never resolves or
+     * decodes its value.
+     */
+    public record AttestedOpaque(DocumentPart part, List<RepositorySchemaOccurrenceStep> steps, String typeUrl) {
+        public AttestedOpaque {
+            Objects.requireNonNull(part);
+            steps = List.copyOf(steps);
+            if (typeUrl == null || typeUrl.isBlank()) throw new IllegalArgumentException("Opaque type URL required");
+        }
+    }
+
+    /** One attested Any occurrence found undecoded: type URL plus exact value digest and length. */
+    public record OpaqueFound(DocumentPart part, List<RepositorySchemaOccurrenceStep> steps,
+                              String typeUrl, String sha256, long length) {
+        public OpaqueFound { steps = List.copyOf(steps); }
+    }
+
     /** The written fragments of one candidate and the container definition they decode with. */
-    public record Request(String docId, List<Fragment> fragments, DocumentSchemaAdmission.Definition container) {
+    public record Request(String docId, List<Fragment> fragments, DocumentSchemaAdmission.Definition container,
+                          java.util.Set<AttestedOpaque> opaque) {
         public Request {
             if (docId == null || docId.isBlank()) throw new IllegalArgumentException("Document identity required");
             fragments = List.copyOf(fragments);
             Objects.requireNonNull(container);
+            opaque = java.util.Set.copyOf(opaque);
+        }
+
+        /** A fully typed request: no attested opaque occurrences. */
+        public Request(String docId, List<Fragment> fragments, DocumentSchemaAdmission.Definition container) {
+            this(docId, fragments, container, java.util.Set.of());
         }
     }
 
@@ -93,15 +119,18 @@ public final class DocumentCandidateAdmission {
         private final List<Occurrence> occurrences;
         private final Map<String, ByteString> artifacts;
         private final DocumentAdmissionResources resources;
+        private final List<OpaqueFound> opaque;
 
         private Accepted(RepositorySchemaAssetReference container, List<Occurrence> occurrences,
-                Map<String, ByteString> artifacts, DocumentAdmissionResources resources) {
+                Map<String, ByteString> artifacts, DocumentAdmissionResources resources, List<OpaqueFound> opaque) {
             this.container = container; this.occurrences = List.copyOf(occurrences);
-            this.artifacts = Map.copyOf(artifacts); this.resources = resources;
+            this.artifacts = Map.copyOf(artifacts); this.resources = resources; this.opaque = List.copyOf(opaque);
         }
         public RepositorySchemaAssetReference container() { return container; }
         public List<Occurrence> occurrences() { return occurrences; }
         public Map<String, ByteString> artifacts() { return artifacts; }
+        /** Attested occurrences accepted undecoded; empty for a fully typed candidate. */
+        public List<OpaqueFound> opaque() { return opaque; }
         @Override public void close() { resources.close(); }
     }
 
@@ -126,6 +155,11 @@ public final class DocumentCandidateAdmission {
             return new SchemaMissing(part + " carries a field the latest registered Document version does not know"
                     + (path.isEmpty() ? "" : " under " + path), true);
         }
+    }
+
+    /** An attestation names a locator whose actual Any envelope has a different type URL. */
+    public static final class OpaqueMismatch extends RuntimeException {
+        public OpaqueMismatch(String message) { super(message); }
     }
 
     /** Any value bytes do not decode as their declared type. */
@@ -255,6 +289,10 @@ public final class DocumentCandidateAdmission {
             var containerKey = new DocumentPayloadCheck.SchemaKey(request.container().metadata().getTypeUrl(),
                     request.container().metadata().getArtifactSha256());
             var occurrences = new ArrayList<Occurrence>();
+            var opaqueFound = new ArrayList<OpaqueFound>();
+            var attested = new java.util.HashMap<AttestedKey, AttestedOpaque>();
+            for (var attestation : request.opaque())
+                attested.put(new AttestedKey(attestation.part(), attestation.steps()), attestation);
             long decodedRemaining = limits.maxDecodedBytes();
             for (var fragment : request.fragments()) {
                 active.run();
@@ -279,6 +317,16 @@ public final class DocumentCandidateAdmission {
                     if (decodedRemaining < 1) throw new BudgetExhausted("candidate decoded payload budget exhausted", null);
                     var locator = DocumentSchemaRootProjection.project(inventory, root, active);
                     var envelope = root.envelope();
+                    var rootAttested = attested.get(new AttestedKey(fragment.part(), locator.getAccessList()));
+                    if (rootAttested != null) {
+                        // Attested root: match the envelope only; never resolve or decode its value.
+                        if (!rootAttested.typeUrl().equals(envelope.getTypeUrl()))
+                            throw new OpaqueMismatch("Attested opaque type at " + fragment.part() + " is "
+                                    + rootAttested.typeUrl() + " but the envelope is " + envelope.getTypeUrl());
+                        opaqueFound.add(new OpaqueFound(fragment.part(), locator.getAccessList(), envelope.getTypeUrl(),
+                                DocumentSchemaOccurrences.sha256(envelope.getValue(), active), envelope.getValue().size()));
+                        continue;
+                    }
                     var selected = select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
                             envelope.getTypeUrl(), List.of(), DocumentSchemaOccurrences.sha256(envelope.getValue(), active),
                             envelope.getValue().size()));
@@ -291,7 +339,18 @@ public final class DocumentCandidateAdmission {
                                 nested -> select(definitions, strict, new DocumentSchemaAdmission.Selection(0, locator,
                                         nested.typeUrl(), DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
                                                 definitions.schemas, active), nested.valueSha256(), nested.valueSizeBytes())),
-                                DocumentSchemaOccurrences.Limits.DEFAULT, evaluatedAt);
+                                DocumentSchemaOccurrences.Limits.DEFAULT, evaluatedAt,
+                                nested -> {
+                                    var steps = new ArrayList<>(locator.getAccessList());
+                                    steps.addAll(DocumentSchemaOccurrenceProjection.projectSteps(nested.prefix(),
+                                            definitions.schemas, active));
+                                    var claim = attested.get(new AttestedKey(fragment.part(), steps));
+                                    if (claim == null) return false;
+                                    if (!claim.typeUrl().equals(nested.typeUrl()))
+                                        throw new OpaqueMismatch("Attested opaque type at " + fragment.part() + " is "
+                                                + claim.typeUrl() + " but the envelope is " + nested.typeUrl());
+                                    return true;
+                                });
                     } catch (MessageWireBudget.LimitExceededException budget) {
                         throw new BudgetExhausted("payload at " + envelope.getTypeUrl() + ": " + budget.getMessage(), budget);
                     } catch (DocumentPayloadCheck.ByteBudgetExceeded budget) {
@@ -305,6 +364,13 @@ public final class DocumentCandidateAdmission {
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
                         found = accepted.checked().payload().occurrences();
                         decodedRemaining -= accepted.checked().payload().decodedBytes();
+                        for (var terminal : accepted.checked().payload().opaqueTerminals()) {
+                            var steps = new ArrayList<>(locator.getAccessList());
+                            steps.addAll(DocumentSchemaOccurrenceProjection.projectSteps(terminal.prefix(),
+                                    definitions.schemas, active));
+                            opaqueFound.add(new OpaqueFound(fragment.part(), steps, terminal.typeUrl(),
+                                    terminal.valueSha256(), terminal.valueSizeBytes()));
+                        }
                     } else {
                         var invalid = (DocumentPayloadAssessment.Invalid) assessment;
                         found = invalid.occurrences();
@@ -331,7 +397,7 @@ public final class DocumentCandidateAdmission {
             active.run();
             if (!violations.isEmpty()) return new Rejected(violations);
             var accepted = new Accepted(definitions.references.get(containerKey).toProto(), occurrences,
-                    definitions.artifacts, resources);
+                    definitions.artifacts, resources, opaqueFound);
             transferred = true;
             return accepted;
         } catch (DocumentAdmissionResources.ReservationFailure failed) {
@@ -419,6 +485,11 @@ public final class DocumentCandidateAdmission {
         } catch (IllegalArgumentException host) {
             throw new HostFailure("schema resolution for " + selection.typeUrl() + ": " + host.getMessage(), host);
         }
+    }
+
+    /** Lookup identity of one attested occurrence: its part and locator steps. */
+    private record AttestedKey(DocumentPart part, List<RepositorySchemaOccurrenceStep> steps) {
+        AttestedKey { steps = List.copyOf(steps); }
     }
 
     /**

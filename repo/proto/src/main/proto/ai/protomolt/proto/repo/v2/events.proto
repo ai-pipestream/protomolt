@@ -50,6 +50,11 @@ message PartChange {
 
 // An accession was committed.
 message Accessioned {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "accessioned-content-verdict"
+    message: "content accession events cannot claim NOT_APPLICABLE"
+    expression: "this.validation_status != 3"
+  };
   // The changed parts.
   repeated PartChange changes = 1;
   // The revision's validation verdict.

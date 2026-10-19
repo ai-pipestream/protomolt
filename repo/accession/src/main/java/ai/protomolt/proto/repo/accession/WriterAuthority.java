@@ -7,6 +7,8 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RejectionReason;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.SaveRejection;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import ai.protomolt.proto.repo.v2.WriterGrantEvidence;
 import io.grpc.Status;
@@ -72,6 +74,40 @@ final class WriterAuthority {
                 : "The caller holds no active grant for this owner");
     }
 
+    /** The producer grant selected for one newly produced opaque occurrence. */
+    record ProducerGrant(WriterGrantEvidence evidence, String grantId) {}
+
+    /**
+     * Selects the caller's active step grant authorizing one opaque producer for one
+     * exact type URL (requirements §5, §9). Eligible grants are taken in unsigned
+     * UTF-8 grant ID order, never database row order; there is no wildcard or prefix
+     * matching. Empty when no grant the caller holds covers the producer and type:
+     * the caller records that as OPAQUE_UNOWNED. Process-authority callers hold no
+     * credential, so no grant ever matches them.
+     */
+    Optional<ProducerGrant> authorizeOpaqueProducer(RepositoryCaller caller,
+            ai.protomolt.proto.repo.v1.WriteProvenance producer, String accountId, String typeUrl) {
+        if (caller.processAuthority()) return Optional.empty();
+        var binding = caller.credentialBinding()
+                .orElseThrow(() -> denied("Saving requires a credential-bound caller or process authority"));
+        var credential = catalog.credential(binding.issuer(), binding.credentialId())
+                .orElseThrow(() -> denied("The caller's credential is not registered"));
+        if (credential.revoked() || credential.generation() != binding.generation())
+            throw denied("The caller's credential generation is not current");
+        var owner = SaveOwner.newBuilder().setStep(producer).build();
+        var grants = new java.util.ArrayList<>(catalog.grants(accountId, binding.issuer(), binding.credentialId()));
+        grants.sort((left, right) -> SaveIntents.compareUtf8(left.grant().getGrantId(), right.grant().getGrantId()));
+        for (var grant : grants) {
+            if (grant.revoked() || !covers(grant.grant(), owner, Optional.empty())) continue;
+            if (!grant.grant().getOpaqueTypeUrlsList().contains(typeUrl)) continue;
+            var evidence = WriterGrantEvidence.newBuilder().setWriterGrantId(grant.grant().getGrantId())
+                    .setWriterGrantSha256(grant.snapshotSha256()).setGrantSnapshot(grant.snapshot())
+                    .setSnapshotSchema(grantSchema.reference()).setCredentialGeneration(binding.generation()).build();
+            return Optional.of(new ProducerGrant(evidence, grant.grant().getGrantId()));
+        }
+        return Optional.empty();
+    }
+
     static boolean covers(WriterGrant grant, SaveOwner owner, Optional<String> connector) {
         if (owner.hasIntake()) {
             if (!grant.hasIntake() || !grant.getIntake().getDatasourceId().equals(owner.getIntake().getDatasourceId()))
@@ -82,6 +118,24 @@ final class WriterAuthority {
         }
         if (!grant.hasStep() || !grant.getStep().getModuleId().equals(owner.getStep().getModuleId())) return false;
         return !grant.getStep().hasNodeId() || grant.getStep().getNodeId().equals(owner.getStep().getNodeId());
+    }
+
+    /** Delete derives its intake scope from stored ownership, never a caller-supplied owner. */
+    Authorized authorizeDelete(RepositoryCaller caller, ai.protomolt.proto.repo.v1.OwnershipContext ownership) {
+        var intake = IntakeOrigin.newBuilder().setDatasourceId(ownership.getDatasourceId());
+        if (ownership.hasConnectorId()) intake.setConnectorId(ownership.getConnectorId());
+        try {
+            return authorize(caller, SaveOwner.newBuilder().setIntake(intake).build(), ownership.getAccountId(),
+                    ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), false);
+        } catch (AccessionException refusal) {
+            if (refusal.detail().filter(detail -> detail instanceof SaveRejection rejection
+                    && rejection.getReason() == RejectionReason.REJECTION_REASON_OWNER_UNKNOWN).isPresent())
+                throw new AccessionException(io.grpc.Status.Code.PERMISSION_DENIED,
+                        "The caller holds no intake authority for this document",
+                        DocumentSaves.rejection(RejectionReason.REJECTION_REASON_WRITE_DENIED,
+                                "The caller holds no intake authority for this document"), refusal);
+            throw refusal;
+        }
     }
 
     static AccessionException denied(String message) {

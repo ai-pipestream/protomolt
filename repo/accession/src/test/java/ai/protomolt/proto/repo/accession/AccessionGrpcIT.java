@@ -16,11 +16,88 @@ import org.junit.jupiter.api.Test;
 
 /** The v2 RPCs through an in-process gRPC server, with errors.proto details on refusals. */
 class AccessionGrpcIT {
+    @Test void purgeAuthorityOutageAndRecoveryCrossTheTransport() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var address = address("a", "doc");
+            f.saves.save(processAuthority(), create("save", address, document("a", "doc", "title")).build());
+            var credential = UUID.randomUUID();
+            var caller = ai.protomolt.proto.actions.Caller.scoped("administrator", java.util.Set.of());
+            var authentication = new ai.protomolt.proto.authz.AuthenticatedCaller(caller, java.util.Optional.of(
+                    new ai.protomolt.proto.authz.CredentialBinding(ISSUER, credential, 1)));
+            var outage = new java.util.concurrent.atomic.AtomicBoolean(true);
+            var purges = new DocumentPurges(f.catalog, f.drives, (bound, account) -> {
+                if (outage.get()) throw new ai.protomolt.proto.repo.spi.RepositoryException(
+                        ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE, "Authority unavailable");
+                return new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(true, true);
+            }, java.time.Clock.systemUTC());
+            var service = new AccessionGrpcService(f.saves, f.reads, new DocumentDeletes(f.catalog, java.time.Clock.systemUTC()),
+                    new DocumentLists(f.catalog), purges, trusted -> writer("a", "administrator", credential, 1));
+            var name = "purge-" + UUID.randomUUID();
+            var server = InProcessServerBuilder.forName(name).directExecutor().addService(io.grpc.ServerInterceptors.intercept(service,
+                    new io.grpc.ServerInterceptor() {
+                        @Override public <ReqT, RespT> io.grpc.ServerCall.Listener<ReqT> interceptCall(io.grpc.ServerCall<ReqT, RespT> call,
+                                io.grpc.Metadata headers, io.grpc.ServerCallHandler<ReqT, RespT> next) {
+                            return io.grpc.Contexts.interceptCall(io.grpc.Context.current()
+                                    .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.CALLER, caller)
+                                    .withValue(ai.protomolt.proto.authz.grpc.CallerContexts.AUTHENTICATED_CALLER, authentication), call, headers, next);
+                        }
+                    })).build().start();
+            var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+            try {
+                var stub = DocumentServiceGrpc.newBlockingStub(channel);
+                var request = PurgeDocumentRequest.newBuilder().setPurgeId("purge").setAddress(address).build();
+                assertThatThrownBy(() -> stub.purgeDocument(request)).isInstanceOfSatisfying(StatusRuntimeException.class,
+                        failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+                assertThat(f.catalog.events(address)).hasSize(1);
+                outage.set(false);
+                var result = stub.purgeDocument(request);
+                assertThat(result.getObjectsToDelete()).isEqualTo(4);
+                assertThat(stub.purgeDocument(request)).isEqualTo(result);
+                assertThat(DocumentSaves.VALIDATOR.validate(result).valid()).isTrue();
+            } finally { channel.shutdownNow(); server.shutdownNow(); }
+        }
+    }
+
+    @Test void deletesAndListingsCrossTheTransport() throws Exception {
+        var name = "delete-list-" + UUID.randomUUID();
+        try (var f = new AccessionFixture()) {
+            var server = InProcessServerBuilder.forName(name).directExecutor()
+                    .addService(new AccessionGrpcService(f.saves, f.reads,
+                            new DocumentDeletes(f.catalog, java.time.Clock.systemUTC()), new DocumentLists(f.catalog), new DocumentPurges(f.catalog, f.drives, (caller, account) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false), java.time.Clock.systemUTC()),
+                            authentication -> new RepositoryCaller(authentication.caller().name(), authentication.caller().unrestricted())))
+                    .build().start();
+            var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
+            try {
+                var stub = DocumentServiceGrpc.newBlockingStub(channel);
+                var address = address("a", "doc");
+                stub.saveDocument(create("save", address, document("a", "doc", "title")).build());
+                var listing = ListDocumentsRequest.newBuilder().setAccountId("a").setPageSize(5).build();
+                assertThat(stub.listDocuments(listing).getDocumentsCount()).isEqualTo(1);
+                var request = DeleteDocumentRequest.newBuilder().setAddress(address).setExpected(at(1)).setOperationId("delete").build();
+                assertThat(stub.deleteDocument(request).getAccession().getTombstone()).isTrue();
+                assertThat(stub.deleteDocument(request).getReplayed()).isTrue();
+                assertThat(stub.listDocuments(listing).getDocumentsCount()).isZero();
+                assertThat(stub.listDocuments(listing.toBuilder().setIncludeTombstoned(true).build()).getDocuments(0).getTombstone()).isTrue();
+                assertThatThrownBy(() -> stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address).build()))
+                        .isInstanceOfSatisfying(StatusRuntimeException.class, failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+                assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
+                        .setRevision(RevisionSelector.newBuilder().setRevision(1)).build()).getDocument().getDocId()).isEqualTo("doc");
+                assertThat(stub.getOperationOutcome(GetOperationOutcomeRequest.newBuilder().setAccountId("a").setOperationId("delete").build())
+                        .getCommitted().getAccession().getTombstone()).isTrue();
+                assertThat(stub.listRevisions(ListRevisionsRequest.newBuilder().setAddress(address).setPageSize(10).build()).getRevisionsCount()).isEqualTo(2);
+                detail(() -> stub.deleteDocument(request.toBuilder().setReason("changed").build()), Status.Code.ALREADY_EXISTS, OperationReuse.class);
+            } finally {
+                channel.shutdownNow();
+                server.shutdownNow();
+            }
+        }
+    }
+
     @Test void savesReadsAndRefusalsCrossTheTransportWithTheirDetails() throws Exception {
         var name = "accession-" + UUID.randomUUID();
         try (var f = new AccessionFixture()) {
             var server = InProcessServerBuilder.forName(name).directExecutor()
-                    .addService(new AccessionGrpcService(f.saves, f.reads, authentication -> new RepositoryCaller(
+                    .addService(new AccessionGrpcService(f.saves, f.reads, new DocumentDeletes(f.catalog, java.time.Clock.systemUTC()), new DocumentLists(f.catalog), new DocumentPurges(f.catalog, f.drives, (caller, account) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false), java.time.Clock.systemUTC()), authentication -> new RepositoryCaller(
                             authentication.caller().name(), authentication.caller().unrestricted())))
                     .build().start();
             var channel = InProcessChannelBuilder.forName(name).directExecutor().build();
@@ -65,9 +142,23 @@ class AccessionGrpcIT {
                 var malformed = create("op-3", address, document).clearOwner().build();
                 assertThat(detail(() -> stub.saveDocument(malformed), Status.Code.INVALID_ARGUMENT, SaveRejection.class)
                         .getReason()).isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
-                assertThatThrownBy(() -> stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
-                        .hasNext()).isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
-                        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+                var frames = new java.util.ArrayList<ReadDocumentResponse>();
+                stub.readDocument(ReadDocumentRequest.newBuilder().setAddress(address).build())
+                        .forEachRemaining(frames::add);
+                assertThat(frames.getFirst().hasManifest()).isTrue();
+                assertThat(frames.getFirst().getManifest().getRevision()).isEqualTo(1);
+                assertThat(frames.getLast().hasComplete()).isTrue();
+                var partFrames = frames.subList(1, frames.size() - 1);
+                assertThat(partFrames).allSatisfy(frame -> assertThat(frame.hasPartData()).isTrue());
+                assertThat(partFrames.stream().map(frame -> frame.getPartData().getSelector().getPart()).toList())
+                        .containsExactly(DocumentPart.DOCUMENT_PART_CORE, DocumentPart.DOCUMENT_PART_BLOBS,
+                                DocumentPart.DOCUMENT_PART_PARSED);
+                assertThat(partFrames.stream().map(frame -> frame.getPartData().getLast()).toList())
+                        .containsExactly(true, true, true);
+                // Slice 4 asserted ListDocuments UNIMPLEMENTED before slice 5 wired it;
+                // the integrated service lists for real (DocumentListsIT covers it deeply).
+                assertThat(stub.listDocuments(ListDocumentsRequest.newBuilder()
+                        .setAccountId(account).setPageSize(10).build()).getDocumentsCount()).isEqualTo(1);
                 assertThat(stub.getDocument(GetDocumentRequest.newBuilder().setAddress(address)
                         .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                                 .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build()).getDocument().hasBlobBag()).isTrue();
@@ -97,7 +188,7 @@ class AccessionGrpcIT {
         var name = "structure-" + UUID.randomUUID();
         try (var f = new AccessionFixture()) {
             var server = InProcessServerBuilder.forName(name).directExecutor()
-                    .addService(new AccessionGrpcService(f.saves, f.reads, authentication -> new RepositoryCaller(
+                    .addService(new AccessionGrpcService(f.saves, f.reads, new DocumentDeletes(f.catalog, java.time.Clock.systemUTC()), new DocumentLists(f.catalog), new DocumentPurges(f.catalog, f.drives, (caller, account) -> new ai.protomolt.proto.repo.spi.PurgeAuthorization.Decision(false, false), java.time.Clock.systemUTC()), authentication -> new RepositoryCaller(
                             authentication.caller().name(), authentication.caller().unrestricted())))
                     .build().start();
             var channel = InProcessChannelBuilder.forName(name).directExecutor().build();

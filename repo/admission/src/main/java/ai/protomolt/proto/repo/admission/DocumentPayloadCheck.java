@@ -45,15 +45,23 @@ final class DocumentPayloadCheck {
     private final Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas;
     private final java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences;
     private final long decodedBytes;
+    private final java.util.List<ResolutionRequest> opaqueTerminals;
 
     private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
             java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences, long decodedBytes) {
+        this(schema, original, decoded, resolvedSchemas, occurrences, decodedBytes, java.util.List.of());
+    }
+
+    private DocumentPayloadCheck(DocumentSchemaBinding schema, Any original, DynamicMessage decoded, Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas,
+            java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences, long decodedBytes,
+            java.util.List<ResolutionRequest> opaqueTerminals) {
         this.schema = schema;
         this.original = original;
         this.decoded = decoded;
         this.resolvedSchemas = Map.copyOf(resolvedSchemas);
         this.occurrences = java.util.List.copyOf(occurrences);
         this.decodedBytes = decodedBytes;
+        this.opaqueTerminals = java.util.List.copyOf(opaqueTerminals);
     }
 
     DocumentSchemaBinding schema() { return schema; }
@@ -62,6 +70,8 @@ final class DocumentPayloadCheck {
     Map<SchemaKey, DocumentSchemaBinding> resolvedSchemas() { return resolvedSchemas; }
     java.util.List<DocumentSchemaOccurrences.Occurrence> occurrences() { return occurrences; }
     long decodedBytes() { return decodedBytes; }
+    /** Nested Any values accepted as opaque terminals: inventoried, never resolved or decoded. */
+    java.util.List<ResolutionRequest> opaqueTerminals() { return opaqueTerminals; }
 
     /** In-memory evidence only; neither retention nor trusted compiler provenance is established. */
     record AssetResult(DocumentPayloadCheck payload, Map<SchemaKey, DocumentSchemaAssetBinding> assets) {
@@ -122,16 +132,31 @@ final class DocumentPayloadCheck {
             Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
             DocumentSchemaOccurrences.Limits evidenceLimits, java.time.Instant evaluatedAt)
             throws InvalidProtocolBufferException {
+        return assessContextualAssets(root, candidate, acceptedTypeUrl, validator, limits, control, resolver,
+                evidenceLimits, evaluatedAt, request -> false);
+    }
+
+    /**
+     * As above, except a nested Any the opaque-terminal predicate claims is inventoried
+     * (type URL, value SHA-256 and length) without resolution or decoding. Intermediate
+     * boundaries the predicate does not claim are still resolved and decoded.
+     */
+    static DocumentPayloadAssessment assessContextualAssets(DocumentSchemaAssetBinding root, Any candidate,
+            String acceptedTypeUrl, ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaAssetBinding> resolver,
+            DocumentSchemaOccurrences.Limits evidenceLimits, java.time.Instant evaluatedAt,
+            java.util.function.Predicate<ResolutionRequest> opaqueTerminal)
+            throws InvalidProtocolBufferException {
         var selections = assetSelections(root, acceptedTypeUrl, resolver, control);
         var scan = scan(root.schema(), candidate, acceptedTypeUrl, validator, limits, control,
-                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits), evaluatedAt, true);
+                selections.resolver(), new DocumentSchemaOccurrences(evidenceLimits), evaluatedAt, true, opaqueTerminal);
         var session = scan.session();
         var occurrences = session.evidence.result();
         active(control);
         if (session.failure != null) return new DocumentPayloadAssessment.Invalid(evaluatedAt, candidate,
                 selections.assets(), occurrences, session.decodedBytes, session.failure);
         var checked = new DocumentPayloadCheck(root.schema(), candidate, scan.decoded(), session.bindings,
-                occurrences, session.decodedBytes);
+                occurrences, session.decodedBytes, session.opaqueFound);
         return new DocumentPayloadAssessment.Accepted(evaluatedAt, new AssetResult(checked, selections.assets()));
     }
 
@@ -220,6 +245,15 @@ final class DocumentPayloadCheck {
             ProtoValidator validator, Limits limits, Runnable control,
             Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
             java.time.Instant evaluatedAt, boolean assess) throws InvalidProtocolBufferException {
+        return scan(schema, candidate, acceptedTypeUrl, validator, limits, control, resolver, evidence,
+                evaluatedAt, assess, request -> false);
+    }
+
+    private static Scan scan(DocumentSchemaBinding schema, Any candidate, String acceptedTypeUrl,
+            ProtoValidator validator, Limits limits, Runnable control,
+            Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
+            java.time.Instant evaluatedAt, boolean assess,
+            java.util.function.Predicate<ResolutionRequest> opaqueTerminal) throws InvalidProtocolBufferException {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(candidate, "candidate");
         Objects.requireNonNull(acceptedTypeUrl, "acceptedTypeUrl");
@@ -235,7 +269,7 @@ final class DocumentPayloadCheck {
         if (!candidate.getUnknownFields().asMap().isEmpty()) {
             throw new IllegalArgumentException("unsupported Any envelope fields");
         }
-        var session = new Session(validator, limits, control, resolver, evidence, evaluatedAt, assess);
+        var session = new Session(validator, limits, control, resolver, evidence, evaluatedAt, assess, opaqueTerminal);
         session.bindings.put(new SchemaKey(acceptedTypeUrl, schema.artifactSha256()), schema);
         DynamicMessage decoded = session.decodeBoundary(acceptedTypeUrl, schema, candidate.getValue(), 0);
         return new Scan(decoded, session);
@@ -263,13 +297,17 @@ final class DocumentPayloadCheck {
         private long anyCount;
         private final java.time.Instant evaluatedAt;
         private final boolean assess;
+        private final java.util.function.Predicate<ResolutionRequest> opaqueTerminal;
+        private final java.util.List<ResolutionRequest> opaqueFound = new ArrayList<>();
         private DocumentPayloadAssessment.Failure failure;
 
         Session(ProtoValidator validator, Limits limits, Runnable control,
                 Function<ResolutionRequest, DocumentSchemaBinding> resolver, DocumentSchemaOccurrences evidence,
-                java.time.Instant evaluatedAt, boolean assess) {
+                java.time.Instant evaluatedAt, boolean assess,
+                java.util.function.Predicate<ResolutionRequest> opaqueTerminal) {
             this.evaluatedAt = Objects.requireNonNull(evaluatedAt);
             this.assess = assess;
+            this.opaqueTerminal = Objects.requireNonNull(opaqueTerminal);
             this.validator = validator;
             this.limits = limits;
             this.control = control;
@@ -352,9 +390,15 @@ final class DocumentPayloadCheck {
                 var bytes = (com.google.protobuf.ByteString) message.getField(valueField);
                 if (bytes.size() > limits.maxBytes() - decodedBytes)
                     throw new ByteBudgetExceeded();
-                DocumentSchemaBinding binding = resolver.apply(new ResolutionRequest(url,
+                var request = new ResolutionRequest(url,
                         evidence == null ? java.util.List.of() : evidence.prefix(),
-                        evidence == null ? "" : DocumentSchemaOccurrences.sha256(bytes, () -> active(control)), bytes.size()));
+                        evidence == null ? "" : DocumentSchemaOccurrences.sha256(bytes, () -> active(control)), bytes.size());
+                // An attested opaque terminal is inventoried here and never resolved or decoded.
+                if (opaqueTerminal.test(request)) {
+                    opaqueFound.add(request);
+                    return;
+                }
+                DocumentSchemaBinding binding = resolver.apply(request);
                 active(control);
                 if (binding == null) throw new IllegalArgumentException("unresolved Any type URL: " + url);
                 requireUrl(url, binding);
