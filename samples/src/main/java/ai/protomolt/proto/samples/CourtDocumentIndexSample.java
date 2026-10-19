@@ -56,7 +56,6 @@ import java.util.Map;
 public final class CourtDocumentIndexSample {
 
     private static final String FIXTURE_RESOURCE = "/fixtures/court/opinions_sample.jsonl";
-    private static final int EMBED_BODY_CHARS = 2000;
     private static final String TEXT_QUERY_TERM = "habeas";
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -98,17 +97,19 @@ public final class CourtDocumentIndexSample {
                 }
                 Document document = CourtDocuments.toDocument(JSON.readTree(line));
 
-                float[] vector = provider.embed(embedText(document));
+                String embeddedText = embedText(document);
+                float[] vector = provider.embed(embeddedText);
                 if (indexed == 0) {
                     System.out.printf(Locale.ROOT, "Embedded first document: %d vector dims%n",
                             vector.length);
                 }
-                document = CourtDocuments.withEmbedding(document, vector, provider.providerId());
+                document = CourtDocuments.withEmbedding(
+                        document, embeddedText, vector, provider.providerId());
 
                 ndjson.writeLine(ndjsonOut, project(document, vector));
 
                 org.apache.lucene.document.Document luceneDoc = luceneMapper.map(document, mapping);
-                // Document-level embedding lives under repeated semantic_results; catalog
+                // Document-level embedding lives under repeated embedding_sets; catalog
                 // paths cannot index into repeated fields yet — attach explicitly.
                 if (isNonZero(vector)) {
                     luceneDoc.add(new KnnFloatVectorField(
@@ -162,14 +163,9 @@ public final class CourtDocumentIndexSample {
         }
     }
 
-    /** The embedding input: title plus the first {@value #EMBED_BODY_CHARS} chars of the body. */
+    /** The embedding input: title plus the first {@link CourtDocuments#EMBED_BODY_CHARS} chars of the body. */
     static String embedText(Document document) {
-        SearchMetadata metadata = document.getSearchMetadata();
-        String body = metadata.getBody();
-        if (body.length() > EMBED_BODY_CHARS) {
-            body = body.substring(0, EMBED_BODY_CHARS);
-        }
-        return metadata.getTitle() + "\n" + body;
+        return CourtDocuments.embedText(document);
     }
 
     /** Flat NDJSON projection: the searchable fields plus the document embedding. */
@@ -220,6 +216,8 @@ public final class CourtDocumentIndexSample {
                 .put(metadata, "category", ResolvedFieldHint.skipped())
                 .put(metadata, "metadata", ResolvedFieldHint.skipped())
                 .put(metadata, "semantic_results", ResolvedFieldHint.skipped())
+                .put(metadata, "segmentations", ResolvedFieldHint.skipped())
+                .put(metadata, "embedding_sets", ResolvedFieldHint.skipped())
                 .put(metadata, "custom_fields", ResolvedFieldHint.skipped())
                 .put(metadata, "source_path", ResolvedFieldHint.skipped())
                 .put(document, "blob_bag", ResolvedFieldHint.skipped())
