@@ -320,10 +320,10 @@ class ArchiveServiceIT {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
-            "put,false,false", "put,false,true", "put,true,false", "put,true,true",
-            "cas,false,false", "cas,false,true", "cas,true,false", "cas,true,true",
-            "delete,false,false", "delete,false,true", "delete,true,false", "delete,true,true"})
-    void genericBlobMutationsCannotChangeBoundArchiveObjects(String operation, boolean versioned, boolean transport) throws Exception {
+            "put,false", "put,true",
+            "cas,false", "cas,true",
+            "delete,false", "delete,true"})
+    void genericBlobMutationsCannotChangeBoundArchiveObjects(String operation, boolean versioned) throws Exception {
         String unique = java.util.UUID.randomUUID().toString();
         String account = "guard-" + unique;
         String driveName = "guard-drive-" + unique;
@@ -358,51 +358,40 @@ class ArchiveServiceIT {
                 java.util.Map.entry("connection-timeout-ms", "10000"),
                 java.util.Map.entry("socket-timeout-ms", "60000")))) {
             var local = new ai.protomolt.proto.repo.engine.BlobOperations(provider.store(), services.driveLedger());
-            var documents = services.services().stream().filter(DocumentGrpcService.class::isInstance)
-                    .map(DocumentGrpcService.class::cast).findFirst().orElseThrow().repository();
-            String name = "archive-blob-guard-" + unique;
-            var host = io.grpc.inprocess.InProcessServerBuilder.forName(name)
-                    .addService(new DocumentGrpcService(documents, local)).build().start();
-            var connection = InProcessChannelBuilder.forName(name).build();
-            try {
-                var stub = ai.protomolt.proto.repo.v1.DocumentServiceGrpc.newBlockingStub(connection);
-                var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("guard-test", true);
-                var key = ai.protomolt.proto.repo.v1.ConditionalBlobKey.newBuilder()
-                        .setDriveName(alias.name).setObjectKey(object.getObjectKey()).build();
-                var before = provider.store().get(drive.bucket, object.getObjectKey());
-                var read = local.getForUpdate(caller, ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest.newBuilder().setKey(key).build());
-                var replacement = ByteString.copyFromUtf8("untracked replacement");
-                Runnable mutate = switch (operation) {
-                    case "put" -> () -> {
-                        var request = ai.protomolt.proto.repo.v1.PutBlobRequest.newBuilder().setDriveName(alias.name)
-                                .setObjectKey(object.getObjectKey()).setData(replacement).build();
-                        if (transport) stub.putBlob(request); else local.put(caller, request);
-                    };
-                    case "cas" -> () -> {
-                        var request = ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest.newBuilder().setKey(key)
-                                .setExpectedEtag(read.getVersion().getEtag()).setData(replacement).build();
-                        if (transport) stub.compareAndPutBlob(request); else local.compareAndPut(caller, request);
-                    };
-                    case "delete" -> () -> {
-                        var request = ai.protomolt.proto.repo.v1.DeleteBlobRequest.newBuilder().setStorageRef(
-                                ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder().setDriveName(alias.name)
-                                        .setObjectKey(object.getObjectKey())).build();
-                        if (transport) stub.deleteBlob(request); else local.delete(caller, request);
-                    };
-                    default -> throw new AssertionError(operation);
+            var caller = new ai.protomolt.proto.repo.spi.RepositoryCaller("guard-test", true);
+            var key = ai.protomolt.proto.repo.v1.ConditionalBlobKey.newBuilder()
+                    .setDriveName(alias.name).setObjectKey(object.getObjectKey()).build();
+            var before = provider.store().get(drive.bucket, object.getObjectKey());
+            var read = local.getForUpdate(caller, ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest.newBuilder().setKey(key).build());
+            var replacement = ByteString.copyFromUtf8("untracked replacement");
+            Runnable mutate = switch (operation) {
+                case "put" -> () -> {
+                    var request = ai.protomolt.proto.repo.v1.PutBlobRequest.newBuilder().setDriveName(alias.name)
+                            .setObjectKey(object.getObjectKey()).setData(replacement).build();
+                    local.put(caller, request);
                 };
-                assertThatThrownBy(mutate::run).satisfies(failure -> {
-                    if (transport) assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
-                    else assertThat(((ai.protomolt.proto.repo.spi.RepositoryException) failure).code())
-                            .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED);
-                });
-                var after = provider.store().get(drive.bucket, object.getObjectKey());
-                assertThat(after.data()).isEqualTo(original);
-                assertThat(after.versionId()).isEqualTo(before.versionId());
-                assertThat(after.eTag()).isEqualTo(before.eTag());
-                assertThat(archives.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()).getRenditions(0).getData())
-                        .isEqualTo(ByteString.copyFrom(original));
-            } finally { connection.shutdownNow(); host.shutdownNow(); }
+                case "cas" -> () -> {
+                    var request = ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest.newBuilder().setKey(key)
+                            .setExpectedEtag(read.getVersion().getEtag()).setData(replacement).build();
+                    local.compareAndPut(caller, request);
+                };
+                case "delete" -> () -> {
+                    var request = ai.protomolt.proto.repo.v1.DeleteBlobRequest.newBuilder().setStorageRef(
+                            ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder().setDriveName(alias.name)
+                                    .setObjectKey(object.getObjectKey())).build();
+                    local.delete(caller, request);
+                };
+                default -> throw new AssertionError(operation);
+            };
+            assertThatThrownBy(mutate::run).satisfies(failure ->
+                assertThat(((ai.protomolt.proto.repo.spi.RepositoryException) failure).code())
+                        .isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED));
+            var after = provider.store().get(drive.bucket, object.getObjectKey());
+            assertThat(after.data()).isEqualTo(original);
+            assertThat(after.versionId()).isEqualTo(before.versionId());
+            assertThat(after.eTag()).isEqualTo(before.eTag());
+            assertThat(archives.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()).getRenditions(0).getData())
+                    .isEqualTo(ByteString.copyFrom(original));
         }
     }
 

@@ -14,9 +14,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Real HTTP boundary checks with ingestion deliberately disabled. These requests
- * stop at credential, route, or parameter validation. Successful ingestion is
- * covered against real storage in {@code UploadHttpServerIT}.
+ * Real HTTP credential boundary checks on the archive route, whose credential
+ * enforcement is this server's own. The parts-based document route checks the
+ * same credential inside the accession upload handler, covered there.
  */
 class UploadHttpServerCredentialTest {
 
@@ -28,7 +28,7 @@ class UploadHttpServerCredentialTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(null, TOKEN, null);
+        server = new UploadHttpServer(null, null, TOKEN, unimplementedArchive());
         base = "http://127.0.0.1:" + server.start(0);
         client = HttpClient.newHttpClient();
     }
@@ -52,7 +52,7 @@ class UploadHttpServerCredentialTest {
 
     @Test
     void aRequestWithoutACredentialIsRefused() throws Exception {
-        HttpResponse<String> response = post(UploadHttpServer.UPLOAD_PATH, null, null);
+        HttpResponse<String> response = post(UploadHttpServer.ARCHIVE_UPLOAD_PATH, null, null);
 
         assertThat(response.statusCode()).isEqualTo(401);
         assertThat(response.body()).contains("api_token");
@@ -61,7 +61,7 @@ class UploadHttpServerCredentialTest {
     @Test
     void aRequestWithTheWrongCredentialIsRefusedWithoutEchoingIt() throws Exception {
         HttpResponse<String> response =
-                post(UploadHttpServer.UPLOAD_PATH, "api_token", "not-the-token");
+                post(UploadHttpServer.ARCHIVE_UPLOAD_PATH, "api_token", "not-the-token");
 
         assertThat(response.statusCode()).isEqualTo(401);
         assertThat(response.body()).doesNotContain("not-the-token");
@@ -73,16 +73,16 @@ class UploadHttpServerCredentialTest {
         // unauthenticated probe of one must not learn whether it is a real route, so it
         // answers the same 401 as the route itself rather than 404.
         HttpResponse<String> response =
-                post(UploadHttpServer.UPLOAD_PATH + "/probe", null, null);
+                post(UploadHttpServer.ARCHIVE_UPLOAD_PATH + "/probe", null, null);
 
         assertThat(response.statusCode()).isEqualTo(401);
     }
 
     @Test
     void bearerAuthorizationIsAccepted() throws Exception {
-        // Authenticated requests reach identity validation before ingestion.
+        // Authenticated requests reach archive validation before storage.
         HttpResponse<String> response =
-                post(UploadHttpServer.UPLOAD_PATH, "Authorization", "Bearer " + TOKEN);
+                post(UploadHttpServer.ARCHIVE_UPLOAD_PATH, "Authorization", "Bearer " + TOKEN);
 
         assertThat(response.statusCode()).isEqualTo(400);
         assertThat(response.body()).contains("account_id is required");
@@ -92,8 +92,16 @@ class UploadHttpServerCredentialTest {
     void missingOrBlankOperatorCredentialCannotOpenAListener() {
         for (String token : new String[]{null, "", "  "}) {
             assertThatThrownBy(() -> {
-                try (var open = new UploadHttpServer(null, token, null)) { open.start(0); }
+                try (var open = new UploadHttpServer(null, null, token, null)) { open.start(0); }
             }).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
         }
+    }
+
+    /** Credential and validation failures fire before the archive port is ever called. */
+    static ai.protomolt.proto.repo.spi.ArchiveRepository unimplementedArchive() {
+        return (ai.protomolt.proto.repo.spi.ArchiveRepository) java.lang.reflect.Proxy.newProxyInstance(
+                UploadHttpServerCredentialTest.class.getClassLoader(),
+                new Class<?>[] { ai.protomolt.proto.repo.spi.ArchiveRepository.class },
+                (proxy, method, args) -> { throw new UnsupportedOperationException(method.getName()); });
     }
 }

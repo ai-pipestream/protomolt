@@ -11,7 +11,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.context;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.context;
 import static org.assertj.core.api.Assertions.*;
 
 /** Registration failures around real PostgreSQL commits, before any read handle escapes. */
@@ -19,8 +19,8 @@ import static org.assertj.core.api.Assertions.*;
 class ReaderRegistrationIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void lostCommitAcknowledgmentQuiescesTheUnexposedReader(boolean archive) {
+    @Test
+    void lostCommitAcknowledgmentQuiescesTheUnexposedReader() {
         try (var c = context(POSTGRES)) {
             var armed = new AtomicBoolean();
             var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
@@ -30,7 +30,7 @@ class ReaderRegistrationIT {
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 var id = UUID.randomUUID();
                 armed.set(true);
-                assertThatThrownBy(() -> register(new Tx(emf), id, archive))
+                assertThatThrownBy(() -> new ArchiveReadLedger(new Tx(emf), id))
                         .hasStackTraceContaining("Reader registration acknowledgment lost");
                 assertThat(armed).isFalse();
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
@@ -41,8 +41,8 @@ class ReaderRegistrationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void cleanupCommitAcknowledgmentLossRetainsIdentityForExplicitRetry(boolean archive) {
+    @Test
+    void cleanupCommitAcknowledgmentLossRetainsIdentityForExplicitRetry() {
         try (var c = context(POSTGRES)) {
             var faults = new AtomicInteger();
             var source = DocumentJdbcFaults.afterCommit(c.pool(), () -> {
@@ -54,7 +54,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 faults.set(2);
-                failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(new Tx(emf), id, archive));
+                failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
                 assertThat(failure).isNotNull();
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
                 assertThat(failure.incarnation()).isEqualTo(id);
@@ -68,8 +68,8 @@ class ReaderRegistrationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void rollbackReservesAPermanentQuiescedTombstone(boolean archive) {
+    @Test
+    void rollbackReservesAPermanentQuiescedTombstone() {
         try (var c = context(POSTGRES)) {
             var armed = new AtomicBoolean();
             var source = DocumentJdbcFaults.beforeCommit(c.pool(), connection -> {
@@ -79,18 +79,18 @@ class ReaderRegistrationIT {
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 var id = UUID.randomUUID();
                 armed.set(true);
-                var failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(new Tx(emf), id, archive));
+                var failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
-                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(c.tx(), id, archive));
+                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(c.tx(), id));
                 assertThat(duplicate.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("QUIESCED");
             }
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void failedCleanupLeavesActiveProtectionAndCanRetryWithLiveDatabase(boolean archive) {
+    @Test
+    void failedCleanupLeavesActiveProtectionAndCanRetryWithLiveDatabase() {
         try (var c = context(POSTGRES)) {
             var armed = new AtomicBoolean();
             var commits = new AtomicInteger();
@@ -106,7 +106,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(new Tx(emf), id, archive));
+                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
                 assertThat(failed).hasStackTraceContaining("Original registration acknowledgment lost")
                         .hasStackTraceContaining("Cleanup database unavailable before commit");
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
@@ -118,8 +118,8 @@ class ReaderRegistrationIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void replacementRegistrationAfterRollbackMustNotBeFencedByFailedOwner(boolean archive) {
+    @Test
+    void replacementRegistrationAfterRollbackMustNotBeFencedByFailedOwner() {
         try (var c = context(POSTGRES)) {
             var id = UUID.randomUUID();
             var armed = new AtomicBoolean();
@@ -128,18 +128,18 @@ class ReaderRegistrationIT {
                     // Deterministic real-transaction interleaving: release the first
                     // insertion, let a different owner register, then report failure.
                     connection.rollback();
-                    register(c.tx(), id, !archive);
+                    new ArchiveReadLedger(c.tx(), id);
                     throw new java.sql.SQLException("Original registration rolled back and another owner won");
                 }
             });
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                var failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(new Tx(emf), id, archive));
+                var failure = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(failure.retryCleanup(c.tx())).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("ACTIVE");
-                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(c.tx(), id, archive));
+                var duplicate = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(c.tx(), id));
                 assertThat(duplicate.cleanup()).isEqualTo(ReaderRegistration.Cleanup.FOREIGN_IDENTITY);
                 assertThat(state(c.tx(), id)).isEqualTo("ACTIVE");
             }
@@ -147,7 +147,7 @@ class ReaderRegistrationIT {
     }
 
     @Test void migrationPreservesExistingReaderStatesAndMakesRegistrationIdentityImmutable() {
-        try (var c = DocumentNativePublicationFixture.context(POSTGRES, "73")) {
+        try (var c = LedgerSqlFixture.context(POSTGRES, "73")) {
             var active = UUID.randomUUID(); var fenced = UUID.randomUUID(); var quiesced = UUID.randomUUID();
             c.tx().inTransaction(em -> {
                 for (var id : java.util.List.of(active, fenced, quiesced))
@@ -184,7 +184,7 @@ class ReaderRegistrationIT {
             try (var emf = jakarta.persistence.Persistence.createEntityManagerFactory("document-ledger",
                     Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
-                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> register(new Tx(emf), id, false));
+                failed = catchThrowableOfType(ReaderRegistration.Failure.class, () -> new ArchiveReadLedger(new Tx(emf), id));
                 assertThat(failed.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
             }
             try (var connection = c.pool().getConnection();
@@ -221,11 +221,6 @@ class ReaderRegistrationIT {
                 }
             }
         }
-    }
-
-    private static void register(Tx tx, UUID id, boolean archive) {
-        if (archive) new ArchiveReadLedger(tx, id);
-        else new DocumentReadLedger(tx, id);
     }
 
     private static String state(Tx tx, UUID id) {

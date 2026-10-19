@@ -5,17 +5,11 @@ import ai.protomolt.proto.repo.blob.spi.BlobStoreException;
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
 import ai.protomolt.proto.repo.container.archive.ArchiveLedger;
 import ai.protomolt.proto.repo.container.archive.ArchiveUploadLedger;
-import ai.protomolt.proto.repo.container.blob.PartStorage;
-import ai.protomolt.proto.repo.container.ledger.DocumentLedger;
-import ai.protomolt.proto.repo.container.ledger.DocumentPartAttemptLedger;
-import ai.protomolt.proto.repo.container.ledger.RawObjectLedger;
 import ai.protomolt.proto.repo.spi.RepositoryException;
-import ai.protomolt.proto.repo.v1.DocumentPart;
 import jakarta.persistence.PersistenceException;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import org.junit.jupiter.api.Test;
 import static ai.protomolt.proto.repo.spi.RepositoryException.Code.*;
@@ -72,21 +66,22 @@ class HistoricalReadFailureTest {
     @Test void everyProviderCodeHasAConstantHistoricalClassificationThatKeepsItsCause() {
         for (var code : BlobStoreException.Code.values()) {
             var provider = new BlobStoreException(code, "s3://bucket/documents/key@version secret=" + code, new IllegalStateException("sdk detail"));
-            var mapped = DocumentErrors.historicalProvider(provider);
-            assertThat(mapped.code()).as(code.name()).isEqualTo(HISTORICAL.get(code));
-            assertThat(mapped.getMessage()).as(code.name()).isEqualTo(MESSAGES.get(code));
-            assertThat(mapped.getMessage()).doesNotContain("s3://", "secret", "bucket");
-            assertThat(mapped.getCause()).isSameAs(provider);
             assertThat(HistoricalReadFailures.translate(provider)).isInstanceOfSatisfying(RepositoryException.class,
-                    translated -> { assertThat(translated.code()).isEqualTo(HISTORICAL.get(code)); assertThat(translated.getCause()).isSameAs(provider); });
+                    mapped -> {
+                        assertThat(mapped.code()).as(code.name()).isEqualTo(HISTORICAL.get(code));
+                        assertThat(mapped.getMessage()).as(code.name()).isEqualTo(MESSAGES.get(code));
+                        assertThat(mapped.getMessage()).doesNotContain("s3://", "secret", "bucket");
+                        assertThat(mapped.getCause()).isSameAs(provider);
+                    });
         }
         assertThat(HISTORICAL).hasSize(BlobStoreException.Code.values().length);
     }
 
     @Test void corruptionAndMissingVersionsNeverBecomeRetryableOutages() {
         for (var code : Set.of(BlobStoreException.Code.NOT_FOUND, BlobStoreException.Code.DATA_LOSS))
-            assertThat(DocumentErrors.historicalProvider(new BlobStoreException(code, "x", null)).code()).isEqualTo(DATA_LOSS);
-        assertThat(DocumentErrors.historicalProvider(new BlobStoreException(BlobStoreException.Code.UNKNOWN, "x", null)).code())
+            assertThat(((RepositoryException) HistoricalReadFailures.translate(new BlobStoreException(code, "x", null))).code())
+                    .isEqualTo(DATA_LOSS);
+        assertThat(((RepositoryException) HistoricalReadFailures.translate(new BlobStoreException(BlobStoreException.Code.UNKNOWN, "x", null))).code())
                 .isNotIn(UNAVAILABLE, RESOURCE_EXHAUSTED, DATA_LOSS);
     }
 
@@ -136,29 +131,7 @@ class HistoricalReadFailureTest {
         assertThat(primary.getSuppressed()).containsExactly(closeFailure);
     }
 
-    @Test void writePathCallMappingIsUnchanged() {
-        for (var code : BlobStoreException.Code.values()) {
-            var provider = new BlobStoreException(code, "provider " + code, null);
-            assertThatThrownBy(() -> DocumentErrors.call(() -> { throw provider; })).isInstanceOfSatisfying(RepositoryException.class, mapped -> {
-                assertThat(mapped.code()).as(code.name()).isEqualTo(writePath(code));
-                assertThat(mapped.getMessage()).isEqualTo("provider " + code);
-                assertThat(mapped.getCause()).isSameAs(provider);
-            });
-        }
-        assertCall(new BlobStore.BlobNotFoundException("gone", null), NOT_FOUND, "gone");
-        assertCall(new PartStorage.PartObjectMissingException("part gone", Set.of(DocumentPart.DOCUMENT_PART_CORE)), FAILED_PRECONDITION, "part gone");
-        assertCall(new IllegalArgumentException("bad plan"), INVALID_ARGUMENT, "bad plan");
-        assertCall(new DocumentLedger.RevisionConflictException(), CONFLICT, new DocumentLedger.RevisionConflictException().getMessage());
-        assertCall(new ArchiveLedger.VersionConflictException("version"), CONFLICT, "version");
-        assertCall(new ArchiveUploadLedger.FenceException("fence"), CONFLICT, "fence");
-        var sql = new PersistenceException("connection lost");
-        assertThatThrownBy(() -> DocumentErrors.call(() -> { throw sql; })).isSameAs(sql);
-        var state = new IllegalStateException("invariant");
-        assertThatThrownBy(() -> DocumentErrors.call(() -> { throw state; })).isSameAs(state);
-        assertThat(DocumentErrors.call(() -> "value")).isEqualTo("value");
-    }
-
-    @Test void sharedCallMapsArchiveAndProviderFailuresAndLeavesDocumentFailuresUnmapped() {
+    @Test void sharedCallMapsArchiveAndProviderFailures() {
         for (var code : BlobStoreException.Code.values()) {
             var provider = new BlobStoreException(code, "provider " + code, null);
             assertThatThrownBy(() -> RepositoryErrors.call(() -> { throw provider; }))
@@ -168,50 +141,12 @@ class HistoricalReadFailureTest {
         assertSharedCall(new IllegalArgumentException("bad plan"), INVALID_ARGUMENT, "bad plan");
         assertSharedCall(new ArchiveLedger.VersionConflictException("version"), CONFLICT, "version");
         assertSharedCall(new ArchiveUploadLedger.FenceException("fence"), CONFLICT, "fence");
-        var conflict = new DocumentLedger.RevisionConflictException();
-        assertThatThrownBy(() -> RepositoryErrors.call(() -> { throw conflict; })).isSameAs(conflict);
-        var missing = new PartStorage.PartObjectMissingException("part gone", Set.of(DocumentPart.DOCUMENT_PART_CORE));
-        assertThatThrownBy(() -> RepositoryErrors.call(() -> { throw missing; })).isSameAs(missing);
-    }
-
-    @Test void writePathManagedFailureMappingIsUnchanged() {
-        var attempt = UUID.randomUUID();
-        for (var code : BlobStoreException.Code.values()) {
-            var wrapped = new RuntimeException("envelope", new BlobStoreException(code, "provider", null));
-            var mapped = DocumentErrors.managedFailure(attempt, "publication", wrapped);
-            assertThat(mapped.code()).as(code.name()).isEqualTo(writePath(code));
-            assertThat(mapped.getMessage()).isEqualTo("Document attempt " + attempt + " failed during publication; reconcile its outcome");
-            assertThat(mapped.getCause()).isSameAs(wrapped);
-        }
-        assertManaged(new RepositoryException(PERMISSION_DENIED, "denied", new IllegalArgumentException()), PERMISSION_DENIED);
-        assertManaged(new DocumentLedger.RevisionConflictException(), CONFLICT);
-        assertManaged(new DocumentPartAttemptLedger.FenceException("missing profile"), FAILED_PRECONDITION);
-        assertManaged(new RawObjectLedger.FenceException("raw fence"), FAILED_PRECONDITION);
-        assertManaged(new CancellationException(), CANCELLED);
-        assertManaged(new BlobStore.BlobReadLimitException(1), DATA_LOSS);
-        assertManaged(new BlobStore.BlobNotFoundException("gone", null), DATA_LOSS);
-        assertManaged(new UnsupportedOperationException("bounded"), FAILED_PRECONDITION);
-        assertManaged(new IllegalArgumentException("invalid plan"), INVALID_ARGUMENT);
-        assertManaged(new IllegalStateException("commit acknowledgement lost"), UNKNOWN);
-        assertManaged(new PersistenceException("connection lost"), UNKNOWN);
-        var budget = new PayloadBudget(1);
-        try (var held = budget.reserve(1)) {
-            RuntimeException exhausted = null;
-            try { budget.reserve(1); } catch (PayloadBudget.CapacityExceededException failure) { exhausted = failure; }
-            assertManaged(exhausted, RESOURCE_EXHAUSTED);
-        }
+        var sql = new PersistenceException("connection lost");
+        assertThatThrownBy(() -> RepositoryErrors.call(() -> { throw sql; })).isSameAs(sql);
     }
 
     private static void assertCode(RuntimeException failure, RepositoryException.Code code, String message) {
         assertThat(HistoricalReadFailures.translate(failure)).isInstanceOfSatisfying(RepositoryException.class, mapped -> {
-            assertThat(mapped.code()).isEqualTo(code);
-            assertThat(mapped.getMessage()).isEqualTo(message);
-            assertThat(mapped.getCause()).isSameAs(failure);
-        });
-    }
-
-    private static void assertCall(RuntimeException failure, RepositoryException.Code code, String message) {
-        assertThatThrownBy(() -> DocumentErrors.call(() -> { throw failure; })).isInstanceOfSatisfying(RepositoryException.class, mapped -> {
             assertThat(mapped.code()).isEqualTo(code);
             assertThat(mapped.getMessage()).isEqualTo(message);
             assertThat(mapped.getCause()).isSameAs(failure);
@@ -224,10 +159,5 @@ class HistoricalReadFailureTest {
             assertThat(mapped.getMessage()).isEqualTo(message);
             assertThat(mapped.getCause()).isSameAs(failure);
         });
-    }
-
-    private static void assertManaged(Throwable cause, RepositoryException.Code code) {
-        var mapped = DocumentErrors.managedFailure(UUID.randomUUID(), "staging", new RuntimeException("envelope", cause));
-        assertThat(mapped.code()).as(cause.getClass().getSimpleName()).isEqualTo(code);
     }
 }

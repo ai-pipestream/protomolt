@@ -4,22 +4,17 @@ import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.UploadHttpHandler;
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
-import ai.protomolt.proto.repo.engine.ArchiveOperations;
 
-import ai.protomolt.proto.repo.blob.spi.BlobStore;
-import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
@@ -34,12 +29,12 @@ import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 /**
- * HTTP parsing and receipts for shared raw ingestion and archive operations.
- * Document uploads require a qualified RawIngestionRepository, or the parts-based
- * {@link UploadHttpHandler}, which then owns the document route outright. Legacy
- * constructors remain source compatible but refuse document uploads until one is supplied.
- * Content-Length is required. Physical keys are immutable per-attempt keys; the
- * receipt returns the committed reference, including on deduplicated uploads.
+ * HTTP parsing and receipts for the parts-based document upload route and the
+ * archive rendition route. The document route belongs to the parts-based
+ * {@link UploadHttpHandler}, which owns its receipts, status mapping and
+ * credential check. Content-Length is required. Physical keys are immutable
+ * per-attempt keys; the receipt returns the committed reference, including on
+ * deduplicated uploads.
  */
 public final class UploadHttpServer implements AutoCloseable {
 
@@ -52,46 +47,13 @@ public final class UploadHttpServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion;
-    /** The parts-based document route; null keeps {@link #UPLOAD_PATH} on the ingestion port. */
+    /** The parts-based document route. */
     private final HttpHandler documentUploads;
     private final byte[] expectedToken;
     private final ArchiveRepository archiveOperations;
 
     private HttpServer server;
     private ExecutorService executor;
-
-    /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
-    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore, String apiToken) {
-        this(documentService, drives, blobStore, apiToken, null);
-    }
-
-    /** Compatibility constructor: document uploads return 503 until a qualified ingestion port is supplied. */
-    public UploadHttpServer(DocumentGrpcService documentService, DriveLedger drives,
-            BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
-        this(documentService.repository(), drives, blobStore, apiToken, archiveOperations);
-    }
-
-    /** Compatibility factory; document uploads require the RawIngestionRepository constructor. */
-    public static UploadHttpServer forRepository(ai.protomolt.proto.repo.spi.DocumentRepository documents,
-            DriveLedger drives, BlobStore blobStore, String apiToken) {
-        return new UploadHttpServer(documents, drives, blobStore, apiToken, null);
-    }
-
-    private UploadHttpServer(ai.protomolt.proto.repo.spi.DocumentRepository documents,
-            DriveLedger drives, BlobStore blobStore, String apiToken, ArchiveRepository archiveOperations) {
-        this((ai.protomolt.proto.repo.spi.RawIngestionRepository) null, apiToken, archiveOperations);
-    }
-
-    /** Hosts only transport parsing; ingestion owns all byte and document publication behavior. */
-    public UploadHttpServer(ai.protomolt.proto.repo.spi.RawIngestionRepository ingestion,
-            String apiToken, ArchiveRepository archiveOperations) {
-        this.ingestion = ingestion;
-        this.documentUploads = null;
-        this.expectedToken = RepositoryNetworkAuthentication.requireOperatorToken(apiToken).getBytes(StandardCharsets.UTF_8);
-        this.archiveOperations = archiveOperations;
-    }
 
     /**
      * Serves {@link #UPLOAD_PATH} through the parts-based {@link UploadHttpHandler}
@@ -100,7 +62,8 @@ public final class UploadHttpServer implements AutoCloseable {
      * {@code archiveOperations} when one is wired. Both routes demand the same
      * operator credential.
      *
-     * @param uploads the parts-based streaming upload coordinator
+     * @param uploads the parts-based streaming upload coordinator, or null to leave
+     *        the document route unmounted (archive-only host)
      * @param callers supplies the caller a request acts as once its credential matches
      * @param apiToken the operator credential both routes require
      * @param archiveOperations the archive rendition upload port, or null to leave
@@ -109,8 +72,7 @@ public final class UploadHttpServer implements AutoCloseable {
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, ArchiveRepository archiveOperations) {
         String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
-        this.ingestion = null;
-        this.documentUploads = new UploadHttpHandler(Objects.requireNonNull(uploads, "uploads"), token,
+        this.documentUploads = uploads == null ? null : new UploadHttpHandler(uploads, token,
                 Objects.requireNonNull(callers, "callers"));
         this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
@@ -158,7 +120,9 @@ public final class UploadHttpServer implements AutoCloseable {
         this.server = created;
         this.executor = pool;
         try {
-            created.createContext(UPLOAD_PATH, documentUploads != null ? documentUploads : this::handle);
+            if (documentUploads != null) {
+                created.createContext(UPLOAD_PATH, documentUploads);
+            }
             if (archiveOperations != null) {
                 created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
             }
@@ -204,93 +168,6 @@ public final class UploadHttpServer implements AutoCloseable {
             }
             executor = null;
         }
-    }
-
-    // ------------------------------------------------------------------ route
-
-    private void handle(HttpExchange exchange) throws IOException {
-        try {
-            // Ahead of route and method matching, so an unauthenticated probe learns
-            // nothing about which routes exist or which methods they accept.
-            requireCredential(exchange);
-            // createContext prefix-matches; only the exact path is the route.
-            if (!UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
-                throw new HttpError(404, "unknown route " + exchange.getRequestURI().getPath());
-            }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                throw new HttpError(405, "method not allowed: " + exchange.getRequestMethod());
-            }
-            writeJson(exchange, 200, upload(exchange));
-        } catch (HttpError e) {
-            writeError(exchange, e.status, e.getMessage());
-        } catch (ai.protomolt.proto.repo.spi.RepositoryException e) {
-            int status = switch (e.code()) {
-                case INVALID_ARGUMENT -> 400;
-                case NOT_FOUND -> 404;
-                case PERMISSION_DENIED -> 403;
-                case FAILED_PRECONDITION, CONFLICT -> 409;
-                case UNSUPPORTED -> 503;
-                default -> 502;
-            };
-            writeError(exchange, status, e.getMessage());
-        } catch (StatusRuntimeException e) {
-
-            // The intake save's gRPC status vocabulary, flattened onto HTTP.
-            Status.Code code = e.getStatus().getCode();
-            int status = switch (code) {
-                case INVALID_ARGUMENT -> 400;
-                case NOT_FOUND -> 404;
-                default -> 502;
-            };
-            writeError(exchange, status, e.getStatus().getDescription());
-        } catch (RuntimeException | IOException e) {
-            LOG.warn("upload failed: {}", e.getMessage());
-            writeError(exchange, 502, "backing store failure: " + e.getMessage());
-        } finally {
-            exchange.close();
-        }
-    }
-
-    private ObjectNode upload(HttpExchange exchange) throws IOException {
-        Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
-        String accountId = required(identity(exchange, query, "account_id", "x-account-id"), "account_id");
-        String datasourceId = required(identity(exchange, query, "datasource_id", "x-datasource-id"),
-                "datasource_id");
-        String driveName = required(identity(exchange, query, "drive", "x-drive-name"), "drive");
-        String filename = required(identity(exchange, query, "filename", "x-filename"), "filename");
-        String connectorId = identity(exchange, query, "connector_id", "x-connector-id");
-        String crawlId = identity(exchange, query, "crawl_id", "x-crawl-id");
-        String docId = identity(exchange, query, "doc_id", "x-doc-id");
-        String contentType = first(query.get("content_type"),
-                exchange.getRequestHeaders().getFirst("Content-Type"), "application/octet-stream");
-
-        // Deliberate contract (see class Javadoc): the S3 sync client streams
-        // only with a known length, so chunked/absent-length bodies are 411
-        // before any byte is read.
-        long contentLength = contentLength(exchange);
-        if (ingestion == null) throw new HttpError(503, "Managed document ingestion is not configured");
-
-        var request = new ai.protomolt.proto.repo.spi.RawIngestionRepository.Request(accountId, datasourceId,
-                driveName, docId, filename, contentType, connectorId, crawlId,
-                exchange.getRequestHeaders().getFirst("X-Content-Sha256"));
-        ai.protomolt.proto.repo.spi.RawIngestionRepository.Result result;
-        try (InputStream body = exchange.getRequestBody()) {
-            result = ingestion.upload(new ai.protomolt.proto.repo.spi.RepositoryCaller("http-upload", true),
-                    request, body, contentLength);
-        }
-        var saved = result.document();
-        var ref = result.storageRef();
-        ObjectNode storageRef = MAPPER.createObjectNode()
-                .put("drive_name", ref.getDriveName()).put("object_key", ref.getObjectKey());
-        if (ref.hasVersionId()) storageRef.put("version_id", ref.getVersionId());
-        ObjectNode response = MAPPER.createObjectNode()
-                .put("node_id", saved.getNodeId())
-                .put("doc_id", saved.getAddress().getDocId())
-                .put("deduplicated", saved.getDeduplicated())
-                .put("size_bytes", result.sizeBytes())
-                .put("sha256", result.sha256());
-        response.set("storage_ref", storageRef);
-        return response;
     }
 
     // ------------------------------------------------------------------ archive route

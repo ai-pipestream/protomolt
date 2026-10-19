@@ -9,7 +9,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.context;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.context;
 import static org.assertj.core.api.Assertions.*;
 
 @Testcontainers
@@ -87,7 +87,7 @@ class ReaderHostExecutionIT {
     }
 
     @Test void migrationKeepsExistingReadersLocalAndRejectsRetrofittedBindings() {
-        try (var c = DocumentNativePublicationFixture.context(POSTGRES, "111")) {
+        try (var c = LedgerSqlFixture.context(POSTGRES, "111")) {
             var reader = UUID.randomUUID();
             c.tx().inTransaction(em -> { em.createNativeQuery("INSERT INTO repository_reader_incarnations(incarnation,state) VALUES(:id,'ACTIVE')")
                 .setParameter("id", reader).executeUpdate(); });
@@ -107,8 +107,8 @@ class ReaderHostExecutionIT {
         }
     }
 
-    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"false,false", "false,true", "true,false", "true,true"})
-    void failedBoundRegistrationKeepsItsBindingAfterHostFence(boolean committed, boolean archive) {
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void failedBoundRegistrationKeepsItsBindingAfterHostFence(boolean committed) {
         try (var c = context(POSTGRES)) {
             var host = UUID.randomUUID(); var reader = UUID.randomUUID(); host(c.tx(), host);
             var armed = new java.util.concurrent.atomic.AtomicBoolean();
@@ -129,7 +129,7 @@ class ReaderHostExecutionIT {
                     java.util.Map.of("hibernate.connection.datasource", source, "hibernate.hbm2ddl.auto", "validate"))) {
                 armed.set(true);
                 var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
-                    () -> construct(new Tx(emf), reader, host, archive));
+                    () -> new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(new Tx(emf), reader, host));
                 assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
                 assertThat(armed).isFalse();
                 assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
@@ -154,18 +154,11 @@ class ReaderHostExecutionIT {
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void ledgerConstructorsRequireHostAndPreserveLocalShutdown(boolean archive) {
+    @Test void ledgerConstructorsRequireHostAndPreserveLocalShutdown() {
         try (var c = context(POSTGRES)) {
             var host = UUID.randomUUID(); var id = UUID.randomUUID(); host(c.tx(), host);
-            Runnable shutdown;
-            if (archive) {
-                var ledger = new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), id, host);
-                shutdown = () -> { ledger.fence(); ledger.attestLocalQuiescence(); };
-            } else {
-                var ledger = new DocumentReadLedger(c.tx(), id, host, 2);
-                shutdown = () -> { ledger.fence(); ledger.attestLocalQuiescence(); };
-            }
+            var ledger = new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), id, host);
+            Runnable shutdown = () -> { ledger.fence(); ledger.attestLocalQuiescence(); };
             admit(c.tx(), id); fence(c.tx(), host);
             assertThatThrownBy(() -> admit(c.tx(), id)).hasStackTraceContaining("host execution is not ACTIVE");
             shutdown.run(); shutdown.run();
@@ -174,17 +167,16 @@ class ReaderHostExecutionIT {
                 .setParameter("id", id).setParameter("host", host).getSingleResult()).intValue())).isEqualTo(1);
             var rejected = UUID.randomUUID();
             var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
-                () -> construct(c.tx(), rejected, host, archive));
+                () -> new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), rejected, host));
             assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.QUIESCED);
         }
     }
 
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void missingHostCannotProduceALedgerOrClaimSuccessfulCleanup(boolean archive) {
+    @Test void missingHostCannotProduceALedgerOrClaimSuccessfulCleanup() {
         try (var c = context(POSTGRES)) {
             var id = UUID.randomUUID(); var host = UUID.randomUUID();
             var failure = catchThrowableOfType(ReaderRegistration.Failure.class,
-                () -> construct(c.tx(), id, host, archive));
+                () -> new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), id, host));
             assertThat(failure.cleanup()).isEqualTo(ReaderRegistration.Cleanup.PENDING);
             assertThat(failure.getSuppressed()).hasSize(1);
             assertThatThrownBy(() -> failure.retryCleanup(c.tx())).isInstanceOf(RuntimeException.class);
@@ -192,14 +184,9 @@ class ReaderHostExecutionIT {
             assertThat(c.tx().<Integer>readOnly(em -> ((Number) em.createNativeQuery(
                 "SELECT count(*) FROM repository_reader_incarnations WHERE incarnation=:id")
                 .setParameter("id", id).getSingleResult()).intValue())).isZero();
-            assertThatThrownBy(() -> construct(c.tx(), UUID.randomUUID(), null, archive))
+            assertThatThrownBy(() -> new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(c.tx(), UUID.randomUUID(), null))
                 .isInstanceOf(NullPointerException.class);
         }
-    }
-
-    private static void construct(Tx tx, UUID id, UUID host, boolean archive) {
-        if (archive) new ai.protomolt.proto.repo.container.archive.ArchiveReadLedger(tx, id, host);
-        else new DocumentReadLedger(tx, id, host);
     }
 
     private static void awaitBlocked(Tx tx, int pid) throws Exception {

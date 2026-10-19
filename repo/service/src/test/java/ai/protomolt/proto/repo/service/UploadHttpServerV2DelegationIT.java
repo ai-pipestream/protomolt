@@ -151,8 +151,8 @@ class UploadHttpServerV2DelegationIT {
     }
 
     @Test void theV2ConstructorRefusesMissingCollaboratorsByName() {
-        assertThatThrownBy(() -> new UploadHttpServer(null, () -> null, TOKEN, null))
-                .isInstanceOf(NullPointerException.class).hasMessageContaining("uploads");
+        // A null uploads mounts no document route (archive-only host); the other
+        // collaborators are still validated by name.
         assertThatThrownBy(() -> new UploadHttpServer(uploads, null, TOKEN, null))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("callers");
         assertThatThrownBy(() -> new UploadHttpServer(uploads, () -> null, " ", null))
