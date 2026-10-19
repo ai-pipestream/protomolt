@@ -40,7 +40,7 @@ final class RepositoryBlobReads {
         var header = first.getHeader();
         if (header.getRevision() != revision || header.getTotalLength() < 0
                 || (blob.getSizeBytes() > 0 && header.getTotalLength() != blob.getSizeBytes())
-                || !header.getSha256().matches("[0-9a-f]{64}"))
+                || !isSha256Hex(header.getSha256()))
             throw damaged("Blob header does not match the retained revision");
         if (header.getTotalLength() > Integer.MAX_VALUE)
             throw Status.RESOURCE_EXHAUSTED.withDescription(
@@ -52,20 +52,34 @@ final class RepositoryBlobReads {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
-        var bytes = new ByteArrayOutputStream();
+        var bytes = new ByteArrayOutputStream((int) Math.min(header.getTotalLength(), 16 * 1024 * 1024L));
         long received = 0;
         while (frames.hasNext()) {
             var frame = frames.next();
             if (!frame.hasData()) throw damaged("Unexpected blob frame after header");
-            received += frame.getData().size();
+            var data = frame.getData();
+            received += data.size();
             if (received > header.getTotalLength()) throw damaged("Blob exceeds declared length");
-            for (var buffer : frame.getData().asReadOnlyByteBufferList()) digest.update(buffer);
-            bytes.writeBytes(frame.getData().toByteArray());
+            for (var buffer : data.asReadOnlyByteBufferList()) digest.update(buffer);
+            try {
+                data.writeTo(bytes);
+            } catch (java.io.IOException impossible) {
+                throw new IllegalStateException("ByteArrayOutputStream write failed", impossible);
+            }
         }
         if (received != header.getTotalLength()
                 || !HexFormat.of().formatHex(digest.digest()).equals(header.getSha256()))
             throw damaged("Blob length or SHA-256 mismatch");
         return bytes.toByteArray();
+    }
+
+    private static boolean isSha256Hex(String value) {
+        if (value == null || value.length() != 64) return false;
+        for (int i = 0; i < 64; i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
     }
 
     private static io.grpc.StatusRuntimeException damaged(String message) {

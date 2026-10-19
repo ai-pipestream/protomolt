@@ -115,7 +115,8 @@ final class DocumentSchemaEvidenceCodec {
         if (!expectedCodec.equals(codec) || version != 1)
             throw new IllegalArgumentException("unsupported schema evidence encoding");
         requireSize(bytes.size());
-        if (sha256 == null || !sha256.matches("[0-9a-f]{64}") || !digest(bytes, control).equals(sha256))
+        if (!ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(sha256)
+                || !digest(bytes, control).equals(sha256))
             throw new IllegalArgumentException("schema evidence digest mismatch");
         new MessageWireBudget(MAX_WIRE_VALUES, MAX_DEPTH, () -> active(control))
                 .check(bytes, descriptor);

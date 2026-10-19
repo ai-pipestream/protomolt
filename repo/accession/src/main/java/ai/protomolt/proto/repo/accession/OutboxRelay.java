@@ -32,21 +32,28 @@ public final class OutboxRelay {
 
     /** Relays up to {@code limit} pending events; returns how many were stamped relayed. */
     public int relayOnce(int limit) throws InterruptedException {
-        int relayed = 0;
+        var relayed = new java.util.ArrayList<String>();
+        var attempted = new java.util.ArrayList<String>();
         var blocked = new HashSet<NodeAddress>();
-        for (var pending : catalog.pendingEvents(limit)) {
-            if (blocked.contains(pending.event().getAddress())) continue;
-            try {
-                publisher.publish(pending.key(), pending.event());
-            } catch (InterruptedException interrupted) {
-                throw interrupted;
-            } catch (Exception failure) {
-                blocked.add(pending.event().getAddress());
-                catalog.markAttempt(pending.eventId());
-                continue;
+        int count = 0;
+        try {
+            for (var pending : catalog.pendingEvents(limit)) {
+                if (blocked.contains(pending.event().getAddress())) continue;
+                try {
+                    publisher.publish(pending.key(), pending.event());
+                } catch (InterruptedException interrupted) {
+                    throw interrupted;
+                } catch (Exception failure) {
+                    blocked.add(pending.event().getAddress());
+                    attempted.add(pending.eventId());
+                    continue;
+                }
+                relayed.add(pending.eventId());
             }
-            if (catalog.markRelayed(pending.eventId())) relayed++;
+        } finally {
+            if (!attempted.isEmpty()) catalog.markAttempts(attempted);
+            if (!relayed.isEmpty()) count = catalog.markRelayed(relayed);
         }
-        return relayed;
+        return count;
     }
 }

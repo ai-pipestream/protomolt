@@ -259,6 +259,7 @@ public final class DocumentSchemaMaterialization {
         if (actual < 0 || actual > maximum) throw new LimitExceeded(name + " exceed materialization limit");
     }
     private static void hash(String value) {
-        if (value == null || !value.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("exact SHA-256 digest required");
+        if (!ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(value))
+            throw new IllegalArgumentException("exact SHA-256 digest required");
     }
 }

@@ -282,9 +282,7 @@ public final class DocumentReads {
         requireBinding(caller);
         requireAddress(address);
         requireAccount(caller, address.getAccountId());
-        var state = catalog.current(address).orElseThrow(() -> notFound("Document not found"));
-        var stored = catalog.manifest(address, state.revision())
-                .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Current revision has no manifest", null));
+        var stored = catalog.currentManifest(address).orElseThrow(() -> notFound("Document not found"));
         if (!canRead(caller, address, stored.getOwnership()))
             throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller may not read this document", null);
 

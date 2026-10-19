@@ -8,6 +8,8 @@ import ai.protomolt.proto.repo.v1.DocumentPart;
  */
 public final class PartLayouts {
 
+    private static final PartLayout DOCUMENT = buildDocument(Document.getDescriptor());
+
     private PartLayouts() {
     }
 
@@ -25,7 +27,7 @@ public final class PartLayouts {
      * @return the default Document part layout
      */
     public static PartLayout document() {
-        return document(Document.getDescriptor());
+        return DOCUMENT;
     }
 
     /**
@@ -37,6 +39,13 @@ public final class PartLayouts {
      * @throws IllegalArgumentException when the descriptor lacks a layout field
      */
     public static PartLayout document(com.google.protobuf.Descriptors.Descriptor documentType) {
+        if (documentType == Document.getDescriptor()) {
+            return DOCUMENT;
+        }
+        return buildDocument(documentType);
+    }
+
+    private static PartLayout buildDocument(com.google.protobuf.Descriptors.Descriptor documentType) {
         return PartLayout.builder(documentType)
                 .identityField("doc_id")
                 .partField(DocumentPart.DOCUMENT_PART_BLOBS, "blob_bag")

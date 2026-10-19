@@ -249,7 +249,29 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
 
     /** Qdrant vector name for an embedding model id: {@code [^A-Za-z0-9_-]} &rarr; {@code _}. */
     public static String vectorName(String model) {
-        return model.replaceAll("[^A-Za-z0-9_-]", "_");
+        int len = model.length();
+        StringBuilder out = null;
+        for (int i = 0; i < len; i++) {
+            char c = model.charAt(i);
+            if (!isVectorNameChar(c)) {
+                if (out == null) {
+                    out = new StringBuilder(len);
+                    out.append(model, 0, i);
+                }
+                out.append('_');
+            } else if (out != null) {
+                out.append(c);
+            }
+        }
+        return out == null ? model : out.toString();
+    }
+
+    private static boolean isVectorNameChar(char c) {
+        return (c >= 'A' && c <= 'Z')
+                || (c >= 'a' && c <= 'z')
+                || (c >= '0' && c <= '9')
+                || c == '_'
+                || c == '-';
     }
 
     /**

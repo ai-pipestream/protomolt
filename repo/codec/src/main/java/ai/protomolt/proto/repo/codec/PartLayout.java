@@ -74,6 +74,11 @@ public final class PartLayout {
     private final List<PartField> partFields;
     private final List<ChunkedField> chunkedFields;
     private final List<KeyedField> keyedFields;
+    private final List<PartField> sortedPartFields;
+    private final List<ChunkedField> sortedChunkedFields;
+    private final List<KeyedField> sortedKeyedFields;
+    private final List<DocumentPart> orderedNonCoreParts;
+    private final java.util.Set<Descriptors.FieldDescriptor> nestedParents;
 
     private PartLayout(Descriptors.Descriptor messageType,
                        Descriptors.FieldDescriptor identityField,
@@ -85,6 +90,36 @@ public final class PartLayout {
         this.partFields = List.copyOf(partFields);
         this.chunkedFields = List.copyOf(chunkedFields);
         this.keyedFields = List.copyOf(keyedFields);
+
+        var sortedParts = new ArrayList<>(this.partFields);
+        sortedParts.sort(java.util.Comparator.comparingInt(pf -> pf.part().getNumber()));
+        this.sortedPartFields = List.copyOf(sortedParts);
+
+        var sortedChunks = new ArrayList<>(this.chunkedFields);
+        sortedChunks.sort(java.util.Comparator.comparingInt(cf -> cf.part().getNumber()));
+        this.sortedChunkedFields = List.copyOf(sortedChunks);
+
+        var sortedKeyed = new ArrayList<>(this.keyedFields);
+        sortedKeyed.sort(java.util.Comparator.comparingInt(kf -> kf.part().getNumber()));
+        this.sortedKeyedFields = List.copyOf(sortedKeyed);
+
+        var order = new ArrayList<DocumentPart>();
+        for (PartField pf : this.sortedPartFields) {
+            if (!order.contains(pf.part())) order.add(pf.part());
+        }
+        for (ChunkedField cf : this.sortedChunkedFields) {
+            if (!order.contains(cf.part())) order.add(cf.part());
+        }
+        for (KeyedField kf : this.sortedKeyedFields) {
+            if (!order.contains(kf.part())) order.add(kf.part());
+        }
+        order.sort(java.util.Comparator.comparingInt(DocumentPart::getNumber));
+        this.orderedNonCoreParts = List.copyOf(order);
+
+        var parents = new java.util.HashSet<Descriptors.FieldDescriptor>();
+        for (ChunkedField cf : this.chunkedFields) parents.add(cf.parent());
+        for (KeyedField kf : this.keyedFields) parents.add(kf.parent());
+        this.nestedParents = java.util.Set.copyOf(parents);
     }
 
     /**
@@ -120,6 +155,27 @@ public final class PartLayout {
     /** The keyed part mappings, in declaration order. */
     public List<KeyedField> keyedFields() {
         return keyedFields;
+    }
+
+    /** Parent fields of chunked or keyed parts, precomputed at layout build time. */
+    public java.util.Set<Descriptors.FieldDescriptor> nestedParents() {
+        return nestedParents;
+    }
+
+    List<PartField> sortedPartFields() {
+        return sortedPartFields;
+    }
+
+    List<ChunkedField> sortedChunkedFields() {
+        return sortedChunkedFields;
+    }
+
+    List<KeyedField> sortedKeyedFields() {
+        return sortedKeyedFields;
+    }
+
+    List<DocumentPart> orderedNonCoreParts() {
+        return orderedNonCoreParts;
     }
 
     /** Builder for {@link PartLayout}; resolves field names at build time. */
@@ -164,11 +220,7 @@ public final class PartLayout {
          * {@code "result_id"}).
          */
         public Builder chunkedPart(DocumentPart part, String repeatedFieldPath, String keyFieldName) {
-            String[] segments = repeatedFieldPath.split("\\.");
-            if (segments.length != 2) {
-                throw new IllegalArgumentException(
-                        "chunkedPart takes a 'parent.repeated' path, got '" + repeatedFieldPath + "'");
-            }
+            String[] segments = splitTwoPartPath(repeatedFieldPath, "chunkedPart");
             Descriptors.FieldDescriptor parent = requireField(messageType, segments[0]);
             if (parent.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE || parent.isRepeated()) {
                 throw new IllegalArgumentException(
@@ -193,11 +245,7 @@ public final class PartLayout {
          * be scalar fields.
          */
         public Builder keyedPart(DocumentPart part, String repeatedFieldPath, String... keyFieldNames) {
-            String[] segments = repeatedFieldPath.split("\\.");
-            if (segments.length != 2) {
-                throw new IllegalArgumentException(
-                        "keyedPart takes a 'parent.repeated' path, got '" + repeatedFieldPath + "'");
-            }
+            String[] segments = splitTwoPartPath(repeatedFieldPath, "keyedPart");
             Descriptors.FieldDescriptor parent = requireField(messageType, segments[0]);
             if (parent.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE || parent.isRepeated()) {
                 throw new IllegalArgumentException(
@@ -226,6 +274,19 @@ public final class PartLayout {
         public PartLayout build() {
             return new PartLayout(messageType, identityField,
                     List.copyOf(partFields), List.copyOf(chunkedFields), List.copyOf(keyedFields));
+        }
+
+        private static String[] splitTwoPartPath(String repeatedFieldPath, String method) {
+            int dot = repeatedFieldPath.indexOf('.');
+            if (dot <= 0 || dot >= repeatedFieldPath.length() - 1
+                    || repeatedFieldPath.indexOf('.', dot + 1) >= 0) {
+                throw new IllegalArgumentException(
+                        method + " takes a 'parent.repeated' path, got '" + repeatedFieldPath + "'");
+            }
+            return new String[] {
+                repeatedFieldPath.substring(0, dot),
+                repeatedFieldPath.substring(dot + 1)
+            };
         }
 
         private static Descriptors.FieldDescriptor requireField(Descriptors.Descriptor type, String name) {

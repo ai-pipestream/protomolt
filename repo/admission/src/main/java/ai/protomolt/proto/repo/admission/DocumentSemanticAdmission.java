@@ -139,6 +139,8 @@ public final class DocumentSemanticAdmission {
         return DocumentCandidateAdmission.partOf(fieldPath);
     }
 
+    private static final ProtoFieldMapperImpl MAPPER = new ProtoFieldMapperImpl(new DescriptorRegistry(false));
+
     /**
      * Checks the composed candidate.
      *
@@ -147,7 +149,6 @@ public final class DocumentSemanticAdmission {
      */
     public static Result check(Candidate candidate) {
         Objects.requireNonNull(candidate);
-        var mapper = new ProtoFieldMapperImpl(new DescriptorRegistry(false));
         var violations = new ArrayList<Violation>();
         var digests = new LinkedHashMap<String, String>(candidate.carriedDigests());
         var finalized = new LinkedHashMap<String, Segmentation>();
@@ -159,7 +160,7 @@ public final class DocumentSemanticAdmission {
                 throw new IllegalArgumentException("Segmentation " + id + " appears twice in the candidate");
             var before = violations.size();
             var ids = checkSegments(segmentation, violations);
-            if (present.verifyContent()) checkSource(segmentation, candidate.view(), mapper, violations);
+            if (present.verifyContent()) checkSource(segmentation, candidate.view(), MAPPER, violations);
             var digest = SegmentationDigests.digest(segmentation);
             if (!segmentation.getContentDigest().isEmpty() && !segmentation.getContentDigest().equals(digest))
                 violations.add(new Violation(Kind.VALIDATION_FAILED, id, "", "content_digest", "segmentation.content-digest",
@@ -245,18 +246,43 @@ public final class DocumentSemanticAdmission {
     private record Unresolved(String reason) implements Resolution {}
 
     /**
-     * The shape of a field path: dot-separated field names, nothing else. The mapper also
-     * accepts quoted or numeric literals and trims whitespace; a text source may name only
-     * a field of the document.
+     * Tests whether {@code path} has the shape of a field path: dot-separated field names
+     * ({@code [A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*}), nothing else. The mapper
+     * also accepts quoted or numeric literals and trims whitespace; a text source may name
+     * only a field of the document.
      */
-    private static final java.util.regex.Pattern FIELD_PATH =
-            java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
+    private static boolean isFieldPath(String path) {
+        if (path == null || path.isEmpty()) return false;
+        boolean segmentStart = true;
+        for (int i = 0; i < path.length(); i++) {
+            char c = path.charAt(i);
+            if (c == '.') {
+                if (segmentStart) return false;
+                segmentStart = true;
+            } else if (segmentStart) {
+                if (!isIdentStart(c)) return false;
+                segmentStart = false;
+            } else if (!isIdentPart(c)) {
+                return false;
+            }
+        }
+        return !segmentStart;
+    }
+
+    private static boolean isIdentStart(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+    }
+
+    private static boolean isIdentPart(char c) {
+        return isIdentStart(c) || (c >= '0' && c <= '9');
+    }
 
     /** Resolves a field path over the composed view to its text, or to the reason it does not resolve to a string. */
     private static Resolution resolve(String fieldPath, MessageOrBuilder view, ProtoFieldMapperImpl mapper) {
-        if (!FIELD_PATH.matcher(fieldPath).matches())
+        if (!isFieldPath(fieldPath))
             return new Unresolved("field_path must be dot-separated field names of the document, got '" + fieldPath + "'");
-        var root = fieldPath.contains(".") ? fieldPath.substring(0, fieldPath.indexOf('.')) : fieldPath;
+        int dot = fieldPath.indexOf('.');
+        var root = dot >= 0 ? fieldPath.substring(0, dot) : fieldPath;
         if (view.getDescriptorForType().findFieldByName(root) == null)
             return new Unresolved("field_path " + fieldPath + " does not start at a field of "
                     + view.getDescriptorForType().getFullName());

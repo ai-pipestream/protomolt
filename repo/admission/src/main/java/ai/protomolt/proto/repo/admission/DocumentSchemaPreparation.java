@@ -32,7 +32,8 @@ final class DocumentSchemaPreparation {
             control.run();
         };
         active.run();
-        if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
+        if (request.commandSha256().size() != 32
+                || !ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(request.policySha256()))
             throw new IllegalArgumentException("exact command and policy digests required");
         if (request.fragments().size() > limits.maxFragments())
             throw new IllegalArgumentException("member admission count exceeds limit");
