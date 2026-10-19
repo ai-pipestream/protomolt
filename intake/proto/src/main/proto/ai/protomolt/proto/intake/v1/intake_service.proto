@@ -53,6 +53,20 @@ message RawPayload {
   string mime_type = 3;
 }
 
+// How intake handles an existing source identifier. Deletes still require a revision.
+enum IngestMode {
+  // Use the supplied expectation, or create-only when no expectation is supplied.
+  INGEST_MODE_UNSPECIFIED = 0;
+  // Require an absent document. A supplied expectation must be none=true.
+  INGEST_MODE_CREATE_ONLY = 1;
+  // Require a positive last-observed revision in expected.
+  INGEST_MODE_EXPECTED_REVISION = 2;
+  // Compare selected content and persisted metadata. Identical content returns the
+  // observed revision without writing; changes save against that revision once.
+  // A concurrent update fails ABORTED. Supplying expected is invalid in this mode.
+  INGEST_MODE_UPSERT = 3;
+}
+
 // Request to ingest one document through the unary lane.
 message IngestDocumentRequest {
   // The payload, in whichever form the caller already has it: a Document for
@@ -73,9 +87,11 @@ message IngestDocumentRequest {
   // Drive to save to. Must be within the key's allowed drives; default is
   // the account's "intake" drive.
   optional string drive = 4;
-  // Omit for create. Updates name the last observed revision. Retain this
-  // expectation on retries; intake never retries against a newer revision.
+  // Explicit revision expectation; interpreted according to mode. Retain this
+  // expectation on retries. UPSERT requires this field to be absent.
   ai.protomolt.proto.repo.v2.ExpectedRevision expected = 5;
+  // Controls creation, explicit revision updates, or read-compare-save.
+  IngestMode mode = 6;
   // Extensible key-value metadata forwarded onto the repo save
   // (extension-metadata map — see the convention in repo's document.proto).
   map<string, string> metadata = 99;
@@ -85,8 +101,10 @@ message IngestDocumentRequest {
 // FIRST frame of an IngestStream call; mirrors the targeting fields of
 // IngestDocumentRequest plus the RawPayload description fields.
 message IngestMetadata {
-  // Same expectation as the unary lane; omitted means create.
+  // Same expectation as the unary lane; UPSERT requires this to be absent.
   ai.protomolt.proto.repo.v2.ExpectedRevision expected = 5;
+  // Same mode semantics as the unary lane.
+  IngestMode mode = 6;
   // Datasource to ingest under; same scope rule as IngestDocumentRequest.
   string datasource_id = 1;
   // Drive to save to; default is the account's "intake" drive.
@@ -136,7 +154,7 @@ message IngestDocumentResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when an identical intake intent replayed its recorded outcome.
+  // True for a recorded intent replay or an UPSERT matching the observed revision.
   bool deduplicated = 7;
   // Exact committed repository revision, unchanged on an identical retry.
   int64 revision = 8;
@@ -160,7 +178,7 @@ message IngestStreamResponse {
   // Lowercase hex SHA-256 of the payload, computed server-side — the same
   // integrity proof repo's PutBlob returns.
   string sha256 = 6;
-  // True when an identical intake intent replayed its recorded outcome.
+  // True for a recorded intent replay or an UPSERT matching the observed revision.
   bool deduplicated = 7;
   // Exact committed repository revision, unchanged on an identical retry.
   int64 revision = 8;

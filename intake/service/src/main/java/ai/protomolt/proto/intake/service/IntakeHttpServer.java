@@ -233,16 +233,16 @@ public final class IntakeHttpServer implements AutoCloseable {
                         contentType == null || contentType.isBlank() ? "" : contentType.trim(),
                         Map.of(), expected.build());
         LOG.debug("HTTP intake saved doc_id={} ({} bytes, sha256={}, deduplicated={})",
-                saved.response().getAccession().getAddress().getDocId(), saved.payloadSize(), saved.sha256(),
-                saved.response().getReplayed());
+                saved.address().getDocId(), saved.payloadSize(), saved.sha256(),
+                saved.deduplicated());
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAccession().getAddress().getDocId())
-                .setRevision(saved.response().getAccession().getRevision())
-                .setAddress(saved.response().getAccession().getAddress())
+                .setDocId(saved.address().getDocId())
+                .setRevision(saved.revision())
+                .setAddress(saved.address())
                 .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getReplayed())
+                .setDeduplicated(saved.deduplicated())
                 .build();
     }
 

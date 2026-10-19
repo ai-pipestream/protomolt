@@ -103,7 +103,8 @@ public final class DocumentReads {
                 }
             }
             return GetDocumentResponse.newBuilder().setDocument(document)
-                    .setManifest(manifest(stored, selected)).setValidation(stored.getValidation()).build();
+                    .setManifest(manifest(stored, selected)).setValidation(stored.getValidation())
+                    .putAllMetadata(stored.getMetadataMap()).build();
         });
     }
 
