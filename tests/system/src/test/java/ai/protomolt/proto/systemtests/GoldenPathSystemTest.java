@@ -405,7 +405,7 @@ class GoldenPathSystemTest {
                 "parser_results", "blob_bag", "structured_data", "ownership", "doc_id_derivation"}) {
             catalog.put(Document.getDescriptor().getFullName(), skipped, ResolvedFieldHint.skipped());
         }
-        for (String skipped : new String[] {"semantic_results", "segmentations", "embedding_sets", "custom_fields", "metadata"}) {
+        for (String skipped : new String[] {"segmentations", "embedding_sets", "custom_fields", "metadata"}) {
             catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", skipped,
                     ResolvedFieldHint.skipped());
         }

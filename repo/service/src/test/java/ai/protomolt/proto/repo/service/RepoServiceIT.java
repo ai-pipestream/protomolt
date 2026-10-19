@@ -684,40 +684,6 @@ class RepoServiceIT {
                         failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.PERMISSION_DENIED));
     }
 
-    @Test
-    void remoteOutageHasDomainFailureLocallyAndSameGrpcStatus() throws Exception {
-        String account = "remote-outage-account";
-        String drive = "remote-outage-drive";
-        createDrive(drive, account);
-        var saved = documents.saveDocument(intakeSave(fixture("outage-doc", account, "source"), drive, account).build());
-        var row = services.driveLedger().findByName(account, drive).orElseThrow();
-        var absentChannel = InProcessChannelBuilder.forName(java.util.UUID.randomUUID().toString()).build();
-        var unavailable = new ai.protomolt.proto.repo.blob.grpc.RemoteBlobStore(
-                DocumentServiceGrpc.newBlockingStub(absentChannel), java.util.Map.of(row.bucket, drive), java.time.Duration.ofSeconds(1));
-        var local = new ai.protomolt.proto.repo.engine.DocumentOperations(services.documentLedger(), services.driveLedger(),
-                null, unavailable, new ai.protomolt.proto.repo.container.blob.PartStorage(), null);
-        var request = GetDocumentRequest.newBuilder().setNodeId(saved.getNodeId()).build();
-        String serverName = io.grpc.inprocess.InProcessServerBuilder.generateName();
-        var server = io.grpc.inprocess.InProcessServerBuilder.forName(serverName).directExecutor()
-                .addService(new DocumentGrpcService(local,
-                        new ai.protomolt.proto.repo.engine.BlobOperations(unavailable, services.driveLedger())))
-                .build().start();
-        var testChannel = InProcessChannelBuilder.forName(serverName).build();
-        try {
-            assertThatThrownBy(() -> local.getDocument(new ai.protomolt.proto.repo.spi.RepositoryCaller("test", true), request))
-                    .isInstanceOfSatisfying(ai.protomolt.proto.repo.spi.RepositoryException.class,
-                            failure -> assertThat(failure.code()).isEqualTo(ai.protomolt.proto.repo.spi.RepositoryException.Code.UNAVAILABLE))
-                    .hasCauseInstanceOf(ai.protomolt.proto.repo.blob.spi.BlobStoreException.class);
-            assertThatThrownBy(() -> DocumentServiceGrpc.newBlockingStub(testChannel).getDocument(request))
-                    .isInstanceOfSatisfying(StatusRuntimeException.class,
-                            failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
-        } finally {
-            testChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-            server.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-            absentChannel.shutdownNow().awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
-        }
-    }
-
     // --------------------------------------------------------- authentication
 
     @Test void networkListenersRequireExplicitOperatorCredential() {

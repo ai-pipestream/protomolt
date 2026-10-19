@@ -65,7 +65,7 @@ import java.util.UUID;
  * strings), plus {@code doc_id}, {@code result_id} and {@code segmentation_id}, {@code chunk_id}
  * and {@code segment_id}, {@code chunk_number}, {@code chunk_text}, and {@code models} (the
  * vector names on the point). Mapping paths under {@code search_metadata.segmentations},
- * {@code search_metadata.embedding_sets}, and legacy {@code search_metadata.semantic_results}
+ * and {@code search_metadata.embedding_sets}
  * are skipped — segment-level data is attached per point, not flattened onto every one.
  *
  * <p>Validation on write: {@link #map} first runs the document through the platform's
@@ -75,8 +75,7 @@ import java.util.UUID;
  * apply on their write paths.
  *
  * <p>Vector hints: when the mapping declares a VECTOR field for the embeddings
- * ({@code search_metadata.embedding_sets.vectors.values}, legacy
- * {@code search_metadata.semantic_results.chunks.embeddings.vector}, or the mapping's only
+ * ({@code search_metadata.embedding_sets.vectors.values}, or the mapping's only
  * VECTOR field), its {@code vector_dims} and {@code vector_similarity} are enforced against
  * every embedding set — the same hint vocabulary OpenSearch ({@code knn_vector}/{@code space_type})
  * and Lucene consume. With no hint, sizes and distances come from the {@link EmbeddingSet}s
@@ -88,7 +87,6 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
     /** Mapping-path prefixes whose values belong to individual points, not the shared payload. */
     private static final String SEGMENTATIONS_PREFIX = "search_metadata.segmentations";
     private static final String EMBEDDING_SETS_PREFIX = "search_metadata.embedding_sets";
-    private static final String SEMANTIC_RESULTS_PREFIX = "search_metadata.semantic_results";
 
     private final ProtoFieldMapper fieldMapper;
     private final AnyIndexing anyIndexing;
@@ -376,7 +374,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
 
     /**
      * The mapping's vector hint for segment embeddings: the VECTOR field under
-     * {@code search_metadata.embedding_sets} (or legacy {@code search_metadata.semantic_results})
+     * {@code search_metadata.embedding_sets}
      * when one is declared, otherwise the mapping's only VECTOR field. Empty when the mapping
      * declares no usable vector hint (or several ambiguous ones outside the semantic subtrees).
      */
@@ -388,8 +386,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
                 continue;
             }
             all.add(field.hint());
-            if (field.path().startsWith(EMBEDDING_SETS_PREFIX + ".")
-                    || field.path().startsWith(SEMANTIC_RESULTS_PREFIX + ".")) {
+            if (field.path().startsWith(EMBEDDING_SETS_PREFIX + ".")) {
                 semantic.add(field.hint());
             }
         }
@@ -462,8 +459,7 @@ public final class QdrantPointMapper implements SearchEngineIndexer {
 
     private static boolean isSemanticSubtree(String path) {
         return isUnderPrefix(path, SEGMENTATIONS_PREFIX)
-                || isUnderPrefix(path, EMBEDDING_SETS_PREFIX)
-                || isUnderPrefix(path, SEMANTIC_RESULTS_PREFIX);
+                || isUnderPrefix(path, EMBEDDING_SETS_PREFIX);
     }
 
     private static boolean isUnderPrefix(String path, String prefix) {
