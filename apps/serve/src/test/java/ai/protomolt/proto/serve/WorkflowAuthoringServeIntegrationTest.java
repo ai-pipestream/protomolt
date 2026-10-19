@@ -13,10 +13,13 @@ import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.PartManifestEntry;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.RevisionValidation;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.ValidationStatus;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAcceptanceFixture;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringPolicy;
 import ai.protomolt.proto.samples.starter.v1.WorkflowPermittedCall;
@@ -403,11 +406,22 @@ class WorkflowAuthoringServeIntegrationTest {
     /**
      * The v2 DocumentService contract over in-memory documents: current-revision reads
      * and compare-and-set saves answering ABORTED with a RevisionConflict detail on a
-     * stale expectation.
+     * stale expectation, with contract-valid responses.
      */
     private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
         private final Map<String, ai.protomolt.proto.repo.v1.Document> documents = new ConcurrentHashMap<>();
         private final Map<String, Long> revisions = new ConcurrentHashMap<>();
+
+        private static final com.google.protobuf.Timestamp COMMITTED_AT =
+                com.google.protobuf.Timestamp.newBuilder().setSeconds(1786449600L).build();
+        private static final SaveOwner OWNER = SaveOwner.newBuilder().setIntake(
+                IntakeOrigin.newBuilder().setDatasourceId("serve-it")).build();
+        private static final RevisionValidation VALIDATION = RevisionValidation.newBuilder()
+                .setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
+                .setCandidateSha256("0".repeat(64))
+                .setValidatorProfile("serve-it")
+                .setProcessAuthority(ProcessAuthorityEvidence.newBuilder().setPrincipal("serve-it"))
+                .build();
 
         @Override public void getDocument(GetDocumentRequest request,
                                           StreamObserver<GetDocumentResponse> observer) {
@@ -417,14 +431,9 @@ class WorkflowAuthoringServeIntegrationTest {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            var manifest = DocumentManifest.newBuilder().setAddress(request.getAddress())
-                    .setRevision(revisions.get(key))
-                    .addParts(PartManifestEntry.newBuilder()
-                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
-                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
-                            .setOwner(SaveOwner.newBuilder().setIntake(
-                                    IntakeOrigin.newBuilder().setDatasourceId("serve-it"))));
-            observer.onNext(GetDocumentResponse.newBuilder().setDocument(document).setManifest(manifest).build());
+            observer.onNext(GetDocumentResponse.newBuilder().setDocument(document)
+                    .setManifest(manifest(request.getAddress(), revisions.get(key)))
+                    .setValidation(VALIDATION).build());
             observer.onCompleted();
         }
 
@@ -446,9 +455,23 @@ class WorkflowAuthoringServeIntegrationTest {
             revisions.put(key, current + 1);
             observer.onNext(SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
                     .setAccession(Accession.newBuilder().setAddress(request.getTarget().getAddress())
-                            .setRevision(current + 1).setPreviousRevision(current))
+                            .setRevision(current + 1).setPreviousRevision(current)
+                            .setCommittedAt(COMMITTED_AT)
+                            .setManifest(manifest(request.getTarget().getAddress(), current + 1))
+                            .setValidation(VALIDATION)
+                            .setOwner(OWNER))
                     .build());
             observer.onCompleted();
+        }
+
+        private static DocumentManifest manifest(
+                ai.protomolt.proto.repo.v1.NodeAddress address, long revision) {
+            return DocumentManifest.newBuilder().setAddress(address).setRevision(revision)
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(revision)
+                            .setOwner(OWNER))
+                    .build();
         }
 
         private static String key(ai.protomolt.proto.repo.v1.NodeAddress address) {

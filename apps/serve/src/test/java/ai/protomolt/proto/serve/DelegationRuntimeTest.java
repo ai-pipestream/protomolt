@@ -18,11 +18,15 @@ import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.PartManifestEntry;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.RevisionValidation;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.ValidationStatus;
 import com.google.protobuf.Any;
+import com.google.protobuf.Timestamp;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -266,6 +270,17 @@ class DelegationRuntimeTest {
         private volatile SaveDocumentRequest lastSave;
         private volatile boolean hangReads;
 
+        private static final Timestamp COMMITTED_AT =
+                Timestamp.newBuilder().setSeconds(1786449600L).build();
+        private static final SaveOwner OWNER = SaveOwner.newBuilder()
+                .setIntake(IntakeOrigin.newBuilder().setDatasourceId("serve-test")).build();
+        private static final RevisionValidation VALIDATION = RevisionValidation.newBuilder()
+                .setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
+                .setCandidateSha256("0".repeat(64))
+                .setValidatorProfile("serve-test")
+                .setProcessAuthority(ProcessAuthorityEvidence.newBuilder().setPrincipal("serve-test"))
+                .build();
+
         @Override
         public synchronized void getDocument(GetDocumentRequest request,
                                              StreamObserver<GetDocumentResponse> observer) {
@@ -276,14 +291,9 @@ class DelegationRuntimeTest {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            var manifest = DocumentManifest.newBuilder().setAddress(request.getAddress())
-                    .setRevision(revision)
-                    .addParts(PartManifestEntry.newBuilder()
-                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
-                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
-                            .setOwner(SaveOwner.newBuilder().setIntake(
-                                    IntakeOrigin.newBuilder().setDatasourceId("serve-test"))));
-            observer.onNext(GetDocumentResponse.newBuilder().setDocument(stored).setManifest(manifest).build());
+            observer.onNext(GetDocumentResponse.newBuilder().setDocument(stored)
+                    .setManifest(manifest(request.getAddress(), revision))
+                    .setValidation(VALIDATION).build());
             observer.onCompleted();
         }
 
@@ -304,9 +314,23 @@ class DelegationRuntimeTest {
             revision++;
             observer.onNext(SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
                     .setAccession(Accession.newBuilder().setAddress(request.getTarget().getAddress())
-                            .setRevision(revision).setPreviousRevision(expected))
+                            .setRevision(revision).setPreviousRevision(expected)
+                            .setCommittedAt(COMMITTED_AT)
+                            .setManifest(manifest(request.getTarget().getAddress(), revision))
+                            .setValidation(VALIDATION)
+                            .setOwner(OWNER))
                     .build());
             observer.onCompleted();
+        }
+
+        private static DocumentManifest manifest(
+                ai.protomolt.proto.repo.v1.NodeAddress address, long revision) {
+            return DocumentManifest.newBuilder().setAddress(address).setRevision(revision)
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(revision)
+                            .setOwner(OWNER))
+                    .build();
         }
     }
 }

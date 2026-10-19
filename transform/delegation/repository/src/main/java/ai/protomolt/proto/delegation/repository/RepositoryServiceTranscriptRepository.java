@@ -136,7 +136,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
             }
             throw e;
         }
-        rejectUnknown(response);
+        validateWire(response);
         long revision = RepositoryStateDocuments.confirmLoaded(request, response, "transcript");
         EncryptedRepositoryState envelope = RepositoryStateDocuments.envelopeOf(response.getDocument(), "transcript");
         byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
@@ -171,7 +171,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
         // makes this instance writable again, even if dispatch exits abnormally.
         failed = true;
         SaveDocumentResponse response = callInRepositoryContext(() -> callStub().saveDocument(request));
-        rejectUnknown(response);
+        validateWire(response);
         confirmedRevision = RepositoryStateDocuments.confirmSaved(request, response, "transcript");
         confirmed = transcript;
         failed = false;

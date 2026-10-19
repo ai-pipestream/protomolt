@@ -21,12 +21,16 @@ import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.PartManifestEntry;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.RevisionValidation;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.ValidationStatus;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import com.google.protobuf.Any;
+import com.google.protobuf.Timestamp;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.ManagedChannel;
@@ -488,7 +492,7 @@ class RepositoryServiceTranscriptRepositoryTest {
 
         service.readFault = ReadFault.ZERO_REVISION;
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("did not confirm");
+                .hasMessageContaining("repository protocol validation failed");
         service.readFault = ReadFault.NONE;
 
         service.readFault = ReadFault.WRONG_DOC_ID;
@@ -512,6 +516,26 @@ class RepositoryServiceTranscriptRepositoryTest {
             assertThatThrownBy(() -> writer.save(acceptedTranscript("write response " + fault)))
                     .as("fault %s", fault).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(writer::load).as("fault %s poisons writer", fault)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
+        }
+    }
+
+    /** A contract-invalid acknowledgement fails ProtoValidator before any identity check. */
+    @Test
+    void contractInvalidWriteAcknowledgementFailsValidationAndPoisonsTheWriter() {
+        for (WriteFault fault : java.util.List.of(WriteFault.MISSING_ACCESSION,
+                WriteFault.MISSING_COMMITTED_AT, WriteFault.MISSING_OWNER)) {
+            service.resetWriteFaults();
+            RepositoryServiceTranscriptRepository writer = repository();
+            service.writeFault = fault;
+            assertThatThrownBy(() -> writer.save(acceptedTranscript("write response " + fault)))
+                    .as("fault %s", fault)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("repository protocol validation failed");
+            assertThatThrownBy(writer::load).as("fault %s poisons writer", fault)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
+            assertThatThrownBy(() -> writer.save(acceptedTranscript("retry after " + fault)))
+                    .as("fault %s keeps writer failed", fault)
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
         }
     }
@@ -627,7 +651,8 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     private enum WriteFault {
-        NONE, WRONG_REVISION, WRONG_ADDRESS, WRONG_OPERATION, REPLAYED, UNKNOWN_FIELD
+        NONE, WRONG_REVISION, WRONG_ADDRESS, WRONG_OPERATION, REPLAYED, UNKNOWN_FIELD,
+        MISSING_ACCESSION, MISSING_COMMITTED_AT, MISSING_OWNER
     }
 
     private enum ReadFault {
@@ -670,6 +695,33 @@ class RepositoryServiceTranscriptRepositoryTest {
             return gate;
         }
 
+        /** A contract-valid accession timestamp; the exact instant carries no meaning. */
+        private static final Timestamp COMMITTED_AT =
+                Timestamp.newBuilder().setSeconds(1786449600L).build();
+        /** A contract-valid save owner for fixture manifests and accessions. */
+        private static final SaveOwner OWNER = SaveOwner.newBuilder()
+                .setIntake(IntakeOrigin.newBuilder().setDatasourceId("seed")).build();
+        /** A contract-valid typed-valid validation record with process authority. */
+        private static final RevisionValidation VALIDATION = RevisionValidation.newBuilder()
+                .setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
+                .setCandidateSha256("0".repeat(64))
+                .setValidatorProfile("transcript-repository-test")
+                .setProcessAuthority(ProcessAuthorityEvidence.newBuilder()
+                        .setPrincipal("transcript-repository-test"))
+                .build();
+
+        /** A contract-valid manifest pinning one present CORE part at {@code revision}. */
+        private static DocumentManifest manifest(
+                ai.protomolt.proto.repo.v1.NodeAddress address, long revision) {
+            return DocumentManifest.newBuilder().setAddress(address).setRevision(revision)
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT)
+                            .setWrittenInRevision(revision > 0 ? revision : 1)
+                            .setOwner(OWNER))
+                    .build();
+        }
+
         @Override
         public synchronized void getDocument(GetDocumentRequest request,
                                              StreamObserver<GetDocumentResponse> observer) {
@@ -681,13 +733,8 @@ class RepositoryServiceTranscriptRepositoryTest {
             var address = readFault == ReadFault.WRONG_ADDRESS
                     ? request.getAddress().toBuilder().setDocId("wrong/document").build()
                     : request.getAddress();
-            var manifest = DocumentManifest.newBuilder().setAddress(address)
-                    .setRevision(readFault == ReadFault.ZERO_REVISION ? 0 : revision)
-                    .addParts(PartManifestEntry.newBuilder()
-                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
-                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
-                            .setOwner(SaveOwner.newBuilder().setIntake(
-                                    IntakeOrigin.newBuilder().setDatasourceId("seed"))));
+            var manifest = manifest(address,
+                    readFault == ReadFault.ZERO_REVISION ? 0 : revision);
             var document = stored;
             if (readFault == ReadFault.WRONG_DOC_ID) {
                 document = document.toBuilder().setDocId("wrong/document").build();
@@ -697,7 +744,8 @@ class RepositoryServiceTranscriptRepositoryTest {
                         .setTypeUrl("type.googleapis.com/wrong.Type")
                         .setValue(document.getStructuredData().getValue())).build();
             }
-            var response = GetDocumentResponse.newBuilder().setDocument(document).setManifest(manifest);
+            var response = GetDocumentResponse.newBuilder().setDocument(document)
+                    .setManifest(manifest).setValidation(VALIDATION);
             if (readFault == ReadFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
             observer.onNext(response.build());
             observer.onCompleted();
@@ -743,17 +791,28 @@ class RepositoryServiceTranscriptRepositoryTest {
 
                 stored = request.getDocument();
                 revision++;
+                var address = writeFault == WriteFault.WRONG_ADDRESS
+                        ? request.getTarget().getAddress().toBuilder().setDocId("wrong/document").build()
+                        : request.getTarget().getAddress();
                 var accession = Accession.newBuilder()
-                        .setAddress(writeFault == WriteFault.WRONG_ADDRESS
-                                ? request.getTarget().getAddress().toBuilder().setDocId("wrong/document").build()
-                                : request.getTarget().getAddress())
+                        .setAddress(address)
                         .setRevision(writeFault == WriteFault.WRONG_REVISION ? revision + 1 : revision)
-                        .setPreviousRevision(expected);
+                        .setPreviousRevision(expected)
+                        .setManifest(manifest(address, revision))
+                        .setValidation(VALIDATION);
+                if (writeFault != WriteFault.MISSING_COMMITTED_AT) {
+                    accession.setCommittedAt(COMMITTED_AT);
+                }
+                if (writeFault != WriteFault.MISSING_OWNER) {
+                    accession.setOwner(OWNER);
+                }
                 var response = SaveDocumentResponse.newBuilder()
                         .setOperationId(writeFault == WriteFault.WRONG_OPERATION
                                 ? "tampered-operation" : request.getOperationId())
-                        .setAccession(accession)
                         .setReplayed(writeFault == WriteFault.REPLAYED);
+                if (writeFault != WriteFault.MISSING_ACCESSION) {
+                    response.setAccession(accession);
+                }
                 if (writeFault == WriteFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
                 writeResponse = response.build();
                 committedGate = afterCommitGate.getAndSet(null);

@@ -25,9 +25,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Stores an encrypted cluster directory event log as one v2 repository document whose
- * CORE part carries the envelope in {@code structured_data}. Every save reads the
- * current revision and compares-and-sets on it (ExpectedRevision none while absent),
- * retrying once when a concurrent write lands in between.
+ * CORE part carries the envelope in {@code structured_data}. Every save
+ * compares-and-sets on the revision this process last confirmed (ExpectedRevision none
+ * while no write is confirmed), so a save only ever replaces the state its candidate was
+ * derived from. A conflicting ABORTED means another writer committed events this process
+ * never loaded; the conflict surfaces rather than overwriting them, and recovery is a
+ * fresh load through a new directory.
  */
 public final class RepositoryServiceClusterEventRepository
         implements ClusterEventRepository {
@@ -51,6 +54,8 @@ public final class RepositoryServiceClusterEventRepository
     private final String keyReference;
     private final EncryptedRepositoryStateCodec codec;
     private final Duration timeout;
+    /** The revision the next save's candidate is derived from; 0 while none is confirmed. */
+    private long confirmedRevision;
 
     /** Creates a repository using the default encrypted-state codec limits and timeout. */
     public RepositoryServiceClusterEventRepository(
@@ -104,14 +109,16 @@ public final class RepositoryServiceClusterEventRepository
     }
 
     @Override
-    public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
+    public synchronized Optional<StoredDirectory> load(ClusterDescriptor cluster) {
         ClusterValidation.validate(cluster);
         var response = readCurrent();
         if (response.isEmpty()) {
+            confirmedRevision = 0;
             return Optional.empty();
         }
         var pair = response.get();
-        RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
+        long revision =
+                RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
         EncryptedRepositoryState envelope =
                 RepositoryStateDocuments.envelopeOf(pair.getValue().getDocument(), "cluster event log");
         byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
@@ -139,11 +146,12 @@ public final class RepositoryServiceClusterEventRepository
         } catch (RuntimeException e) {
             throw corrupt("stored cluster event log failed validation", e);
         }
+        confirmedRevision = revision;
         return Optional.of(directory);
     }
 
     @Override
-    public void save(ClusterDescriptor cluster, StoredDirectory directory) {
+    public synchronized void save(ClusterDescriptor cluster, StoredDirectory directory) {
         ClusterValidation.validate(cluster);
         ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
         ClusterEventLog.Builder builder = ClusterEventLog.newBuilder()
@@ -157,35 +165,38 @@ public final class RepositoryServiceClusterEventRepository
         ValidationResult.validate(eventLog).throwIfInvalid();
         EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
                 CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
-        // Compare-and-set on the revision read just before the write; one re-read when
-        // a concurrent save lands in between. A second conflict means real contention.
-        for (int attempt = 0; ; attempt++) {
-            long current = currentRevision();
-            var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, current);
-            final SaveDocumentResponse response;
-            try {
-                response = within().saveDocument(request);
-            } catch (StatusRuntimeException e) {
-                if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
-                    // The write may still land server-side. That is safe to leave: the caller
-                    // does not install the candidate, and the next mutation re-reads the
-                    // current revision and rewrites the whole log from the state this
-                    // process still considers current.
-                    throw unreachable("accept", e);
-                }
-                if (e.getStatus().getCode() == Status.Code.ABORTED && attempt == 0) {
-                    continue;
-                }
-                throw e;
+        // Compare-and-set on the revision this candidate was derived from, never on a
+        // revision read after the fact: a fresh read could already carry another writer's
+        // events, and replacing it would silently drop them. A conflicting ABORTED means
+        // exactly that race, so it surfaces for recovery rather than being retried with
+        // this stale candidate.
+        var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
+        final SaveDocumentResponse response;
+        try {
+            response = within().saveDocument(request);
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                // The write may still land server-side. That is safe to leave: the caller
+                // does not install the candidate, and if it did land the next save
+                // conflicts on the stale baseline and surfaces for recovery instead of
+                // overwriting it.
+                throw unreachable("accept", e);
             }
-            RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
-            return;
+            if (e.getStatus().getCode() == Status.Code.ABORTED) {
+                throw conflict(e);
+            }
+            throw e;
         }
+        confirmedRevision =
+                RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
     }
 
-    /** The committed revision of the state document, or 0 when it does not exist yet. */
-    private long currentRevision() {
-        return readCurrent().map(pair -> pair.getValue().getManifest().getRevision()).orElse(0L);
+    private static IllegalStateException conflict(StatusRuntimeException cause) {
+        return new IllegalStateException(
+                "repository service reported a conflicting write to the cluster event log: "
+                        + "another writer committed events this process has not loaded, and "
+                        + "overwriting them would drop them; recovery requires a fresh load "
+                        + "through a new directory", cause);
     }
 
     private Optional<Map.Entry<GetDocumentRequest, GetDocumentResponse>> readCurrent() {

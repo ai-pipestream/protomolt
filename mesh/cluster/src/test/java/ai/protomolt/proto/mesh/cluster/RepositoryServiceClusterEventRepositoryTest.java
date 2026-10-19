@@ -6,7 +6,6 @@ import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.mesh.cluster.v1.DirectoryCheckpoint;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v2.Accession;
 import ai.protomolt.proto.repo.v2.DocumentManifest;
 import ai.protomolt.proto.repo.v2.DocumentPart;
@@ -178,24 +177,50 @@ class RepositoryServiceClusterEventRepositoryTest {
     }
 
     @Test
-    void aConcurrentWriteRetriesOnceAgainstTheNewRevision() {
-        ClusterDirectory source = new ClusterDirectory(ClusterFixtures.cluster(),
+    void aCompetingWriterSurfacesAConflictAndTheCommittedLogSurvives() {
+        var cluster = ClusterFixtures.cluster();
+        ClusterDirectory first = new ClusterDirectory(cluster,
                 new ClusterFixtures.MutableClock(ClusterFixtures.T0));
-        source.register(ClusterFixtures.node("node-1"));
-        // Another writer commits between this save's read and its compare-and-set.
-        service.interfereOnce = true;
+        first.register(ClusterFixtures.node("node-first"));
+        ClusterDirectory second = new ClusterDirectory(cluster,
+                new ClusterFixtures.MutableClock(ClusterFixtures.T0));
+        second.register(ClusterFixtures.node("node-second"));
+        RepositoryServiceClusterEventRepository winner = repository();
+        RepositoryServiceClusterEventRepository competitor = repository();
+        assertThat(winner.load(cluster)).isEmpty();
+        assertThat(competitor.load(cluster)).isEmpty();
+        winner.save(cluster, ClusterEventRepository.StoredDirectory.of(first.events()));
 
-        repository().save(ClusterFixtures.cluster(),
-                ClusterEventRepository.StoredDirectory.of(source.events()));
-
+        // The competitor's candidate was derived from the same empty baseline; committing
+        // it would drop the winner's event, so the conflict must surface instead.
+        assertThatThrownBy(() -> competitor.save(cluster,
+                ClusterEventRepository.StoredDirectory.of(second.events())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conflicting write")
+                .hasMessageContaining("fresh load");
         assertThat(service.saveCalls).isEqualTo(2);
+        assertThat(service.revision).isEqualTo(1);
+
+        // The conflicted instance stays conflicted rather than retrying its stale
+        // candidate; only a fresh load recovers.
+        assertThatThrownBy(() -> competitor.save(cluster,
+                ClusterEventRepository.StoredDirectory.of(second.events())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conflicting write");
+        assertThat(service.saveCalls).isEqualTo(3);
+
+        // The winner's confirmed baseline advanced, so its next save compare-and-sets on
+        // revision 1, and the committed log keeps every event it ever wrote.
+        first.register(ClusterFixtures.node("node-first-2"));
+        winner.save(cluster, ClusterEventRepository.StoredDirectory.of(first.events()));
+        assertThat(service.lastSave.getExpected().getRevision()).isEqualTo(1);
         assertThat(service.revision).isEqualTo(2);
-        assertThat(repository().load(ClusterFixtures.cluster()))
-                .get().satisfies(loaded -> assertThat(loaded.events()).isEqualTo(source.events()));
+        assertThat(repository().load(cluster)).get()
+                .satisfies(loaded -> assertThat(loaded.events()).isEqualTo(first.events()));
     }
 
     @Test
-    void aPersistentConflictSurfacesAbortedAfterExactlyOneRetry() {
+    void aConflictSurfacesWithoutRetryingTheStaleCandidate() {
         ClusterDirectory source = new ClusterDirectory(ClusterFixtures.cluster(),
                 new ClusterFixtures.MutableClock(ClusterFixtures.T0));
         source.register(ClusterFixtures.node("node-1"));
@@ -203,14 +228,17 @@ class RepositoryServiceClusterEventRepositoryTest {
 
         assertThatThrownBy(() -> repository().save(ClusterFixtures.cluster(),
                 ClusterEventRepository.StoredDirectory.of(source.events())))
-                .isInstanceOfSatisfying(io.grpc.StatusRuntimeException.class, failure -> {
-                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.ABORTED);
-                    var status = StatusProto.fromThrowable(failure);
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conflicting write")
+                .satisfies(error -> {
+                    var cause = (io.grpc.StatusRuntimeException) error.getCause();
+                    assertThat(cause.getStatus().getCode()).isEqualTo(Status.Code.ABORTED);
+                    var status = StatusProto.fromThrowable(cause);
                     assertThat(status).isNotNull();
                     assertThat(status.getDetailsList()).anySatisfy(detail ->
                             assertThat(detail.is(RevisionConflict.class)).isTrue());
                 });
-        assertThat(service.saveCalls).isEqualTo(2);
+        assertThat(service.saveCalls).isEqualTo(1);
     }
 
     private RepositoryServiceClusterEventRepository repository() {
@@ -234,8 +262,7 @@ class RepositoryServiceClusterEventRepositoryTest {
     /**
      * The v2 DocumentService contract over one in-memory document: current-revision
      * reads and compare-and-set saves answering ABORTED with a RevisionConflict detail
-     * on a stale expectation. Fault hooks stall answers or inject a conflicting write
-     * between the client's read and its compare-and-set.
+     * on a stale expectation. Fault hooks stall answers or conflict every write.
      */
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
@@ -245,8 +272,6 @@ class RepositoryServiceClusterEventRepositoryTest {
         private volatile int saveCalls;
         /** Accepts the call and never answers it, the way a wedged repository behaves. */
         private volatile boolean stall;
-        /** Commits an unrelated write the first time a save's expectation is checked. */
-        private volatile boolean interfereOnce;
         private volatile boolean alwaysConflict;
 
         @Override
@@ -278,11 +303,6 @@ class RepositoryServiceClusterEventRepositoryTest {
             if (stall) {
                 return;
             }
-            if (interfereOnce) {
-                interfereOnce = false;
-                stored = stateDocument("interference");
-                revision++;
-            }
             long expected = request.getExpected().hasNone() ? 0 : request.getExpected().getRevision();
             if (alwaysConflict || (stored == null ? expected != 0 : revision != expected)) {
                 var detail = RevisionConflict.newBuilder().setAddress(request.getTarget().getAddress())
@@ -299,12 +319,6 @@ class RepositoryServiceClusterEventRepositoryTest {
                             .setRevision(revision).setPreviousRevision(expected))
                     .build());
             observer.onCompleted();
-        }
-
-        private static Document stateDocument(String marker) {
-            return Document.newBuilder().setDocId(OBJECT_KEY + "-" + marker)
-                    .setOwnership(OwnershipContext.newBuilder().setAccountId(DRIVE).setDatasourceId(OBJECT_KEY))
-                    .build();
         }
     }
 }

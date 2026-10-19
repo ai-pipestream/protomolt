@@ -29,20 +29,8 @@ import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
 import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
-import ai.protomolt.proto.repo.v2.Accession;
-import ai.protomolt.proto.repo.v2.DocumentManifest;
-import ai.protomolt.proto.repo.v2.DocumentPart;
-import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v2.GetDocumentRequest;
-import ai.protomolt.proto.repo.v2.GetDocumentResponse;
-import ai.protomolt.proto.repo.v2.IntakeOrigin;
-import ai.protomolt.proto.repo.v2.PartManifestEntry;
-import ai.protomolt.proto.repo.v2.PartSelector;
-import ai.protomolt.proto.repo.v2.PartState;
-import ai.protomolt.proto.repo.v2.RevisionConflict;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
-import ai.protomolt.proto.repo.v2.SaveOwner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -678,15 +666,10 @@ class AuthoringWorkerDiscoveryProcessTest {
     }
 
     /**
-     * The v2 DocumentService contract over in-memory documents: current-revision reads
-     * and compare-and-set saves answering ABORTED with a RevisionConflict detail on a
-     * stale expectation. Committed transcripts stay inspectable to the test through the
-     * same client-side encryption the coordinator applies.
+     * The shared in-memory v2 document store with a gate that holds the candidate
+     * acknowledgement until the test releases it.
      */
-    private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private final Map<String, ai.protomolt.proto.repo.v1.Document> documents =
-                new java.util.concurrent.ConcurrentHashMap<>();
-        private final Map<String, Long> revisions = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final class FakeDocumentService extends FakeRepositoryDocumentService {
         private final AtomicReference<TranscriptGate> candidateGate = new AtomicReference<>();
 
         TranscriptGate blockCandidateAcknowledgement() {
@@ -698,42 +681,10 @@ class AuthoringWorkerDiscoveryProcessTest {
             return gate;
         }
 
-        @Override public void getDocument(GetDocumentRequest request,
-                StreamObserver<GetDocumentResponse> observer) {
-            String key = key(request.getAddress());
-            var document = documents.get(key);
-            if (document == null) {
-                observer.onError(Status.NOT_FOUND.asRuntimeException());
-                return;
-            }
-            var manifest = DocumentManifest.newBuilder().setAddress(request.getAddress())
-                    .setRevision(revisions.get(key))
-                    .addParts(PartManifestEntry.newBuilder()
-                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
-                            .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(1)
-                            .setOwner(SaveOwner.newBuilder().setIntake(
-                                    IntakeOrigin.newBuilder().setDatasourceId("samples-test"))));
-            observer.onNext(GetDocumentResponse.newBuilder().setDocument(document)
-                    .setManifest(manifest).build());
-            observer.onCompleted();
-        }
-
-        @Override public synchronized void saveDocument(SaveDocumentRequest request,
+        @Override protected boolean afterSave(SaveDocumentRequest request,
                 StreamObserver<SaveDocumentResponse> observer) {
-            String objectKey = key(request.getTarget().getAddress());
-            long current = revisions.getOrDefault(objectKey, 0L);
-            long expected = request.getExpected().hasNone() ? 0 : request.getExpected().getRevision();
-            if (current != expected) {
-                var detail = RevisionConflict.newBuilder().setAddress(request.getTarget().getAddress())
-                        .setExpected(request.getExpected()).setCurrentRevision(current).build();
-                observer.onError(io.grpc.protobuf.StatusProto.toStatusRuntimeException(
-                        com.google.rpc.Status.newBuilder().setCode(Status.Code.ABORTED.value())
-                                .setMessage("conditional write conflict")
-                                .addDetails(com.google.protobuf.Any.pack(detail)).build()));
-                return;
-            }
-            documents.put(objectKey, request.getDocument());
-            revisions.put(objectKey, current + 1);
+            String objectKey = request.getTarget().getAddress().getAccountId()
+                    + "/" + request.getTarget().getAddress().getDocId();
             if (objectKey.equals("protomolt/delegation/serve/transcript.pb.enc")) {
                 Transcript saved = decryptTranscript(request.getDocument());
                 boolean hasCandidate = saved.getEntriesList().stream()
@@ -749,20 +700,16 @@ class AuthoringWorkerDiscoveryProcessTest {
                             observer.onError(Status.DEADLINE_EXCEEDED
                                     .withDescription("test transcript acknowledgement gate timed out")
                                     .asRuntimeException());
-                            return;
+                            return false;
                         }
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                         observer.onError(Status.CANCELLED.asRuntimeException());
-                        return;
+                        return false;
                     }
                 }
             }
-            observer.onNext(SaveDocumentResponse.newBuilder().setOperationId(request.getOperationId())
-                    .setAccession(Accession.newBuilder().setAddress(request.getTarget().getAddress())
-                            .setRevision(current + 1).setPreviousRevision(current))
-                    .build());
-            observer.onCompleted();
+            return true;
         }
 
         private static Transcript decryptTranscript(ai.protomolt.proto.repo.v1.Document document) {
@@ -779,10 +726,6 @@ class AuthoringWorkerDiscoveryProcessTest {
             } catch (Exception failure) {
                 throw new IllegalStateException("test repository could not inspect committed transcript", failure);
             }
-        }
-
-        private static String key(ai.protomolt.proto.repo.v1.NodeAddress address) {
-            return address.getAccountId() + "/" + address.getDocId();
         }
     }
 }
