@@ -21,18 +21,6 @@ import ai.protomolt.proto.workflow.authoring.FileSystemWorkflowPreparationReposi
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringServiceGrpc;
 import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -44,9 +32,7 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.grpc.Status;
 import io.grpc.stub.MetadataUtils;
-import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -110,7 +96,7 @@ class AuthoringWorkflowWorkerCrashProcessTest {
         java.sql.Connection barrier = null;
         try {
             postgres.start();
-            repository = ServerBuilder.forPort(0).addService(new FakeDocumentService()).build().start();
+            repository = ServerBuilder.forPort(0).addService(new FakeRepositoryDocumentService()).build().start();
             Path fixtureRecords = directory.resolve("fixture-records");
             Path fixtureLog = directory.resolve("fixture.log");
             int fixturePort = freePort();
@@ -648,62 +634,6 @@ class AuthoringWorkflowWorkerCrashProcessTest {
                 process.destroyForcibly();
                 process.waitFor(5, TimeUnit.SECONDS);
             }
-        }
-    }
-
-    private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private final Map<String, StoredObject> objects = new java.util.concurrent.ConcurrentHashMap<>();
-        @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-            StoredObject stored = objects.get(key(request.getStorageRef().getDriveName(),
-                    request.getStorageRef().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobResponse.newBuilder().setData(stored.bytes()).setSizeBytes(stored.bytes().size())
-                    .setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-            ByteString bytes = request.getData();
-            objects.put(key(request.getDriveName(), request.getObjectKey()),
-                    new StoredObject(bytes, request.getMimeType()));
-            observer.onNext(PutBlobResponse.newBuilder().setStorageRef(
-                    FileStorageReference.newBuilder().setDriveName(request.getDriveName())
-                            .setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(bytes.size()).setSha256(sha256Unchecked(bytes.toByteArray())).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
-                StreamObserver<GetBlobForUpdateResponse> observer) {
-            StoredObject stored = objects.get(key(request.getKey().getDriveName(), request.getKey().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobForUpdateResponse.newBuilder().setData(stored.bytes())
-                    .setVersion(version(request.getKey(), stored)).setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
-                StreamObserver<CompareAndPutBlobResponse> observer) {
-            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
-            StoredObject current = objects.get(objectKey);
-            boolean matches = switch (request.getPreconditionCase()) {
-                case IF_ABSENT -> request.getIfAbsent() && current == null;
-                case EXPECTED_ETAG -> current != null && current.etag().equals(request.getExpectedEtag());
-                default -> false;
-            };
-            if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
-            StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
-            objects.put(objectKey, stored);
-            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
-            observer.onCompleted();
-        }
-        private static ConditionalBlobVersion version(ConditionalBlobKey key, StoredObject stored) {
-            return ConditionalBlobVersion.newBuilder().setKey(key).setEtag(stored.etag())
-                    .setSizeBytes(stored.bytes().size()).setSha256(sha256Unchecked(stored.bytes().toByteArray())).build();
-        }
-        private record StoredObject(ByteString bytes, String mimeType) {
-            String etag() { return "\"" + sha256Unchecked(bytes.toByteArray()) + "\""; }
-        }
-        private static String key(String drive, String object) { return drive + "/" + object; }
-        private static String sha256Unchecked(byte[] bytes) {
-            try { return sha256(bytes); } catch (Exception impossible) { throw new AssertionError(impossible); }
         }
     }
 }

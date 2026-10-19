@@ -2,22 +2,35 @@ package ai.protomolt.proto.delegation;
 
 import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
 
+import ai.protomolt.proto.delegation.repository.RepositoryStateDocuments;
+
 import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 
 import ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository;
 
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
-import com.google.protobuf.ByteString;
+import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v2.Accession;
+import ai.protomolt.proto.repo.v2.DocumentManifest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartManifestEntry;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartState;
+import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
+import ai.protomolt.proto.repo.v2.RevisionConflict;
+import ai.protomolt.proto.repo.v2.RevisionValidation;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.ValidationStatus;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import com.google.protobuf.Any;
+import com.google.protobuf.Timestamp;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.ManagedChannel;
@@ -26,20 +39,18 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.spec.SecretKeySpec;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.HexFormat;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -79,23 +90,30 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
-    void missingObjectLoadsAsEmpty() {
+    void missingDocumentLoadsAsEmpty() {
         assertThat(repository().load()).isEmpty();
     }
 
     @Test
-    void roundTripsEncryptedTranscriptThroughStableRepositoryCoordinates() {
+    void roundTripsEncryptedTranscriptThroughStableRepositoryCoordinates() throws Exception {
         Transcript transcript = acceptedTranscript("private objective marker");
 
         repository().save(transcript);
 
-        assertThat(service.lastCompare.getKey().getDriveName()).isEqualTo(DRIVE);
-        assertThat(service.lastCompare.getKey().getObjectKey()).isEqualTo(OBJECT_KEY);
-        assertThat(service.lastCompare.getMimeType())
-                .isEqualTo(RepositoryServiceTranscriptRepository.MIME_TYPE);
-        assertThat(service.lastCompare.getData().toStringUtf8())
-                .doesNotContain("private objective marker");
-        EncryptedRepositoryState envelope = parseEnvelope();
+        SaveDocumentRequest written = service.lastSave;
+        var address = written.getTarget().getAddress();
+        assertThat(address.getAccountId()).isEqualTo(DRIVE);
+        assertThat(address.getDocId()).isEqualTo(OBJECT_KEY);
+        assertThat(address.getGraphAddressId()).isEqualTo(OBJECT_KEY);
+        assertThat(address.getGraphId()).isEqualTo("intake:" + DRIVE);
+        assertThat(written.getExpected().hasNone()).isTrue();
+        assertThat(written.getDocument().getOwnership().getAccountId()).isEqualTo(DRIVE);
+        assertThat(written.getDocument().getOwnership().getDatasourceId()).isEqualTo(OBJECT_KEY);
+        assertThat(written.getWritesList()).hasSize(1);
+        var data = written.getDocument().getStructuredData();
+        assertThat(data.getTypeUrl()).isEqualTo(RepositoryStateDocuments.ENVELOPE_TYPE_URL);
+        assertThat(data.getValue().toStringUtf8()).doesNotContain("private objective marker");
+        EncryptedRepositoryState envelope = EncryptedRepositoryState.parseFrom(data.getValue());
         assertThat(envelope.getKeyRef()).isEqualTo(KEY_REF);
         assertThat(envelope.getNonce()).hasSize(12);
         assertThat(repository().load()).contains(transcript);
@@ -113,7 +131,7 @@ class RepositoryServiceTranscriptRepositoryTest {
 
     @Test
     void rejectsRepositoryWriteWithoutExactIntegrityConfirmation() {
-        service.writeFault = WriteFault.WRONG_DIGEST;
+        service.writeFault = WriteFault.WRONG_REVISION;
 
         assertThatThrownBy(() -> repository().save(acceptedTranscript("objective")))
                 .isInstanceOf(IllegalStateException.class)
@@ -121,13 +139,13 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
-    void rejectsRepositoryReadWithWrongSizeMetadata() {
+    void rejectsRepositoryReadWithAMisboundManifest() {
         repository().save(acceptedTranscript("objective"));
-        service.readSizeDelta = 1;
+        service.readFault = ReadFault.WRONG_ADDRESS;
 
         assertThatThrownBy(() -> repository().load())
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("size");
+                .hasMessageContaining("did not confirm");
     }
 
     @Test
@@ -136,9 +154,9 @@ class RepositoryServiceTranscriptRepositoryTest {
         EncryptedRepositoryState envelope = parseEnvelope();
         byte[] changed = envelope.getCiphertext().toByteArray();
         changed[0] ^= 1;
-        service.stored = envelope.toBuilder()
-                .setCiphertext(ByteString.copyFrom(changed))
-                .build().toByteString();
+        service.stored = stateDocument(envelope.toBuilder()
+                .setCiphertext(com.google.protobuf.ByteString.copyFrom(changed))
+                .build());
 
         assertThatThrownBy(() -> repository().load())
                 .isInstanceOf(IllegalStateException.class)
@@ -148,15 +166,13 @@ class RepositoryServiceTranscriptRepositoryTest {
     @Test
     void rejectsUnknownFieldsInAuthenticatedEnvelopeAndTranscript() {
         Transcript transcript = acceptedTranscript("unknown state fields");
-        service.stored = envelopeFor(transcript.toByteArray()).toBuilder()
-                .setUnknownFields(unknownFields()).build().toByteString();
-        service.currentEtag = "\"seed-envelope\"";
+        service.seed(stateDocument(envelopeFor(transcript.toByteArray()).toBuilder()
+                .setUnknownFields(unknownFields()).build()));
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("unknown");
 
         Transcript withUnknown = transcript.toBuilder().setUnknownFields(unknownFields()).build();
-        service.stored = envelopeFor(withUnknown.toByteArray()).toByteString();
-        service.currentEtag = "\"seed-transcript\"";
+        service.seed(stateDocument(envelopeFor(withUnknown.toByteArray())));
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("unknown");
     }
@@ -182,21 +198,21 @@ class RepositoryServiceTranscriptRepositoryTest {
         assertThatThrownBy(() -> limited.save(acceptedTranscript("objective")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("plaintext limit");
-        assertThat(service.lastCompare).isNull();
+        assertThat(service.lastSave).isNull();
     }
 
     @Test
     void storedInvalidTranscriptCannotBecomeRestartState() throws Exception {
         Transcript valid = acceptedTranscript("objective");
         repository().save(valid);
-        EncryptedRepositoryState original = parseEnvelope();
+        Document original = service.stored;
         Transcript invalid = valid.toBuilder().removeEntries(0).build();
 
         RepositoryServiceTranscriptRepository writer = repository();
         assertThatThrownBy(() -> writer.save(invalid))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("invalid");
-        assertThat(parseEnvelope()).isEqualTo(original);
+        assertThat(service.stored).isEqualTo(original);
     }
 
     @Test
@@ -219,21 +235,21 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
-    void repeatedSaveUsesTheConfirmedEtagAndAdvancesTheOpaqueToken() {
+    void repeatedSaveUsesTheConfirmedRevisionAndAdvancesIt() {
         Transcript transcript = acceptedTranscript("objective");
         RepositoryServiceTranscriptRepository writer = repository();
 
         writer.save(transcript);
-        String first = service.currentEtag;
+        long first = service.revision;
         writer.save(transcript);
 
-        assertThat(service.lastCompare.hasExpectedEtag()).isTrue();
-        assertThat(service.lastCompare.getExpectedEtag()).isEqualTo(first);
-        assertThat(service.currentEtag).isNotEqualTo(first);
+        assertThat(service.lastSave.getExpected().hasRevision()).isTrue();
+        assertThat(service.lastSave.getExpected().getRevision()).isEqualTo(first);
+        assertThat(service.revision).isEqualTo(first + 1);
     }
 
     @Test
-    void staleIfAbsentWriteConflictsPoisonsInstanceAndFreshInstanceRecovers() {
+    void staleCreateWriteConflictsPoisonsInstanceAndFreshInstanceRecovers() {
         RepositoryServiceTranscriptRepository first = repository();
         RepositoryServiceTranscriptRepository stale = repository();
         assertThat(first.load()).isEmpty();
@@ -243,8 +259,14 @@ class RepositoryServiceTranscriptRepositoryTest {
         first.save(transcript);
         assertThatThrownBy(() -> stale.save(transcript))
                 .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(error -> assertThat(((StatusRuntimeException) error).getStatus().getCode())
-                        .isEqualTo(Status.Code.ABORTED));
+                .satisfies(error -> {
+                    assertThat(((StatusRuntimeException) error).getStatus().getCode())
+                            .isEqualTo(Status.Code.ABORTED);
+                    var status = StatusProto.fromThrowable((StatusRuntimeException) error);
+                    assertThat(status).isNotNull();
+                    assertThat(status.getDetailsList()).anySatisfy(detail ->
+                            assertThat(detail.is(RevisionConflict.class)).isTrue());
+                });
         assertThatThrownBy(stale::load).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("requires recovery");
         assertThat(repository().load()).contains(transcript);
@@ -256,7 +278,7 @@ class RepositoryServiceTranscriptRepositoryTest {
         RepositoryServiceTranscriptRepository recovery = repository();
         assertThat(earlier.load()).isEmpty();
         assertThat(recovery.load()).isEmpty();
-        service.pauseNextCompare = true;
+        service.pauseNextSave = true;
         AtomicReference<Throwable> earlierFailure = new AtomicReference<>();
         Thread earlierWriter = new Thread(() -> {
             try {
@@ -266,10 +288,10 @@ class RepositoryServiceTranscriptRepositoryTest {
             }
         }, "delayed-transcript-writer");
         earlierWriter.start();
-        assertThat(service.compareEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(service.saveEntered.await(5, TimeUnit.SECONDS)).isTrue();
         Transcript recovered = acceptedTranscript("recovery snapshot");
         recovery.save(recovered);
-        service.resumeCompare.countDown();
+        service.resumeSave.countDown();
         earlierWriter.join(5_000);
 
         assertThat(earlierWriter.isAlive()).isFalse();
@@ -280,14 +302,14 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
-    void delayedStaleEtagWriteCannotOverwriteRecoveryAppend() throws Exception {
+    void delayedStaleRevisionWriteCannotOverwriteRecoveryAppend() throws Exception {
         Transcript prefix = leasedTranscript("shared prefix");
         repository().save(prefix);
         RepositoryServiceTranscriptRepository earlier = repository();
         RepositoryServiceTranscriptRepository recovery = repository();
         assertThat(earlier.load()).contains(prefix);
         assertThat(recovery.load()).contains(prefix);
-        service.pauseNextCompare = true;
+        service.pauseNextSave = true;
         Transcript staleExtension = leasedTranscriptBuilder("shared prefix")
                 .progress(TASK, WORKER, 1, 1, "older completion").build();
         Transcript recoveredExtension = leasedTranscriptBuilder("shared prefix")
@@ -300,11 +322,11 @@ class RepositoryServiceTranscriptRepositoryTest {
             } catch (Throwable failure) {
                 staleFailure.set(failure);
             }
-        }, "delayed-stale-etag-writer");
+        }, "delayed-stale-revision-writer");
         delayed.start();
-        assertThat(service.compareEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(service.saveEntered.await(5, TimeUnit.SECONDS)).isTrue();
         recovery.save(recoveredExtension);
-        service.resumeCompare.countDown();
+        service.resumeSave.countDown();
         delayed.join(5_000);
 
         assertThat(delayed.isAlive()).isFalse();
@@ -338,7 +360,7 @@ class RepositoryServiceTranscriptRepositoryTest {
         RepositoryServiceTranscriptRepository writer = repository(keyResolver(), 1024 * 1024,
                 Duration.ofSeconds(10));
         Transcript transcript = acceptedTranscript("caller canceled after durable commit");
-        Gate gate = service.blockNextCompareAfterCommit();
+        Gate gate = service.blockNextSaveAfterCommit();
         Context.CancellableContext caller = Context.current().withValue(TEST_CONTEXT, "caller-marker")
                 .withCancellation();
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -376,9 +398,9 @@ class RepositoryServiceTranscriptRepositoryTest {
             assertThat(failure.get()).isNull();
             assertThat(loadedUnderCancelledContext.get()).isEqualTo(transcript);
             assertThat(restoredContext.get()).isSameAs(originalContext.get());
-            int writes = service.compareCalls;
+            int writes = service.saveCalls;
             writer.save(transcript);
-            assertThat(service.compareCalls).isEqualTo(writes + 1);
+            assertThat(service.saveCalls).isEqualTo(writes + 1);
         } finally {
             gate.release().countDown();
             caller.cancel(null);
@@ -391,7 +413,7 @@ class RepositoryServiceTranscriptRepositoryTest {
         RepositoryServiceTranscriptRepository writer = repository(keyResolver(), 1024 * 1024,
                 Duration.ofMillis(500));
         Transcript transcript = acceptedTranscript("repository call exceeded its own deadline");
-        Gate gate = service.blockNextCompareAfterCommit();
+        Gate gate = service.blockNextSaveAfterCommit();
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread save = new Thread(() -> {
             try {
@@ -421,16 +443,18 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     @Test
-    void unsupportedConditionalRpcNeverFallsBackToUnconditionalPut() {
-        service.conditionalWriteUnimplemented = true;
+    void unsupportedSaveRpcIsNeverRetriedThroughAnotherRpc() {
+        service.saveUnimplemented = true;
         RepositoryServiceTranscriptRepository writer = repository();
         assertThat(writer.load()).isEmpty();
+        int reads = service.getCalls;
 
         assertThatThrownBy(() -> writer.save(acceptedTranscript("no fallback")))
                 .isInstanceOf(StatusRuntimeException.class)
                 .satisfies(error -> assertThat(((StatusRuntimeException) error).getStatus().getCode())
                         .isEqualTo(Status.Code.UNIMPLEMENTED));
-        assertThat(service.putCalls).isZero();
+        assertThat(service.saveCalls).isEqualTo(1);
+        assertThat(service.getCalls).isEqualTo(reads);
         assertThatThrownBy(writer::load).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("requires recovery");
     }
@@ -441,7 +465,7 @@ class RepositoryServiceTranscriptRepositoryTest {
         RepositoryServiceTranscriptRepository writer = repository();
         writer.save(confirmed);
         assertThat(writer.load()).contains(confirmed);
-        int writes = service.compareCalls;
+        int writes = service.saveCalls;
 
         assertThatThrownBy(() -> writer.save(acceptedTranscript("divergent history")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -449,30 +473,37 @@ class RepositoryServiceTranscriptRepositoryTest {
         assertThatThrownBy(() -> writer.save(confirmed.toBuilder()
                 .removeEntries(confirmed.getEntriesCount() - 1).build()))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(service.compareCalls).isEqualTo(writes);
+        assertThat(service.saveCalls).isEqualTo(writes);
     }
 
     @Test
     void malformedUnknownAndMisboundReadResponsesFailClosed() {
         repository().save(acceptedTranscript("valid base"));
 
-        service.readWrongKey = true;
+        service.readFault = ReadFault.WRONG_ADDRESS;
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("did not confirm");
-        service.readWrongKey = false;
+        service.readFault = ReadFault.NONE;
 
-        service.readUnknownField = true;
+        service.readFault = ReadFault.UNKNOWN_FIELD;
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("unknown repository protocol fields");
-        service.readUnknownField = false;
+        service.readFault = ReadFault.NONE;
 
-        service.readMalformedEtag = true;
-        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class);
-        service.readMalformedEtag = false;
+        service.readFault = ReadFault.ZERO_REVISION;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("repository protocol validation failed");
+        service.readFault = ReadFault.NONE;
 
-        service.readWrongDigest = true;
+        service.readFault = ReadFault.WRONG_DOC_ID;
         assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("did not confirm");
+        service.readFault = ReadFault.NONE;
+
+        service.readFault = ReadFault.WRONG_TYPE_URL;
+        assertThatThrownBy(() -> repository().load()).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("unexpected media type");
+        service.readFault = ReadFault.NONE;
     }
 
     @Test
@@ -485,6 +516,26 @@ class RepositoryServiceTranscriptRepositoryTest {
             assertThatThrownBy(() -> writer.save(acceptedTranscript("write response " + fault)))
                     .as("fault %s", fault).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(writer::load).as("fault %s poisons writer", fault)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
+        }
+    }
+
+    /** A contract-invalid acknowledgement fails ProtoValidator before any identity check. */
+    @Test
+    void contractInvalidWriteAcknowledgementFailsValidationAndPoisonsTheWriter() {
+        for (WriteFault fault : java.util.List.of(WriteFault.MISSING_ACCESSION,
+                WriteFault.MISSING_COMMITTED_AT, WriteFault.MISSING_OWNER)) {
+            service.resetWriteFaults();
+            RepositoryServiceTranscriptRepository writer = repository();
+            service.writeFault = fault;
+            assertThatThrownBy(() -> writer.save(acceptedTranscript("write response " + fault)))
+                    .as("fault %s", fault)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("repository protocol validation failed");
+            assertThatThrownBy(writer::load).as("fault %s poisons writer", fault)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
+            assertThatThrownBy(() -> writer.save(acceptedTranscript("retry after " + fault)))
+                    .as("fault %s keeps writer failed", fault)
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("requires recovery");
         }
     }
@@ -518,7 +569,7 @@ class RepositoryServiceTranscriptRepositoryTest {
 
     private EncryptedRepositoryState parseEnvelope() {
         try {
-            return EncryptedRepositoryState.parseFrom(service.stored);
+            return EncryptedRepositoryState.parseFrom(service.stored.getStructuredData().getValue());
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
             throw new AssertionError(e);
         }
@@ -532,6 +583,12 @@ class RepositoryServiceTranscriptRepositoryTest {
     }
 
     private record Gate(CountDownLatch entered, CountDownLatch release) {}
+
+    private static Document stateDocument(EncryptedRepositoryState envelope) {
+        return Document.newBuilder().setDocId(OBJECT_KEY)
+                .setOwnership(OwnershipContext.newBuilder().setAccountId(DRIVE).setDatasourceId(OBJECT_KEY))
+                .setStructuredData(Any.pack(envelope)).build();
+    }
 
     private static EncryptedRepositoryState envelopeFor(byte[] plaintext) {
         return new EncryptedRepositoryStateCodec(keyResolver(),
@@ -593,41 +650,44 @@ class RepositoryServiceTranscriptRepositoryTest {
                 .accept(TASK, WORKER, 1);
     }
 
-    private static String sha256(ByteString data) {
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(data.toByteArray()));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
     private enum WriteFault {
-        NONE, WRONG_DIGEST, WRONG_SIZE, WRONG_KEY, UNKNOWN_FIELD, MISSING_VERSION, MALFORMED_ETAG
+        NONE, WRONG_REVISION, WRONG_ADDRESS, WRONG_OPERATION, REPLAYED, UNKNOWN_FIELD,
+        MISSING_ACCESSION, MISSING_COMMITTED_AT, MISSING_OWNER
     }
 
+    private enum ReadFault {
+        NONE, WRONG_ADDRESS, UNKNOWN_FIELD, ZERO_REVISION, WRONG_DOC_ID, WRONG_TYPE_URL
+    }
+
+    /**
+     * The v2 DocumentService contract over one in-memory document: current-revision
+     * reads, and compare-and-set saves that answer ABORTED with a RevisionConflict
+     * detail on a stale expectation. Fault hooks misbind or corrupt responses;
+     * gates commit first and hold the acknowledgement, or hold the compare-and-set
+     * decision, so concurrency and lost-acknowledgement scenarios are deterministic.
+     */
     private static final class FakeDocumentService
             extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private volatile ByteString stored;
-        private volatile String currentEtag;
-        private volatile CompareAndPutBlobRequest lastCompare;
+        private volatile Document stored;
+        private volatile long revision;
+        private volatile SaveDocumentRequest lastSave;
         private volatile WriteFault writeFault = WriteFault.NONE;
-        private volatile long readSizeDelta;
-        private volatile boolean readWrongKey;
-        private volatile boolean readWrongDigest;
-        private volatile boolean readUnknownField;
-        private volatile boolean readMalformedEtag;
-        private volatile boolean conditionalWriteUnimplemented;
+        private volatile ReadFault readFault = ReadFault.NONE;
+        private volatile boolean saveUnimplemented;
         private volatile boolean loseAcknowledgementAfterCommit;
-        private volatile boolean pauseNextCompare;
+        private volatile boolean pauseNextSave;
         private final AtomicReference<Gate> afterCommitGate = new AtomicReference<>();
-        private volatile int compareCalls;
-        private volatile int putCalls;
-        private long generation;
-        private CountDownLatch compareEntered = new CountDownLatch(1);
-        private CountDownLatch resumeCompare = new CountDownLatch(1);
+        private volatile int saveCalls;
+        private volatile int getCalls;
+        private CountDownLatch saveEntered = new CountDownLatch(1);
+        private CountDownLatch resumeSave = new CountDownLatch(1);
 
-        private Gate blockNextCompareAfterCommit() {
+        private void seed(Document document) {
+            stored = document;
+            revision = 1;
+        }
+
+        private Gate blockNextSaveAfterCommit() {
             Gate gate = new Gate(new CountDownLatch(1), new CountDownLatch(1));
             if (!afterCommitGate.compareAndSet(null, gate)) {
                 throw new IllegalStateException("post-commit gate is already armed");
@@ -635,51 +695,82 @@ class RepositoryServiceTranscriptRepositoryTest {
             return gate;
         }
 
+        /** A contract-valid accession timestamp; the exact instant carries no meaning. */
+        private static final Timestamp COMMITTED_AT =
+                Timestamp.newBuilder().setSeconds(1786449600L).build();
+        /** A contract-valid save owner for fixture manifests and accessions. */
+        private static final SaveOwner OWNER = SaveOwner.newBuilder()
+                .setIntake(IntakeOrigin.newBuilder().setDatasourceId("seed")).build();
+        /** A contract-valid typed-valid validation record with process authority. */
+        private static final RevisionValidation VALIDATION = RevisionValidation.newBuilder()
+                .setStatus(ValidationStatus.VALIDATION_STATUS_TYPED_VALID)
+                .setCandidateSha256("0".repeat(64))
+                .setValidatorProfile("transcript-repository-test")
+                .setProcessAuthority(ProcessAuthorityEvidence.newBuilder()
+                        .setPrincipal("transcript-repository-test"))
+                .build();
+
+        /** A contract-valid manifest pinning one present CORE part at {@code revision}. */
+        private static DocumentManifest manifest(
+                ai.protomolt.proto.repo.v1.NodeAddress address, long revision) {
+            return DocumentManifest.newBuilder().setAddress(address).setRevision(revision)
+                    .addParts(PartManifestEntry.newBuilder()
+                            .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                            .setState(PartState.PART_STATE_PRESENT)
+                            .setWrittenInRevision(revision > 0 ? revision : 1)
+                            .setOwner(OWNER))
+                    .build();
+        }
+
         @Override
-        public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
-                                                  StreamObserver<GetBlobForUpdateResponse> observer) {
+        public synchronized void getDocument(GetDocumentRequest request,
+                                             StreamObserver<GetDocumentResponse> observer) {
+            getCalls++;
             if (stored == null) {
                 observer.onError(Status.NOT_FOUND.asRuntimeException());
                 return;
             }
-            ConditionalBlobKey responseKey = readWrongKey
-                    ? request.getKey().toBuilder().setObjectKey("wrong/key").build()
-                    : request.getKey();
-            String responseEtag = readMalformedEtag ? "*" : currentEtag;
-            ConditionalBlobVersion.Builder version = ConditionalBlobVersion.newBuilder()
-                    .setKey(responseKey)
-                    .setEtag(responseEtag)
-                    .setSizeBytes(stored.size() + readSizeDelta)
-                    .setSha256(readWrongDigest ? "0".repeat(64) : sha256(stored));
-            GetBlobForUpdateResponse.Builder response = GetBlobForUpdateResponse.newBuilder()
-                    .setVersion(version)
-                    .setData(stored)
-                    .setMimeType(RepositoryServiceTranscriptRepository.MIME_TYPE);
-            if (readUnknownField) response.setUnknownFields(unknownFields());
+            var address = readFault == ReadFault.WRONG_ADDRESS
+                    ? request.getAddress().toBuilder().setDocId("wrong/document").build()
+                    : request.getAddress();
+            var manifest = manifest(address,
+                    readFault == ReadFault.ZERO_REVISION ? 0 : revision);
+            var document = stored;
+            if (readFault == ReadFault.WRONG_DOC_ID) {
+                document = document.toBuilder().setDocId("wrong/document").build();
+            }
+            if (readFault == ReadFault.WRONG_TYPE_URL) {
+                document = document.toBuilder().setStructuredData(Any.newBuilder()
+                        .setTypeUrl("type.googleapis.com/wrong.Type")
+                        .setValue(document.getStructuredData().getValue())).build();
+            }
+            var response = GetDocumentResponse.newBuilder().setDocument(document)
+                    .setManifest(manifest).setValidation(VALIDATION);
+            if (readFault == ReadFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
             observer.onNext(response.build());
             observer.onCompleted();
         }
 
         @Override
-        public void compareAndPutBlob(CompareAndPutBlobRequest request,
-                                      StreamObserver<CompareAndPutBlobResponse> observer) {
-            lastCompare = request;
-            compareCalls++;
-            if (conditionalWriteUnimplemented) {
+        public void saveDocument(SaveDocumentRequest request,
+                                 StreamObserver<SaveDocumentResponse> observer) {
+            lastSave = request;
+            saveCalls++;
+            if (saveUnimplemented) {
                 observer.onError(Status.UNIMPLEMENTED.asRuntimeException());
                 return;
             }
             boolean pause;
             synchronized (this) {
-                pause = pauseNextCompare;
+                pause = pauseNextSave;
                 if (pause) {
-                    pauseNextCompare = false;
-                    compareEntered.countDown();
+                    pauseNextSave = false;
+                    saveEntered.countDown();
                 }
             }
             if (pause) {
                 try {
-                    if (!resumeCompare.await(5, TimeUnit.SECONDS)) {
+                    if (!resumeSave.await(5, TimeUnit.SECONDS)) {
                         observer.onError(Status.DEADLINE_EXCEEDED.asRuntimeException());
                         return;
                     }
@@ -689,29 +780,39 @@ class RepositoryServiceTranscriptRepositoryTest {
                     return;
                 }
             }
-            CompareAndPutBlobResponse writeResponse;
+            SaveDocumentResponse writeResponse;
             Gate committedGate;
             synchronized (this) {
-                boolean mayWrite = request.hasIfAbsent()
-                        ? stored == null
-                        : stored != null && request.getExpectedEtag().equals(currentEtag);
-                if (!mayWrite) {
-                    observer.onError(Status.ABORTED.withDescription("conditional write conflict").asRuntimeException());
+                long expected = request.getExpected().hasNone() ? 0 : request.getExpected().getRevision();
+                if (stored == null ? expected != 0 : revision != expected) {
+                    observer.onError(abortedWithConflict(request, revision));
                     return;
                 }
 
-                stored = request.getData();
-                currentEtag = "\"etag-" + (++generation) + "\"";
-                ConditionalBlobKey responseKey = writeFault == WriteFault.WRONG_KEY
-                        ? request.getKey().toBuilder().setObjectKey("wrong/key").build()
-                        : request.getKey();
-                ConditionalBlobVersion.Builder version = ConditionalBlobVersion.newBuilder()
-                        .setKey(responseKey)
-                        .setEtag(writeFault == WriteFault.MALFORMED_ETAG ? "*" : currentEtag)
-                        .setSizeBytes(stored.size() + (writeFault == WriteFault.WRONG_SIZE ? 1 : 0))
-                        .setSha256(writeFault == WriteFault.WRONG_DIGEST ? "0".repeat(64) : sha256(stored));
-                CompareAndPutBlobResponse.Builder response = CompareAndPutBlobResponse.newBuilder();
-                if (writeFault != WriteFault.MISSING_VERSION) response.setVersion(version);
+                stored = request.getDocument();
+                revision++;
+                var address = writeFault == WriteFault.WRONG_ADDRESS
+                        ? request.getTarget().getAddress().toBuilder().setDocId("wrong/document").build()
+                        : request.getTarget().getAddress();
+                var accession = Accession.newBuilder()
+                        .setAddress(address)
+                        .setRevision(writeFault == WriteFault.WRONG_REVISION ? revision + 1 : revision)
+                        .setPreviousRevision(expected)
+                        .setManifest(manifest(address, revision))
+                        .setValidation(VALIDATION);
+                if (writeFault != WriteFault.MISSING_COMMITTED_AT) {
+                    accession.setCommittedAt(COMMITTED_AT);
+                }
+                if (writeFault != WriteFault.MISSING_OWNER) {
+                    accession.setOwner(OWNER);
+                }
+                var response = SaveDocumentResponse.newBuilder()
+                        .setOperationId(writeFault == WriteFault.WRONG_OPERATION
+                                ? "tampered-operation" : request.getOperationId())
+                        .setReplayed(writeFault == WriteFault.REPLAYED);
+                if (writeFault != WriteFault.MISSING_ACCESSION) {
+                    response.setAccession(accession);
+                }
                 if (writeFault == WriteFault.UNKNOWN_FIELD) response.setUnknownFields(unknownFields());
                 writeResponse = response.build();
                 committedGate = afterCommitGate.getAndSet(null);
@@ -746,18 +847,18 @@ class RepositoryServiceTranscriptRepositoryTest {
             observer.onCompleted();
         }
 
-        @Override
-        public void putBlob(ai.protomolt.proto.repo.v1.PutBlobRequest request,
-                            StreamObserver<ai.protomolt.proto.repo.v1.PutBlobResponse> observer) {
-            putCalls++;
-            observer.onError(Status.UNIMPLEMENTED.asRuntimeException());
+        private static StatusRuntimeException abortedWithConflict(SaveDocumentRequest request, long current) {
+            var detail = RevisionConflict.newBuilder().setAddress(request.getTarget().getAddress())
+                    .setExpected(request.getExpected()).setCurrentRevision(current).build();
+            return StatusProto.toStatusRuntimeException(com.google.rpc.Status.newBuilder()
+                    .setCode(Status.Code.ABORTED.value()).setMessage("conditional write conflict")
+                    .addDetails(Any.pack(detail)).build());
         }
 
         private void resetWriteFaults() {
             writeFault = WriteFault.NONE;
             stored = null;
-            currentEtag = null;
-            generation = 0;
+            revision = 0;
         }
 
         private static UnknownFieldSet unknownFields() {

@@ -29,18 +29,8 @@ import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
 import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.delegation.v1.Transcript;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -675,8 +665,11 @@ class AuthoringWorkerDiscoveryProcessTest {
         }
     }
 
-    private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private final Map<String, StoredObject> objects = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The shared in-memory v2 document store with a gate that holds the candidate
+     * acknowledgement until the test releases it.
+     */
+    private static final class FakeDocumentService extends FakeRepositoryDocumentService {
         private final AtomicReference<TranscriptGate> candidateGate = new AtomicReference<>();
 
         TranscriptGate blockCandidateAcknowledgement() {
@@ -688,47 +681,12 @@ class AuthoringWorkerDiscoveryProcessTest {
             return gate;
         }
 
-        @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-            StoredObject stored = objects.get(key(request.getStorageRef().getDriveName(),
-                    request.getStorageRef().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobResponse.newBuilder().setData(stored.bytes()).setSizeBytes(stored.bytes().size())
-                    .setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-
-        @Override public synchronized void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-            ByteString bytes = request.getData();
-            objects.put(key(request.getDriveName(), request.getObjectKey()), new StoredObject(bytes, request.getMimeType()));
-            observer.onNext(PutBlobResponse.newBuilder().setStorageRef(FileStorageReference.newBuilder()
-                    .setDriveName(request.getDriveName()).setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(bytes.size()).setSha256(shaUnchecked(bytes.toByteArray())).build());
-            observer.onCompleted();
-        }
-
-        @Override public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
-                StreamObserver<GetBlobForUpdateResponse> observer) {
-            StoredObject stored = objects.get(key(request.getKey().getDriveName(), request.getKey().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobForUpdateResponse.newBuilder().setData(stored.bytes())
-                    .setVersion(version(request.getKey(), stored)).setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-
-        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
-                StreamObserver<CompareAndPutBlobResponse> observer) {
-            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
-            StoredObject current = objects.get(objectKey);
-            boolean matches = switch (request.getPreconditionCase()) {
-                case IF_ABSENT -> request.getIfAbsent() && current == null;
-                case EXPECTED_ETAG -> current != null && current.etag().equals(request.getExpectedEtag());
-                default -> false;
-            };
-            if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
-            StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
-            objects.put(objectKey, stored);
+        @Override protected boolean afterSave(SaveDocumentRequest request,
+                StreamObserver<SaveDocumentResponse> observer) {
+            String objectKey = request.getTarget().getAddress().getAccountId()
+                    + "/" + request.getTarget().getAddress().getDocId();
             if (objectKey.equals("protomolt/delegation/serve/transcript.pb.enc")) {
-                Transcript saved = decryptTranscript(stored.bytes());
+                Transcript saved = decryptTranscript(request.getDocument());
                 boolean hasCandidate = saved.getEntriesList().stream()
                         .anyMatch(entry -> entry.hasWorkerFrame() && entry.getWorkerFrame().hasCompletion());
                 boolean hasReviewStart = saved.getEntriesList().stream().anyMatch(entry ->
@@ -742,22 +700,22 @@ class AuthoringWorkerDiscoveryProcessTest {
                             observer.onError(Status.DEADLINE_EXCEEDED
                                     .withDescription("test transcript acknowledgement gate timed out")
                                     .asRuntimeException());
-                            return;
+                            return false;
                         }
                     } catch (InterruptedException interrupted) {
                         Thread.currentThread().interrupt();
                         observer.onError(Status.CANCELLED.asRuntimeException());
-                        return;
+                        return false;
                     }
                 }
             }
-            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
-            observer.onCompleted();
+            return true;
         }
 
-        private static Transcript decryptTranscript(ByteString stored) {
+        private static Transcript decryptTranscript(ai.protomolt.proto.repo.v1.Document document) {
             try {
-                EncryptedRepositoryState envelope = EncryptedRepositoryState.parseFrom(stored);
+                EncryptedRepositoryState envelope = document.getStructuredData()
+                        .unpack(EncryptedRepositoryState.class);
                 byte[] key = Base64.getDecoder().decode("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
                 var codec = new EncryptedRepositoryStateCodec(reference ->
                         new SecretKeySpec(key, "AES"));
@@ -768,18 +726,6 @@ class AuthoringWorkerDiscoveryProcessTest {
             } catch (Exception failure) {
                 throw new IllegalStateException("test repository could not inspect committed transcript", failure);
             }
-        }
-
-        private static ConditionalBlobVersion version(ConditionalBlobKey key, StoredObject stored) {
-            return ConditionalBlobVersion.newBuilder().setKey(key).setEtag(stored.etag())
-                    .setSizeBytes(stored.bytes().size()).setSha256(shaUnchecked(stored.bytes().toByteArray())).build();
-        }
-        private record StoredObject(ByteString bytes, String mimeType) {
-            String etag() { return "\"" + shaUnchecked(bytes.toByteArray()) + "\""; }
-        }
-        private static String key(String drive, String object) { return drive + "/" + object; }
-        private static String shaUnchecked(byte[] bytes) {
-            try { return sha256(bytes); } catch (Exception impossible) { throw new AssertionError(impossible); }
         }
     }
 }

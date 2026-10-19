@@ -1,30 +1,37 @@
 package ai.protomolt.proto.mesh.cluster;
 
 import ai.protomolt.proto.delegation.repository.EncryptedRepositoryStateCodec;
+import ai.protomolt.proto.delegation.repository.RepositoryStateDocuments;
 import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.mesh.cluster.storage.v1.ClusterEventLog;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterEvent;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
-/** Stores an encrypted cluster directory event log through repository-service blob RPCs. */
+/**
+ * Stores an encrypted cluster directory event log as one v2 repository document whose
+ * CORE part carries the envelope in {@code structured_data}. Every save
+ * compares-and-sets on the revision this process last confirmed (ExpectedRevision none
+ * while no write is confirmed), so a save only ever replaces the state its candidate was
+ * derived from. A conflicting ABORTED means another writer committed events this process
+ * never loaded; the conflict surfaces rather than overwriting them, and recovery is a
+ * fresh load through a new directory.
+ */
 public final class RepositoryServiceClusterEventRepository
         implements ClusterEventRepository {
 
@@ -33,7 +40,7 @@ public final class RepositoryServiceClusterEventRepository
             "application/vnd.protomolt.cluster-event-log+protobuf";
 
     /**
-     * How long one blob round trip may take before the directory gives up on it. A
+     * How long one repository round trip may take before the directory gives up on it. A
      * blocking stub with no deadline waits forever, so an unreachable or wedged
      * repository-service turned every mesh mutation into an unbounded stall that logged
      * nothing. The bound sits well inside the shortest presence TTL the directory serves,
@@ -47,6 +54,8 @@ public final class RepositoryServiceClusterEventRepository
     private final String keyReference;
     private final EncryptedRepositoryStateCodec codec;
     private final Duration timeout;
+    /** The revision the next save's candidate is derived from; 0 while none is confirmed. */
+    private long confirmedRevision;
 
     /** Creates a repository using the default encrypted-state codec limits and timeout. */
     public RepositoryServiceClusterEventRepository(
@@ -65,13 +74,13 @@ public final class RepositoryServiceClusterEventRepository
         this(documents, driveName, objectKey, keyReference, codec, DEFAULT_TIMEOUT);
     }
 
-    /** Creates a repository with an explicit per-call blob timeout. */
+    /** Creates a repository with an explicit per-call repository timeout. */
     public RepositoryServiceClusterEventRepository(
             DocumentServiceGrpc.DocumentServiceBlockingStub documents,
             String driveName, String objectKey, String keyReference,
             EncryptedRepositoryStateCodec codec, Duration timeout) {
         this.documents = Objects.requireNonNull(documents, "documents");
-        this.driveName = requireText(driveName, "driveName", 256);
+        this.driveName = requireText(driveName, "driveName", 200);
         this.objectKey = requireText(objectKey, "objectKey", 1024);
         this.keyReference = requireText(keyReference, "keyReference", 256);
         this.codec = Objects.requireNonNull(codec, "codec");
@@ -100,35 +109,18 @@ public final class RepositoryServiceClusterEventRepository
     }
 
     @Override
-    public Optional<StoredDirectory> load(ClusterDescriptor cluster) {
+    public synchronized Optional<StoredDirectory> load(ClusterDescriptor cluster) {
         ClusterValidation.validate(cluster);
-        GetBlobResponse response;
-        try {
-            response = within().getBlob(GetBlobRequest.newBuilder()
-                    .setStorageRef(storageReference()).build());
-        } catch (StatusRuntimeException e) {
-            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
-                return Optional.empty();
-            }
-            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
-                throw unreachable("return", e);
-            }
-            throw e;
+        var response = readCurrent();
+        if (response.isEmpty()) {
+            confirmedRevision = 0;
+            return Optional.empty();
         }
-        byte[] stored = response.getData().toByteArray();
-        if (response.getSizeBytes() != stored.length) {
-            throw corrupt("stored cluster event log size does not match repository metadata");
-        }
-        if (response.hasMimeType() && !EncryptedRepositoryStateCodec.ENVELOPE_MIME_TYPE
-                .equals(response.getMimeType())) {
-            throw corrupt("stored cluster event log has an unexpected media type");
-        }
-        EncryptedRepositoryState envelope;
-        try {
-            envelope = EncryptedRepositoryState.parseFrom(stored);
-        } catch (InvalidProtocolBufferException e) {
-            throw corrupt("stored cluster event log envelope is not valid protobuf", e);
-        }
+        var pair = response.get();
+        long revision =
+                RepositoryStateDocuments.confirmLoaded(pair.getKey(), pair.getValue(), "cluster event log");
+        EncryptedRepositoryState envelope =
+                RepositoryStateDocuments.envelopeOf(pair.getValue().getDocument(), "cluster event log");
         byte[] plaintext = codec.decrypt(envelope, CONTENT_TYPE, storageContext());
         ClusterEventLog eventLog;
         try {
@@ -154,11 +146,12 @@ public final class RepositoryServiceClusterEventRepository
         } catch (RuntimeException e) {
             throw corrupt("stored cluster event log failed validation", e);
         }
+        confirmedRevision = revision;
         return Optional.of(directory);
     }
 
     @Override
-    public void save(ClusterDescriptor cluster, StoredDirectory directory) {
+    public synchronized void save(ClusterDescriptor cluster, StoredDirectory directory) {
         ClusterValidation.validate(cluster);
         ClusterValidation.validateEventLog(directory.events(), directory.firstSeq());
         ClusterEventLog.Builder builder = ClusterEventLog.newBuilder()
@@ -172,39 +165,53 @@ public final class RepositoryServiceClusterEventRepository
         ValidationResult.validate(eventLog).throwIfInvalid();
         EncryptedRepositoryState envelope = codec.encrypt(eventLog.toByteArray(),
                 CONTENT_TYPE, directory.events().size(), keyReference, storageContext());
-        byte[] stored = envelope.toByteArray();
-        PutBlobResponse response;
+        // Compare-and-set on the revision this candidate was derived from, never on a
+        // revision read after the fact: a fresh read could already carry another writer's
+        // events, and replacing it would silently drop them. A conflicting ABORTED means
+        // exactly that race, so it surfaces for recovery rather than being retried with
+        // this stale candidate.
+        var request = RepositoryStateDocuments.save(driveName, objectKey, envelope, confirmedRevision);
+        final SaveDocumentResponse response;
         try {
-            response = within().putBlob(PutBlobRequest.newBuilder()
-                    .setDriveName(driveName)
-                    .setObjectKey(objectKey)
-                    .setData(ByteString.copyFrom(stored))
-                    .setMimeType(EncryptedRepositoryStateCodec.ENVELOPE_MIME_TYPE)
-                    .build());
+            response = within().saveDocument(request);
         } catch (StatusRuntimeException e) {
             if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
                 // The write may still land server-side. That is safe to leave: the caller
-                // does not install the candidate, and the next mutation rewrites the whole
-                // log from the state this process still considers current.
+                // does not install the candidate, and if it did land the next save
+                // conflicts on the stale baseline and surfaces for recovery instead of
+                // overwriting it.
                 throw unreachable("accept", e);
+            }
+            if (e.getStatus().getCode() == Status.Code.ABORTED) {
+                throw conflict(e);
             }
             throw e;
         }
-        if (response.getSizeBytes() != stored.length
-                || !EncryptedRepositoryStateCodec.sha256Hex(stored)
-                .equals(response.getSha256())
-                || !driveName.equals(response.getStorageRef().getDriveName())
-                || !objectKey.equals(response.getStorageRef().getObjectKey())) {
-            throw new IllegalStateException(
-                    "repository service did not confirm the persisted cluster event log");
-        }
+        confirmedRevision =
+                RepositoryStateDocuments.confirmSaved(request, response, "cluster event log");
     }
 
-    private FileStorageReference storageReference() {
-        return FileStorageReference.newBuilder()
-                .setDriveName(driveName)
-                .setObjectKey(objectKey)
-                .build();
+    private static IllegalStateException conflict(StatusRuntimeException cause) {
+        return new IllegalStateException(
+                "repository service reported a conflicting write to the cluster event log: "
+                        + "another writer committed events this process has not loaded, and "
+                        + "overwriting them would drop them; recovery requires a fresh load "
+                        + "through a new directory", cause);
+    }
+
+    private Optional<Map.Entry<GetDocumentRequest, GetDocumentResponse>> readCurrent() {
+        var request = RepositoryStateDocuments.get(driveName, objectKey);
+        try {
+            return Optional.of(Map.entry(request, within().getDocument(request)));
+        } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return Optional.empty();
+            }
+            if (e.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+                throw unreachable("return", e);
+            }
+            throw e;
+        }
     }
 
     private String storageContext() {
