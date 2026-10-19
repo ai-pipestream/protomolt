@@ -48,6 +48,34 @@ class BlobStoreStackTest {
         assertThat(store.streamedPuts).isZero();
     }
 
+    @Test void rejectsBlobStoreWithoutStreamedReadCapabilityAndPropagatesUnsupportedOperations() throws Exception {
+        var withoutStreamedReads = new BlobStore() {
+            @Override public PutResult put(PutSpec spec, byte[] body) { throw new UnsupportedOperationException(); }
+            @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) { throw new UnsupportedOperationException(); }
+            @Override public GetResult get(String bucket, String key, String versionId) { throw new UnsupportedOperationException(); }
+            @Override public void copy(String srcBucket, String srcKey, String dstBucket, String dstKey) { throw new UnsupportedOperationException(); }
+            @Override public boolean delete(String bucket, String key) { return false; }
+            @Override public BatchDeleteResult deleteAll(String bucket, List<String> keys) { return new BatchDeleteResult(Map.of()); }
+            @Override public List<ListedObject> list(String bucket, String prefix) { return List.of(); }
+            @Override public void headBucket(String bucket) {}
+            @Override public void headObject(String bucket, String key) {}
+        };
+
+        assertThatThrownBy(() -> new BlobStoreStack("s1", withoutStreamedReads, "bucket", "prefix"))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("BlobStore does not support streamed object reads");
+
+        var store = new RetryingStore();
+        var stack = new BlobStoreStack("s1", store, "bucket", "prefix", 8, () -> {});
+        var ref = stack.put("abc".getBytes());
+
+        // RetryingStore leaves objectLength unimplemented (default UnsupportedOperationException on BlobStore);
+        // head(ref) must propagate UnsupportedOperationException rather than disguising it as IOException.
+        assertThatThrownBy(() -> stack.head(ref))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("object length lookup is unsupported");
+    }
+
     /** The caller's stream: any rewind attempt fails the test. */
     private static final class Unrewindable extends ByteArrayInputStream {
         Unrewindable(byte[] bytes) { super(bytes); }
