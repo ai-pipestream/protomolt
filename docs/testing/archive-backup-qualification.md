@@ -3,8 +3,7 @@
 This note covers exactly what `ArchiveBackupQualificationIT` qualifies: an offline
 (QUIESCED) backup of one repository deployment holding archive entries, PostgreSQL ledger
 plus one pinned RustFS volume, restored into fresh stores and verified by a fresh
-production-JAR host. It extends the document rehearsal in
-[repository-backup-rehearsal.md](../operations/repository-backup-rehearsal.md), whose
+production-JAR host. It extends the document rehearsal in `RepositoryBackupRehearsalIT`, whose
 offline-volume procedure, transaction-counter check, backup-set layout and driver helpers
 it reuses unchanged. It is a qualification harness, not an online backup service, not a
 public restore API, not provider identity remapping and not a statement of production
