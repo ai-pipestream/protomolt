@@ -80,6 +80,14 @@ final class SaveIntents {
         return HexFormat.of().formatHex(newSha256().digest(bytes));
     }
 
+    static String sha256Hex(com.google.protobuf.ByteString bytes) {
+        var digest = newSha256();
+        for (var buffer : bytes.asReadOnlyByteBufferList()) {
+            digest.update(buffer);
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
     /** Unsigned UTF-8 byte order, which equals code point order. */
     static int compareUtf8(String left, String right) {
         int i = 0, j = 0;

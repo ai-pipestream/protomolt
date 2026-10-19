@@ -84,9 +84,8 @@ public final class DocumentSaves {
             DocumentPart.DOCUMENT_PART_PARSED, ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_PARSED);
     static final PartSelector CORE_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
     static final PartSelector BLOBS_SELECTOR = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_BLOBS).build();
-    /** The element index a validator reports for a keyed part, in the admitted view's order. */
-    private static final java.util.regex.Pattern KEYED_ELEMENT =
-            java.util.regex.Pattern.compile("^search_metadata\\.(?:segmentations|embedding_sets)\\[(\\d+)\\]");
+    private static final String SEGMENTATIONS_PREFIX = "search_metadata.segmentations[";
+    private static final String EMBEDDING_SETS_PREFIX = "search_metadata.embedding_sets[";
     /** Codec order: CORE, BLOBS, CHUNKS by segmentation ID, PARSED, EMBEDDINGS by key, IDs in unsigned UTF-8 order. */
     static final java.util.Comparator<PartSelector> CODEC_ORDER = (left, right) -> {
         int order = Integer.compare(rank(left), rank(right));
@@ -1253,11 +1252,15 @@ public final class DocumentSaves {
      */
     private static Map<PartSelector, ByteString> split(Document request, Descriptors.Descriptor documentType,
             Map<PartSelector, WriteAction> writes, PartSelector streamedPart) {
-        final DynamicMessage document;
-        try {
-            document = DynamicMessage.parseFrom(documentType, request.toByteString());
-        } catch (InvalidProtocolBufferException impossible) {
-            throw new IllegalStateException("A parsed request document failed to parse again", impossible);
+        final Message document;
+        if (documentType == Document.getDescriptor()) {
+            document = request;
+        } else {
+            try {
+                document = DynamicMessage.parseFrom(documentType, request.toByteString());
+            } catch (InvalidProtocolBufferException impossible) {
+                throw new IllegalStateException("A parsed request document failed to parse again", impossible);
+            }
         }
         final ai.protomolt.proto.repo.codec.PartLayout layout;
         try {
@@ -1266,23 +1269,14 @@ public final class DocumentSaves {
             throw new AccessionException(Status.Code.INTERNAL, "The registered Document lacks a part field: "
                     + host.getMessage(), null, host);
         }
-        var prototype = DynamicMessage.getDefaultInstance(documentType);
         var fragments = new LinkedHashMap<PartSelector, ByteString>();
         final List<ai.protomolt.proto.repo.codec.PartObject> splits;
         try {
-            splits = DocumentPartCodec.split(document, layout);
+            splits = DocumentPartCodec.splitDeterministic(document, layout);
         } catch (IllegalArgumentException duplicate) {
             throw malformedException(duplicate.getMessage());
         }
-        for (var split : splits) {
-            // Deterministic bytes: a client sending map entries in another order must get
-            // the same content digest, the same intent, and a replay on retry.
-            final ai.protomolt.proto.repo.codec.PartObject part;
-            try {
-                part = DocumentPartCodec.deterministic(split, prototype);
-            } catch (InvalidProtocolBufferException impossible) {
-                throw new IllegalStateException("A freshly split fragment failed to parse", impossible);
-            }
+        for (var part : splits) {
             var selector = selector(part);
             var bytes = ByteString.copyFrom(part.bytes());
             if (selector.equals(streamedPart)) {
@@ -1309,16 +1303,16 @@ public final class DocumentSaves {
      */
     private static boolean coreHasContent(ByteString core, Descriptors.Descriptor documentType,
             ai.protomolt.proto.repo.codec.PartLayout layout) {
-        final DynamicMessage fragment;
+        final Message fragment;
         try {
-            fragment = DynamicMessage.parseFrom(documentType, core);
+            fragment = documentType == Document.getDescriptor()
+                    ? Document.parseFrom(core)
+                    : DynamicMessage.parseFrom(documentType, core);
         } catch (InvalidProtocolBufferException impossible) {
             throw new IllegalStateException("A freshly split CORE fragment failed to parse", impossible);
         }
         if (!fragment.getUnknownFields().asMap().isEmpty()) return true;
-        var parents = new HashSet<Descriptors.FieldDescriptor>();
-        layout.chunkedFields().forEach(field -> parents.add(field.parent()));
-        layout.keyedFields().forEach(field -> parents.add(field.parent()));
+        var parents = layout.nestedParents();
         for (var entry : fragment.getAllFields().entrySet()) {
             var field = entry.getKey();
             if (field.equals(layout.identityField())) continue;
@@ -1539,12 +1533,29 @@ public final class DocumentSaves {
             return PartSelector.newBuilder().setPart(v2(part)).build();
         var keyed = admitted.stream().filter(selector -> part == ai.protomolt.proto.repo.v1.DocumentPart.DOCUMENT_PART_CHUNKS
                 ? selector.hasSegmentationId() : selector.hasEmbeddingSet()).toList();
-        var matcher = KEYED_ELEMENT.matcher(violation.fieldPath());
-        int index = matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+        int index = keyedElementIndex(violation.fieldPath());
         if (index >= keyed.size())
             throw new AccessionException(Status.Code.INTERNAL, "Validation names element " + index + " of " + keyed.size()
                     + " admitted " + part + " fragments", null);
         return keyed.get(index);
+    }
+
+    private static int keyedElementIndex(String fieldPath) {
+        int start;
+        if (fieldPath.startsWith(SEGMENTATIONS_PREFIX)) {
+            start = SEGMENTATIONS_PREFIX.length();
+        } else if (fieldPath.startsWith(EMBEDDING_SETS_PREFIX)) {
+            start = EMBEDDING_SETS_PREFIX.length();
+        } else {
+            return 0;
+        }
+        int end = fieldPath.indexOf(']', start);
+        if (end <= start) return 0;
+        for (int i = start; i < end; i++) {
+            char c = fieldPath.charAt(i);
+            if (c < '0' || c > '9') return 0;
+        }
+        return Integer.parseInt(fieldPath.substring(start, end));
     }
 
     /**
@@ -1775,23 +1786,24 @@ public final class DocumentSaves {
 
     private static StackRef putOrReuse(Stack stack, ByteString bytes, Map<ContentIdentity, StackRef> reusable,
             List<StackRef> newObjects) {
-        var existing = reusable.get(new ContentIdentity(sha256(bytes), bytes.size()));
+        var expectedSha256 = sha256(bytes);
+        var existing = reusable.get(new ContentIdentity(expectedSha256, bytes.size()));
         if (existing != null) return existing;
-        var ref = put(stack, bytes);
+        var ref = put(stack, bytes, expectedSha256);
         newObjects.add(ref);
         rememberReusable(stack, reusable, ref);
         return ref;
     }
 
     /** Writes one object and checks the stack's reference against the bytes it was given. */
-    private static StackRef put(Stack stack, ByteString bytes) {
+    private static StackRef put(Stack stack, ByteString bytes, String expectedSha256) {
         final StackRef ref;
         try {
             ref = stack.put(bytes.toByteArray());
         } catch (IOException failure) {
             throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
         }
-        if (!ref.getSha256().equals(sha256(bytes)) || ref.getLength() != bytes.size())
+        if (!ref.getSha256().equals(expectedSha256) || ref.getLength() != bytes.size())
             throw new IllegalStateException("Stack digest differs from the bytes written");
         return ref;
     }
@@ -1866,7 +1878,7 @@ public final class DocumentSaves {
         return UUID.nameUUIDFromBytes(name.toByteArray()).toString();
     }
 
-    static String sha256(ByteString bytes) { return SaveIntents.sha256Hex(bytes.toByteArray()); }
+    static String sha256(ByteString bytes) { return SaveIntents.sha256Hex(bytes); }
 
     static Timestamp timestamp(Instant instant) {
         return Timestamp.newBuilder().setSeconds(instant.getEpochSecond()).setNanos(instant.getNano()).build();

@@ -543,4 +543,13 @@ class QdrantPointMapperTest {
         // No flat payload representation.
         assertThat(QdrantPointMapper.toValue(SearchMetadata.getDefaultInstance())).isNull();
     }
+
+    @Test
+    void vectorNameSanitizesByCodePoint() {
+        assertThat(QdrantPointMapper.vectorName("bge-small_v1")).isSameAs("bge-small_v1");
+        assertThat(QdrantPointMapper.vectorName("sentence-transformers/all-MiniLM-L6-v2"))
+                .isEqualTo("sentence-transformers_all-MiniLM-L6-v2");
+        assertThat(QdrantPointMapper.vectorName("model\uD83D\uDE00")).isEqualTo("model_");
+        assertThat(QdrantPointMapper.vectorName("a\uD83D\uDE00b\u00E9c\uD800d")).isEqualTo("a_b_c_d");
+    }
 }

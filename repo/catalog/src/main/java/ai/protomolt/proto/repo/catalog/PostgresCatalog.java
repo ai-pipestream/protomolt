@@ -56,8 +56,6 @@ public final class PostgresCatalog implements Catalog {
     private static final String OUTCOME_KEY = "catalog_operation_outcomes_pkey";
     /** Bound on the digests remembered as persisted; past it the set starts again from empty. */
     private static final int KNOWN_ARTIFACTS = 4096;
-    /** A dedicated catalog schema is a plain PostgreSQL identifier; nothing else is accepted. */
-    private static final java.util.regex.Pattern SCHEMA_NAME = java.util.regex.Pattern.compile("[a-z_][a-z0-9_]*");
     private final DataSource dataSource;
     /**
      * Schema artifact digests this process has seen committed. Rows are immutable by
@@ -96,7 +94,7 @@ public final class PostgresCatalog implements Catalog {
         hikari.setConnectionTimeout(10_000);
         String dedicated = schema == null || schema.isBlank() ? null : schema;
         if (dedicated != null) {
-            if (!SCHEMA_NAME.matcher(dedicated).matches())
+            if (!isSchemaName(dedicated))
                 throw new IllegalArgumentException("Catalog schema must match [a-z_][a-z0-9_]*: " + dedicated);
             hikari.setSchema(dedicated);
         }
@@ -117,6 +115,18 @@ public final class PostgresCatalog implements Catalog {
             owned.close();
             throw failure;
         }
+    }
+
+    /** A dedicated catalog schema is a plain PostgreSQL identifier ({@code [a-z_][a-z0-9_]*}); nothing else is accepted. */
+    private static boolean isSchemaName(String name) {
+        if (name == null || name.isEmpty()) return false;
+        char first = name.charAt(0);
+        if (!((first >= 'a' && first <= 'z') || first == '_')) return false;
+        for (int i = 1; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+        }
+        return true;
     }
 
     @Override public void close() { if (owned != null) owned.close(); }
@@ -181,6 +191,27 @@ public final class PostgresCatalog implements Catalog {
         });
     }
 
+    /** The document's current-revision manifest, read in a single transaction. */
+    @Override public Optional<StoredManifest> currentManifest(NodeAddress address) {
+        return inTransaction("Current manifest lookup", connection -> {
+            try (var select = connection.prepareStatement("""
+                    SELECT d.current_revision, r.manifest, r.manifest_sha256
+                    FROM catalog_documents d
+                    LEFT JOIN catalog_revisions r ON r.document_id = d.document_id AND r.revision = d.current_revision
+                    WHERE d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
+                      AND NOT d.purged""")) {
+                bindAddress(select, 1, address);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) return Optional.empty();
+                    long revision = rows.getLong(1);
+                    byte[] bytes = rows.getBytes(2);
+                    if (bytes == null) throw new CatalogDataLoss("Current revision has no manifest");
+                    return Optional.of(parseManifest(bytes, rows.getString(3), address, revision));
+                }
+            }
+        });
+    }
+
     /** Stored manifests below {@code beforeRevision}, newest first. */
     @Override public List<StoredManifest> revisions(NodeAddress address, long beforeRevision, int limit) {
         return inTransaction("Revision history", connection -> {
@@ -208,10 +239,10 @@ public final class PostgresCatalog implements Catalog {
                 select.setString(1, sha256);
                 try (var rows = select.executeQuery()) {
                     if (!rows.next()) return Optional.empty();
-                    var content = ByteString.copyFrom(rows.getBytes(1));
-                    if (!sha256Hex(content.toByteArray()).equals(sha256))
+                    var raw = rows.getBytes(1);
+                    if (!sha256Hex(raw).equals(sha256))
                         throw new CatalogDataLoss("Retained schema artifact differs from its digest");
-                    return Optional.of(content);
+                    return Optional.of(ByteString.copyFrom(raw));
                 }
             }
         });
@@ -762,11 +793,37 @@ public final class PostgresCatalog implements Catalog {
         });
     }
 
+    /** Stamps a batch of events relayed after the broker acknowledged them. */
+    @Override public int markRelayed(List<String> eventIds) {
+        if (eventIds.isEmpty()) return 0;
+        return inTransaction("Outbox relay stamp", connection -> {
+            try (var update = connection.prepareStatement(
+                    "UPDATE catalog_outbox SET relayed_at = ? WHERE event_id = ANY(?) AND relayed_at IS NULL")) {
+                update.setTimestamp(1, Timestamp.from(Instant.now()));
+                update.setArray(2, connection.createArrayOf("text", eventIds.toArray()));
+                return update.executeUpdate();
+            }
+        });
+    }
+
     /** Counts a failed relay attempt; the event stays pending. */
     @Override public void markAttempt(String eventId) {
         inTransaction("Outbox attempt", connection -> {
             try (var update = connection.prepareStatement("UPDATE catalog_outbox SET attempts = attempts + 1 WHERE event_id = ?")) {
                 update.setString(1, eventId);
+                update.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Counts a failed relay attempt for each named event; the events stay pending. */
+    @Override public void markAttempts(List<String> eventIds) {
+        if (eventIds.isEmpty()) return;
+        inTransaction("Outbox attempt", connection -> {
+            try (var update = connection.prepareStatement(
+                    "UPDATE catalog_outbox SET attempts = attempts + 1 WHERE event_id = ANY(?)")) {
+                update.setArray(1, connection.createArrayOf("text", eventIds.toArray()));
                 update.executeUpdate();
             }
             return null;

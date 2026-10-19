@@ -87,6 +87,36 @@ class OutboxOrderIT {
         assertThat(f.catalog.events(a)).isEqualTo(events);
     }
 
+    @Test void markRelayedStillPersistsWhenMarkAttemptsThrows() throws Exception {
+        var a = address(account, "doc-ok");
+        var b = address(account, "doc-fail");
+        f.saves.save(processAuthority(), create("ok-1", a, document(account, "doc-ok", "ok")).build());
+        f.saves.save(processAuthority(), create("fail-1", b, document(account, "doc-fail", "fail")).build());
+
+        var spied = (ai.protomolt.proto.repo.catalog.Catalog) java.lang.reflect.Proxy.newProxyInstance(
+                ai.protomolt.proto.repo.catalog.Catalog.class.getClassLoader(),
+                new Class<?>[]{ai.protomolt.proto.repo.catalog.Catalog.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("markAttempts")) {
+                        throw new RuntimeException("simulated markAttempts failure");
+                    }
+                    try {
+                        return method.invoke(f.catalog, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        var relay = new OutboxRelay(spied, (key, event) -> {
+            if (event.getAddress().equals(b)) throw new java.io.IOException("broker failure on b");
+        });
+        assertThatThrownBy(() -> relay.relayOnce(10))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("simulated markAttempts failure");
+        var remaining = f.catalog.pendingEvents(10);
+        assertThat(remaining).hasSize(1);
+        assertThat(remaining.getFirst().event().getAddress()).isEqualTo(b);
+    }
+
     private static SaveDocumentRequest titleSave(String operation, NodeAddress address, long expected, String title) {
         var core = Document.newBuilder().setDocId(address.getDocId()).setOwnership(ownership(address.getAccountId()))
                 .setSearchMetadata(SearchMetadata.newBuilder().setTitle(title)).build();

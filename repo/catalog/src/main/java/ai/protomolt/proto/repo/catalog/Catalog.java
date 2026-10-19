@@ -46,6 +46,19 @@ public interface Catalog extends AutoCloseable {
     /** One accession's stored manifest; its stored digest is verified. */
     Optional<StoredManifest> manifest(NodeAddress address, long revision);
 
+    /**
+     * The document's current-revision manifest, read in a single transaction.
+     *
+     * @param address the document address
+     * @return the current stored manifest, or empty when the document does not exist or is purged
+     */
+    default Optional<StoredManifest> currentManifest(NodeAddress address) {
+        var state = current(address);
+        if (state.isEmpty()) return Optional.empty();
+        return Optional.of(manifest(address, state.get().revision())
+                .orElseThrow(() -> new CatalogDataLoss("Current revision has no manifest")));
+    }
+
     /** Stored manifests below {@code beforeRevision}, newest first. */
     List<StoredManifest> revisions(NodeAddress address, long beforeRevision, int limit);
 
@@ -114,8 +127,29 @@ public interface Catalog extends AutoCloseable {
     /** Stamps an event relayed after the broker acknowledged it. */
     boolean markRelayed(String eventId);
 
+    /**
+     * Stamps a batch of events relayed after the broker acknowledged them.
+     *
+     * @param eventIds the event IDs acknowledged by the broker
+     * @return the number of unrelayed rows stamped relayed
+     */
+    default int markRelayed(List<String> eventIds) {
+        int count = 0;
+        for (var id : eventIds) if (markRelayed(id)) count++;
+        return count;
+    }
+
     /** Counts a failed relay attempt; the event stays pending. */
     void markAttempt(String eventId);
+
+    /**
+     * Counts a failed relay attempt for each named event; the events stay pending.
+     *
+     * @param eventIds the event IDs whose publish attempt failed
+     */
+    default void markAttempts(List<String> eventIds) {
+        for (var id : eventIds) markAttempt(id);
+    }
 
     /** Every outbox event of one document, in revision order. */
     List<DocumentEvent> events(NodeAddress address);

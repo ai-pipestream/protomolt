@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.v1.*;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -317,7 +318,7 @@ public final class DocumentSchemaAdmission {
         Objects.requireNonNull(evaluatedAt);
         Objects.requireNonNull(request); Objects.requireNonNull(reader); Objects.requireNonNull(limits);
         Objects.requireNonNull(control); active(control);
-        if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
+        if (request.commandSha256().size() != 32 || !DocumentPartCodec.isSha256Hex(request.policySha256()))
             throw new IllegalArgumentException("exact command and policy digests required");
         var member = request.member();
         if (member.getPartsCount() > limits.maxFragments() || request.fragments().size() > limits.maxFragments()
