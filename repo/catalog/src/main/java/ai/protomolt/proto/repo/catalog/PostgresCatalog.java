@@ -563,7 +563,7 @@ public final class PostgresCatalog implements Catalog {
             insert.setString(1, commit.event().getEventId());
             insert.setLong(2, documentId);
             insert.setLong(3, revision);
-            insert.setString(4, commit.address().getDocId());
+            insert.setString(4, CatalogRecords.eventKey(commit.address()));
             insert.setBytes(5, commit.event().toByteArray());
             insert.setTimestamp(6, now);
             insert.executeUpdate();

@@ -43,6 +43,9 @@ import java.util.function.Function;
  * catalog, or fails its digest, is DATA_LOSS.
  */
 public final class DocumentReads {
+    /** Largest payload of one part-data frame of a streamed read. */
+    private static final int READ_FRAME_BYTES = 1024 * 1024;
+
     private final Catalog catalog;
     private final DocumentSaves.Drives drives;
     private final DocumentSchemaAdmission.Limits limits;
@@ -94,6 +97,54 @@ public final class DocumentReads {
             var stored = resolve(caller, request.getAddress(), request.getRevision());
             return GetManifestResponse.newBuilder().setManifest(manifest(stored, selector -> false))
                     .setValidation(stored.getValidation()).build();
+        });
+    }
+
+    /**
+     * The streamed read of one pinned revision (requirements §8, §11): the manifest
+     * frame first, then each selected PRESENT part's bytes in one or more frames,
+     * then the completion frame. Every part's bytes are verified against their
+     * stack reference, and non-opaque parts against their retained schemas, before
+     * any of its frames are emitted; raw blobs go out with their claim checks
+     * filled (decision 45). An opaque part the request does not allow fails the
+     * item before any frame is emitted. A prefix without the completion frame is
+     * not a successful read.
+     */
+    public void readDocument(RepositoryCaller caller, ReadDocumentRequest request,
+            java.util.function.Consumer<ReadDocumentResponse> frames) {
+        Objects.requireNonNull(frames);
+        guarded(() -> {
+            valid(request);
+            var stored = resolve(caller, request.getAddress(), request.getRevision());
+            var selected = selected(request.getSelection());
+            var parts = new java.util.ArrayList<StoredPartEntry>();
+            for (var part : stored.getPartsList()) {
+                var entry = part.getEntry();
+                if (!selected.apply(entry.getSelector()) || entry.getState() != PartState.PART_STATE_PRESENT) continue;
+                if (entry.getOpaque() && !request.getAllowOpaque())
+                    throw new AccessionException(Status.Code.FAILED_PRECONDITION,
+                            "The revision holds opaque content; request its opaque representation explicitly", null);
+                parts.add(part);
+            }
+            frames.accept(ReadDocumentResponse.newBuilder().setManifest(manifest(stored, selected)).build());
+            for (var part : parts) {
+                var entry = part.getEntry();
+                var bytes = read(part.getRef());
+                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
+                long offset = 0;
+                do {
+                    int length = (int) Math.min(READ_FRAME_BYTES, (long) bytes.size() - offset);
+                    frames.accept(ReadDocumentResponse.newBuilder().setPartData(PartData.newBuilder()
+                            .setSelector(entry.getSelector()).setOffset(offset)
+                            .setData(bytes.substring((int) offset, (int) offset + length))
+                            .setLast(offset + length == bytes.size())).build());
+                    offset += length;
+                } while (offset < bytes.size());
+            }
+            frames.accept(ReadDocumentResponse.newBuilder().setComplete(ReadComplete.getDefaultInstance()).build());
+            return null;
         });
     }
 
