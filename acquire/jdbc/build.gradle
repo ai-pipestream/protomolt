@@ -17,8 +17,12 @@ dependencies {
     // The full-stack IT pulls from a Postgres source table into a real
     // repo-service (Postgres + LocalStack S3) behind the real intake service.
     testImplementation project(':protomolt-intake-service')
-    testImplementation project(':protomolt-repo-service')
-    testImplementation project(':protomolt-repo-container')
+    testImplementation project(':protomolt-repo-accession')
+    testImplementation project(':protomolt-authz-grpc')
+    testImplementation project(':protomolt-repo-admission')
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation libs.awssdk.s3
+    testImplementation libs.awssdk.url.connection.client
     testImplementation libs.postgresql
     testImplementation libs.grpc.inprocess
     testImplementation libs.testcontainers.postgresql

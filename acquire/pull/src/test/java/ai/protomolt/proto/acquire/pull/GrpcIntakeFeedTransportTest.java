@@ -31,9 +31,12 @@ class GrpcIntakeFeedTransportTest {
 
     /** Answers anything, so a call that arrives proves the transport agreed. */
     private static final class AcceptingIntake extends IntakeServiceGrpc.IntakeServiceImplBase {
+        private final java.util.concurrent.atomic.AtomicReference<IngestDocumentRequest> received =
+                new java.util.concurrent.atomic.AtomicReference<>();
         @Override
         public void ingestDocument(IngestDocumentRequest request,
                                    StreamObserver<IngestDocumentResponse> observer) {
+            received.set(request);
             observer.onNext(IngestDocumentResponse.getDefaultInstance());
             observer.onCompleted();
         }
@@ -41,11 +44,13 @@ class GrpcIntakeFeedTransportTest {
 
     private Server plaintextServer;
     private String target;
+    private AcceptingIntake accepting;
 
     @BeforeEach
     void startPlaintextIntake() throws IOException {
+        accepting = new AcceptingIntake();
         plaintextServer = NettyServerBuilder.forPort(0)
-                .addService(new AcceptingIntake())
+                .addService(accepting)
                 .build()
                 .start();
         target = "127.0.0.1:" + plaintextServer.getPort();
@@ -76,6 +81,8 @@ class GrpcIntakeFeedTransportTest {
         try (GrpcIntakeFeed feed = new GrpcIntakeFeed(target, API_KEY, true)) {
             assertThat(feed.submit(Document.newBuilder().setDocId("doc-1").build(),
                     "datasource-1", "intake", Map.of())).isNotNull();
+            assertThat(accepting.received.get().getMode())
+                    .isEqualTo(ai.protomolt.proto.intake.v1.IngestMode.INGEST_MODE_UPSERT);
         }
     }
 

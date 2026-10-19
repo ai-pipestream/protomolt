@@ -11,16 +11,10 @@ import ai.protomolt.proto.intake.service.IntakeServices;
 import ai.protomolt.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
-import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
-import ai.protomolt.proto.repo.service.RepoServiceConfig;
-import ai.protomolt.proto.repo.service.RepoServices;
-import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
-import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -58,7 +52,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * changed object replaces its own document), watermark incrementality, repository dedupe, the
  * cap, and the {@code pull-s3} verb's JSON round trip.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class S3PullIT {
 
@@ -75,7 +69,7 @@ class S3PullIT {
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8"))
                     .withServices("s3");
 
-    static RepoServices repo;
+    static V2RepositoryFixture repo;
     static IntakeServices intake;
     static ManagedChannel repoChannel;
     static S3Client sourceS3;
@@ -86,25 +80,8 @@ class S3PullIT {
 
     @BeforeAll
     static void boot() throws Exception {
-        RepoServiceConfig config = new RepoServiceConfig(
-                0,
-                new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                LOCALSTACK.getEndpoint().toString(),
-                LOCALSTACK.getRegion(),
-                LOCALSTACK.getAccessKey(),
-                LOCALSTACK.getSecretKey(),
-                "s3-pull-it-docs",
-                0,
-                null, null, null, null, 0, 0L);
-        repo = RepoServices.build(config);
-        repo.startInProcess("s3-pull-it-repo");
+        repo = new V2RepositoryFixture(POSTGRES, LOCALSTACK, "s3-pull-it-repo");
         repoChannel = InProcessChannelBuilder.forName("s3-pull-it-repo").build();
-        DriveServiceGrpc.newBlockingStub(repoChannel).createDrive(
-                CreateDriveRequest.newBuilder()
-                        .setName("intake")
-                        .setAccountId(ACCOUNT)
-                        .setDriveType(DriveType.DRIVE_TYPE_INTAKE)
-                        .build());
 
         intake = IntakeServices.build(
                 new IntakeServiceConfig(
@@ -150,17 +127,46 @@ class S3PullIT {
         IngestDocumentResponse receipt = feed.receipts.get(docId);
         assertThat(receipt).as("no intake receipt recorded for " + docId).isNotNull();
         return DocumentServiceGrpc.newBlockingStub(repoChannel)
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(receipt.getAddress())
                         .build())
                 .getDocument();
     }
 
+    static byte[] blobBytes(String docId) {
+        var receipt = feed.receipts.get(docId);
+        var blob = fetch(docId).getBlobBag().getBlob();
+        assertThat(blob.getData()).isEmpty();
+        assertThat(blob.hasStorageRef()).isTrue();
+        var frames = DocumentServiceGrpc.newBlockingStub(repoChannel).readBlob(
+                ai.protomolt.proto.repo.v2.ReadBlobRequest.newBuilder()
+                        .setAddress(receipt.getAddress())
+                        .setRevision(ai.protomolt.proto.repo.v2.RevisionSelector.newBuilder().setRevision(receipt.getRevision()))
+                        .setBlobId(blob.getBlobId()).build());
+        assertThat(frames.hasNext()).isTrue();
+        var first = frames.next();
+        assertThat(first.hasHeader()).isTrue();
+        var bytes = new java.io.ByteArrayOutputStream();
+        while (frames.hasNext()) {
+            var frame = frames.next();
+            assertThat(frame.hasData()).isTrue();
+            bytes.writeBytes(frame.getData().toByteArray());
+        }
+        assertThat(bytes.size()).isEqualTo(first.getHeader().getTotalLength());
+        try {
+            assertThat(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(bytes.toByteArray()))).isEqualTo(first.getHeader().getSha256());
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+        return bytes.toByteArray();
+    }
+
     static int totalDocuments() {
         return DocumentServiceGrpc.newBlockingStub(repoChannel)
                 .listDocuments(ListDocumentsRequest.newBuilder()
-                        .setDrive("intake").setAccountId(ACCOUNT).setLimit(100).build())
-                .getTotalCount();
+                        .setAccountId(ACCOUNT).setPageSize(100).build())
+                .getDocumentsCount();
     }
 
     @Test
@@ -180,7 +186,7 @@ class S3PullIT {
         String docId = PullDocuments.docId(
                 S3Pull.CONNECTOR_ID, DATASOURCE, "s3://" + SOURCE_BUCKET + "/a.txt");
         Document stored = fetch(docId);
-        assertThat(stored.getBlobBag().getBlob().getData().toStringUtf8()).isEqualTo("alpha");
+        assertThat(new String(blobBytes(docId), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("alpha");
         assertThat(stored.getBlobBag().getBlob().getMimeType()).isEqualTo("text/plain");
         assertThat(stored.getOwnership().getAccountId()).isEqualTo(ACCOUNT);
         assertThat(stored.getOwnership().getDatasourceId()).isEqualTo(DATASOURCE);
@@ -209,7 +215,7 @@ class S3PullIT {
         putObject("z-new.txt", "gamma", "text/plain");
 
         PullReport report = pull.pull(SOURCE_BUCKET, "", DATASOURCE, "", watermark, 0);
-        assertThat(report.submitted()).isEqualTo(1);
+        assertThat(report.submitted()).as("pull errors: %s", report.errors()).isEqualTo(1);
         assertThat(report.deduplicated()).isZero();
         assertThat(report.watermark()).isNotEqualTo(watermark);
         watermark = report.watermark();
@@ -223,7 +229,7 @@ class S3PullIT {
         putObject("a.txt", "alpha revised", "text/plain");
 
         PullReport report = pull.pull(SOURCE_BUCKET, "", DATASOURCE, "", watermark, 0);
-        assertThat(report.submitted()).isEqualTo(1);
+        assertThat(report.submitted()).as("pull errors: %s", report.errors()).isEqualTo(1);
         watermark = report.watermark();
 
         assertThat(totalDocuments())
@@ -231,7 +237,7 @@ class S3PullIT {
                 .isEqualTo(3);
         String docId = PullDocuments.docId(
                 S3Pull.CONNECTOR_ID, DATASOURCE, "s3://" + SOURCE_BUCKET + "/a.txt");
-        assertThat(fetch(docId).getBlobBag().getBlob().getData().toStringUtf8())
+        assertThat(new String(blobBytes(docId), java.nio.charset.StandardCharsets.UTF_8))
                 .isEqualTo("alpha revised");
     }
 

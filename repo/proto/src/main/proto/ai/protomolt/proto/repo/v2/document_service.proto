@@ -490,6 +490,8 @@ message GetDocumentResponse {
   DocumentManifest manifest = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
   // The revision's validation record.
   RevisionValidation validation = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Persisted request metadata from this same authorized revision, independent of part selection.
+  map<string, string> metadata = 4;
 }
 
 // A streamed read.

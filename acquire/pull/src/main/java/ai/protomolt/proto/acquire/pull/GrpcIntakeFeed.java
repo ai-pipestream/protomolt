@@ -96,6 +96,7 @@ public final class GrpcIntakeFeed implements IntakeFeed {
                                          Map<String, String> metadata) {
         IngestDocumentRequest.Builder request = IngestDocumentRequest.newBuilder()
                 .setDocument(document)
+                .setMode(ai.protomolt.proto.intake.v1.IngestMode.INGEST_MODE_UPSERT)
                 .setDatasourceId(datasourceId)
                 .putAllMetadata(metadata);
         if (drive != null && !drive.isBlank()) {
