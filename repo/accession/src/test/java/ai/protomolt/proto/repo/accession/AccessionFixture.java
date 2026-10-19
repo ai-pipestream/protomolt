@@ -301,6 +301,7 @@ final class AccessionFixture implements AutoCloseable {
         final Map<String, Integer> opened = new ConcurrentHashMap<>();
         volatile ThrowingRunnable afterPut = () -> {};
         volatile ThrowingRunnable afterOpen = () -> {};
+        volatile ThrowingRunnable afterDelete = () -> {};
 
         CountingStack(Stack delegate) { this.delegate = delegate; }
 
@@ -336,9 +337,9 @@ final class AccessionFixture implements AutoCloseable {
 
         @Override public long head(StackRef ref) throws IOException { return delegate.head(ref); }
 
-        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); }
+        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); afterDelete.run(); }
 
-        void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; afterOpen = () -> {}; }
+        void reset() { puts.set(0); opens.set(0); opened.clear(); afterPut = () -> {}; afterOpen = () -> {}; afterDelete = () -> {}; }
     }
 
     @FunctionalInterface interface ThrowingRunnable { void run() throws IOException; }

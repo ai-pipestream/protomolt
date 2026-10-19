@@ -7,6 +7,8 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v2.ProcessAuthorityEvidence;
 import ai.protomolt.proto.repo.v2.RejectionReason;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.SaveRejection;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import ai.protomolt.proto.repo.v2.WriterGrantEvidence;
 import io.grpc.Status;
@@ -116,6 +118,24 @@ final class WriterAuthority {
         }
         if (!grant.hasStep() || !grant.getStep().getModuleId().equals(owner.getStep().getModuleId())) return false;
         return !grant.getStep().hasNodeId() || grant.getStep().getNodeId().equals(owner.getStep().getNodeId());
+    }
+
+    /** Delete derives its intake scope from stored ownership, never a caller-supplied owner. */
+    Authorized authorizeDelete(RepositoryCaller caller, ai.protomolt.proto.repo.v1.OwnershipContext ownership) {
+        var intake = IntakeOrigin.newBuilder().setDatasourceId(ownership.getDatasourceId());
+        if (ownership.hasConnectorId()) intake.setConnectorId(ownership.getConnectorId());
+        try {
+            return authorize(caller, SaveOwner.newBuilder().setIntake(intake).build(), ownership.getAccountId(),
+                    ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), false);
+        } catch (AccessionException refusal) {
+            if (refusal.detail().filter(detail -> detail instanceof SaveRejection rejection
+                    && rejection.getReason() == RejectionReason.REJECTION_REASON_OWNER_UNKNOWN).isPresent())
+                throw new AccessionException(io.grpc.Status.Code.PERMISSION_DENIED,
+                        "The caller holds no intake authority for this document",
+                        DocumentSaves.rejection(RejectionReason.REJECTION_REASON_WRITE_DENIED,
+                                "The caller holds no intake authority for this document"), refusal);
+            throw refusal;
+        }
     }
 
     static AccessionException denied(String message) {

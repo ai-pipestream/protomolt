@@ -225,6 +225,11 @@ message PartManifestEntry {
 
 // The public map of one accession.
 message DocumentManifest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-no-parts"
+    message: "tombstones contain no part entries"
+    expression: "!this.tombstone || size(this.parts) == 0"
+  };
   // The call number.
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // The accession's revision.
@@ -246,6 +251,8 @@ enum ValidationStatus {
   VALIDATION_STATUS_TYPED_VALID = 1;
   // Accepted with opaque occurrences; never reported as typed-valid.
   VALIDATION_STATUS_OPAQUE_ACCEPTED = 2;
+  // Tombstones authorize a delete and make no content-validation claim.
+  VALIDATION_STATUS_NOT_APPLICABLE = 3;
 }
 
 // One Any occurrence decoded at save time, with the exact schema used.
@@ -362,6 +369,11 @@ message RuleResult {
 // identity, not a verdict.
 message RevisionValidation {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "validation-content-status"
+    message: "tombstones have no content validation; other revisions require candidate and validator identity"
+    expression: "this.status == 3 ? (size(this.resolved_occurrences) == 0 && size(this.opaque_occurrences) == 0 && size(this.rule_results) == 0 && size(this.part_schemas) == 0 && this.candidate_sha256 == '' && this.validator_profile == '') : (this.candidate_sha256 != '' && this.validator_profile != '')"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "typed-validation-complete"
     message: "typed-valid must not contain opaque values or unevaluated rules"
     expression: "this.status != 1 || (size(this.opaque_occurrences) == 0 && size(this.rule_results) == 0)"
@@ -385,16 +397,15 @@ message RevisionValidation {
   repeated PartSchemaBinding part_schemas = 5;
   // SHA-256 of the candidate's CandidateDigestInput.
   string candidate_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {
-    required: true
+    ignore_if_zero: true
     string: {sha256_hex: true}
   }];
   // The validator and host policy that produced the verdict.
   string validator_profile = 8 [(ai.protomolt.proto.validate.v1.field) = {
-    required: true
+    ignore_if_zero: true
     string: {min_len: 1, max_len: 200}
   }];
-  // The save's write authority. One is required for every save; tombstones use
-  // their authenticated delete boundary.
+  // Every save and tombstone records its write authority.
   oneof write_authority {
     // The grant selected for the save.
     WriterGrantEvidence writer_grant = 9;
@@ -407,6 +418,17 @@ message RevisionValidation {
 // One committed revision of a document.
 message Accession {
   option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "accession-manifest-tombstone"
+    message: "accession and manifest agree on tombstone state"
+    expression: "this.tombstone == this.manifest.tombstone"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-validation-status"
+    message: "only tombstones have NOT_APPLICABLE validation"
+    expression: "this.tombstone == (this.validation.status == 3)"
+  };
+
+  option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "save-owner-present"
     message: "save accessions require an owner"
     expression: "this.tombstone || has(this.owner)"
@@ -414,7 +436,7 @@ message Accession {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "save-authority-present"
     message: "save accessions require grant or process-authority evidence"
-    expression: "this.tombstone || has(this.validation.writer_grant) || has(this.validation.process_authority)"
+    expression: "has(this.validation.writer_grant) || has(this.validation.process_authority)"
   };
   // The call number.
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];

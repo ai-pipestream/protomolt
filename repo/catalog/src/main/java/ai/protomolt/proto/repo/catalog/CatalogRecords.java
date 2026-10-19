@@ -19,6 +19,15 @@ public final class CatalogRecords {
     private CatalogRecords() {}
 
     /** A document's current-revision pointer. */
+    public record ListedDocument(NodeAddress address, long revision, boolean tombstone,
+            com.google.protobuf.Timestamp committedAt, ai.protomolt.proto.repo.v2.CatalogEntry entry) {}
+
+    public record PurgeState(ai.protomolt.proto.repo.v2.CatalogPurge record, boolean completed) {}
+    /** An idempotency key already belongs to a different document. */
+    public static final class PurgeConflict extends IllegalStateException {
+        public PurgeConflict() { super("Purge ID belongs to another document"); }
+    }
+
     public record Current(long revision, boolean tombstone) {}
 
     /** A recorded terminal outcome and the intent it was recorded for. */
@@ -69,6 +78,8 @@ public final class CatalogRecords {
     public record Conflict(long currentRevision, boolean currentTombstone) implements CommitResult {}
     /** A carried-forward object was purged before the commit. */
     public record SourcePurged(StackRef ref) implements CommitResult {}
+    /** The destination address was permanently purged and cannot accept another revision. */
+    public record TargetPurged() implements CommitResult {}
     /** The writer grant or credential was revoked or rotated before the commit. */
     public record WriteDenied(String reason) implements CommitResult, RejectionResult {}
 

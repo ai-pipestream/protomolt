@@ -600,6 +600,8 @@ public final class DocumentSaves {
                     conflict.currentTombstone());
             case CatalogRecords.SourcePurged purged -> reject(caller, request, address, intentSha, authorized,
                     RejectionReason.REJECTION_REASON_SOURCE_PURGED, "A carried object is purged", List.of());
+            case CatalogRecords.TargetPurged ignored -> reject(caller, request, address, intentSha, authorized,
+                    RejectionReason.REJECTION_REASON_SOURCE_PURGED, "The destination document was purged", List.of());
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
         };
     }

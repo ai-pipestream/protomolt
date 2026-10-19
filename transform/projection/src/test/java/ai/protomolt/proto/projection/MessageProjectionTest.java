@@ -210,4 +210,46 @@ class MessageProjectionTest {
                 .isInstanceOf(ProjectionException.class)
                 .hasMessageContaining("not a declared source");
     }
+    @Test
+    void evolvedSourceWithSameNameUsesItsOwnCelDescriptor() throws Exception {
+        var original = ai.protomolt.proto.projection.test.EvolvingSource.getDescriptor();
+        var file = original.getFile().toProto().toBuilder();
+        for (int n = 0; n < file.getMessageTypeCount(); n++) {
+            if (file.getMessageType(n).getName().equals("EvolvingSource")) {
+                file.getMessageTypeBuilder(n).getFieldBuilder(0)
+                        .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT64);
+            }
+        }
+        var evolved = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(file.build(),
+                original.getFile().getDependencies().toArray(com.google.protobuf.Descriptors.FileDescriptor[]::new))
+                .findMessageTypeByName("EvolvingSource");
+        var projection = MessageProjection.forTarget(ai.protomolt.proto.projection.test.EvolvingProjection.getDescriptor(),
+                SourceResolver.of(original)).orElseThrow();
+        var text = ai.protomolt.proto.projection.test.EvolvingSource.newBuilder().setValue("before").build();
+        var number = DynamicMessage.newBuilder(evolved).setField(evolved.findFieldByNumber(1), 42L).build();
+        var rendered = ai.protomolt.proto.projection.test.EvolvingProjection.getDescriptor().findFieldByName("rendered");
+        assertThat(projection.project(text).getField(rendered)).isEqualTo("before");
+        assertThat(projection.project(number).getField(rendered)).isEqualTo("42");
+        assertThat(projection.project(text).getField(rendered)).isEqualTo("before");
+    }
+
+    @Test void dynamicDescriptorChurnEvictsWithoutLosingProjectionBehavior() throws Exception {
+        var original = ai.protomolt.proto.projection.test.EvolvingSource.getDescriptor();
+        var target = ai.protomolt.proto.projection.test.EvolvingProjection.getDescriptor();
+        var projection = MessageProjection.forTarget(target, SourceResolver.of(original)).orElseThrow();
+        var rendered = target.findFieldByName("rendered");
+        var first = ai.protomolt.proto.projection.test.EvolvingSource.newBuilder().setValue("first").build();
+        assertThat(projection.project(first).getField(rendered)).isEqualTo("first");
+        for (int n = 0; n < MessageProjection.MAX_CACHED_EVALUATORS + 10; n++) {
+            var copy = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(original.getFile().toProto(),
+                    original.getFile().getDependencies().toArray(com.google.protobuf.Descriptors.FileDescriptor[]::new))
+                    .findMessageTypeByName("EvolvingSource");
+            var message = DynamicMessage.newBuilder(copy).setField(copy.findFieldByNumber(1), "value-" + n).build();
+            assertThat(projection.project(message).getField(rendered)).isEqualTo("value-" + n);
+            assertThat(projection.cachedEvaluatorCount()).isLessThanOrEqualTo(MessageProjection.MAX_CACHED_EVALUATORS);
+        }
+        assertThat(projection.project(first).getField(rendered)).isEqualTo("first");
+        assertThat(projection.cachedEvaluatorCount()).isEqualTo(MessageProjection.MAX_CACHED_EVALUATORS);
+    }
+
 }
