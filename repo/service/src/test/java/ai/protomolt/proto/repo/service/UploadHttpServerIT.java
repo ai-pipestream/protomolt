@@ -132,9 +132,16 @@ class UploadHttpServerIT {
             assertThat(disabled.documentLedger().findByReference(ai.protomolt.proto.repo.v1.NodeAddress.newBuilder()
                     .setAccountId(ACCOUNT).setDocId("disabled-upload").setGraphId("intake:" + ACCOUNT)
                     .setGraphAddressId(DATASOURCE).build())).isEmpty();
-            // And the upload reads back through the v2 document service on the same host.
-            disabled.startInProcess("it-http-default");
-            var v2Channel = InProcessChannelBuilder.forName("it-http-default").build();
+            // Legacy StorageReconciler must never delete live v2 stack objects.
+            var drive = disabled.driveLedger().findByName(ACCOUNT, DRIVE).orElseThrow();
+            var report = new ai.protomolt.proto.repo.container.lifecycle.StorageReconciler(disabled.documentLedger())
+                    .reconcile(disabled.blobStore(), drive.bucket, drive.prefix, java.time.Duration.ZERO, false);
+            assertThat(report.deleted()).isZero();
+        }
+        // A fresh cold host (empty v2Stacks cache) resolves the persisted stackId by drive primary key and reads back.
+        try (var coldHost = RepoServices.build(config)) {
+            coldHost.startInProcess("it-http-default-cold");
+            var v2Channel = InProcessChannelBuilder.forName("it-http-default-cold").build();
             try {
                 var readBack = ai.protomolt.proto.repo.v2.DocumentServiceGrpc.newBlockingStub(v2Channel)
                         .getDocument(ai.protomolt.proto.repo.v2.GetDocumentRequest.newBuilder()
