@@ -448,7 +448,10 @@ public final class RepoServices implements AutoCloseable {
                 v2Uploads = new ai.protomolt.proto.repo.accession.DocumentUploads(v2Saves);
                 accession = new ai.protomolt.proto.repo.accession.AccessionGrpcService(v2Saves, v2Uploads,
                         new ai.protomolt.proto.repo.accession.DocumentReads(catalog, v2Drives, limits,
-                                bytes -> () -> {}, java.time.Clock.systemUTC()),
+                                // Verified reads buffer typed parts, so they draw on a real host
+                                // byte budget; a read past the budget is RESOURCE_EXHAUSTED
+                                // before anything is allocated.
+                                new ReadByteBudget(config.readBudgetBytes()), java.time.Clock.systemUTC()),
                         new ai.protomolt.proto.repo.accession.DocumentDeletes(catalog, java.time.Clock.systemUTC()),
                         new ai.protomolt.proto.repo.accession.DocumentLists(catalog),
                         new ai.protomolt.proto.repo.accession.DocumentPurges(catalog, v2Drives,
