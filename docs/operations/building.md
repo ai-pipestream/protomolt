@@ -190,9 +190,9 @@ compose stack's, with a system property or environment variable:
           -Dprotomolt.it.apicurio.url=http://my-registry:8080
 ```
 
-An unreachable override endpoint still skips via a JUnit assumption (a
-quick ~2 second probe), so a plain `./gradlew build` stays green without
-containers.
+An unreachable override endpoint fails the suite rather than skipping, so
+a typo in the URL cannot silently hand the run back to the Testcontainers
+registry. Without the override the suites provision their own containers.
 
 ## ACP protocol round trips
 
