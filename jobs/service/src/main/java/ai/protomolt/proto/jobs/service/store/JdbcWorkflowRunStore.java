@@ -12,7 +12,6 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +25,10 @@ import java.util.UUID;
  * actions own the Jackson work). Every commit point writes its outbox event
  * in the same transaction as the job mutation — that is the outbox
  * pattern's whole point.
+ *
+ * <p>JDBC value binding and row mapping live in {@link WorkflowRunJdbcMapping}.
+ * Transaction boundaries, claim fencing, checkpoint idempotency and outbox
+ * settlement remain here.
  */
 public final class JdbcWorkflowRunStore implements WorkflowRunStore {
 
@@ -77,20 +80,21 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 ps.setString(2, job.workflowName);
                 ps.setObject(3, job.workflowDefinition, Types.OTHER);
                 ps.setObject(4, job.input, Types.OTHER);
-                setText(ps, 5, job.inputRef);
+                WorkflowRunJdbcMapping.setText(ps, 5, job.inputRef);
                 ps.setString(6, job.status);
                 ps.setInt(7, job.attempt);
                 ps.setInt(8, job.maxAttempts);
-                setInstant(ps, 9, job.runAfter == null ? Instant.now() : job.runAfter);
-                setText(ps, 10, job.outstandingStep);
+                WorkflowRunJdbcMapping.setInstant(ps, 9,
+                        job.runAfter == null ? Instant.now() : job.runAfter);
+                WorkflowRunJdbcMapping.setText(ps, 10, job.outstandingStep);
                 ps.setObject(11, job.checkpoints == null ? "[]" : job.checkpoints, Types.OTHER);
                 ps.setObject(12, job.result, Types.OTHER);
-                setText(ps, 13, job.resultRef);
-                setText(ps, 14, job.verdict);
-                setText(ps, 15, job.error);
-                setText(ps, 16, job.leaseOwner);
-                setInstant(ps, 17, job.leaseUntil);
-                setInstant(ps, 18, job.completedAt);
+                WorkflowRunJdbcMapping.setText(ps, 13, job.resultRef);
+                WorkflowRunJdbcMapping.setText(ps, 14, job.verdict);
+                WorkflowRunJdbcMapping.setText(ps, 15, job.error);
+                WorkflowRunJdbcMapping.setText(ps, 16, job.leaseOwner);
+                WorkflowRunJdbcMapping.setInstant(ps, 17, job.leaseUntil);
+                WorkflowRunJdbcMapping.setInstant(ps, 18, job.completedAt);
                 inserted = ps.executeUpdate();
             } catch (SQLException e) {
                 throw WorkflowRunStoreException.wrap("insert workflow run failed", e);
@@ -117,7 +121,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, jobId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(mapJob(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(WorkflowRunJdbcMapping.mapJob(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw WorkflowRunStoreException.wrap("get workflow run failed", e);
@@ -150,7 +154,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 List<WorkflowRunRecord> rows = new ArrayList<>();
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        rows.add(mapJob(rs));
+                        rows.add(WorkflowRunJdbcMapping.mapJob(rs));
                     }
                 }
                 return rows;
@@ -179,7 +183,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 ps.setString(1, workerId);
                 ps.setLong(2, leaseDuration.toMillis());
                 try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? Optional.of(mapJob(rs)) : Optional.empty();
+                    return rs.next() ? Optional.of(WorkflowRunJdbcMapping.mapJob(rs)) : Optional.empty();
                 }
             } catch (SQLException e) {
                 throw WorkflowRunStoreException.wrap("claim workflow run failed", e);
@@ -208,7 +212,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
             try (PreparedStatement ps = c.prepareStatement(exhausted);
                  ResultSet rows = ps.executeQuery()) {
                 while (rows.next()) {
-                    WorkflowRunRecord dead = mapJob(rows);
+                    WorkflowRunRecord dead = WorkflowRunJdbcMapping.mapJob(rows);
                     enqueue(c, WorkflowRunEventFactory.dead(dead, dead.error));
                 }
             } catch (SQLException e) {
@@ -407,7 +411,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                 List<WorkflowRunEventRecord> claimed = new ArrayList<>();
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        claimed.add(mapEvent(rs));
+                        claimed.add(WorkflowRunJdbcMapping.mapEvent(rs));
                     }
                 }
                 return claimed;
@@ -449,7 +453,7 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
                             || !WorkflowRunEventRecord.STATUS_PENDING.equals(rs.getString("status"))) {
                         return Optional.empty();
                     }
-                    managed = mapEvent(rs);
+                    managed = WorkflowRunJdbcMapping.mapEvent(rs);
                 }
                 managed.attempts = managed.attempts + 1;
                 managed.lastError = truncate(error);
@@ -550,67 +554,6 @@ public final class JdbcWorkflowRunStore implements WorkflowRunStore {
         // Corrupt state the CHECK constraints cannot catch: fail loud.
         throw new IllegalStateException(
                 "stored checkpoints are not an array for job " + jobId);
-    }
-
-    private static void setText(PreparedStatement ps, int index, String value)
-            throws SQLException {
-        if (value == null) {
-            ps.setNull(index, Types.VARCHAR);
-        } else {
-            ps.setString(index, value);
-        }
-    }
-
-    private static void setInstant(PreparedStatement ps, int index, Instant value)
-            throws SQLException {
-        if (value == null) {
-            ps.setNull(index, Types.TIMESTAMP_WITH_TIMEZONE);
-        } else {
-            ps.setObject(index, value.atOffset(ZoneOffset.UTC));
-        }
-    }
-
-    private static WorkflowRunRecord mapJob(ResultSet rs) throws SQLException {
-        WorkflowRunRecord record = new WorkflowRunRecord();
-        record.jobId = rs.getObject("job_id", UUID.class);
-        record.workflowName = rs.getString("workflow_name");
-        record.workflowDefinition = rs.getString("workflow_definition");
-        record.input = rs.getString("input");
-        record.inputRef = rs.getString("input_ref");
-        record.status = rs.getString("status");
-        record.attempt = rs.getInt("attempt");
-        record.maxAttempts = rs.getInt("max_attempts");
-        record.runAfter = toInstant(rs.getObject("run_after", OffsetDateTime.class));
-        record.outstandingStep = rs.getString("outstanding_step");
-        record.checkpoints = rs.getString("checkpoints");
-        record.result = rs.getString("result");
-        record.resultRef = rs.getString("result_ref");
-        record.verdict = rs.getString("verdict");
-        record.error = rs.getString("error");
-        record.leaseOwner = rs.getString("lease_owner");
-        record.leaseUntil = toInstant(rs.getObject("lease_until", OffsetDateTime.class));
-        record.createdAt = toInstant(rs.getObject("created_at", OffsetDateTime.class));
-        record.updatedAt = toInstant(rs.getObject("updated_at", OffsetDateTime.class));
-        record.completedAt = toInstant(rs.getObject("completed_at", OffsetDateTime.class));
-        return record;
-    }
-
-    private static WorkflowRunEventRecord mapEvent(ResultSet rs) throws SQLException {
-        WorkflowRunEventRecord record = new WorkflowRunEventRecord();
-        record.eventId = rs.getObject("event_id", UUID.class);
-        record.eventType = rs.getString("event_type");
-        record.payload = rs.getBytes("payload");
-        record.kafkaKey = rs.getString("kafka_key");
-        record.attempts = rs.getInt("attempts");
-        record.status = rs.getString("status");
-        record.createdAt = toInstant(rs.getObject("created_at", OffsetDateTime.class));
-        record.publishedAt = toInstant(rs.getObject("published_at", OffsetDateTime.class));
-        record.lastError = rs.getString("last_error");
-        return record;
-    }
-
-    private static Instant toInstant(OffsetDateTime value) {
-        return value == null ? null : value.toInstant();
     }
 
     private static String truncate(String error) {
