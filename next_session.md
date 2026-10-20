@@ -10,8 +10,8 @@ Delete an entry once it is done. An empty page means the handoff is clean.
 ## Where the tree and the fleet stand
 
 `main` is the same commit on both remotes. Forgejo is master; GitHub receives
-`sync/forgejo-main` pull requests and its `main` is protected by five required
-checks (`build (21)`, `build (25)`, `conformance`, `console`, `integration`).
+`sync/forgejo-main` pull requests and its `main` is protected by four required
+checks (`build (25)`, `conformance`, `console`, `integration`).
 
 | Where | Runs | Pinned to |
 | --- | --- | --- |

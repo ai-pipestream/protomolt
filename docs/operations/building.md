@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - JDK 25 or newer. The build uses Gradle toolchains (with the Foojay
-  resolver), so any recent JDK can run the wrapper; artifacts target 21.
+  resolver), so any recent JDK can run the wrapper; artifacts target 25.
 - [buf](https://buf.build/docs/installation) on the `PATH` for proto
   linting (`buf lint` runs as part of `check`).
 - Docker, only if you want to run the registry integration tests.
@@ -113,7 +113,7 @@ compose stack's, with a system property or environment variable:
 
 ```shell
 ./gradlew :protomolt-schema-apicurio:test \
-          -Dpipestream.it.apicurio.url=http://my-registry:8080
+          -Dprotomolt.it.apicurio.url=http://my-registry:8080
 ```
 
 An unreachable override endpoint still skips via a JUnit assumption (a
@@ -158,8 +158,8 @@ to `main` and on pull requests:
 
 - **build**: compiles all modules, runs the unit test suite and the
   in-build conformance gate, runs `buf lint`, and (for pull requests)
-  `buf breaking` against the target branch. It runs as a matrix over test
-  JDKs 21 and 25 (`-PtestJdk=…`), so both supported runtimes are exercised.
+  `buf breaking` against the target branch. Tests run on JDK 25
+  (`-PtestJdk=25`), the only supported runtime.
 - **console**: installs the console's npm dependencies and runs its tests,
   its TypeScript typecheck, and its production build. The console is a
   standalone Vite app that the JVM build does not need, so a broken bundle

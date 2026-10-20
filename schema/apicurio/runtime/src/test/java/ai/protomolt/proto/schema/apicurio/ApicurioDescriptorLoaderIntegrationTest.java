@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code ./gradlew build} stays green without containers.</p>
  *
  * <p>To run against an external registry instead (for example the compose stack's):
- * {@code -Dpipestream.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL}.
+ * {@code -Dprotomolt.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL}.
  * An unreachable override endpoint still skips via a JUnit assumption.</p>
  *
  * <p>Artifacts are registered under unique per-run groups so reruns never collide. The shared
