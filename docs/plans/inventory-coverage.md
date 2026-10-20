@@ -41,7 +41,7 @@ distinguish format declarations, byte evidence, and classification state.
 [CharacterizerTest](../../asset/characterize/src/test/java/ai/protomolt/proto/asset/characterize/CharacterizerTest.java)
 and [ClassificationsTest](../../asset/characterize/src/test/java/ai/protomolt/proto/asset/characterize/ClassificationsTest.java)
 cover identification and state transitions. The repository's
-[ArchiveClassifications](../../repo/service/src/main/java/ai/protomolt/proto/repo/service/ArchiveClassifications.java)
+[ArchiveClassifications](../../repo/engine/src/main/java/ai/protomolt/proto/repo/engine/ArchiveClassifications.java)
 uses this engine. Source/test inspection only; no new file-format conformance run.
 The starter's text input does not require archive classification.
 

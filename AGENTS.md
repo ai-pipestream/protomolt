@@ -118,7 +118,7 @@
 ## CI layout (deliberate, 2026-08-02)
 
 - **GitHub Actions is the build of record** (`.github/workflows/ci.yml`:
-  build 21/25, conformance, console, integration — branch protection
+  build 25, conformance, console, integration; branch protection
   requires all of them; the forward workflow attaches them to each Forgejo
   main commit before GitHub main moves).
 - **Forgejo runs no build CI.** Its two workflows are

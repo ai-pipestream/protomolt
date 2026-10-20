@@ -331,7 +331,7 @@ returns its resumption position to the caller rather than persisting it.
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-registry` | `schema/registry/core` | The subject and version store SPI and its git-backed implementation: the repository is the storage, one commit per registration, with a monotonic global id, a compatibility write gate, path-traversal guards and transitive reference resolution. | `schema/registry/core/src/main/java/ai/protomolt/proto/registry/GitSchemaRegistryStore.java` | |
+| `protomolt-registry` | `schema/registry/core` | The subject and version store SPI, its provider lookup and an in-memory store, with a monotonic global id, a compatibility write gate and transitive reference resolution. The git-backed store, one commit per registration with path-traversal guards, is `GitSchemaRegistryStore` in `schema/registry/git` (`protomolt-schema-registry-git`). | `schema/registry/core/src/main/java/ai/protomolt/proto/registry/SchemaRegistryStore.java` | |
 | `protomolt-schema-confluent` | `schema/confluent` | A read client over the Confluent subjects REST API, a pre-compiled descriptor-set source, and a publisher that registers in reverse-topological import order. | `schema/confluent/src/main/java/ai/protomolt/proto/schema/confluent/ConfluentSchemaRegistryLoader.java` | Client side only |
 | `protomolt-schema-apicurio` | `schema/apicurio/runtime` | A descriptor loader and publisher for Apicurio Registry v3's native API, with references first-class. Ships as a Quarkus extension runtime. | `schema/apicurio/runtime/src/main/java/ai/protomolt/proto/schema/apicurio/ApicurioDescriptorLoader.java` | Client side only |
 | `protomolt-schema-apicurio-deployment` | `schema/apicurio/deployment` | The Quarkus build-time half of that extension. | `schema/apicurio/deployment/src/main/java/ai/protomolt/proto/schema/apicurio/deployment/ProtoToolsApicurioProcessor.java` | |
@@ -371,7 +371,7 @@ so `host/composer` can mount them as a role; see [Role nodes](#role-nodes).
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-grpc-service` | `surface/grpc/service` | The action catalog as a typed gRPC service: `ProtoMoltService`, 44 RPCs, served descriptor-natively with no generated stubs, with server reflection on. `ProtoMoltCatalog` is the assembled 44-verb catalog `apps/serve` and the CLI use. | `surface/grpc/service/src/main/java/ai/protomolt/proto/grpc/service/ProtoMoltGrpcServer.java`, proto at `surface/grpc/service/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Typed RPCs cover 44 of the 72 verbs |
+| `protomolt-grpc-service` | `surface/grpc/service` | The action catalog as a typed gRPC service: `ProtoMoltService`, 44 RPCs, served descriptor-natively with no generated stubs, with server reflection on. `ProtoMoltCatalog` is the assembled 44-verb catalog `apps/serve` and the CLI use. | `surface/grpc/service/src/main/java/ai/protomolt/proto/grpc/service/ProtoMoltGrpcServer.java`, proto at `surface/grpc/service-contract/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Typed RPCs cover 44 of the 72 verbs |
 | `protomolt-mcp` | `surface/mcp` | An MCP server over the action catalog and registry: JSON-RPC 2.0 on stdio, no framework, plus `protomolt://` resources for the workspace, registry, service profiles and delegation. `McpMain` is a standalone launcher registering 34 verbs. | `surface/mcp/src/main/java/ai/protomolt/proto/mcp/McpServer.java` | |
 | `protomolt-acp-agent` | `surface/acp` | The action catalog as an Agent Client Protocol agent, so an ACP-capable IDE (JetBrains AI chat, Zed) runs any verb over stdio. | `surface/acp/src/main/java/ai/protomolt/proto/acp/agent/ProtoMoltAcpAgent.java` | |
 
@@ -388,7 +388,7 @@ so `host/composer` can mount them as a role; see [Role nodes](#role-nodes).
 | `protomolt-intake-proto` | `intake/proto` | The intake contract: `IngestDocument` unary and `IngestStream` client-streaming, with a normative frame discipline, plus the HTTP upload lane that is deliberately not an RPC. Authentication is gRPC metadata, never a proto field. | `intake/proto/src/main/proto/ai/protomolt/proto/intake/v1/intake_service.proto` | |
 | `protomolt-intake-service` | `intake/service` | The only authenticated way in. An API key resolves to an `IntakeScope` (account, datasources, drives, mime types, payload cap); the request may narrow within it and never widen it, and ownership is overwritten from the scope. Three key stores: in-memory, JDBC (SHA-256 digests, revocation by timestamp), and OIDC introspection. One HTTP route, `POST /v1/intake:upload`. Role `intake`, gRPC port 9092. | `intake/service/src/main/java/ai/protomolt/proto/intake/service/IntakeGrpcService.java` | No pull connector uses the streaming lane. `IntakeModule` and `IntakeServiceMain` disagree on the HTTP-port gate (`>= 0` versus `> 0`) |
 | `protomolt-repo-proto` | `repo/proto` | The parts-based document store contract: `NodeAddress`, the `Document` model, the part manifest, `DocumentService` (`repo.v2`) with 11 RPCs, `DriveService` with 3, `ArchiveService`, and the document event envelopes. | `repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto` | |
-| `protomolt-repo-service` | `repo/service` | The store as a gRPC service set (`AccessionGrpcService`, `DriveGrpcService`, `ArchiveGrpcService`), embeddable in-JVM over the in-process transport or standalone over Netty, plus an HTTP upload route that streams through a digest straight into the blob store, with a transactional outbox relaying `document-events`. Role `repo`, gRPC port 9090. | `repo/service/src/main/java/ai/protomolt/proto/repo/service/RepoServices.java` | |
+| `protomolt-repo-service` | `repo/service` | The store as a gRPC service set (`AccessionGrpcService`, `DriveGrpcService`, `ArchiveGrpcService`), embeddable in-JVM over the in-process transport or standalone over Netty, plus an HTTP upload route that streams through a digest straight into the blob store, with a transactional outbox relaying `document-events`. Role `repo`, gRPC port 9090. | `repo/service/src/main/java/ai/protomolt/proto/repo/service/RepoServices.java` | Network listeners (gRPC, health, reflection and HTTP upload) fail startup without `PROTOMOLT_API_TOKEN`; the operator token grants process authority, and per-account ownership is a separate boundary |
 | `protomolt-account-proto` | `account/proto` | The account contract: `Account`, `AccountService`, and the account-event outbox payloads. | `account/proto/src/main/proto/ai/protomolt/proto/account/v1/account_service.proto` | |
 | `protomolt-account-service` | `account/service` | Account CRUD and activation, drive provisioning through repo-service RPC (exactly two drives per account, `intake` and `pipeline`), and the account-events outbox. Embeddable in-JVM or standalone over Netty. | `account/service/src/main/java/ai/protomolt/proto/account/service/AccountGrpcService.java` | Not in `DEFAULT_ROLES`; no `ServiceModule` |
 
@@ -415,7 +415,7 @@ so `host/composer` can mount them as a role; see [Role nodes](#role-nodes).
 
 | Gradle module | Directory | What it does | Entry point | Status |
 |---|---|---|---|---|
-| `protomolt-jobs-proto` | `jobs/proto` | The workflow-runs contract: the `WorkflowRunEvent` lifecycle envelope and the `WorkflowRunRequest` request-topic payload. Messages only, because the verbs are catalog actions. | `jobs/proto/src/main/proto/ai/protomolt/proto/jobs/v1/workflow_run_event.proto` | No gRPC service by design |
+| `protomolt-jobs-proto` | `jobs/proto` | The workflow-runs contract: the `WorkflowRunEvent` lifecycle envelope and the `WorkflowRunRequest` request-topic payload. Messages only, because the verbs are catalog actions. | `jobs/proto/src/main/proto/ai/protomolt/proto/jobs/v1/jobs.proto` | No gRPC service by design |
 | `protomolt-jobs-service` | `jobs/service` | Durable asynchronous workflow execution running the same definition with the same serial semantics as `run-workflow`, detached: Postgres is the truth, a Kafka request topic in, lifecycle events out through a transactional outbox written in the same transaction as the state change. Plain JDBC, plain kafka-clients, virtual threads. Ships `submit-workflow`, `get-job`, `list-jobs` and `complete-step`. Role `jobs`. | `jobs/service/src/main/java/ai/protomolt/proto/jobs/service/worker/WorkflowRunWorker.java` | Neither repo nor intake enqueues a job; downstream work rides the `document-events` topic |
 | `protomolt-inference-proto` | `inference/proto` | The inference contract: `InferenceService` with `Generate`, `GenerateStream`, `ListModels` and `DescribeModel`; the catalog `ModelEntry` carrying a credential reference, never credential material; and provenance-carrying generation envelopes. | `inference/proto/src/main/proto/ai/protomolt/proto/inference/v1/inference.proto` | `GenerateStreamRequest` deliberately omits structured output, so structured generation is unary only |
 | `protomolt-inference-service` | `inference/service` | The generic gRPC surface wrapped around the SPI facade: requests validated against their declared rules before any provider is touched, blocking provider calls on virtual threads. Also the `inference-generate`, `inference-list-models` and `inference-describe-model` verbs. | `inference/service/src/main/java/ai/protomolt/proto/inference/service/InferenceServiceImpl.java` | The gRPC service has no production client. Every consumer uses the in-process `InferenceEngines` facade |
@@ -620,7 +620,7 @@ Every front a verb or a service can be reached through.
 
 | Surface | Module | Entry point | Status |
 |---|---|---|---|
-| Typed gRPC service (`ProtoMoltService`, 44 RPCs) | `surface/grpc/service` | `ProtoMoltGrpcServer`; proto at `surface/grpc/service/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Shipped |
+| Typed gRPC service (`ProtoMoltService`, 44 RPCs) | `surface/grpc/service` | `ProtoMoltGrpcServer`; proto at `surface/grpc/service-contract/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto` | Shipped |
 | gRPC server reflection, server side | `surface/grpc/service` | Enabled on `ProtoMoltGrpcServer` | Shipped |
 | gRPC server reflection, client side | `surface/grpc/invoke` | `ReflectAction` | Shipped |
 | Dynamic gRPC invocation, no stubs | `surface/grpc/invoke` | `GrpcInvokeAction`, `DynamicGrpcCalls` | Shipped |
@@ -777,8 +777,8 @@ See [role nodes](docs/apps/role-nodes.md) and
 # Adjacent projects
 
 These are separate repositories. They are named here because protomolt either
-depends on them, is depended on by them, or shares a design lineage. Detail
-lives in the survey documents, not in this README.
+depends on them, is depended on by them, or shares a design lineage. Each
+repository's own documentation is the detail.
 
 **Apache OpenNLP.** The project owner is a primary committer on Apache OpenNLP
 3.x. Protomolt consumes a preview build published as
@@ -787,16 +787,14 @@ lives in the survey documents, not in this README.
 `search/chunk` plus `search/embedding/model2vec` (sentence boundaries and
 Model2Vec static embeddings). The upstream programme covers offset tracking,
 speed, pure-Java static embeddings, a pluggable gRPC embedding surface and a
-gRPC server so non-Java teams can use OpenNLP. See
-`/work/shared-docs/system-survey/03-opennlp-grpc-and-vectors.md`.
+gRPC server so non-Java teams can use OpenNLP.
 
 **The gRParse parsing fleet.** Seventeen independent repositories, one gRPC
 service each, sharing one document model that is a field-for-field port of
 docling's `DoclingDocument` v2, with gRParse as the C++ scatter-gather
 coordinator. Protomolt does not talk to the individual services; it talks to
 gRParse through `parse/grparse`, and `parse/document` holds the canonical copy
-of the shared document proto that the fleet repos re-vendor byte-identical. See
-`/work/shared-docs/system-survey/04-grparse-and-parsing-fleet.md`.
+of the shared document proto that the fleet repos re-vendor byte-identical.
 
 **distributed-search (knn-node).** A streamed cross-shard vector search service
 on a forked Apache Lucene, whose distinguishing feature is a shared, monotonic
@@ -806,7 +804,7 @@ score floor that lets uncompetitive HNSW paths stop early (Apache Lucene PR
 `distributed-lucene` and delegates flat field mapping to protomolt's
 `ProtoLuceneMapper`. It is not integrated on the query side, because protomolt
 has no query-side index SPI. The service describes itself as a developer
-preview. See `/work/shared-docs/system-survey/05-search-vector-distributed.md`.
+preview.
 
 **turbovec.** A Rust scalar-quantization codec plus a SIMD exhaustive-scan
 kernel implementing Google Research's TurboQuant, with a gRPC sharding facade

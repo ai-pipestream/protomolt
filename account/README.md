@@ -35,7 +35,7 @@ idempotent re-activation provokes no repo traffic.
 
 ## Tenets
 
-1. **No framework.** No Quarkus, no Spring. Pure Java 21+, constructor
+1. **No framework.** No Quarkus, no Spring. Pure Java 25, constructor
    wiring, a small `main`. `AccountServices` is the SPI.
 2. **Virtual threads everywhere.** Blocking style, one virtual thread per
    unit of work. No reactive types in APIs.

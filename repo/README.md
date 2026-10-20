@@ -44,7 +44,7 @@ around that rule.
 
 ## Tenets
 
-1. **No framework.** No Quarkus, no Spring. Pure Java 21+, constructor
+1. **No framework.** No Quarkus, no Spring. Pure Java 25, constructor
    wiring, a small `main`. `RepoServices` is the SPI.
 2. **Virtual threads everywhere.** Blocking style, one virtual thread per
    unit of work (per gRPC call, per upload, per part IO). No reactive types

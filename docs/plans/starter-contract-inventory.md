@@ -1,6 +1,6 @@
 # Starter contract inventory
 
-Contract review snapshot: 2026-09-24, `dc49800cd66950356a883d99141e00427df6ad65` (local HEAD, `origin/main`, and `github/main` at inventory time). Goal 2 subsequently added a local [recorded correction sample](../tutorials/recorded-correction.md); the new Evaluation RPC remains unmounted. The separate `review-binding` worktree still has an uncommitted patch; its attempt/revision checks are a prerequisite for automatic external task review. The wider product sequence is recorded in the [entry plan](/work/website/protomolt/.research/contract-first-entry-plan.md) outside this checkout.
+Contract review snapshot: 2026-09-24, `dc49800cd66950356a883d99141e00427df6ad65` (local HEAD, `origin/main`, and `github/main` at inventory time). Goal 2 subsequently added a local [recorded correction sample](../tutorials/recorded-correction.md); the new Evaluation RPC remains unmounted. The separate `review-binding` worktree still has an uncommitted patch; its attempt/revision checks are a prerequisite for automatic external task review. The wider product sequence is recorded in an entry plan outside this repository.
 
 ## Existing surface and starter use
 
@@ -76,12 +76,11 @@ message rules. [SkipWhenTest](../../protobuf/validation/src/test/java/ai/protomo
 covers declaration, missing reason, normal validation, nested fields, and invalid
 skip-field definitions. Its six existing tests passed in this follow-up audit.
 
-The full external harness also still exists at
-[/work/main/sea-of-slop/qa/court-decoration](/work/main/sea-of-slop/qa/court-decoration/README.md),
-with sampled texts, rendered prompts, raw model replies, analysis, and a later
-jobs experiment. Its
-[CourtDecorationService.Fill contract](/work/main/sea-of-slop/qa/court-decoration/jobs/proto/court/jobs/v1/decoration.proto)
-describes an external step: a job parks, a filler supplies OpinionMetadata through
+The full harness, with sampled texts, rendered prompts, raw model replies,
+analysis, and a later jobs experiment, lives outside this repository; the
+checked-in [court-decoration example](../../protobuf/llm/examples/court-decoration/proto/court/v1/opinion_metadata.proto)
+keeps the contract, personas and round findings. The harness's
+`CourtDecorationService.Fill` contract describes an external step: a job parks, a filler supplies OpinionMetadata through
 CompleteStep, and the declared response rules are checked. Its saved 90-job
 comparison records a final-status timing issue and two changed outcomes under
 model nondeterminism. It is historical evidence, not a current integration test.
