@@ -1,3 +1,8 @@
+plugins {
+    // CelFixtures is shared with the CEL mapper's tests.
+    id 'java-test-fixtures'
+}
+
 description = 'Shared CEL environments, compilation and evaluation independent of mapping'
 
 dependencies {

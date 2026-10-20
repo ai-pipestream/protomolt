@@ -96,7 +96,8 @@ class AuthoringCoordinatorPreparationProcessTest {
             process = startInstalledCoordinator(grpcPort, httpPort, postgres, registry, workspace,
                     authorization, preparations, policySha, trustFile, signingKey, accessPolicy,
                     "127.0.0.1:" + repository.getPort(), log);
-            awaitHealth(process, httpPort, log);
+            CoordinatorHealth.await(process, httpPort, log, "coordinator exited during startup",
+                    "coordinator did not become healthy");
 
             JsonNode paths = JSON.readTree(get(httpPort, "/openapi.json", null).body()).path("paths");
             assertThat(paths.has(
@@ -277,19 +278,6 @@ class AuthoringCoordinatorPreparationProcessTest {
             socket.bind(new InetSocketAddress("127.0.0.1", 0));
             return socket.getLocalPort();
         }
-    }
-
-    private static void awaitHealth(Process process, int port, Path log) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-        while (System.nanoTime() < deadline) {
-            if (!process.isAlive()) throw new AssertionError("coordinator exited during startup:\n"
-                    + Files.readString(log));
-            try {
-                if (get(port, "/health", null).statusCode() == 200) return;
-            } catch (Exception ignored) { }
-            Thread.sleep(200);
-        }
-        throw new AssertionError("coordinator did not become healthy:\n" + Files.readString(log));
     }
 
     private static String sha256(String text) throws Exception {

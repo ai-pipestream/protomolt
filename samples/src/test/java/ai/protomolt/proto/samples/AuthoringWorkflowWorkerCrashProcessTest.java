@@ -122,7 +122,7 @@ class AuthoringWorkflowWorkerCrashProcessTest {
             coordinator = startCoordinator(grpcPort, httpPort, postgres, registry, workspace,
                     authorization, preparations, policy.getSha256(), trustFile, signingKey,
                     accessPolicy, "127.0.0.1:" + repository.getPort(), coordinatorLog);
-            awaitHealth(coordinator, httpPort, coordinatorLog);
+            CoordinatorHealth.await(coordinator, httpPort, coordinatorLog);
 
             var mcp = initializeMcp(httpPort, OPERATOR_TOKEN);
             Path authorLog = directory.resolve("author.log");
@@ -199,7 +199,7 @@ class AuthoringWorkflowWorkerCrashProcessTest {
             coordinator = startCoordinator(grpcPort, httpPort, postgres, registry, workspace,
                     authorization, preparations, policy.getSha256(), trustFile, signingKey,
                     accessPolicy, "127.0.0.1:" + repository.getPort(), coordinatorLog);
-            awaitHealth(coordinator, httpPort, coordinatorLog);
+            CoordinatorHealth.await(coordinator, httpPort, coordinatorLog);
             awaitCompletedRow(postgres, coordinator, coordinatorLog);
             assertRecoveredRowAndEvents(postgres, acceptedSource, committedNormalize);
 
@@ -556,20 +556,6 @@ class AuthoringWorkflowWorkerCrashProcessTest {
         if (session != null) request.header("Mcp-Session-Id", session);
         if (version != null) request.header("MCP-Protocol-Version", version);
         return HTTP.send(request.build(), HttpResponse.BodyHandlers.ofString());
-    }
-
-    private static void awaitHealth(Process process, int port, Path log) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-        while (System.nanoTime() < deadline) {
-            if (!process.isAlive()) throw new AssertionError("coordinator exited:\n" + Files.readString(log));
-            try {
-                var response = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
-                                .timeout(Duration.ofSeconds(3)).GET().build(), HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) return;
-            } catch (Exception ignored) { }
-            Thread.sleep(150);
-        }
-        throw new AssertionError("coordinator health timeout:\n" + Files.readString(log));
     }
 
     private static void awaitOutput(Process process, Path log, String marker, Duration timeout)
