@@ -55,22 +55,41 @@ final class ArchiveKeys {
     /**
      * Path-segment sanitization: anything outside {@code [A-Za-z0-9._-]} becomes {@code _}.
      *
-     * @throws IllegalArgumentException when the result is empty, {@code .} or {@code ..},
-     *         because such a segment would collapse or climb out of its namespace
+     * @throws IllegalArgumentException when the input carries an ASCII control character,
+     *         or the result is empty or consists solely of {@code .} characters, because
+     *         such a segment would collapse or climb out of its namespace
      */
     static String sanitize(String segment) {
         StringBuilder out = new StringBuilder(segment.length());
         for (int i = 0; i < segment.length(); i++) {
             char c = segment.charAt(i);
+            if (c < 0x20 || c == 0x7F) {
+                throw new IllegalArgumentException(
+                        "archive key segment must not contain control characters");
+            }
             boolean safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
                     || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
             out.append(safe ? c : '_');
         }
         String sanitized = out.toString();
-        if (sanitized.isEmpty() || sanitized.equals(".") || sanitized.equals("..")) {
+        if (sanitized.isEmpty() || isDotOnly(sanitized)) {
             throw new IllegalArgumentException(
-                    "archive key segment must not be empty, '.' or '..': '" + sanitized + "'");
+                    "archive key segment must not be empty or consist solely of '.'"
+                            + " characters: '" + sanitized + "'");
         }
         return sanitized;
+    }
+
+    /** Whether every character is a dot; the empty string is not dot-only. */
+    private static boolean isDotOnly(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) != '.') {
+                return false;
+            }
+        }
+        return true;
     }
 }

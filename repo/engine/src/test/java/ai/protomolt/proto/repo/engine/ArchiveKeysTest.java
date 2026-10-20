@@ -31,20 +31,28 @@ class ArchiveKeysTest {
         assertThat(ArchiveKeys.sanitize("a/b c\\d:e")).isEqualTo("a_b_c_d_e");
         assertThat(ArchiveKeys.sanitize("café")).isEqualTo("caf_");
         assertThat(ArchiveKeys.sanitize("😀")).isEqualTo("__");
-        assertThat(ArchiveKeys.sanitize("...")).isEqualTo("...");
         assertThat(ArchiveKeys.sanitize("./")).isEqualTo("._");
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"", ".", ".."})
+    @ValueSource(strings = {"", ".", "..", "...", "...."})
     void sanitizeRefusesASegmentThatIsEmptyOrDotOnly(String segment) {
         assertThatThrownBy(() -> ArchiveKeys.sanitize(segment))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("archive key segment must not be empty, '.' or '..': '" + segment + "'");
+                .hasMessage("archive key segment must not be empty or consist solely of '.'"
+                        + " characters: '" + segment + "'");
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {".", ".."})
+    @ValueSource(strings = {"\u0000", "a\nb", "ac\rt", "x\ty", "acct\u007f", "a\u001fb"})
+    void sanitizeRefusesControlCharactersInsteadOfRewritingThem(String segment) {
+        assertThatThrownBy(() -> ArchiveKeys.sanitize(segment))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("archive key segment must not contain control characters");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {".", "..", "..."})
     void everyKeyBuilderRefusesADotOnlyAccountEvenWhenTheCallerSkippedValidation(String account) {
         UUID upload = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
         assertThatThrownBy(() -> ArchiveKeys.rendition(drive("tenant/"), account, "docs", ENTRY, "original", null, SHA))
