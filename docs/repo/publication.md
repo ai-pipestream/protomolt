@@ -231,7 +231,9 @@ Validation rejections (schema, semantic, payload rules) are **recorded
 outcomes**: they commit a `SaveRejection` under the operation ID and answer
 `FAILED_PRECONDITION`, so a retry with the same ID and intent replays the
 rejection instead of re-running admission. Malformed requests, permission
-failures and revision conflicts record nothing.
+failures and revision conflicts record nothing — with one recorded
+exception: `OPAQUE_NOT_ALLOWED` maps to `PERMISSION_DENIED` and **is**
+recorded, whereas `WRITE_DENIED` is unrecorded.
 
 Errors are gRPC statuses carrying the `errors.proto` detail messages
 (`SaveRejection`, `RevisionConflict`, `OperationReuse`, `ItemError`, field

@@ -143,15 +143,18 @@ current read answers `NOT_FOUND`.
 The catalog transaction marks every reference of the document purged and
 counts the objects that no unpurged reference (from any document, via
 carry-forward or sourcing) still points at; those objects are then deleted
-from their stacks, and a later call with a new `purge_id` resumes an
-interrupted purge. Purge requires a credential-bound administrator through
+from their stacks, and a later call with the **same** `purge_id` resumes an
+interrupted purge (`PostgresPurges.mark` returns the recorded plan for a
+known `(account_id, purge_id)`; a new `purge_id` would re-mark the document
+with an empty plan and never execute the pending deletions). Purge requires a credential-bound administrator through
 the `PurgeAuthorization` port: process authority cannot purge, and the
 mounted host denies all purges until an admin identity is bound.
 
 ## Kafka eventing (transactional outbox)
 
 When `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` is set, every accession
-writes exactly one outbox event (`DocumentCommitted`: address, revision,
+writes exactly one outbox event (a `DocumentEvent` of kind `Accessioned`:
+address, revision,
 changed parts with SHA-256s, validation verdict - see
 `repo/proto/.../v2/events.proto`) **in its catalog commit transaction**, so
 an event can never drift from the state change it describes. When it is
@@ -179,7 +182,7 @@ From the repository root:
 buf lint   # proto contract lint (repo/proto is a buf module)
 ```
 
-Tests are testcontainers integration tests (Docker required): PostgreSQL 17
+Tests are testcontainers integration tests (Docker required): `postgres:18-alpine`
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
@@ -218,8 +221,8 @@ for the ledger, LocalStack for S3, the full stack booted through
 - `RedisBlobStoreIT` — the Redis blob store against `redis:7-alpine`:
   verified writes, the two-entries-per-object mapping, 1000-key pipelined
   deletes, SCAN listing, TTL expiry.
-- `CachingBlobStoreTest` — the caching decorator's read-through/write-through
-  semantics over in-memory stores.
+- `CacheCloseTest` / `CacheProviderIT` — the caching decorator's
+  read-through/write-through semantics over in-memory stores.
 
 ## Running
 
@@ -231,7 +234,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 |---------|---------|---------|
 | `DOCUMENT_PLATFORM_GRPC_PORT` | `9090` | gRPC listen port |
 | `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | HTTP upload listen port; `0` or `off` disables the HTTP server |
-| `DOCUMENT_PLATFORM_JDBC_URL` / `_USERNAME` / `_PASSWORD` / `_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`) |
+| `DOCUMENT_PLATFORM_JDBC_URL`, `DOCUMENT_PLATFORM_USERNAME`, `DOCUMENT_PLATFORM_PASSWORD`, `DOCUMENT_PLATFORM_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`; only the URL carries the `JDBC_` infix) |
 | `DOCUMENT_PLATFORM_S3_ENDPOINT` | _(provider default)_ | S3 endpoint override for S3-compatible stores (LocalStack, SeaweedFS, MinIO); path-style is forced when set |
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
@@ -240,14 +243,14 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
-| `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC, HTTP, and MCP |
+| `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC and HTTP (repo-service mounts no MCP surface) |
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Total bytes independently buffered across verified document and blob reads. Streaming `ReadDocument` reserves each non-opaque part's catalog length while decoding and streaming it (a bounded 131,072-byte chunk buffer for opaque parts); `ReadBlob` streams in 64 KiB chunks without a catalog-length reservation; unary `GetDocument` and bulk `ReadDocuments` reserve each selected part's catalog length |
-| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `true` | Require S3 `If-None-Match` semantics for write-once stack-object creation |
+| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | Require S3 `If-None-Match` semantics for write-once stack-object creation |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background loops when `startLifecycle()` is called (archive mutation recovery, archive reconciliation, the v2 outbox relay) |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Lifecycle cadence: archive mutation-recovery lookback and idle sleep; also the v2 outbox relay's idle sleep |
 | `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | Archive-reconciliation loop cadence |
 | `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for archive reconciliation (objects younger than this are never reconciled) |
-| `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
+| `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; outbox rows are always written in the commit transaction, and leaving this unset only disables the outbox relay/publisher |
 | `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the v2 outbox relay publishes to |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | _(none)_ | Standalone default account: at boot the service idempotently ensures this account's `intake` and `pipeline` drives exist; unset = no seeding. Permanent namespace once used — never change it against an existing store (see below) |
