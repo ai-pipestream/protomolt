@@ -12,7 +12,6 @@ import ai.protomolt.proto.mesh.cluster.v1.NodePresence;
 import ai.protomolt.proto.mesh.cluster.v1.NodeRecord;
 import ai.protomolt.proto.mesh.cluster.v1.PresenceState;
 import ai.protomolt.proto.mesh.cluster.v1.ProcessorAdvertisement;
-import com.google.protobuf.Timestamp;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -21,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
@@ -56,6 +54,13 @@ import java.util.function.Consumer;
  * Heartbeats and refresh-only re-advertisements (the same identity with only its lease
  * window and sequence moved) are soft state and append nothing, so an expiry event may
  * name a renewal the log never recorded; replay accepts exactly that difference.
+ *
+ * <p><b>Structure.</b> The directory is one state machine with two drivers over a single
+ * {@link ClusterDirectoryState}: the live path (the methods below, which validate input and
+ * append durable events) and the replay path ({@link ClusterEventReplay}, which folds the
+ * durable record back without emitting). Both share the gates in {@link ClusterTransitions} —
+ * fencing, epoch comparison, refresh classification, and presence arithmetic — so the two
+ * drivers cannot drift apart.
  */
 public final class ClusterDirectory {
 
@@ -73,18 +78,7 @@ public final class ClusterDirectory {
 
     private final ClusterDescriptor cluster;
     private final Clock clock;
-    private final Map<String, NodeAdvertisement> nodes = new TreeMap<>();
-    /** Highest accepted node positions, retained after expiry as fencing tombstones. */
-    private final Map<String, Position> nodePositions = new TreeMap<>();
-    private final Map<String, NodePresence> presence = new TreeMap<>();
-    private final Map<String, CapacityAdvertisement> nodeCapacity = new TreeMap<>();
-    private final Map<String, ProcessorAdvertisement> processors = new TreeMap<>();
-    /** Highest accepted processor positions, retained after expiry as fencing tombstones. */
-    private final Map<String, Position> processorPositions = new TreeMap<>();
-    /** Keyed by {@code nodeId + "\n" + processorId}; newline cannot appear in a path-safe id. */
-    private final Map<String, CapacityAdvertisement> processorCapacity = new TreeMap<>();
-    private final List<ClusterEvent> events = new ArrayList<>();
-    private long eventSeq;
+    private final ClusterDirectoryState state;
 
     /**
      * Creates the directory for one cluster.
@@ -94,9 +88,18 @@ public final class ClusterDirectory {
      * @throws IllegalArgumentException when the cluster descriptor fails validation
      */
     public ClusterDirectory(ClusterDescriptor cluster, Clock clock) {
+        this(cluster, clock, new ClusterDirectoryState());
+    }
+
+    /**
+     * Creates the directory over a prepared state. The replay driver builds the state from the
+     * durable record and hands it over here; the cluster identity is validated either way.
+     */
+    ClusterDirectory(ClusterDescriptor cluster, Clock clock, ClusterDirectoryState state) {
         ClusterValidation.validate(cluster);
         this.cluster = cluster;
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.state = Objects.requireNonNull(state, "state");
     }
 
     /**
@@ -114,14 +117,7 @@ public final class ClusterDirectory {
      */
     public static ClusterDirectory replay(ClusterDescriptor cluster, List<ClusterEvent> eventLog,
             Clock clock) {
-        ClusterValidation.validateEventLog(eventLog);
-        ClusterDirectory directory = new ClusterDirectory(cluster, clock);
-        for (ClusterEvent event : eventLog) {
-            directory.applyReplay(event);
-            directory.events.add(event);
-            directory.eventSeq = event.getSeq();
-        }
-        return directory;
+        return ClusterEventReplay.replay(cluster, eventLog, clock);
     }
 
     /**
@@ -141,47 +137,7 @@ public final class ClusterDirectory {
      */
     public static ClusterDirectory restore(ClusterDescriptor cluster,
             DirectoryCheckpoint checkpoint, List<ClusterEvent> tail, Clock clock) {
-        Objects.requireNonNull(checkpoint, "checkpoint");
-        ClusterSnapshot state = checkpoint.getState();
-        require(state.getCluster().equals(cluster),
-                "checkpoint describes a different cluster identity than the directory");
-        require(state.getFingerprint().equals(ClusterValidation.snapshotFingerprint(
-                        state.toBuilder().clearFingerprint().build())),
-                "checkpoint state fingerprint does not commit to the checkpoint state");
-
-        ClusterDirectory directory = new ClusterDirectory(cluster, clock);
-        for (NodeRecord record : state.getNodesList()) {
-            String nodeId = record.getAdvertisement().getNodeId();
-            directory.nodes.put(nodeId, record.getAdvertisement());
-            directory.presence.put(nodeId, record.getPresence());
-            if (record.hasCapacity()) {
-                directory.nodeCapacity.put(nodeId, record.getCapacity());
-            }
-        }
-        for (ProcessorAdvertisement processor : state.getProcessorsList()) {
-            directory.processors.put(processor.getProcessorId(), processor);
-        }
-        for (CapacityAdvertisement capacity : state.getCapacitiesList()) {
-            directory.processorCapacity.put(
-                    capacityKey(capacity.getNodeId(), capacity.getProcessorId()), capacity);
-        }
-        for (FencingPosition position : checkpoint.getNodePositionsList()) {
-            directory.nodePositions.put(position.getId(),
-                    new Position(position.getEpoch(), position.getSeq()));
-        }
-        for (FencingPosition position : checkpoint.getProcessorPositionsList()) {
-            directory.processorPositions.put(position.getId(),
-                    new Position(position.getEpoch(), position.getSeq()));
-        }
-        directory.eventSeq = state.getSnapshotSeq();
-
-        ClusterValidation.validateEventLog(tail, state.getSnapshotSeq() + 1);
-        for (ClusterEvent event : tail) {
-            directory.applyReplay(event);
-            directory.events.add(event);
-            directory.eventSeq = event.getSeq();
-        }
-        return directory;
+        return ClusterEventReplay.restore(cluster, checkpoint, tail, clock);
     }
 
     /**
@@ -196,14 +152,14 @@ public final class ClusterDirectory {
     public DirectoryCheckpoint checkpoint() {
         DirectoryCheckpoint.Builder builder = DirectoryCheckpoint.newBuilder()
                 .setState(snapshot());
-        nodePositions.forEach((id, position) ->
+        state.nodePositions.forEach((id, position) ->
                 builder.addNodePositions(fencingPosition(id, position)));
-        processorPositions.forEach((id, position) ->
+        state.processorPositions.forEach((id, position) ->
                 builder.addProcessorPositions(fencingPosition(id, position)));
         return builder.build();
     }
 
-    private static FencingPosition fencingPosition(String id, Position position) {
+    private static FencingPosition fencingPosition(String id, ClusterDirectoryState.Position position) {
         return FencingPosition.newBuilder()
                 .setId(id)
                 .setEpoch(position.epoch())
@@ -223,16 +179,16 @@ public final class ClusterDirectory {
      */
     public ApplyOutcome register(NodeAdvertisement advertisement) {
         ClusterValidation.validate(advertisement);
-        requireCluster(advertisement.getClusterId(), "advertisement");
+        ClusterTransitions.requireCluster(cluster, advertisement.getClusterId(), "advertisement");
         String nodeId = advertisement.getNodeId();
-        NodeAdvertisement existing = nodes.get(nodeId);
+        NodeAdvertisement existing = state.nodes.get(nodeId);
         if (existing == null) {
-            requireNewerThanTombstone(nodePositions.get(nodeId), advertisement.getEpoch(),
-                    advertisement.getSeq(), "node '" + nodeId + "'");
-            nodes.put(nodeId, advertisement);
-            nodePositions.put(nodeId, new Position(advertisement.getEpoch(),
-                    advertisement.getSeq()));
-            presence.put(nodeId, initialPresence(advertisement));
+            ClusterTransitions.requireNewerThanTombstone(state.nodePositions.get(nodeId),
+                    advertisement.getEpoch(), advertisement.getSeq(), "node '" + nodeId + "'");
+            state.nodes.put(nodeId, advertisement);
+            state.nodePositions.put(nodeId, new ClusterDirectoryState.Position(
+                    advertisement.getEpoch(), advertisement.getSeq()));
+            state.presence.put(nodeId, ClusterTransitions.initialPresence(advertisement));
             emit(ClusterEventType.CLUSTER_EVENT_TYPE_NODE_REGISTERED, nodeId, "",
                     b -> b.setNode(advertisement));
             return ApplyOutcome.REGISTERED;
@@ -240,24 +196,24 @@ public final class ClusterDirectory {
         if (existing.equals(advertisement)) {
             return ApplyOutcome.UNCHANGED;
         }
-        requireFresher(advertisement.getEpoch(), advertisement.getSeq(),
+        ClusterTransitions.requireFresher(advertisement.getEpoch(), advertisement.getSeq(),
                 existing.getEpoch(), existing.getSeq(), "node '" + nodeId + "'");
         boolean newEpoch = advertisement.getEpoch() > existing.getEpoch();
         if (newEpoch) {
-            for (ProcessorAdvertisement processor : List.copyOf(processors.values())) {
+            for (ProcessorAdvertisement processor : List.copyOf(state.processors.values())) {
                 if (processor.getNodeId().equals(nodeId)) {
                     removeProcessor(processor.getProcessorId(), processor, null);
                 }
             }
-            nodeCapacity.remove(nodeId);
+            state.nodeCapacity.remove(nodeId);
         }
-        boolean refresh = !newEpoch && refreshOnly(existing, advertisement);
-        nodes.put(nodeId, advertisement);
-        nodePositions.put(nodeId, new Position(advertisement.getEpoch(),
-                advertisement.getSeq()));
-        presence.put(nodeId, newEpoch
-                ? initialPresence(advertisement)
-                : mergePresence(presence.get(nodeId), advertisement));
+        boolean refresh = !newEpoch && ClusterTransitions.refreshOnly(existing, advertisement);
+        state.nodes.put(nodeId, advertisement);
+        state.nodePositions.put(nodeId, new ClusterDirectoryState.Position(
+                advertisement.getEpoch(), advertisement.getSeq()));
+        state.presence.put(nodeId, newEpoch
+                ? ClusterTransitions.initialPresence(advertisement)
+                : ClusterTransitions.mergePresence(state.presence.get(nodeId), advertisement));
         if (refresh) {
             return ApplyOutcome.UPDATED;
         }
@@ -286,23 +242,23 @@ public final class ClusterDirectory {
      */
     public ApplyOutcome heartbeat(NodePresence record) {
         ClusterValidation.validate(record);
-        requireCluster(record.getClusterId(), "presence");
+        ClusterTransitions.requireCluster(cluster, record.getClusterId(), "presence");
         String nodeId = record.getNodeId();
-        require(nodes.containsKey(nodeId),
+        ClusterTransitions.require(state.nodes.containsKey(nodeId),
                 "heartbeat for unregistered node '" + nodeId + "'");
-        NodeAdvertisement node = nodes.get(nodeId);
-        require(record.getNodeEpoch() == node.getEpoch(),
+        NodeAdvertisement node = state.nodes.get(nodeId);
+        ClusterTransitions.require(record.getNodeEpoch() == node.getEpoch(),
                 "presence for node '" + nodeId + "' carries node_epoch "
                         + record.getNodeEpoch() + " but the registered epoch is "
                         + node.getEpoch());
-        NodePresence existing = presence.get(nodeId);
+        NodePresence existing = state.presence.get(nodeId);
         if (existing.equals(record)) {
             return ApplyOutcome.UNCHANGED;
         }
-        requireFresher(record.getNodeEpoch(), record.getHeartbeatSeq(),
+        ClusterTransitions.requireFresher(record.getNodeEpoch(), record.getHeartbeatSeq(),
                 existing.getNodeEpoch(), existing.getHeartbeatSeq(),
                 "presence for node '" + nodeId + "'");
-        presence.put(nodeId, record);
+        state.presence.put(nodeId, record);
         return ApplyOutcome.UPDATED;
     }
 
@@ -318,23 +274,23 @@ public final class ClusterDirectory {
      */
     public ApplyOutcome registerProcessor(ProcessorAdvertisement advertisement) {
         ClusterValidation.validate(advertisement);
-        NodeAdvertisement node = nodes.get(advertisement.getNodeId());
-        require(node != null,
+        NodeAdvertisement node = state.nodes.get(advertisement.getNodeId());
+        ClusterTransitions.require(node != null,
                 "processor '" + advertisement.getProcessorId() + "' names unregistered node '"
                         + advertisement.getNodeId() + "'");
-        require(advertisement.getNodeEpoch() == node.getEpoch(),
+        ClusterTransitions.require(advertisement.getNodeEpoch() == node.getEpoch(),
                 "processor '" + advertisement.getProcessorId() + "' carries node_epoch "
                         + advertisement.getNodeEpoch() + " but node '"
                         + advertisement.getNodeId() + "' is at epoch " + node.getEpoch());
         String processorId = advertisement.getProcessorId();
-        ProcessorAdvertisement existing = processors.get(processorId);
+        ProcessorAdvertisement existing = state.processors.get(processorId);
         if (existing == null) {
-            requireNewerThanTombstone(processorPositions.get(processorId),
+            ClusterTransitions.requireNewerThanTombstone(state.processorPositions.get(processorId),
                     advertisement.getLeaseEpoch(), advertisement.getSeq(),
                     "processor '" + processorId + "'");
-            processors.put(processorId, advertisement);
-            processorPositions.put(processorId, new Position(advertisement.getLeaseEpoch(),
-                    advertisement.getSeq()));
+            state.processors.put(processorId, advertisement);
+            state.processorPositions.put(processorId, new ClusterDirectoryState.Position(
+                    advertisement.getLeaseEpoch(), advertisement.getSeq()));
             emit(ClusterEventType.CLUSTER_EVENT_TYPE_PROCESSOR_REGISTERED,
                     advertisement.getNodeId(), processorId, b -> b.setProcessor(advertisement));
             return ApplyOutcome.REGISTERED;
@@ -342,20 +298,21 @@ public final class ClusterDirectory {
         if (existing.equals(advertisement)) {
             return ApplyOutcome.UNCHANGED;
         }
-        requireFresher(advertisement.getLeaseEpoch(), advertisement.getSeq(),
+        ClusterTransitions.requireFresher(advertisement.getLeaseEpoch(), advertisement.getSeq(),
                 existing.getLeaseEpoch(), existing.getSeq(), "processor '" + processorId + "'");
-        require(existing.getNodeId().equals(advertisement.getNodeId())
+        ClusterTransitions.require(existing.getNodeId().equals(advertisement.getNodeId())
                         || advertisement.getLeaseEpoch() > existing.getLeaseEpoch(),
                 "processor '" + processorId
                         + "' may move nodes only under a newer lease_epoch");
         if (!existing.getNodeId().equals(advertisement.getNodeId())
                 || existing.getLeaseEpoch() != advertisement.getLeaseEpoch()) {
-            processorCapacity.remove(capacityKey(existing.getNodeId(), processorId));
+            state.processorCapacity.remove(ClusterDirectoryState.capacityKey(
+                    existing.getNodeId(), processorId));
         }
-        boolean refresh = refreshOnly(existing, advertisement);
-        processors.put(processorId, advertisement);
-        processorPositions.put(processorId, new Position(advertisement.getLeaseEpoch(),
-                advertisement.getSeq()));
+        boolean refresh = ClusterTransitions.refreshOnly(existing, advertisement);
+        state.processors.put(processorId, advertisement);
+        state.processorPositions.put(processorId, new ClusterDirectoryState.Position(
+                advertisement.getLeaseEpoch(), advertisement.getSeq()));
         if (refresh) {
             return ApplyOutcome.UPDATED;
         }
@@ -377,28 +334,29 @@ public final class ClusterDirectory {
     public ApplyOutcome updateCapacity(CapacityAdvertisement snapshot) {
         ClusterValidation.validate(snapshot);
         String nodeId = snapshot.getNodeId();
-        require(nodes.containsKey(nodeId),
+        ClusterTransitions.require(state.nodes.containsKey(nodeId),
                 "capacity for unregistered node '" + nodeId + "'");
         boolean nodeWide = snapshot.getProcessorId().isEmpty();
         long expectedEpoch;
         if (!nodeWide) {
-            ProcessorAdvertisement processor = processors.get(snapshot.getProcessorId());
-            require(processor != null,
+            ProcessorAdvertisement processor = state.processors.get(snapshot.getProcessorId());
+            ClusterTransitions.require(processor != null,
                     "capacity for unregistered processor '" + snapshot.getProcessorId() + "'");
-            require(processor.getNodeId().equals(nodeId),
+            ClusterTransitions.require(processor.getNodeId().equals(nodeId),
                     "capacity for processor '" + snapshot.getProcessorId() + "' names node '"
                             + nodeId + "' but the processor belongs to '"
                             + processor.getNodeId() + "'");
             expectedEpoch = processor.getLeaseEpoch();
         } else {
-            expectedEpoch = nodes.get(nodeId).getEpoch();
+            expectedEpoch = state.nodes.get(nodeId).getEpoch();
         }
-        require(snapshot.getSourceEpoch() == expectedEpoch,
+        ClusterTransitions.require(snapshot.getSourceEpoch() == expectedEpoch,
                 "capacity for node '" + nodeId + "' carries source_epoch "
                         + snapshot.getSourceEpoch() + " but the current source epoch is "
                         + expectedEpoch);
-        Map<String, CapacityAdvertisement> map = nodeWide ? nodeCapacity : processorCapacity;
-        String key = nodeWide ? nodeId : capacityKey(nodeId, snapshot.getProcessorId());
+        Map<String, CapacityAdvertisement> map = nodeWide ? state.nodeCapacity : state.processorCapacity;
+        String key = nodeWide ? nodeId
+                : ClusterDirectoryState.capacityKey(nodeId, snapshot.getProcessorId());
         CapacityAdvertisement existing = map.get(key);
         if (existing == null) {
             map.put(key, snapshot);
@@ -409,10 +367,10 @@ public final class ClusterDirectory {
         if (existing.equals(snapshot)) {
             return ApplyOutcome.UNCHANGED;
         }
-        requireFresher(snapshot.getSourceEpoch(), snapshot.getSeq(),
+        ClusterTransitions.requireFresher(snapshot.getSourceEpoch(), snapshot.getSeq(),
                 existing.getSourceEpoch(), existing.getSeq(),
                 "capacity for node '" + nodeId + "'");
-        boolean refresh = refreshOnly(existing, snapshot);
+        boolean refresh = ClusterTransitions.refreshOnly(existing, snapshot);
         map.put(key, snapshot);
         if (refresh) {
             return ApplyOutcome.UPDATED;
@@ -433,28 +391,28 @@ public final class ClusterDirectory {
     public List<ClusterEvent> sweep() {
         Instant now = clock.instant();
         List<ClusterEvent> emitted = new ArrayList<>();
-        for (String processorId : List.copyOf(processors.keySet())) {
-            ProcessorAdvertisement advertisement = processors.get(processorId);
-            if (!instant(advertisement.getLeaseExpiresAt()).isAfter(now)) {
+        for (String processorId : List.copyOf(state.processors.keySet())) {
+            ProcessorAdvertisement advertisement = state.processors.get(processorId);
+            if (!ClusterTransitions.instant(advertisement.getLeaseExpiresAt()).isAfter(now)) {
                 removeProcessor(processorId, advertisement, emitted);
             }
         }
-        for (String nodeId : List.copyOf(presence.keySet())) {
-            NodePresence record = presence.get(nodeId);
+        for (String nodeId : List.copyOf(state.presence.keySet())) {
+            NodePresence record = state.presence.get(nodeId);
             boolean gone = record.getState() == PresenceState.PRESENCE_STATE_GONE
-                    || !instant(record.getExpiresAt()).isAfter(now);
+                    || !ClusterTransitions.instant(record.getExpiresAt()).isAfter(now);
             if (!gone) {
                 continue;
             }
-            NodeAdvertisement advertisement = nodes.get(nodeId);
-            for (ProcessorAdvertisement processor : List.copyOf(processors.values())) {
+            NodeAdvertisement advertisement = state.nodes.get(nodeId);
+            for (ProcessorAdvertisement processor : List.copyOf(state.processors.values())) {
                 if (processor.getNodeId().equals(nodeId)) {
                     removeProcessor(processor.getProcessorId(), processor, emitted);
                 }
             }
-            nodes.remove(nodeId);
-            presence.remove(nodeId);
-            nodeCapacity.remove(nodeId);
+            state.nodes.remove(nodeId);
+            state.presence.remove(nodeId);
+            state.nodeCapacity.remove(nodeId);
             emitted.add(emit(ClusterEventType.CLUSTER_EVENT_TYPE_NODE_EXPIRED, nodeId, "",
                     b -> b.setNode(advertisement)));
         }
@@ -489,13 +447,14 @@ public final class ClusterDirectory {
             throw new IllegalArgumentException("payloadBytes must not be negative");
         }
         Instant now = clock.instant();
-        return processors.values().stream()
-                .filter(p -> instant(p.getLeaseExpiresAt()).isAfter(now))
+        return state.processors.values().stream()
+                .filter(p -> ClusterTransitions.instant(p.getLeaseExpiresAt()).isAfter(now))
                 .filter(p -> isServing(p.getNodeId(), now))
-                .filter(p -> p.getNodeEpoch() == nodes.get(p.getNodeId()).getEpoch())
-                .filter(p -> hasCapacity(nodeCapacity.get(p.getNodeId()), payloadBytes))
-                .filter(p -> hasProcessorCapacity(p, processorCapacity.get(
-                        capacityKey(p.getNodeId(), p.getProcessorId())), payloadBytes))
+                .filter(p -> p.getNodeEpoch() == state.nodes.get(p.getNodeId()).getEpoch())
+                .filter(p -> hasCapacity(state.nodeCapacity.get(p.getNodeId()), payloadBytes))
+                .filter(p -> hasProcessorCapacity(p, state.processorCapacity.get(
+                        ClusterDirectoryState.capacityKey(p.getNodeId(), p.getProcessorId())),
+                        payloadBytes))
                 .filter(p -> capability.isEmpty() || p.getCapabilitiesList().contains(capability))
                 .filter(p -> typeName.isEmpty() || p.getAcceptedSchemasList().stream()
                         .anyMatch(s -> s.getTypeName().equals(typeName)
@@ -515,20 +474,20 @@ public final class ClusterDirectory {
     public ClusterSnapshot snapshot() {
         ClusterSnapshot.Builder builder = ClusterSnapshot.newBuilder()
                 .setCluster(cluster)
-                .setCapturedAt(timestamp(clock.instant()))
-                .setSnapshotSeq(eventSeq);
-        nodes.forEach((nodeId, advertisement) -> {
+                .setCapturedAt(ClusterTransitions.timestamp(clock.instant()))
+                .setSnapshotSeq(state.eventSeq);
+        state.nodes.forEach((nodeId, advertisement) -> {
             NodeRecord.Builder record = NodeRecord.newBuilder()
                     .setAdvertisement(advertisement)
-                    .setPresence(presence.get(nodeId));
-            CapacityAdvertisement capacity = nodeCapacity.get(nodeId);
+                    .setPresence(state.presence.get(nodeId));
+            CapacityAdvertisement capacity = state.nodeCapacity.get(nodeId);
             if (capacity != null) {
                 record.setCapacity(capacity);
             }
             builder.addNodes(record);
         });
-        processors.values().forEach(builder::addProcessors);
-        processorCapacity.values().forEach(builder::addCapacities);
+        state.processors.values().forEach(builder::addProcessors);
+        state.processorCapacity.values().forEach(builder::addCapacities);
         ClusterSnapshot unsigned = builder.build();
         return unsigned.toBuilder()
                 .setFingerprint(ClusterValidation.snapshotFingerprint(unsigned))
@@ -542,66 +501,33 @@ public final class ClusterDirectory {
 
     /** Returns the registered advertisement for {@code nodeId}, when present. */
     public Optional<NodeAdvertisement> node(String nodeId) {
-        return Optional.ofNullable(nodes.get(nodeId));
+        return Optional.ofNullable(state.nodes.get(nodeId));
     }
 
     /** Returns the presence record for {@code nodeId}, when present. */
     public Optional<NodePresence> presence(String nodeId) {
-        return Optional.ofNullable(presence.get(nodeId));
+        return Optional.ofNullable(state.presence.get(nodeId));
     }
 
     /** Returns the registered advertisement for {@code processorId}, when present. */
     public Optional<ProcessorAdvertisement> processor(String processorId) {
-        return Optional.ofNullable(processors.get(processorId));
+        return Optional.ofNullable(state.processors.get(processorId));
     }
 
     /** Returns the node-wide capacity snapshot for {@code nodeId}, when published. */
     public Optional<CapacityAdvertisement> nodeCapacity(String nodeId) {
-        return Optional.ofNullable(nodeCapacity.get(nodeId));
+        return Optional.ofNullable(state.nodeCapacity.get(nodeId));
     }
 
     /** Returns the capacity snapshot for one processor on one node, when published. */
     public Optional<CapacityAdvertisement> processorCapacity(String nodeId, String processorId) {
-        return Optional.ofNullable(processorCapacity.get(capacityKey(nodeId, processorId)));
+        return Optional.ofNullable(state.processorCapacity.get(
+                ClusterDirectoryState.capacityKey(nodeId, processorId)));
     }
 
     /** Returns the event log in emission order. */
     public List<ClusterEvent> events() {
-        return List.copyOf(events);
-    }
-
-    /**
-     * True when a fresh advertisement differs from the registered one only in the fields a
-     * lease refresh moves. The test copies those fields across and asks for equality, so any
-     * field added later is treated as identity by default: a genuine change stays durable
-     * unless someone deliberately classifies it as a refresh.
-     */
-    private static boolean refreshOnly(NodeAdvertisement existing, NodeAdvertisement fresh) {
-        return existing.toBuilder()
-                .setAdvertisedAt(fresh.getAdvertisedAt())
-                .setTtl(fresh.getTtl())
-                .setSeq(fresh.getSeq())
-                .build()
-                .equals(fresh);
-    }
-
-    private static boolean refreshOnly(ProcessorAdvertisement existing,
-                                       ProcessorAdvertisement fresh) {
-        return existing.toBuilder()
-                .setAdvertisedAt(fresh.getAdvertisedAt())
-                .setLeaseExpiresAt(fresh.getLeaseExpiresAt())
-                .setSeq(fresh.getSeq())
-                .build()
-                .equals(fresh);
-    }
-
-    private static boolean refreshOnly(CapacityAdvertisement existing,
-                                       CapacityAdvertisement fresh) {
-        return existing.toBuilder()
-                .setObservedAt(fresh.getObservedAt())
-                .setSeq(fresh.getSeq())
-                .build()
-                .equals(fresh);
+        return List.copyOf(state.events);
     }
 
     /**
@@ -613,17 +539,7 @@ public final class ClusterDirectory {
      * @return an independent directory holding the same state at the same sequence
      */
     ClusterDirectory copy() {
-        ClusterDirectory copy = new ClusterDirectory(cluster, clock);
-        copy.nodes.putAll(nodes);
-        copy.nodePositions.putAll(nodePositions);
-        copy.presence.putAll(presence);
-        copy.nodeCapacity.putAll(nodeCapacity);
-        copy.processors.putAll(processors);
-        copy.processorPositions.putAll(processorPositions);
-        copy.processorCapacity.putAll(processorCapacity);
-        copy.events.addAll(events);
-        copy.eventSeq = eventSeq;
-        return copy;
+        return new ClusterDirectory(cluster, clock, state.copy());
     }
 
     /**
@@ -642,37 +558,40 @@ public final class ClusterDirectory {
      * @param source the installed directory whose soft state to carry forward
      */
     void adoptSoftState(ClusterDirectory source) {
-        source.presence.forEach((nodeId, record) -> {
-            NodeAdvertisement node = nodes.get(nodeId);
+        source.state.presence.forEach((nodeId, record) -> {
+            NodeAdvertisement node = state.nodes.get(nodeId);
             if (node == null || record.getNodeEpoch() != node.getEpoch()) {
                 return;
             }
-            NodePresence rebuilt = presence.get(nodeId);
+            NodePresence rebuilt = state.presence.get(nodeId);
             if (rebuilt == null || record.getHeartbeatSeq() >= rebuilt.getHeartbeatSeq()) {
-                presence.put(nodeId, record);
+                state.presence.put(nodeId, record);
             }
         });
-        source.nodes.forEach((nodeId, live) -> {
-            NodeAdvertisement rebuilt = nodes.get(nodeId);
+        source.state.nodes.forEach((nodeId, live) -> {
+            NodeAdvertisement rebuilt = state.nodes.get(nodeId);
             if (rebuilt == null || live.getEpoch() != rebuilt.getEpoch()
-                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                    || live.getSeq() < rebuilt.getSeq()
+                    || !ClusterTransitions.refreshOnly(rebuilt, live)) {
                 return;
             }
-            nodes.put(nodeId, live);
-            nodePositions.put(nodeId, new Position(live.getEpoch(), live.getSeq()));
+            state.nodes.put(nodeId, live);
+            state.nodePositions.put(nodeId,
+                    new ClusterDirectoryState.Position(live.getEpoch(), live.getSeq()));
         });
-        source.processors.forEach((processorId, live) -> {
-            ProcessorAdvertisement rebuilt = processors.get(processorId);
+        source.state.processors.forEach((processorId, live) -> {
+            ProcessorAdvertisement rebuilt = state.processors.get(processorId);
             if (rebuilt == null || live.getLeaseEpoch() != rebuilt.getLeaseEpoch()
-                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                    || live.getSeq() < rebuilt.getSeq()
+                    || !ClusterTransitions.refreshOnly(rebuilt, live)) {
                 return;
             }
-            processors.put(processorId, live);
-            processorPositions.put(processorId,
-                    new Position(live.getLeaseEpoch(), live.getSeq()));
+            state.processors.put(processorId, live);
+            state.processorPositions.put(processorId,
+                    new ClusterDirectoryState.Position(live.getLeaseEpoch(), live.getSeq()));
         });
-        adoptCapacity(source.nodeCapacity, nodeCapacity);
-        adoptCapacity(source.processorCapacity, processorCapacity);
+        adoptCapacity(source.state.nodeCapacity, state.nodeCapacity);
+        adoptCapacity(source.state.processorCapacity, state.processorCapacity);
     }
 
     private static void adoptCapacity(Map<String, CapacityAdvertisement> source,
@@ -680,7 +599,8 @@ public final class ClusterDirectory {
         source.forEach((key, live) -> {
             CapacityAdvertisement rebuilt = target.get(key);
             if (rebuilt == null || live.getSourceEpoch() != rebuilt.getSourceEpoch()
-                    || live.getSeq() < rebuilt.getSeq() || !refreshOnly(rebuilt, live)) {
+                    || live.getSeq() < rebuilt.getSeq()
+                    || !ClusterTransitions.refreshOnly(rebuilt, live)) {
                 return;
             }
             target.put(key, live);
@@ -689,8 +609,9 @@ public final class ClusterDirectory {
 
     private void removeProcessor(String processorId, ProcessorAdvertisement advertisement,
             List<ClusterEvent> emitted) {
-        processors.remove(processorId);
-        processorCapacity.remove(capacityKey(advertisement.getNodeId(), processorId));
+        state.processors.remove(processorId);
+        state.processorCapacity.remove(ClusterDirectoryState.capacityKey(
+                advertisement.getNodeId(), processorId));
         ClusterEvent event = emit(ClusterEventType.CLUSTER_EVENT_TYPE_PROCESSOR_EXPIRED,
                 advertisement.getNodeId(), processorId, b -> b.setProcessor(advertisement));
         if (emitted != null) {
@@ -698,231 +619,25 @@ public final class ClusterDirectory {
         }
     }
 
-    private void applyReplay(ClusterEvent event) {
-        switch (event.getType()) {
-            case CLUSTER_EVENT_TYPE_NODE_REGISTERED -> replayNodeRegistration(event.getNode());
-            case CLUSTER_EVENT_TYPE_NODE_EXPIRED -> replayNodeExpiry(event.getNode());
-            case CLUSTER_EVENT_TYPE_PROCESSOR_REGISTERED ->
-                    replayProcessorRegistration(event.getProcessor());
-            case CLUSTER_EVENT_TYPE_PROCESSOR_EXPIRED ->
-                    replayProcessorExpiry(event.getProcessor());
-            case CLUSTER_EVENT_TYPE_PRESENCE_UPDATED -> replayPresence(event.getPresence());
-            case CLUSTER_EVENT_TYPE_CAPACITY_UPDATED -> replayCapacity(event.getCapacity());
-            case CLUSTER_EVENT_TYPE_UNSPECIFIED, UNRECOGNIZED ->
-                    throw new IllegalArgumentException("unsupported cluster event type at seq "
-                            + event.getSeq());
-        }
-    }
-
-    private void replayNodeRegistration(NodeAdvertisement advertisement) {
-        requireCluster(advertisement.getClusterId(), "replayed advertisement");
-        String nodeId = advertisement.getNodeId();
-        NodeAdvertisement existing = nodes.get(nodeId);
-        if (existing == null) {
-            requireNewerThanTombstone(nodePositions.get(nodeId), advertisement.getEpoch(),
-                    advertisement.getSeq(), "node '" + nodeId + "'");
-        } else {
-            requireFresher(advertisement.getEpoch(), advertisement.getSeq(), existing.getEpoch(),
-                    existing.getSeq(), "node '" + nodeId + "'");
-            if (advertisement.getEpoch() > existing.getEpoch()) {
-                require(processors.values().stream()
-                                .noneMatch(processor -> processor.getNodeId().equals(nodeId)),
-                        "node '" + nodeId
-                                + "' advanced epoch before its processors expired");
-                nodeCapacity.remove(nodeId);
-            }
-        }
-        boolean newEpoch = existing != null && advertisement.getEpoch() > existing.getEpoch();
-        nodes.put(nodeId, advertisement);
-        nodePositions.put(nodeId, new Position(advertisement.getEpoch(), advertisement.getSeq()));
-        presence.put(nodeId, existing == null || newEpoch
-                ? initialPresence(advertisement)
-                : mergePresence(presence.get(nodeId), advertisement));
-    }
-
-    /**
-     * Replays a node expiry. The expiry names the advertisement the directory held when it
-     * swept the node, and lease refreshes are soft state, so that advertisement may be a
-     * renewal the log never saw: same epoch, a sequence at or past the recorded one, and
-     * nothing else moved. The replay accepts exactly that and nothing looser, and it carries
-     * the expiry's position into the fencing tombstone so a restarted directory fences the
-     * dead incarnation from the same sequence the live one did.
-     */
-    private void replayNodeExpiry(NodeAdvertisement advertisement) {
-        String nodeId = advertisement.getNodeId();
-        NodeAdvertisement registered = nodes.get(nodeId);
-        require(registered != null && (registered.equals(advertisement)
-                        || (advertisement.getEpoch() == registered.getEpoch()
-                        && advertisement.getSeq() >= registered.getSeq()
-                        && refreshOnly(registered, advertisement))),
-                "node expiry at replay does not match registered node '" + nodeId + "'");
-        require(processors.values().stream()
-                        .noneMatch(processor -> processor.getNodeId().equals(nodeId)),
-                "node '" + nodeId + "' expired before its processors");
-        nodes.remove(nodeId);
-        presence.remove(nodeId);
-        nodeCapacity.remove(nodeId);
-        nodePositions.put(nodeId, new Position(advertisement.getEpoch(), advertisement.getSeq()));
-    }
-
-    private void replayProcessorRegistration(ProcessorAdvertisement advertisement) {
-        String processorId = advertisement.getProcessorId();
-        NodeAdvertisement node = nodes.get(advertisement.getNodeId());
-        require(node != null,
-                "replayed processor '" + processorId + "' names unregistered node '"
-                        + advertisement.getNodeId() + "'");
-        require(advertisement.getNodeEpoch() == node.getEpoch(),
-                "replayed processor '" + processorId + "' carries stale node_epoch");
-        ProcessorAdvertisement existing = processors.get(processorId);
-        if (existing == null) {
-            requireNewerThanTombstone(processorPositions.get(processorId),
-                    advertisement.getLeaseEpoch(), advertisement.getSeq(),
-                    "processor '" + processorId + "'");
-        } else {
-            requireFresher(advertisement.getLeaseEpoch(), advertisement.getSeq(),
-                    existing.getLeaseEpoch(), existing.getSeq(),
-                    "processor '" + processorId + "'");
-            require(existing.getNodeId().equals(advertisement.getNodeId())
-                            || advertisement.getLeaseEpoch() > existing.getLeaseEpoch(),
-                    "processor '" + processorId
-                            + "' moved nodes without a newer lease_epoch");
-            if (!existing.getNodeId().equals(advertisement.getNodeId())
-                    || existing.getLeaseEpoch() != advertisement.getLeaseEpoch()) {
-                processorCapacity.remove(capacityKey(existing.getNodeId(), processorId));
-            }
-        }
-        processors.put(processorId, advertisement);
-        processorPositions.put(processorId, new Position(advertisement.getLeaseEpoch(),
-                advertisement.getSeq()));
-    }
-
-    /**
-     * Replays a processor expiry under the same rule as {@link #replayNodeExpiry}: the
-     * expired advertisement may be a soft lease renewal of the registered one, and the
-     * tombstone takes the expiry's position.
-     */
-    private void replayProcessorExpiry(ProcessorAdvertisement advertisement) {
-        String processorId = advertisement.getProcessorId();
-        ProcessorAdvertisement registered = processors.get(processorId);
-        require(registered != null && (registered.equals(advertisement)
-                        || (advertisement.getLeaseEpoch() == registered.getLeaseEpoch()
-                        && advertisement.getSeq() >= registered.getSeq()
-                        && refreshOnly(registered, advertisement))),
-                "processor expiry at replay does not match registered processor '"
-                        + processorId + "'");
-        processors.remove(processorId);
-        processorCapacity.remove(capacityKey(advertisement.getNodeId(), processorId));
-        processorPositions.put(processorId,
-                new Position(advertisement.getLeaseEpoch(), advertisement.getSeq()));
-    }
-
-    private void replayPresence(NodePresence record) {
-        String nodeId = record.getNodeId();
-        NodeAdvertisement node = nodes.get(nodeId);
-        require(node != null, "replayed presence names unregistered node '" + nodeId + "'");
-        requireCluster(record.getClusterId(), "replayed presence");
-        require(record.getNodeEpoch() == node.getEpoch(),
-                "replayed presence for node '" + nodeId + "' carries stale node_epoch");
-        NodePresence existing = presence.get(nodeId);
-        requireFresher(record.getNodeEpoch(), record.getHeartbeatSeq(), existing.getNodeEpoch(),
-                existing.getHeartbeatSeq(), "presence for node '" + nodeId + "'");
-        presence.put(nodeId, record);
-    }
-
-    private void replayCapacity(CapacityAdvertisement snapshot) {
-        String nodeId = snapshot.getNodeId();
-        NodeAdvertisement node = nodes.get(nodeId);
-        require(node != null, "replayed capacity names unregistered node '" + nodeId + "'");
-        boolean nodeWide = snapshot.getProcessorId().isEmpty();
-        long expectedEpoch;
-        if (nodeWide) {
-            expectedEpoch = node.getEpoch();
-        } else {
-            ProcessorAdvertisement processor = processors.get(snapshot.getProcessorId());
-            require(processor != null,
-                    "replayed capacity names unregistered processor '"
-                            + snapshot.getProcessorId() + "'");
-            require(processor.getNodeId().equals(nodeId),
-                    "replayed capacity names the wrong node for processor '"
-                            + snapshot.getProcessorId() + "'");
-            expectedEpoch = processor.getLeaseEpoch();
-        }
-        require(snapshot.getSourceEpoch() == expectedEpoch,
-                "replayed capacity for node '" + nodeId + "' carries stale source_epoch");
-        Map<String, CapacityAdvertisement> target = nodeWide ? nodeCapacity : processorCapacity;
-        String key = nodeWide ? nodeId : capacityKey(nodeId, snapshot.getProcessorId());
-        CapacityAdvertisement existing = target.get(key);
-        if (existing != null) {
-            requireFresher(snapshot.getSourceEpoch(), snapshot.getSeq(),
-                    existing.getSourceEpoch(), existing.getSeq(),
-                    "capacity for node '" + nodeId + "'");
-        }
-        target.put(key, snapshot);
-    }
-
     private boolean isServing(String nodeId, Instant now) {
-        NodePresence record = presence.get(nodeId);
+        NodePresence record = state.presence.get(nodeId);
         return record != null
                 && record.getState() == PresenceState.PRESENCE_STATE_ACTIVE
-                && instant(record.getExpiresAt()).isAfter(now);
-    }
-
-    private NodePresence initialPresence(NodeAdvertisement advertisement) {
-        return NodePresence.newBuilder()
-                .setNodeId(advertisement.getNodeId())
-                .setClusterId(advertisement.getClusterId())
-                .setState(PresenceState.PRESENCE_STATE_ACTIVE)
-                .setLastHeartbeatAt(advertisement.getAdvertisedAt())
-                .setHeartbeatSeq(advertisement.getSeq())
-                .setTtl(advertisement.getTtl())
-                .setNodeEpoch(advertisement.getEpoch())
-                .setExpiresAt(timestamp(instant(advertisement.getAdvertisedAt())
-                        .plus(duration(advertisement.getTtl()))))
-                .build();
-    }
-
-    private NodePresence mergePresence(NodePresence current, NodeAdvertisement advertisement) {
-        Instant heartbeat = instant(advertisement.getAdvertisedAt());
-        Instant advertisedExpiry = heartbeat.plus(duration(advertisement.getTtl()));
-        Instant currentHeartbeat = instant(current.getLastHeartbeatAt());
-        if (heartbeat.isAfter(currentHeartbeat)
-                || (heartbeat.equals(currentHeartbeat)
-                && advertisedExpiry.isAfter(instant(current.getExpiresAt())))) {
-            return current.toBuilder()
-                    .setLastHeartbeatAt(advertisement.getAdvertisedAt())
-                    .setTtl(advertisement.getTtl())
-                    .setExpiresAt(timestamp(advertisedExpiry))
-                    .build();
-        }
-        return current;
-    }
-
-    private void requireCluster(String clusterId, String what) {
-        require(clusterId.equals(cluster.getClusterId()),
-                what + " names cluster '" + clusterId + "' but this directory serves cluster '"
-                        + cluster.getClusterId() + "'");
-    }
-
-    private static void requireFresher(long epoch, long seq, long currentEpoch, long currentSeq,
-            String identity) {
-        require(epoch > currentEpoch || (epoch == currentEpoch && seq > currentSeq),
-                "conflicting update for " + identity + ": epoch " + epoch + " seq " + seq
-                        + " does not advance the registered epoch " + currentEpoch + " seq "
-                        + currentSeq);
+                && ClusterTransitions.instant(record.getExpiresAt()).isAfter(now);
     }
 
     private ClusterEvent emit(ClusterEventType type, String nodeId, String processorId,
             Consumer<ClusterEvent.Builder> detail) {
         ClusterEvent.Builder builder = ClusterEvent.newBuilder()
-                .setSeq(++eventSeq)
-                .setOccurredAt(timestamp(clock.instant()))
+                .setSeq(++state.eventSeq)
+                .setOccurredAt(ClusterTransitions.timestamp(clock.instant()))
                 .setType(type)
                 .setNodeId(nodeId)
                 .setProcessorId(processorId);
         detail.accept(builder);
         ClusterEvent event = builder.build();
         ClusterValidation.validate(event);
-        events.add(event);
+        state.events.add(event);
         return event;
     }
 
@@ -946,40 +661,5 @@ public final class ClusterDirectory {
         }
         return capacity == null || processor.getMaxActiveSessions() == 0
                 || capacity.getActiveSessions() < processor.getMaxActiveSessions();
-    }
-
-    private static void requireNewerThanTombstone(Position position, long epoch, long seq,
-            String identity) {
-        if (position != null) {
-            requireFresher(epoch, seq, position.epoch(), position.seq(), identity);
-        }
-    }
-
-    private static String capacityKey(String nodeId, String processorId) {
-        return nodeId + "\n" + processorId;
-    }
-
-    private static Instant instant(Timestamp value) {
-        return Instant.ofEpochSecond(value.getSeconds(), value.getNanos());
-    }
-
-    private static java.time.Duration duration(com.google.protobuf.Duration value) {
-        return java.time.Duration.ofSeconds(value.getSeconds(), value.getNanos());
-    }
-
-    private static Timestamp timestamp(Instant value) {
-        return Timestamp.newBuilder()
-                .setSeconds(value.getEpochSecond())
-                .setNanos(value.getNano())
-                .build();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new IllegalArgumentException(message);
-        }
-    }
-
-    private record Position(long epoch, long seq) {
     }
 }
