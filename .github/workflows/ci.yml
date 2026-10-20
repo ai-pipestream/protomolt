@@ -9,10 +9,11 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same pull request supersedes the running build. Runs on
-# main are never cancelled, so every commit there keeps its own result.
+# A newer push to the same pull request supersedes the running build. Every
+# other run gets a group of its own (keyed on run_id), so a main push neither
+# cancels nor replaces a queued main run and each commit keeps its own result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
