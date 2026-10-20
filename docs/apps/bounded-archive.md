@@ -8,7 +8,9 @@ are unavailable in this profile.
 
 The Java API lives in `protomolt-repo-service`. Select it explicitly with
 `RepoServices.buildBoundedArchive`; the existing `RepoServiceMain` does not select
-this profile from environment settings alone.
+this profile from environment settings alone. The
+`DOCUMENT_PLATFORM_ARCHIVE_*` variables the standalone launcher reads are in
+the [environment-variable reference](../operations/environment-variables.md).
 
 ## Run a standalone process
 

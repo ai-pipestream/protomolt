@@ -4,7 +4,9 @@
 Muse Code), a local OpenAI-compatible model, or the worker-only fixture attached
 to the delegation tools on a ProtoMolt server. The server remains the
 coordinator and transcript authority. The host owns the model process, local
-workspace, MCP cursor, and provider session.
+workspace, MCP cursor, and provider session. The `PROTOMOLT_AGENT_*`
+variables that seed the command-line flags are in the
+[environment-variable reference](../operations/environment-variables.md).
 
 The host long-polls `/mcp` over a pooled HTTP/2 client. A model receives only
 events relevant to its role and must return a JSON command batch. The host

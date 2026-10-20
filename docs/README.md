@@ -129,6 +129,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Archive backup and cold restore](operations/archive-backup-and-restore.md): the qualified offline backup and cold-restore procedure for the archive stack
+- [Environment variables](operations/environment-variables.md): every variable each service reads, with defaults and failure behavior
 - [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
 

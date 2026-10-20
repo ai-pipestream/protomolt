@@ -6,7 +6,9 @@ absent, is the full one-container preset. A different role list is a
 specialized node — a repo node, a search node, a connector node — never a
 different program, and configuration is only demanded for what a node
 actually mounts: a repo-only node needs no jobs database, no registry
-repository, no search index.
+repository, no search index. The
+[environment-variable reference](../operations/environment-variables.md)
+lists every variable each role reads, with defaults and failure behavior.
 
 ## The mechanism
 

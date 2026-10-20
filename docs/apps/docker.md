@@ -2,7 +2,9 @@
 
 The public demo is a one-liner on Docker Hub. The image is a Docker Hardened
 Image runtime (`dhi.io/eclipse-temurin:25-debian13`, Debian 13 JRE, uid 65532,
-no shell). Alpine DHI tags are not used.
+no shell). Alpine DHI tags are not used. The environment variables the
+server and the platform containers read are listed in the
+[environment-variable reference](../operations/environment-variables.md).
 
 ```shell
 docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
