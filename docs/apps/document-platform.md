@@ -213,10 +213,16 @@ refuse startup. Trusted in-process library access has no socket; its caller
 binding is supplied by the embedding host. The operator token grants process
 authority. Scoped ownership grants remain a separate authorization boundary.
 
-Repository-backed blob storage is not a supported mode:
-`DOCUMENT_PLATFORM_BLOB_STORE=repo` and `repo-inprocess` refuse startup with
-`Remote repository blob storage is retired`. Use `s3`, `redis` or
-`s3-redis-cache`.
+`DOCUMENT_PLATFORM_BLOB_STORE` selects the repository role's byte store:
+`s3` (direct object storage), `redis` (objects live in Redis), or
+`s3-redis-cache` (S3 of record behind a Redis cache). `repo` and
+`repo-inprocess` refuse startup with `Remote repository blob storage is
+retired`; any other value refuses startup naming the three supported modes.
+`DOCUMENT_PLATFORM_READ_BUDGET_BYTES` (default 268435456, 256 MiB) is the
+host byte budget shared by concurrent verified reads; a reservation that does
+not fit the remaining budget fails fast with `RESOURCE_EXHAUSTED`. The
+[repository README](../../repo/README.md) configuration table lists what each
+read reserves.
 
 A policy principal's `metric_access` section drives the metric role's
 compile-time rewrite on the same guarded node — denied members and

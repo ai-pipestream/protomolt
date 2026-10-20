@@ -111,8 +111,9 @@ enabled until that host credential boundary lands.
 The coordinator runs with durable delegation transcripts
 (`--delegation-repo-endpoint repo-service:9090`). The serve process validates
 and encrypts each transcript snapshot locally with AES-256-GCM under the key
-that `PROTOMOLT_TRANSCRIPT_KEY` holds, then stores the ciphertext as one blob
-through the repo-service (`PutBlob`/`GetBlob`) on the drive named by
+that `PROTOMOLT_TRANSCRIPT_KEY` holds, then stores the ciphertext as a document
+revision through the repo-service v2 `DocumentService` (`SaveDocument`/`GetDocument`)
+on the drive named by
 `PROTOMOLT_DELEGATION_REPO_DRIVE` (default `protomolt`, created by the
 repo-init container against the existing `protomolt` RustFS bucket). The
 repo-service, its PostgreSQL ledger, and RustFS only ever see ciphertext. A
