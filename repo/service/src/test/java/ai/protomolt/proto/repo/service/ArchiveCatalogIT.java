@@ -78,7 +78,7 @@ class ArchiveCatalogIT {
                 LOCALSTACK.getSecretKey(),
                 "it-catalog",
                 0,
-                null, null, null, null, 0, 0L);
+                null, null, 0, 0L);
         services = RepoServices.build(config);
         services.startInProcess("catalog-it");
         channel = InProcessChannelBuilder.forName("catalog-it").build();

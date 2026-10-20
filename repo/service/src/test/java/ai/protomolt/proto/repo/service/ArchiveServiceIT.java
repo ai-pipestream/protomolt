@@ -105,7 +105,7 @@ class ArchiveServiceIT {
                 LOCALSTACK.getSecretKey(),
                 "it-archive",
                 0,
-                null, null, null, null, 0, 0L)
+                null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("archive-it-original", "archive-it-realm", true));
         services = RepoServices.build(config);
         var operator = ai.protomolt.proto.actions.Caller.operator();

@@ -20,7 +20,7 @@ class RepoServiceConfigCredentialsTest {
     /** The 14-component compatibility constructor with credentials as the variable. */
     private static RepoServiceConfig withCredentials(String accessKey, String secretKey) {
         return new RepoServiceConfig(0, LEDGER, null, null, accessKey, secretKey, null,
-                0, null, null, null, null, -1, -1L);
+                0, null, null, -1, -1L);
     }
 
     // ------------------------------------------------------------------ S3 credentials
@@ -58,18 +58,18 @@ class RepoServiceConfigCredentialsTest {
     @Test
     void blobStoreSelectionIsTrimmedAndCaseInsensitive() {
         RepoServiceConfig loud = new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
-                0, " S3 ", null, null, null, -1, -1L);
+                0, " S3 ", null, -1, -1L);
         assertThat(loud.blobStore()).isEqualTo("s3");
 
         RepoServiceConfig inProcess = new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
-                0, "Repo-InProcess", "backend-inproc", null, null, -1, -1L);
+                0, "Repo-InProcess", null, -1, -1L);
         assertThat(inProcess.blobStore()).isEqualTo("repo-inprocess");
     }
 
     @Test
     void negativePortsFallBackToTheDefaults() {
         RepoServiceConfig config = new RepoServiceConfig(-5, LEDGER, null, null, null, null, null,
-                -1, null, null, null, null, -1, -1L);
+                -1, null, null, -1, -1L);
         assertThat(config.grpcPort()).isEqualTo(9090);
         assertThat(config.httpPort()).isEqualTo(8080);
     }
@@ -77,7 +77,7 @@ class RepoServiceConfigCredentialsTest {
     @Test
     void nonPositiveLifecycleIntervalsFallBackToTheDefaults() {
         RepoServiceConfig config = new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
-                0, null, null, null, null, -1, -1L,
+                0, null, null, -1, -1L,
                 true, 0L, -1L, false, true, -1L);
         assertThat(config.purgeIntervalMs()).isEqualTo(5000L);
         assertThat(config.sweepIntervalMs()).isEqualTo(60000L);
@@ -87,7 +87,7 @@ class RepoServiceConfigCredentialsTest {
     @Test
     void blankOptionalStringsNormalizeToNull() {
         RepoServiceConfig config = new RepoServiceConfig(0, LEDGER, "  ", null, null, null, null,
-                0, null, null, null, null, -1, -1L);
+                0, null, null, -1, -1L);
         assertThat(config.s3Endpoint()).isNull();
         // A blank bucket base falls back to the default rather than staying blank.
         assertThat(config.defaultBucketBase()).isEqualTo("documents");

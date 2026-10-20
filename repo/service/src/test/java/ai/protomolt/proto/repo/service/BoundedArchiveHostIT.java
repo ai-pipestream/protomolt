@@ -33,7 +33,7 @@ class BoundedArchiveHostIT {
         return new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "bounded-host", 0,
-                "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379) + "/" + database, 0, 1024)
+                "redis", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379) + "/" + database, 0, 1024)
                 .withManagedStorage(new ManagedStoragePolicy("bounded-redis", "bounded-realm", true));
     }
 

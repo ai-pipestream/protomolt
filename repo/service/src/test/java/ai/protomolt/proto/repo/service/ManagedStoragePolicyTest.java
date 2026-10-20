@@ -9,7 +9,7 @@ class ManagedStoragePolicyTest {
         var config = new RepoServiceConfig(0,
                 new ai.protomolt.proto.repo.container.ledger.LedgerConfig("jdbc:postgresql://127.0.0.1:1/unavailable", "unused", "unused"),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "policy-test", 0,
-                "redis", null, null, "redis://127.0.0.1:1", 0, 1024)
+                "redis", "redis://127.0.0.1:1", 0, 1024)
                 .withManagedStorage(new ManagedStoragePolicy("redis-test", "test-realm", true));
         var providers = ai.protomolt.proto.repo.blob.spi.BlobStores.of(java.util.List.of());
         assertThatThrownBy(() -> new RepoServices(config, ai.protomolt.proto.asset.bridge.BridgeEngine.standard(), providers))

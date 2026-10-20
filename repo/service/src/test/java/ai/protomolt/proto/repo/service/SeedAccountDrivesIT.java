@@ -39,7 +39,7 @@ class SeedAccountDrivesIT {
                 LOCALSTACK.getSecretKey(),
                 "seed-it-docs",
                 0, // HTTP upload route not exercised by this IT
-                null, null, null, null, 0, 0L, // blob store: the default direct-S3 path
+                null, null, 0, 0L, // blob store: the default direct-S3 path
                 true, -1L, -1L, false, true, -1L, // lifecycle/reconcile defaults
                 null, null, null, // eventing off
                 seedAccountId);

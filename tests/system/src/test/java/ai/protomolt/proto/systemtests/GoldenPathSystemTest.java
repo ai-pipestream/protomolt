@@ -191,7 +191,7 @@ class GoldenPathSystemTest {
                 LOCALSTACK.getSecretKey(),
                 "golden-docs",
                 0,
-                null, null, null, null, 0, 0L));
+                null, null, 0, 0L));
         // The text parser's results embed the fleet document model as typed content.
         repo.withAdmittedSchemas(java.util.List.of(ai.protomolt.proto.parse.document.v1.DocumentProto.getDescriptor()));
         repo.startInProcess("golden-repo");

@@ -21,7 +21,7 @@ class RedisServiceCompositionIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "redis-test", 0,
-                "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024);
+                "redis", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024);
         var unopenedS3 = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
             public String id() { return "s3"; }
             public ai.protomolt.proto.repo.blob.spi.OpenedBlobStore open(java.util.Map<String, String> options) {
@@ -94,7 +94,7 @@ class RedisServiceCompositionIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 "http://127.0.0.1:1", "us-east-1", "unused", "unused", "startup-test", 0,
-                "s3-redis-cache", null, null, "redis://127.0.0.1:1", 0, 1024);
+                "s3-redis-cache", "redis://127.0.0.1:1", 0, 1024);
         var closes = new java.util.concurrent.atomic.AtomicInteger();
         var backing = new ai.protomolt.proto.repo.blob.spi.BlobStoreProvider() {
             public String id() { return "s3"; }

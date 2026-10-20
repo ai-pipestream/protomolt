@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.engine;
 
+import ai.protomolt.proto.repo.spi.RepositoryException;
+
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import ai.protomolt.proto.repo.v1.DriveProviderConfig;
@@ -137,16 +139,16 @@ public final class DriveProvisioner {
 
     public static void requireSelectedProvider(String defaultProvider, String provider, DriveProviderConfig config) {
         if (!defaultProvider.equals(provider)) {
-            throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive provider does not match the selected storage backend");
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Drive provider does not match the selected storage backend");
         }
         if (config == null) return;
         boolean mismatch = switch (config.getConfigCase()) {
             case S3 -> !"s3".equals(defaultProvider);
             case REDIS -> !"redis".equals(defaultProvider);
-            case REMOTE -> !"repo".equals(defaultProvider) && !"repo-inprocess".equals(defaultProvider);
             case CONFIG_NOT_SET -> false;
+            default -> true;
         };
-        if (mismatch) throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration does not match the selected storage backend");
+        if (mismatch) throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, "Drive configuration does not match the selected storage backend");
     }
 
     /**

@@ -160,7 +160,8 @@ public final class DocumentReads {
      * any of its frames are emitted; raw blobs go out with their claim checks
      * filled (decision 45). An opaque part the request does not allow fails the
      * item before any frame is emitted. A prefix without the completion frame is
-     * not a successful read.
+     * not a successful read. Each selected part reserves its recorded byte length
+     * before storage is opened and holds that lease through its final frame callback.
      */
     public void readDocument(RepositoryCaller caller, ReadDocumentRequest request,
             java.util.function.Consumer<ReadDocumentResponse> frames) {
@@ -181,19 +182,22 @@ public final class DocumentReads {
             frames.accept(ReadDocumentResponse.newBuilder().setManifest(manifest(stored, selected)).build());
             for (var part : parts) {
                 var entry = part.getEntry();
-                var bytes = read(part.getRef());
-                if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
-                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
-                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
-                long offset = 0;
-                do {
-                    int length = (int) Math.min(READ_FRAME_BYTES, (long) bytes.size() - offset);
-                    frames.accept(ReadDocumentResponse.newBuilder().setPartData(PartData.newBuilder()
-                            .setSelector(entry.getSelector()).setOffset(offset)
-                            .setData(bytes.substring((int) offset, (int) offset + length))
-                            .setLast(offset + length == bytes.size())).build());
-                    offset += length;
-                } while (offset < bytes.size());
+                try (var lease = Objects.requireNonNull(
+                        reservations.reserve(part.getRef().getLength()), "reservation lease")) {
+                    var bytes = read(part.getRef());
+                    if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
+                    if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                        bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
+                    long offset = 0;
+                    do {
+                        int length = (int) Math.min(READ_FRAME_BYTES, (long) bytes.size() - offset);
+                        frames.accept(ReadDocumentResponse.newBuilder().setPartData(PartData.newBuilder()
+                                .setSelector(entry.getSelector()).setOffset(offset)
+                                .setData(bytes.substring((int) offset, (int) offset + length))
+                                .setLast(offset + length == bytes.size())).build());
+                        offset += length;
+                    } while (offset < bytes.size());
+                }
             }
             frames.accept(ReadDocumentResponse.newBuilder().setComplete(ReadComplete.getDefaultInstance()).build());
             return null;
