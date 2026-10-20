@@ -25,6 +25,8 @@ jobs:
       - uses: bufbuild/buf-action@v1
         with:
           setup_only: true
+          # Match ci.yml and coordination-contract.sh: bundled well-known descriptors vary by CLI version.
+          version: '1.70.0'
 
       - name: Full build and test suite
         run: ./gradlew build --no-daemon --console=plain
