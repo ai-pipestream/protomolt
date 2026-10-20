@@ -23,7 +23,6 @@ import ai.protomolt.proto.repo.archive.v1.ClassifyEntryResponse;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.CreateArchiveResponse;
 import ai.protomolt.proto.repo.archive.v1.EntryAddress;
-import ai.protomolt.proto.repo.archive.v1.EntryInfo;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveRequest;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveResponse;
 import ai.protomolt.proto.repo.archive.v1.GetArchiveStatsRequest;
@@ -46,7 +45,6 @@ import ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry;
 import ai.protomolt.proto.repo.archive.v1.RenditionState;
 import ai.protomolt.proto.repo.archive.v1.RenditionStats;
 import ai.protomolt.proto.repo.archive.v1.VersionManifest;
-import ai.protomolt.proto.repo.archive.v1.VersioningPolicy;
 import ai.protomolt.proto.repo.archive.v1.WriteAttribution;
 import ai.protomolt.proto.repo.container.archive.ArchiveEntryRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveIds;
@@ -58,11 +56,9 @@ import ai.protomolt.proto.repo.container.archive.ArchiveRenditionStatsRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveStatsRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveVersionRecord;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.engine.ArchiveSlots.Slot;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.util.Timestamps;
 import jakarta.persistence.PersistenceException;
@@ -101,21 +97,7 @@ import static ai.protomolt.proto.repo.engine.RepositoryErrors.notFound;
  * incomplete; the archive deletion failure tests capture those unsafe paths.
  */
 public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.ArchiveRepository {
-
-    /** Sorted map key for one rendition instance inside a manifest. */
-    private record Slot(String name, String subKey) implements Comparable<Slot> {
-        @Override
-        public int compareTo(Slot other) {
-            int byName = name.compareTo(other.name);
-            return byName != 0 ? byName : subKey.compareTo(other.subKey);
-        }
-    }
-
-
     private static final Logger LOG = LoggerFactory.getLogger(ArchiveOperations.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {
-    };
     private static final int CONFLICT_RETRIES = 3;
 
     private final ArchiveLedger ledger;
@@ -213,7 +195,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         record.versioning = versioning;
         record.description = archive.getDescription().isBlank()
                 ? null : archive.getDescription();
-        record.metadata = mapToJson(archive.getMetadataMap());
+        record.metadata = ArchiveRecordCodec.mapToJson(archive.getMetadataMap());
         record.createdAt = Instant.now();
         try {
             ledger.createArchive(record);
@@ -221,7 +203,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             throw alreadyExists("archive '" + archive.getName()
                     + "' already exists for account '" + archive.getAccountId() + "'");
         }
-        return CreateArchiveResponse.newBuilder().setArchive(toProto(record)).build();
+        return CreateArchiveResponse.newBuilder().setArchive(ArchiveRecordCodec.toProto(record)).build();
     }
 
     @Override
@@ -234,7 +216,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         ArchiveRequests.accountId(request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         return GetArchiveResponse.newBuilder()
-                .setArchive(toProto(archiveOrThrow(request.getAccountId(), request.getArchive())))
+                .setArchive(ArchiveRecordCodec.toProto(archiveOrThrow(request.getAccountId(), request.getArchive())))
                 .build();
     }
 
@@ -250,7 +232,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         long offset = ArchiveRequests.offset(request.getContinuationToken());
         List<ArchiveRecord> page = ledger.listArchives(request.getAccountId(), limit, offset);
         ListArchivesResponse.Builder response = ListArchivesResponse.newBuilder();
-        page.forEach(record -> response.addArchives(toProto(record)));
+        page.forEach(record -> response.addArchives(ArchiveRecordCodec.toProto(record)));
         if (page.size() == limit) {
             response.setNextContinuationToken(Long.toString(offset + limit));
         }
@@ -319,7 +301,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         for (RenditionContent content : request.getRenditionsList()) {
             RenditionDescriptor descriptor =
                     ArchiveRequests.rendition(content.hasRendition(), content.getRendition());
-            if (!seen.add(new Slot(descriptor.getName(), descriptor.getSubKey()))) {
+            if (!seen.add(ArchiveSlots.of(descriptor))) {
                 throw invalidArgument("renditions repeats '" + descriptor.getName()
                         + (descriptor.getSubKey().isBlank() ? "" : "/" + descriptor.getSubKey())
                         + "'");
@@ -344,18 +326,18 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             List<ArchiveVersionRecord> retained = existing.isEmpty()
                     ? List.of() : ledger.allVersions(entryUuid);
             if (objectWriter == null) requireLegacyDestructivePath(retained);
-            VersionManifest current = base == 0 ? null : manifestOf(retained, base);
+            VersionManifest current = base == 0 ? null : ArchiveVersions.manifestOf(retained, base);
 
             // The new manifest: the current renditions carried by reference,
             // overlaid with what this save writes.
-            TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);
+            TreeMap<Slot, RenditionManifestEntry> slots = ArchiveSlots.slotsOf(current);
             Instant now = Instant.now();
             for (RenditionContent content : request.getRenditionsList()) {
                 RenditionDescriptor descriptor = content.getRendition();
                 byte[] data = content.getData().toByteArray();
-                Slot slot = new Slot(descriptor.getName(), descriptor.getSubKey());
-                slots.put(slot, shareRetainedObject(
-                        writtenEntry(descriptor, data, drive, address, entryUuid,
+                Slot slot = ArchiveSlots.of(descriptor);
+                slots.put(slot, ArchiveSlots.shareRetainedObject(
+                        ArchiveVersions.writtenEntry(descriptor, data, drive, address, entryUuid,
                                 request.getWrittenBy(), now), slots.get(slot)));
             }
             List<RenditionManifestEntry> ordered = new ArrayList<>(slots.values());
@@ -365,10 +347,9 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             ArchiveEntryRecord entry = entryRow(existing.orElse(null), address, entryUuid,
                     request, now);
             applyClassification(entry, declared, origin,
-                    primaryWindows(slots, request), entry.filename,
+                    ArchiveSlots.primaryWindows(slots, request), entry.filename,
                     request.getWrittenBy());
-            if (current != null && root.equals(retained.stream()
-                    .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum)) {
+            if (current != null && root.equals(ArchiveVersions.rootChecksumOf(retained, base))) {
                 // Identical content: no bytes move, no version lands; the
                 // entry's metadata still takes the request's values.
                 entry.currentVersion = base;
@@ -381,23 +362,23 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             // Object IO first, outside any transaction: only keys no retained
             // manifest references yet are physically written.
             Map<String, RenditionManifestEntry> before =
-                    ArchiveManifests.referencedObjects(manifests(retained));
+                    ArchiveManifests.referencedObjects(ArchiveVersions.manifests(retained));
             Map<UUID, UUID> uploadTokens = new HashMap<>();
             for (RenditionContent content : request.getRenditionsList()) {
                 RenditionDescriptor descriptor = content.getRendition();
                 RenditionManifestEntry written =
-                        slots.get(new Slot(descriptor.getName(), descriptor.getSubKey()));
+                        slots.get(ArchiveSlots.of(descriptor));
                 if (written.getState() == RenditionState.RENDITION_STATE_PRESENT
                         && !before.containsKey(written.getObjectKey())) {
                     byte[] data = content.getData().toByteArray();
                     if (objectWriter != null) {
                         var staged = objectWriter.stage(entryUuid, address.getAccountId(), address.getArchive(),
-                                drive.bucket, written, contentTypeOf(descriptor), data);
-                        slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()), staged.rendition());
+                                drive.bucket, written, ArchiveVersions.contentTypeOf(descriptor), data);
+                        slots.put(ArchiveSlots.of(descriptor), staged.rendition());
                         uploadTokens.put(staged.objectId(), staged.leaseToken());
                     } else {
                         blobStore.put(new BlobStore.PutSpec(drive.bucket, written.getObjectKey(),
-                                    contentTypeOf(descriptor), null, written.getSha256()),
+                                    ArchiveVersions.contentTypeOf(descriptor), null, written.getSha256()),
                             data);
                     }
                 }
@@ -407,14 +388,14 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
             entry.currentVersion = newVersion;
-            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+            VersionManifest manifest = ArchiveVersions.manifestProto(address, newVersion, root, totalBytes,
                     ordered, now, entry);
-            ArchiveVersionRecord versionRow = versionRow(entryUuid, newVersion, manifest,
+            ArchiveVersionRecord versionRow = ArchiveVersions.versionRow(entryUuid, newVersion, manifest,
                     root, totalBytes, now);
 
-            Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
+            Map<String, RenditionManifestEntry> after = ArchiveVersions.afterOwnership(retained, dropVersion,
                     manifest);
-            StatsDelta delta = delta(existing.isEmpty() ? 1 : 0,
+            StatsDelta delta = ArchiveVersions.delta(existing.isEmpty() ? 1 : 0,
                     1 - (dropVersion != 0 ? 1 : 0),
                     before, after,
                     totalBytes - (current == null ? 0 : ArchiveManifests.totalBytes(
@@ -501,7 +482,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     .setState(RenditionState.RENDITION_STATE_PRESENT).setSizeBytes(declaredSize)
                     .setSha256(expectedSha).setObjectKey(objectKey).build();
             staged = objectWriter.stageStream(entryUuid, address.getAccountId(), address.getArchive(), drive.bucket,
-                    candidate, contentTypeOf(descriptor), body);
+                    candidate, ArchiveVersions.contentTypeOf(descriptor), body);
             sha256 = staged.rendition().getSha256();
         } else if (!expectedSha.isEmpty()) {
             objectKey = ArchiveKeys.rendition(drive, address.getAccountId(),
@@ -509,7 +490,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     descriptor.getSubKey(), expectedSha);
             try (InputStream in = new DigestInputStream(body, digest)) {
                 blobStore.put(new BlobStore.PutSpec(drive.bucket, objectKey,
-                        contentTypeOf(descriptor), null, expectedSha), in, declaredSize);
+                        ArchiveVersions.contentTypeOf(descriptor), null, expectedSha), in, declaredSize);
             }
             sha256 = HexFormat.of().formatHex(digest.digest());
             if (!sha256.equals(expectedSha)) {
@@ -524,7 +505,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     address.getArchive(), entryUuid, UUID.randomUUID());
             try (InputStream in = new DigestInputStream(body, digest)) {
                 blobStore.put(new BlobStore.PutSpec(drive.bucket, stagingKey,
-                        contentTypeOf(descriptor), null, null), in, declaredSize);
+                        ArchiveVersions.contentTypeOf(descriptor), null, null), in, declaredSize);
             }
             sha256 = HexFormat.of().formatHex(digest.digest());
             objectKey = ArchiveKeys.rendition(drive, address.getAccountId(),
@@ -545,10 +526,10 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             long base = existing.map(e -> e.currentVersion).orElse(0L);
             List<ArchiveVersionRecord> retained = existing.isEmpty()
                     ? List.of() : ledger.allVersions(entryUuid);
-            VersionManifest current = base == 0 ? null : manifestOf(retained, base);
+            VersionManifest current = base == 0 ? null : ArchiveVersions.manifestOf(retained, base);
 
             if (objectWriter == null) requireLegacyDestructivePath(retained);
-            TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);
+            TreeMap<Slot, RenditionManifestEntry> slots = ArchiveSlots.slotsOf(current);
             Instant now = Instant.now();
             RenditionManifestEntry.Builder written = RenditionManifestEntry.newBuilder()
                     .setRendition(descriptor)
@@ -562,17 +543,16 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     || !writtenBy.getActor().isBlank())) {
                 written.setWrittenBy(writtenBy);
             }
-            slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()), written.build());
+            slots.put(ArchiveSlots.of(descriptor), written.build());
             List<RenditionManifestEntry> ordered = new ArrayList<>(slots.values());
             String root = ArchiveManifests.rootChecksum(ordered);
             long totalBytes = ArchiveManifests.totalBytes(ordered);
 
-            if (current != null && root.equals(retained.stream()
-                    .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum)) {
+            if (current != null && root.equals(ArchiveVersions.rootChecksumOf(retained, base))) {
                 // The upload candidate is unique and was never published.
                 // Return the retained reference, not the discarded candidate.
-                var retainedSlot = slotsOf(current)
-                        .get(new Slot(descriptor.getName(), descriptor.getSubKey()));
+                var retainedSlot = ArchiveSlots.slotsOf(current)
+                        .get(ArchiveSlots.of(descriptor));
                 if (retainedSlot == null || retainedSlot.getState() != RenditionState.RENDITION_STATE_PRESENT
                         || !retainedSlot.getSha256().equals(sha256)
                         || retainedSlot.getSizeBytes() != declaredSize || retainedSlot.getObjectKey().isBlank()) {
@@ -586,7 +566,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
 
             Map<String, RenditionManifestEntry> before =
-                    ArchiveManifests.referencedObjects(manifests(retained));
+                    ArchiveManifests.referencedObjects(ArchiveVersions.manifests(retained));
             long newVersion = base + 1;
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
             ArchiveEntryRecord entry = existing.orElseGet(() -> {
@@ -606,7 +586,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             // Classification recomputes when this upload carries the entry's
             // primary rendition (the manifest's "original", or its first
             // rendition when no "original" exists).
-            String primary = primaryName(slots);
+            String primary = ArchiveSlots.primaryName(slots);
             if (descriptor.getName().equals(primary)) {
                 applyClassification(entry, declaredFormat, origin, capture.windows(),
                         filename != null && !filename.isBlank() ? filename : entry.filename,
@@ -614,11 +594,11 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
             entry.currentVersion = newVersion;
             entry.updatedAt = now;
-            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+            VersionManifest manifest = ArchiveVersions.manifestProto(address, newVersion, root, totalBytes,
                     ordered, now, entry);
-            Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
+            Map<String, RenditionManifestEntry> after = ArchiveVersions.afterOwnership(retained, dropVersion,
                     manifest);
-            StatsDelta delta = delta(existing.isEmpty() ? 1 : 0,
+            StatsDelta delta = ArchiveVersions.delta(existing.isEmpty() ? 1 : 0,
                     1 - (dropVersion != 0 ? 1 : 0),
                     before, after,
                     totalBytes - (current == null ? 0 : ArchiveManifests.totalBytes(
@@ -626,7 +606,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             try {
                 ledger.commitSave(entry,
                         base,
-                        versionRow(entryUuid, newVersion, manifest, root, totalBytes, now),
+                        ArchiveVersions.versionRow(entryUuid, newVersion, manifest, root, totalBytes, now),
                         dropVersion, delta, staged == null ? Map.of() : Map.of(staged.objectId(), staged.leaseToken()));
             } catch (ArchiveLedger.VersionConflictException e) {
                 if (attempt >= CONFLICT_RETRIES) {
@@ -667,7 +647,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
         Set<String> wanted = new HashSet<>(request.getRenditionsList());
         GetEntryResponse.Builder response = GetEntryResponse.newBuilder()
-                .setInfo(toProto(entry))
+                .setInfo(ArchiveRecordCodec.toProto(entry))
                 .setManifest(manifest);
         var selected = manifest.getRenditionsList().stream()
                 .filter(item -> item.getState() == RenditionState.RENDITION_STATE_PRESENT)
@@ -718,7 +698,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         ArchiveEntryRecord entry = entryOrThrow(address);
         long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
         return GetEntryManifestResponse.newBuilder()
-                .setInfo(toProto(entry))
+                .setInfo(ArchiveRecordCodec.toProto(entry))
                 .setManifest(readManifest(entry.entryUuid, version, manifests)
                         .orElseThrow(() -> notFound("entry has no retained version " + version)))
                 .build();
@@ -748,7 +728,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         ListEntriesResponse.Builder response = ListEntriesResponse.newBuilder()
                 .setTotalCount(ledger.countEntries(request.getAccountId(), request.getArchive()));
         for (ArchiveEntryRecord entry : page) {
-            response.addEntries(toProto(entry));
+            response.addEntries(ArchiveRecordCodec.toProto(entry));
             if (request.getIncludeManifests()) {
                 // Same order as the entries, and one manifest per entry even
                 // when a row's current version has gone missing: a listing
@@ -832,7 +812,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
         ByteWindows windows = null;
         ArchiveVersionRecord version = versionOrThrow(entry, 0);
         VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
-        RenditionManifestEntry primary = primaryOf(manifest);
+        RenditionManifestEntry primary = ArchiveSlots.primaryOf(manifest);
         if (primary != null
                 && primary.getState() == RenditionState.RENDITION_STATE_PRESENT) {
             windows = ByteWindows.ofWhole(
@@ -891,7 +871,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
 
         ArchiveVersionRecord version = versionOrThrow(entry, 0);
         VersionManifest manifest = ArchiveManifests.fromJson(version.manifest);
-        RenditionManifestEntry primary = primaryOf(manifest);
+        RenditionManifestEntry primary = ArchiveSlots.primaryOf(manifest);
         if (primary == null || primary.getState() != RenditionState.RENDITION_STATE_PRESENT) {
             throw failedPrecondition("entry '" + address.getEntryId()
                     + "' has no present primary rendition to bridge from");
@@ -931,7 +911,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                         .setDetail(e.getMessage() == null ? e.toString() : e.getMessage());
                 continue;
             }
-            produced.put(derivedDescriptor(kind), new Derived(derivation, outcome));
+            produced.put(ArchiveVersions.derivedDescriptor(kind), new Derived(derivation, outcome));
             escalate(kind, derivation, format, run);
         }
 
@@ -965,18 +945,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     private record Derived(Bridge.Derivation derivation, BridgeOutcome.Builder outcome) {
     }
 
-    /** The descriptor a bridge's output lands under: name, media type, shape pin. */
-    private static RenditionDescriptor derivedDescriptor(BridgeKind kind) {
-        RenditionDescriptor.Builder descriptor = RenditionDescriptor.newBuilder()
-                .setName(Bridges.renditionName(kind))
-                .setMediaType(Bridges.mediaType(kind));
-        String subject = Bridges.schemaSubject(kind);
-        if (!subject.isBlank()) {
-            descriptor.setSchemaSubject(subject);
-        }
-        return descriptor.build();
-    }
-
     /**
      * Lands every produced rendition in ONE new version beside the original,
      * which is carried by reference and never rewritten. Identical output
@@ -994,23 +962,23 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             long base = entry.currentVersion;
             List<ArchiveVersionRecord> retained = ledger.allVersions(entryUuid);
             if (objectWriter == null) requireLegacyDestructivePath(retained);
-            VersionManifest current = manifestOf(retained, base);
+            VersionManifest current = ArchiveVersions.manifestOf(retained, base);
 
-            TreeMap<Slot, RenditionManifestEntry> slots = slotsOf(current);
+            TreeMap<Slot, RenditionManifestEntry> slots = ArchiveSlots.slotsOf(current);
             Instant now = Instant.now();
             Map<String, byte[]> bytesByKey = new LinkedHashMap<>();
             for (Map.Entry<RenditionDescriptor, Derived> item : produced.entrySet()) {
                 RenditionDescriptor descriptor = item.getKey();
                 byte[] data = item.getValue().derivation().content();
-                RenditionManifestEntry written = writtenEntry(descriptor, data, drive, address,
+                RenditionManifestEntry written = ArchiveVersions.writtenEntry(descriptor, data, drive, address,
                         entryUuid, bridgedBy, now);
-                written = shareRetainedObject(written,
-                        slots.get(new Slot(descriptor.getName(), descriptor.getSubKey())));
+                written = ArchiveSlots.shareRetainedObject(written,
+                        slots.get(ArchiveSlots.of(descriptor)));
                 ContentProfile profile = item.getValue().derivation().profile();
                 if (profile != null) {
                     written = written.toBuilder().setContentProfile(profile).build();
                 }
-                slots.put(new Slot(descriptor.getName(), descriptor.getSubKey()), written);
+                slots.put(ArchiveSlots.of(descriptor), written);
                 if (written.getState() == RenditionState.RENDITION_STATE_PRESENT) {
                     bytesByKey.put(written.getObjectKey(), data);
                 }
@@ -1019,8 +987,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             String root = ArchiveManifests.rootChecksum(ordered);
             long totalBytes = ArchiveManifests.totalBytes(ordered);
 
-            boolean unchanged = root.equals(retained.stream()
-                    .filter(v -> v.version == base).findFirst().orElseThrow().rootChecksum);
+            boolean unchanged = root.equals(ArchiveVersions.rootChecksumOf(retained, base));
             for (Derived item : produced.values()) {
                 item.outcome().setStatus(unchanged
                         ? BridgeStatus.BRIDGE_STATUS_UNCHANGED
@@ -1036,7 +1003,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             }
 
             Map<String, RenditionManifestEntry> before =
-                    ArchiveManifests.referencedObjects(manifests(retained));
+                    ArchiveManifests.referencedObjects(ArchiveVersions.manifests(retained));
             Map<UUID, UUID> uploadTokens = new HashMap<>();
             for (Map.Entry<String, byte[]> object : bytesByKey.entrySet()) {
                 if (!before.containsKey(object.getKey())) {
@@ -1045,11 +1012,11 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                             .findFirst().orElseThrow();
                     if (objectWriter != null) {
                         var staged = objectWriter.stage(entryUuid, address.getAccountId(), address.getArchive(), drive.bucket,
-                                written, contentTypeOf(written.getRendition()), object.getValue());
-                        slots.put(new Slot(written.getRendition().getName(), written.getRendition().getSubKey()), staged.rendition());
+                                written, ArchiveVersions.contentTypeOf(written.getRendition()), object.getValue());
+                        slots.put(ArchiveSlots.of(written.getRendition()), staged.rendition());
                         uploadTokens.put(staged.objectId(), staged.leaseToken());
                     } else blobStore.put(new BlobStore.PutSpec(drive.bucket, object.getKey(),
-                                    contentTypeOf(written.getRendition()), null,
+                                    ArchiveVersions.contentTypeOf(written.getRendition()), null,
                                     written.getSha256()),
                             object.getValue());
                 }
@@ -1061,15 +1028,15 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             long dropVersion = !archive.retainsVersions() && base != 0 ? base : 0;
             entry.currentVersion = newVersion;
             entry.updatedAt = now;
-            VersionManifest manifest = manifestProto(address, newVersion, root, totalBytes,
+            VersionManifest manifest = ArchiveVersions.manifestProto(address, newVersion, root, totalBytes,
                     ordered, now, entry);
-            Map<String, RenditionManifestEntry> after = afterOwnership(retained, dropVersion,
+            Map<String, RenditionManifestEntry> after = ArchiveVersions.afterOwnership(retained, dropVersion,
                     manifest);
-            StatsDelta delta = delta(0, 1 - (dropVersion != 0 ? 1 : 0), before, after,
+            StatsDelta delta = ArchiveVersions.delta(0, 1 - (dropVersion != 0 ? 1 : 0), before, after,
                     totalBytes - ArchiveManifests.totalBytes(current.getRenditionsList()));
             try {
                 ledger.commitSave(entry, base,
-                        versionRow(entryUuid, newVersion, manifest, root, totalBytes, now),
+                        ArchiveVersions.versionRow(entryUuid, newVersion, manifest, root, totalBytes, now),
                         dropVersion, delta, uploadTokens);
             } catch (ArchiveLedger.VersionConflictException e) {
                 if (attempt >= CONFLICT_RETRIES) {
@@ -1085,59 +1052,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             if (objectWriter == null) deleteQuietly(drive, ArchiveManifests.unreferencedKeys(before, after));
             return newVersion;
         }
-    }
-
-    /**
-     * The manifest's primary rendition: "original", else the first rendition
-     * a bridge did not produce. Derived renditions are excluded on purpose —
-     * an entry must never end up characterized from its own bridge output.
-     */
-    private static RenditionManifestEntry primaryOf(VersionManifest manifest) {
-        RenditionManifestEntry first = null;
-        for (RenditionManifestEntry item : manifest.getRenditionsList()) {
-            String name = item.getRendition().getName();
-            if (name.equals("original")) {
-                return item;
-            }
-            if (first == null && !Bridges.derivedName(name)) {
-                first = item;
-            }
-        }
-        return first;
-    }
-
-    /** The primary rendition's name among a save's slots, or null when none. */
-    private static String primaryName(TreeMap<Slot, RenditionManifestEntry> slots) {
-        if (slots.containsKey(new Slot("original", ""))) {
-            return "original";
-        }
-        return slots.keySet().stream()
-                .map(Slot::name)
-                .filter(name -> !Bridges.derivedName(name))
-                .findFirst()
-                .orElse(null);
-    }
-
-    /**
-     * The primary rendition's windows when THIS save carries it; null when
-     * the primary's bytes are not in the request (identification is then
-     * skipped rather than invented — ClassifyEntry re-reads from the store
-     * on demand). A unary save holds the whole rendition already, so both
-     * windows are resident and nothing is truncated away.
-     */
-    private static ByteWindows primaryWindows(TreeMap<Slot, RenditionManifestEntry> slots,
-                                              PutEntryRequest request) {
-        String primary = primaryName(slots);
-        if (primary == null) {
-            return null;
-        }
-        for (RenditionContent content : request.getRenditionsList()) {
-            if (content.getRendition().getName().equals(primary)
-                    && !content.getData().isEmpty()) {
-                return ByteWindows.ofWhole(content.getData().toByteArray());
-            }
-        }
-        return null;
     }
 
     /** Resolves and stamps the entry's classification columns. */
@@ -1205,43 +1119,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                         + "' has no retained version " + version));
     }
 
-    private RenditionManifestEntry writtenEntry(RenditionDescriptor descriptor, byte[] data,
-                                                DriveRecord drive, EntryAddress address,
-                                                UUID entryUuid, WriteAttribution writtenBy,
-                                                Instant now) {
-        RenditionManifestEntry.Builder entry = RenditionManifestEntry.newBuilder()
-                .setRendition(descriptor)
-                .setWrittenAt(Timestamps.fromMillis(now.toEpochMilli()));
-        if (writtenBy != null
-                && (!writtenBy.getModule().isBlank() || !writtenBy.getActor().isBlank())) {
-            entry.setWrittenBy(writtenBy);
-        }
-        if (data.length == 0) {
-            return entry.setState(RenditionState.RENDITION_STATE_EMPTY).build();
-        }
-        String sha256 = ArchiveManifests.sha256Hex(data);
-        return entry.setState(RenditionState.RENDITION_STATE_PRESENT)
-                .setSizeBytes(data.length)
-                .setSha256(sha256)
-                .setObjectKey(ArchiveKeys.rendition(drive, address.getAccountId(),
-                        address.getArchive(), entryUuid, descriptor.getName(),
-                        descriptor.getSubKey(), sha256))
-                .build();
-    }
-
-    private static RenditionManifestEntry shareRetainedObject(
-            RenditionManifestEntry candidate, RenditionManifestEntry retained) {
-        if (retained != null
-                && candidate.getState() == RenditionState.RENDITION_STATE_PRESENT
-                && retained.getState() == RenditionState.RENDITION_STATE_PRESENT
-                && candidate.getSha256().equals(retained.getSha256())
-                && candidate.getSizeBytes() == retained.getSizeBytes()) {
-            return candidate.toBuilder().setObjectKey(retained.getObjectKey())
-                    .setStorageObjectId(retained.getStorageObjectId()).build();
-        }
-        return candidate;
-    }
-
     private static void requireLegacyDestructivePath(List<ArchiveVersionRecord> versions) {
         for (var version : versions) {
             if (ArchiveManifests.fromJson(version.manifest).getRenditionsList().stream()
@@ -1249,71 +1126,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 throw failedPrecondition("Bound archive objects require durable destructive admission");
             }
         }
-    }
-
-    private static TreeMap<Slot, RenditionManifestEntry> slotsOf(VersionManifest current) {
-        TreeMap<Slot, RenditionManifestEntry> slots = new TreeMap<>();
-        if (current != null) {
-            for (RenditionManifestEntry entry : current.getRenditionsList()) {
-                slots.put(new Slot(entry.getRendition().getName(),
-                        entry.getRendition().getSubKey()), entry);
-            }
-        }
-        return slots;
-    }
-
-    private static List<VersionManifest> manifests(List<ArchiveVersionRecord> rows) {
-        return rows.stream().map(row -> ArchiveManifests.fromJson(row.manifest)).toList();
-    }
-
-    private static VersionManifest manifestOf(List<ArchiveVersionRecord> rows, long version) {
-        return rows.stream().filter(row -> row.version == version).findFirst()
-                .map(row -> ArchiveManifests.fromJson(row.manifest))
-                .orElseThrow(() -> failedPrecondition(
-                        "the entry's current version " + version + " has no retained manifest"));
-    }
-
-    /** The ownership set after a mutation: retained rows minus the dropped one, plus the new manifest. */
-    private static Map<String, RenditionManifestEntry> afterOwnership(
-            List<ArchiveVersionRecord> retained, long dropVersion, VersionManifest added) {
-        List<VersionManifest> after = new ArrayList<>();
-        for (ArchiveVersionRecord row : retained) {
-            if (row.version != dropVersion) {
-                after.add(ArchiveManifests.fromJson(row.manifest));
-            }
-        }
-        after.add(added);
-        return ArchiveManifests.referencedObjects(after);
-    }
-
-    /** Exact counter deltas from the before/after ownership sets. */
-    private static StatsDelta delta(long entries, long versions,
-                                    Map<String, RenditionManifestEntry> before,
-                                    Map<String, RenditionManifestEntry> after,
-                                    long currentBytesDelta) {
-        long retainedDelta = 0;
-        Map<String, Long> renditionObjects = new HashMap<>();
-        Map<String, Long> renditionBytes = new HashMap<>();
-        for (Map.Entry<String, RenditionManifestEntry> object : after.entrySet()) {
-            if (!before.containsKey(object.getKey())) {
-                RenditionManifestEntry item = object.getValue();
-                retainedDelta += item.getSizeBytes();
-                String name = item.getRendition().getName();
-                renditionObjects.merge(name, 1L, Long::sum);
-                renditionBytes.merge(name, item.getSizeBytes(), Long::sum);
-            }
-        }
-        for (Map.Entry<String, RenditionManifestEntry> object : before.entrySet()) {
-            if (!after.containsKey(object.getKey())) {
-                RenditionManifestEntry item = object.getValue();
-                retainedDelta -= item.getSizeBytes();
-                String name = item.getRendition().getName();
-                renditionObjects.merge(name, -1L, Long::sum);
-                renditionBytes.merge(name, -item.getSizeBytes(), Long::sum);
-            }
-        }
-        return new StatsDelta(entries, versions, retainedDelta, currentBytesDelta,
-                renditionObjects, renditionBytes);
     }
 
     private ArchiveEntryRecord entryRow(ArchiveEntryRecord existing, EntryAddress address,
@@ -1335,7 +1147,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                     Timestamps.toMillis(request.getSourceModifiedAt()));
         }
         if (!request.getMetadataMap().isEmpty()) {
-            entry.metadata = mapToJson(request.getMetadataMap());
+            entry.metadata = ArchiveRecordCodec.mapToJson(request.getMetadataMap());
         }
         entry.updatedAt = now;
         return entry;
@@ -1344,39 +1156,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     /** A blank request field keeps the stored value; a set one replaces it. */
     private static String blankToNull(String requested, String stored) {
         return requested.isBlank() ? stored : requested;
-    }
-
-    private static ArchiveVersionRecord versionRow(UUID entryUuid, long version,
-                                                   VersionManifest manifest, String root,
-                                                   long totalBytes, Instant now) {
-        ArchiveVersionRecord row = new ArchiveVersionRecord();
-        row.entryUuid = entryUuid;
-        row.version = version;
-        row.manifest = ArchiveManifests.toJson(manifest);
-        row.rootChecksum = root;
-        row.totalBytes = totalBytes;
-        row.createdAt = now;
-        return row;
-    }
-
-    private VersionManifest manifestProto(EntryAddress address, long version,
-                                                 String root, long totalBytes,
-                                                 List<RenditionManifestEntry> ordered,
-                                                 Instant createdAt, ArchiveEntryRecord entry) {
-        EntryInfo snapshot = toProto(entry);
-        if (!snapshot.getAddress().equals(address) || entry.currentVersion != version
-                || !ArchiveIds.entryUuid(address).equals(entry.entryUuid)) {
-            throw new IllegalStateException("Archive version metadata does not match its entry identity");
-        }
-        return VersionManifest.newBuilder()
-                .setAddress(address)
-                .setVersion(version)
-                .setRootChecksum(root)
-                .setTotalBytes(totalBytes)
-                .setCreatedAt(Timestamps.fromMillis(createdAt.toEpochMilli()))
-                .addAllRenditions(ordered)
-                .setMetadataSnapshot(snapshot)
-                .build();
     }
 
     private static PutEntryResponse putResponse(UUID entryUuid, long version, String root,
@@ -1400,82 +1179,6 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
                 // An orphan by the standing rule; the reconciler's sweep owns it.
                 LOG.warn("best-effort delete of {} failed: {}", key, e.getMessage());
             }
-        }
-    }
-
-    private static String contentTypeOf(RenditionDescriptor descriptor) {
-        return descriptor.getMediaType().isBlank()
-                ? "application/octet-stream" : descriptor.getMediaType();
-    }
-
-    private Archive toProto(ArchiveRecord record) {
-        Archive.Builder archive = Archive.newBuilder()
-                .setName(record.name)
-                .setAccountId(record.accountId)
-                .setDriveName(record.driveName)
-                .setVersioning(record.retainsVersions()
-                        ? VersioningPolicy.VERSIONING_POLICY_RETAINED
-                        : VersioningPolicy.VERSIONING_POLICY_NONE)
-                .setCreatedAt(Timestamps.fromMillis(record.createdAt.toEpochMilli()));
-        if (record.description != null) {
-            archive.setDescription(record.description);
-        }
-        archive.putAllMetadata(jsonToMap(record.metadata));
-        return archive.build();
-    }
-
-    private EntryInfo toProto(ArchiveEntryRecord record) {
-        EntryInfo.Builder info = EntryInfo.newBuilder()
-                .setAddress(EntryAddress.newBuilder()
-                        .setAccountId(record.accountId)
-                        .setArchive(record.archive)
-                        .setEntryId(record.entryId))
-                .setEntryUuid(record.entryUuid.toString())
-                .setCurrentVersion(record.currentVersion)
-                .setCreatedAt(Timestamps.fromMillis(record.createdAt.toEpochMilli()))
-                .setUpdatedAt(Timestamps.fromMillis(record.updatedAt.toEpochMilli()));
-        if (record.title != null) {
-            info.setTitle(record.title);
-        }
-        if (record.filename != null) {
-            info.setFilename(record.filename);
-        }
-        if (record.contentType != null) {
-            info.setContentType(record.contentType);
-        }
-        if (record.sourceUri != null) {
-            info.setSourceUri(record.sourceUri);
-        }
-        if (record.sourceModifiedAt != null) {
-            info.setSourceModifiedAt(Timestamps.fromMillis(record.sourceModifiedAt.toEpochMilli()));
-        }
-        Classification classification = ArchiveClassifications.fromJson(record.classification);
-        if (classification != null) {
-            info.setClassification(classification);
-        }
-        info.putAllMetadata(jsonToMap(record.metadata));
-        return info.build();
-    }
-
-    private static String mapToJson(Map<String, String> map) {
-        if (map.isEmpty()) {
-            return null;
-        }
-        try {
-            return MAPPER.writeValueAsString(map);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("metadata map does not print as JSON", e);
-        }
-    }
-
-    private static Map<String, String> jsonToMap(String json) {
-        if (json == null || json.isBlank()) {
-            return Map.of();
-        }
-        try {
-            return MAPPER.readValue(json, STRING_MAP);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("stored metadata does not parse", e);
         }
     }
 }
