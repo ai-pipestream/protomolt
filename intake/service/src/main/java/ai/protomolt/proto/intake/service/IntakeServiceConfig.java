@@ -103,7 +103,7 @@ public record IntakeServiceConfig(
                 longValue(ENV_MAX_PAYLOAD_BYTES, cap, DEFAULT_MAX_PAYLOAD_BYTES),
                 intValue(ENV_HTTP_PORT, httpPort, 0),
                 writers == null ? DEFAULT_STEP_WRITERS
-                        : java.util.Arrays.stream(writers.split(",")).map(String::trim)
+                        : DelimitedValues.segments(writers, ',').stream().map(String::trim)
                                 .filter(writer -> !writer.isEmpty()).collect(java.util.stream.Collectors.toSet()));
     }
 

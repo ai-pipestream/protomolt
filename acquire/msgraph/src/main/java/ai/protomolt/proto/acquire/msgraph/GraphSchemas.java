@@ -129,7 +129,7 @@ public final class GraphSchemas {
      */
     private static boolean repeated(Descriptor descriptor, String path) {
         Descriptor current = descriptor;
-        for (String segment : path.split("\\.")) {
+        for (String segment : dotSegments(path)) {
             if (current == null) {
                 return false;
             }
@@ -144,5 +144,32 @@ public final class GraphSchemas {
                     ? field.getMessageType() : null;
         }
         return false;
+    }
+
+    /**
+     * The path's dot-separated segments without regex, with the same
+     * limit-0 split behavior the path walk relied on: trailing empty
+     * segments drop, leading and inner empty segments stay.
+     */
+    private static List<String> dotSegments(String path) {
+        if (path.isEmpty()) {
+            return List.of("");
+        }
+        List<String> parts = new ArrayList<>();
+        int from = 0;
+        while (true) {
+            int dot = path.indexOf('.', from);
+            if (dot < 0) {
+                parts.add(path.substring(from));
+                break;
+            }
+            parts.add(path.substring(from, dot));
+            from = dot + 1;
+        }
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end);
     }
 }

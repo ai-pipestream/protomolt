@@ -134,7 +134,7 @@ public final class IntakeServiceMain {
                             + " (format: <key>=<account_id>[@<datasource_id>,...];...)");
         }
         InMemoryApiKeyIdentityResolver resolver = new InMemoryApiKeyIdentityResolver();
-        for (String entry : spec.split(";")) {
+        for (String entry : DelimitedValues.segments(spec, ';')) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) {
                 continue;
@@ -153,7 +153,7 @@ public final class IntakeServiceMain {
             }
             String accountId = grant.substring(0, at).trim();
             Set<String> datasources =
-                    java.util.Arrays.stream(grant.substring(at + 1).split(","))
+                    DelimitedValues.segments(grant.substring(at + 1), ',').stream()
                             .map(String::trim)
                             .filter(s -> !s.isEmpty())
                             .collect(java.util.stream.Collectors.toUnmodifiableSet());
