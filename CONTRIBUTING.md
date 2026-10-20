@@ -4,6 +4,25 @@ Thanks for your interest in ProtoMolt. Contributions of all kinds are
 welcome: bug reports, documentation fixes, new descriptor sources, engine
 plugins, and validation dialects.
 
+## Where the repository lives
+
+ProtoMolt has two homes:
+
+- **Forgejo, the canonical repository:**
+  [git.rokkon.com/ai-pipestream/protomolt](https://git.rokkon.com/ai-pipestream/protomolt).
+  `main` moves only here, through gated pull requests; CI, review and merges
+  all happen on Forgejo.
+- **GitHub, the public mirror:**
+  [github.com/ai-pipestream/protomolt](https://github.com/ai-pipestream/protomolt).
+  After a pull request merges into Forgejo `main`, the
+  `forward-main-to-github` workflow opens a short-lived GitHub pull request so
+  the required checks run on the exact Forgejo commit, fast-forwards GitHub
+  `main` to it, and closes that pull request. Nothing merges into GitHub
+  `main` directly, and neither `main` is ever force-pushed.
+
+Cloning from GitHub is fine for building, exploring and opening pull
+requests; it carries the same history as Forgejo.
+
 ## Getting set up
 
 ```shell
@@ -49,8 +68,22 @@ The most useful contributions tend to be implementations of existing SPIs:
 
 ## Submitting changes
 
-Open a pull request against `main`. CI must pass (build, tests, lint,
-breaking-change check). For anything larger than a bug fix, consider opening
+Target `main` in either forge:
+
+- **If you have a Forgejo account**, push your branch to Forgejo and open a
+  pull request against `main` there. That is the gate: CI must pass (build,
+  tests, lint, breaking-change check), and the merge happens on Forgejo.
+- **If you contribute through GitHub**, open a pull request against `main` on
+  the GitHub mirror. GitHub CI runs there as a first signal, but the pull
+  request is not merged on GitHub. A maintainer lands it by pushing the branch
+  to Forgejo and opening the gating pull request against Forgejo `main`; once
+  that merges, the forward workflow brings the commit back to GitHub `main`
+  and your GitHub pull request shows as merged or is closed with a reference
+  to the landing commit. Work that reached GitHub first is kept: a guard
+  workflow refuses a Forgejo merge whose head does not already contain GitHub
+  `main`, so the forges never diverge.
+
+For anything larger than a bug fix, consider opening
 an issue first to discuss the approach: especially for new modules, where
 naming and placement matter.
 
