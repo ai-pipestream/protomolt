@@ -61,6 +61,7 @@ are a draft for review, not a description of completed repairs.
 
 - [Descriptor sources](core/descriptor-sources.md): descriptor loading and hygiene checks
 - [Cluster directory](core/cluster-directory.md): memory-resident discovery with encrypted restart persistence
+- [Distributed config](core/config.md): typed protobuf config documents behind a pluggable `ConfigSource`
 - [Core utilities](core/helpers.md): `Any`, `Struct`, conversion, and message comparison
 - [Compatibility checking](schema/compatibility.md): wire, JSON, and source compatibility
 - [JSON Schema generation](schema/json-schema.md): draft 2020-12 output from protobuf descriptors
@@ -95,6 +96,10 @@ are a draft for review, not a description of completed repairs.
 - [Kafka Connect: OpenSearch](sink/kafka-connect-opensearch.md): hint-driven documents from topic records
 - [Kafka serde](sink/kafka-serde.md): Confluent wire format with schema enforcement
 
+## Repository
+
+- [Save and read document parts](repo/publication.md): the repository guide to the canonical parts-based `DocumentService`
+
 ## Surfaces
 
 - [Actions](surface/actions.md): the self-describing verb catalog
@@ -104,6 +109,7 @@ are a draft for review, not a description of completed repairs.
 - [REST gateway](surface/rest-gateway.md): JSON transcoding and server hosts
 - [Service workspaces](surface/service-workspace.md): persistent service profiles and descriptors
 - [Framework integrations](surface/framework-integrations.md): Spring Boot and Quarkus
+- [gRPC tools over MCP](apps/grpc-mcp.md): a stdio application that reflects and invokes one gRPC endpoint
 
 The [generated action inventory](generated/action-inventory.json) lists each
 built-in action exposed by the standalone and full catalogs.
@@ -118,6 +124,7 @@ built-in action exposed by the standalone and full catalogs.
 - [Docker](apps/docker.md): container images and Compose setup
 - [macOS (.dmg)](apps/serve-macos.md): protomolt-serve as a self-contained Apple-silicon app with an embedded runtime
 - [Document platform](apps/document-platform.md): the one-container document pipeline (repo, intake, parse, jobs, registry, search, console, playground)
+- [Bounded Redis archive](apps/bounded-archive.md): run or embed managed archive entries and retained versions on Redis and PostgreSQL
 - [Role nodes](apps/role-nodes.md): the same binary as specialized nodes via PROTOMOLT_ROLES and remote role targets
 - [Coding workers](apps/coding-workers.md): Java and C++ agent environments, state, credentials, and transport boundaries
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
@@ -141,6 +148,8 @@ built-in action exposed by the standalone and full catalogs.
 - [Streaming through the ACP agent](tutorials/streaming.md)
 - [Earning a signed receipt from a delegated task](tutorials/delegation-receipt.md)
 - [Recorded correction with a verifiable assessment](tutorials/recorded-correction.md)
+- [Forward an accepted workflow launch through Kafka](tutorials/kafka-accepted-workflow.md): an optional local broker bridge to the published coordinator
+- [Adoption walkthrough checklist](tutorials/adoption-checklist.md): an uncoached first-use test for someone new to ProtoMolt
 
 ## Architecture and records
 
@@ -156,4 +165,15 @@ built-in action exposed by the standalone and full catalogs.
 - [Authorization scopes](design/authorization-scopes.md): named principals, a closed scope vocabulary, and per-operation refusals
 - [Intake and parsing](design/intake-and-parsing.md): platform ingestion architecture
 - [Document platform](design/document-platform.md): repository and account service architecture
+- [Optional action providers](architecture/action-providers.md): runtime composition of the action catalog through `ActionProvider`
+- [SPI composition and dependency boundaries](architecture/spi-modularity.md): module extraction and the dependencies each SPI may carry
+- [Config distribution](design/config-distribution.md): how configuration moves between nodes in a scaled deployment
+- [Metric joins](design/metric-joins.md): joins on the metric surface
+- [Screening](design/screening.md): model-driven PII and entity detection
+- [Well-known types](design/well-known-types.md): the validated typed commons, wire-plain and server-strict
+- [Archive version metadata](design/archive-version-metadata.md): descriptive metadata snapshots for archive versions
+- [Repo service contract and component mapping](design/repo-v2-contract-draft/component-mapping.md): the v2 contract mapped onto existing components
+- [Worker harness guide](design/worker-harness-guide.md): failing and working invocations for delegation workers
+- [Website feature inventory](website-feature-inventory.md): capability inventory prepared for the website team
+- [Plans](plans): goal plans, inventories and verification records
 - [Review records](reviews): dated correctness and security reviews
