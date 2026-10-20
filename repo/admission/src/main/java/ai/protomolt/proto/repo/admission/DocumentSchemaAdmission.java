@@ -62,6 +62,13 @@ public final class DocumentSchemaAdmission {
                 throw new IllegalArgumentException("invalid member admission limits");
         }
 
+        /**
+         * The limits the repository service runs with: 16 fragments of up to 64 MiB, 64 roots,
+         * 4 MiB of evidence, 32 bindings, 32 MiB retained and 64 MiB decoded, with the v1 wire budgets.
+         */
+        public static final Limits SERVICE_DEFAULTS =
+                new Limits(16, 64L * MIB, 64, 4L * MIB, 32, 32L * MIB, 64 * MIB);
+
         /** The v1 wire budgets: one million wire values, wire depth 64, ten thousand parser entries. */
         public Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
                       int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {

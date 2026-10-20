@@ -85,8 +85,7 @@ class UploadHttpServerV2DelegationIT {
                 .setProvider("s3").setEndpoint(S3.getEndpoint().toString()).setNamespace(BUCKET + "/" + prefix).build());
         var drives = new DocumentSaves.Drives("default",
                 Map.of("default", new BlobStoreStack(stackId, new S3BlobStore(s3), BUCKET, prefix)));
-        var limits = new DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024, 64, 4L * 1024 * 1024, 32,
-                32L * 1024 * 1024, 64 * 1024 * 1024);
+        var limits = DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
         var saves = new DocumentSaves(catalog, drives, selection -> null, limits, bytes -> () -> {},
                 Clock.systemUTC());
         uploads = new DocumentUploads(saves);

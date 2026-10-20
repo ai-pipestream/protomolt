@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.spi.PayloadBudget;
+import ai.protomolt.proto.repo.engine.MessageCeiling;
 import io.grpc.*;
 import java.time.Duration;
 import java.util.Objects;
@@ -30,7 +31,7 @@ final class UnaryRequestAdmission implements ServerInterceptor, AutoCloseable {
     UnaryRequestAdmission(PayloadBudget budget, int maxRequestBytes, int maxActive, Set<String> methods,
             java.util.Map<String, Integer> responseLimits) {
         this.budget = Objects.requireNonNull(budget);
-        if (maxRequestBytes < 1 || maxRequestBytes > 256 * 1024 * 1024 || maxActive < 1 || maxActive > 1024)
+        if (maxRequestBytes < 1 || maxRequestBytes > MessageCeiling.MAX_BYTES || maxActive < 1 || maxActive > 1024)
             throw new IllegalArgumentException("Invalid unary request admission limits");
         this.maxRequestBytes = maxRequestBytes;
         this.maxActive = maxActive;
@@ -38,7 +39,7 @@ final class UnaryRequestAdmission implements ServerInterceptor, AutoCloseable {
         if (this.methods.isEmpty()) throw new IllegalArgumentException("Unary admission requires an explicit method set");
         this.responseLimits = java.util.Map.copyOf(responseLimits);
         this.responseLimits.forEach((method, limit) -> {
-            if (!this.methods.contains(method) || limit < 1 || limit > 256 * 1024 * 1024)
+            if (!this.methods.contains(method) || limit < 1 || limit > MessageCeiling.MAX_BYTES)
                 throw new IllegalArgumentException("Invalid unary response admission limit");
         });
     }

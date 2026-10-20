@@ -431,7 +431,7 @@ public final class DocumentSaves {
             var tracker = new UploadStreamTracker(body, expectedLength, cancelled);
 
             if (p.recorded() != null) {
-                byte[] buffer = new byte[64 * 1024];
+                byte[] buffer = new byte[DocumentStreams.CHUNK_SIZE];
                 try {
                     while (tracker.read(buffer) >= 0) {
                         // Drain in bounded chunks to compute the retry stream's digest and byte count.
@@ -524,7 +524,7 @@ public final class DocumentSaves {
             var leases = new ArrayList<DocumentAdmissionReservations.Lease>();
             try {
                 var out = ByteString.newOutput();
-                byte[] buffer = new byte[64 * 1024];
+                byte[] buffer = new byte[DocumentStreams.CHUNK_SIZE];
                 boolean budgetExceeded = false;
                 try {
                     int r;
