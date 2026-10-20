@@ -10,7 +10,7 @@ is the source of truth for the assembled name set.
 The service is defined in protobuf, of course:
 `ai.protomolt.proto.grpc.service.v1.ProtoMoltService`, one typed RPC per full-catalog
 action in
-[`protomolt_service.proto`](../../surface/grpc/service/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto).
+[`protomolt_service.proto`](../../surface/grpc/service-contract/src/main/resources/ai/protomolt/proto/grpc/service/v1/protomolt_service.proto).
 Each request and response message is designed so its canonical proto3 JSON
 form is exactly the action's JSON envelope. That one decision makes every
 surface identical: a `CheckCompatRequest` over gRPC, the JSON body of

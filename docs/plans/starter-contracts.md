@@ -98,7 +98,7 @@ The review-binding patch remains a prerequisite for automatic external review.
 
 ## First workflow: correct-contact
 
-The [stored-definition fixture](../../samples/src/main/resources/starter/correct-contact.workflow.json)
+The [stored-definition fixture](../../apps/correction/src/main/resources/starter/correct-contact.workflow.json)
 uses the existing authoring `CompiledWorkflow` and `SchemaSource.type`. Register
 the [correction schema](../../apps/correction/src/main/proto/ai/protomolt/proto/correction/v1/correction.proto)
 and full import closure before resolving that type. A real host must resolve and
