@@ -7,10 +7,17 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Struct;
 
-final class CelFixtures {
-    static final FileDescriptor FILE;
-    static final Descriptor DOCUMENT;
-    static final Descriptor INFO;
+/**
+ * A small dynamic {@code celtest} schema shared by the CEL and CEL-mapper tests: a
+ * {@code Document} with scalar, {@link Struct} and nested {@code Info} fields.
+ */
+public final class CelFixtures {
+    /** The {@code cel_fixtures.proto} file holding both message types. */
+    public static final FileDescriptor FILE;
+    /** The {@code celtest.Document} message type. */
+    public static final Descriptor DOCUMENT;
+    /** The {@code celtest.Info} message type nested in {@code Document.info}. */
+    public static final Descriptor INFO;
     static {
         try {
             var info = DescriptorProtos.DescriptorProto.newBuilder().setName("Info")
@@ -31,10 +38,20 @@ final class CelFixtures {
             DOCUMENT = FILE.findMessageTypeByName("Document"); INFO = FILE.findMessageTypeByName("Info");
         } catch (Exception e) { throw new ExceptionInInitializerError(e); }
     }
-    static DynamicMessage.Builder doc(String title) {
+
+    private CelFixtures() {
+    }
+
+    /**
+     * Starts a {@code Document} with only its title set.
+     *
+     * @param title the title field value
+     * @return a mutable document builder
+     */
+    public static DynamicMessage.Builder doc(String title) {
         return DynamicMessage.newBuilder(DOCUMENT).setField(DOCUMENT.findFieldByName("title"), title);
     }
-    static DescriptorProtos.FieldDescriptorProto.Builder field(String n, int i, DescriptorProtos.FieldDescriptorProto.Type t) {
+    private static DescriptorProtos.FieldDescriptorProto.Builder field(String n, int i, DescriptorProtos.FieldDescriptorProto.Type t) {
         return DescriptorProtos.FieldDescriptorProto.newBuilder().setName(n).setNumber(i).setType(t);
     }
 }
