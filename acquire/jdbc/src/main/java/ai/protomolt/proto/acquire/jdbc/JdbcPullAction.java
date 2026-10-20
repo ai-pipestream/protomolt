@@ -8,9 +8,6 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.protomolt.proto.validate.ProtoValidator;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 
@@ -22,11 +19,6 @@ public final class JdbcPullAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "pull-jdbc";
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    /** Enforces the request contract on the catalog path. */
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private final JdbcPull pull;
 

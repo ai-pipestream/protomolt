@@ -5,14 +5,11 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.schema.registry.git.RegistryFederation;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.schema.registry.v1.RegistryRemotesRequest;
 import ai.protomolt.proto.schema.registry.v1.RegistryRemotesResponse;
 import ai.protomolt.proto.schema.registry.v1.RemoteRegistry;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 
@@ -25,8 +22,6 @@ public final class RegistryRemotesAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "registry-remotes";
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final RegistryFederation federation;
 
@@ -99,14 +94,5 @@ public final class RegistryRemotesAction implements ProtoAction {
                     .setUrl(remote.url()));
         }
         return response.build();
-    }
-
-    private static String requiredString(ObjectNode input, String field) throws ActionException {
-        String value = input.path(field).asText("");
-        if (value.isBlank()) {
-            throw new ActionException("invalid-input", field + " is required for op="
-                    + input.path("op").asText(""));
-        }
-        return value;
     }
 }

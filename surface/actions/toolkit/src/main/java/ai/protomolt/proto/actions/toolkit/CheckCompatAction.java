@@ -15,7 +15,6 @@ import ai.protomolt.proto.compat.CompatibilityResult;
 import ai.protomolt.proto.compat.SchemaChange;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
-import java.util.Arrays;
 
 /** Checks a new schema version against an old one under a compatibility mode. */
 final class CheckCompatAction implements ProtoAction {

@@ -154,10 +154,6 @@ public final class ServiceProfileResources implements McpResources {
         return ROOT + "/" + encode(name);
     }
 
-    private static String methodUri(String name, String method) {
-        return serviceUri(name) + "/methods/" + encode(method);
-    }
-
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }

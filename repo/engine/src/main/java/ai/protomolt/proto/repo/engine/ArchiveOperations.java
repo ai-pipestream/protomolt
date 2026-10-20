@@ -4,7 +4,6 @@ import ai.protomolt.proto.asset.bridge.Bridge;
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.asset.bridge.Bridges;
 import ai.protomolt.proto.asset.characterize.ByteWindows;
-import ai.protomolt.proto.asset.characterize.Characterizer;
 import ai.protomolt.proto.asset.characterize.WindowCapture;
 import ai.protomolt.proto.asset.v1.BridgeKind;
 import ai.protomolt.proto.asset.v1.BridgeStatus;

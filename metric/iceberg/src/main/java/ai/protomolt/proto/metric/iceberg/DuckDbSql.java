@@ -1,6 +1,5 @@
 package ai.protomolt.proto.metric.iceberg;
 
-import ai.protomolt.proto.metric.Aggregate;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.Dimension;
 import ai.protomolt.proto.metric.spi.CompiledMetricQuery.DimensionKind;

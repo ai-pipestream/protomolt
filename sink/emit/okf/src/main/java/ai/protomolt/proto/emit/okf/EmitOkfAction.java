@@ -10,7 +10,6 @@ import ai.protomolt.proto.actions.SchemaResolver;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.emit.Bundle;
 import ai.protomolt.proto.emit.Bundles;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.google.protobuf.Message;
 import java.nio.charset.StandardCharsets;
 

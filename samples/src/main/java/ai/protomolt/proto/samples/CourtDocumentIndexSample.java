@@ -13,7 +13,6 @@ import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ListValue;
 import com.google.protobuf.Struct;

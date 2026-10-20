@@ -1,7 +1,6 @@
 package ai.protomolt.proto.pipeline;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
-import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.pipeline.v1.CollectStep;
 import ai.protomolt.proto.pipeline.v1.EdgeCardinality;
 import ai.protomolt.proto.pipeline.v1.GrpcCallStep;

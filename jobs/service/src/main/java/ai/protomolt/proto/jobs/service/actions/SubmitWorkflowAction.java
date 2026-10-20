@@ -10,8 +10,6 @@ import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.jobs.service.WorkflowRunSubmitter;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunStore;
 import ai.protomolt.proto.workflow.WorkflowRepository;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
@@ -105,12 +103,5 @@ public final class SubmitWorkflowAction implements ProtoAction {
                 .set("failedStep", outcome.failedStep() == null ? "" : outcome.failedStep())
                 .set("error", outcome.error())
                 .build();
-    }
-
-    private static ObjectNode baseSchema() {
-        ObjectNode schema = JsonNodeFactory.instance.objectNode();
-        schema.put("$schema", "https://json-schema.org/draft/2020-12/schema");
-        schema.put("type", "object");
-        return schema;
     }
 }

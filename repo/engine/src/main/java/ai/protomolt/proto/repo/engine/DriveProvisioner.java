@@ -18,7 +18,6 @@ public final class DriveProvisioner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DriveProvisioner.class);
 
-    static final String DEFAULT_PROVIDER = "s3";
     static final String STATUS_ACTIVE = "ACTIVE";
 
     private final DriveLedger drives;

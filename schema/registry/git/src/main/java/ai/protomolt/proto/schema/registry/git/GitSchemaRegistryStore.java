@@ -9,7 +9,6 @@ import ai.protomolt.proto.registry.RegistrationSupport;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.registry.SchemaContents;
 import ai.protomolt.proto.registry.SchemaReference;
-import ai.protomolt.proto.registry.SchemaRegistryStore;
 import ai.protomolt.proto.registry.StoredSchema;
 
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;

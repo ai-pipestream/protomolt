@@ -14,7 +14,6 @@ import ai.protomolt.proto.shapes.ShapeSynthesizer;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import com.google.protobuf.Struct;
-import com.google.protobuf.util.JsonFormat;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;

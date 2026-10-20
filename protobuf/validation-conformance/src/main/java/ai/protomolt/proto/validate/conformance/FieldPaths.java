@@ -2,7 +2,6 @@ package ai.protomolt.proto.validate.conformance;
 
 import build.buf.validate.FieldPath;
 import build.buf.validate.FieldPathElement;
-import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.OneofDescriptor;

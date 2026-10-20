@@ -13,7 +13,6 @@ import ai.protomolt.proto.search.index.spi.IndexMapping;
 import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
 import ai.protomolt.proto.search.v1.SearchHit;
-import ai.protomolt.proto.search.v1.SearchLane;
 import ai.protomolt.proto.search.v1.SearchRequest;
 import ai.protomolt.proto.search.v1.StoredValue;
 import ai.protomolt.proto.search.v1.SubjectInfo;

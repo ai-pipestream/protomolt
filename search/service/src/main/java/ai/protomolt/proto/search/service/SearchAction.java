@@ -5,7 +5,6 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.search.v1.SearchRequest;
 import ai.protomolt.proto.search.v1.SearchResponse;
 import ai.protomolt.proto.search.v1.SubjectInfo;

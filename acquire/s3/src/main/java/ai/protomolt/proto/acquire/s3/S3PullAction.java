@@ -8,9 +8,6 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.protomolt.proto.validate.ProtoValidator;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 
@@ -23,11 +20,6 @@ public final class S3PullAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "pull-s3";
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    /** Enforces the request contract on the catalog path. */
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private final S3Pull pull;
 
