@@ -9,8 +9,18 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes the running build. Every
+# other run gets a group of its own (keyed on run_id), so a main push neither
+# cancels nor replaces a queued main run and each commit keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   published-consumer:
+    # The job checks out a fixed consumer revision, so a pull request cannot
+    # change what it tests; it runs on main and by hand only.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       # Public snapshots are published manually. This consumer revision is
