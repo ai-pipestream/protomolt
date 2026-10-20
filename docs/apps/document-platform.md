@@ -213,13 +213,10 @@ refuse startup. Trusted in-process library access has no socket; its caller
 binding is supplied by the embedding host. The operator token grants process
 authority. Scoped ownership grants remain a separate authorization boundary.
 
-For `DOCUMENT_PLATFORM_BLOB_STORE=repo`, configure
-`DOCUMENT_PLATFORM_REPO_API_TOKEN` with the upstream repository's credential.
-This is independent of the local listener's `PROTOMOLT_API_TOKEN`; neither is
-inferred from the other. A missing upstream credential refuses TCP repository
-storage startup. The existing TCP client uses plaintext transport, so deployments
-must provide a protected transport boundary. The `repo-inprocess` mode does not
-require an upstream credential.
+Repository-backed blob storage is not a supported mode:
+`DOCUMENT_PLATFORM_BLOB_STORE=repo` and `repo-inprocess` refuse startup with
+`Remote repository blob storage is retired`. Use `s3`, `redis` or
+`s3-redis-cache`.
 
 A policy principal's `metric_access` section drives the metric role's
 compile-time rewrite on the same guarded node — denied members and

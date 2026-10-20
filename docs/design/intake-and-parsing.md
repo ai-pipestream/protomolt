@@ -163,13 +163,10 @@ physical purge. A delayed delete cannot delete a newer revision: the repository
 checks the expectation in its commit transaction. A retry retains its operation
 ID and expectation and returns the recorded tombstone receipt.
 
-The older `DocumentOperations.saveFull` used the root SHA of the split document
-for intake deduplication. `S3Purger.eligible` rejected obsolete physical purge
-work using the repository's body-write timestamp, or the purge generation. That
-was not a source `last_modified_date` ordering policy. Those implementations were
-not deleted by D8. The v2 migration must preserve their safety properties through
-revision checks, immutable objects and reference-aware purge, without mounting
-that legacy service.
+Deduplication by the root SHA of the split document and purge eligibility by
+body-write timestamp or purge generation are not a source `last_modified_date`
+ordering policy. The parts-based repository must keep those safety properties through
+revision checks, immutable objects and reference-aware purge.
 
 Binary reuse and operation replay are distinct. The save path can reuse identical
 SHA-256/length objects from the authorized base revision in the selected stack.

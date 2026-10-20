@@ -432,20 +432,18 @@ protects persisted review identities from changes during this extraction.
 
 ## Shared document operations
 
-`DocumentRepository` now covers save, node/reference reads, manifest reads, list
-and delete. `DocumentOperations` in the engine owns those implementations;
-`DocumentGrpcService` adapts calls and errors. Its existing public constructors
-remain available. HTTP document uploads invoke the same repository interface,
-with `UploadHttpServer.forRepository(...)` available for library composition.
-HTTP still stages the body before the document save. It currently supports only
-operator-token or trusted open operation; scoped HTTP access must authorize before
-staging when account policy is implemented.
+The parts-based `DocumentService` (`ai.protomolt.proto.repo.v2`) is
+`AccessionGrpcService` in `repo/accession`, which adapts calls and errors over
+`DocumentSaves`, `DocumentReads` and `DocumentPurges`. HTTP document uploads run
+through `DocumentUploads`, the same save pipeline as `SaveDocument`, streaming the
+body to the stack with bounded heap memory. `UploadHttpServer` mounts that route
+and the archive rendition route; both require the operator credential.
 
 Document library calls require an explicit trusted `RepositoryCaller`. Until the
 account-policy implementation is installed, scoped principals fail closed rather
 than running with ignored identity. This is a temporary process-authority boundary,
-not completed per-account ownership enforcement. Open listeners retain their
-existing operator default and require the trusted-network deployment boundary.
+not completed per-account ownership enforcement. Network listeners refuse to start
+without an operator credential (`PROTOMOLT_API_TOKEN`).
 
 Byte-client transport failures use the provider-neutral `BlobStoreException`,
 retaining the original cause without exposing a provider SDK as the top-level

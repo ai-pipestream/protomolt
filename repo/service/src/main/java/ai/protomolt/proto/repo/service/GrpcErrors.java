@@ -17,19 +17,17 @@ import java.util.function.Supplier;
  * <p>Mapping policy (the wire contract of both services):
  * <ul>
  *   <li>explicit {@link StatusRuntimeException}/{@link StatusException} pass
- *   through unchanged — handler code raises INVALID_ARGUMENT / NOT_FOUND /
+ *   through unchanged; handler code raises INVALID_ARGUMENT / NOT_FOUND /
  *   FAILED_PRECONDITION / UNAVAILABLE at the decision point;</li>
+ *   <li>a {@code RepositoryException} maps by its code: CONFLICT → ABORTED,
+ *   UNSUPPORTED → UNIMPLEMENTED, every other code to the gRPC code of the
+ *   same name;</li>
  *   <li>{@link IllegalArgumentException} → INVALID_ARGUMENT (validation that
- *   slipped through, e.g. the storage-identity guards in
- *   {@code DocumentIds});</li>
+ *   slipped through, e.g. the archive put and get admission checks);</li>
  *   <li>{@link BlobStore.BlobNotFoundException} → NOT_FOUND;</li>
- *   <li>anything else → INTERNAL with only the exception message — never a
- *   stack trace — in the status description.</li>
+ *   <li>anything else → INTERNAL with only the exception message, never a
+ *   stack trace, in the status description.</li>
  * </ul>
- *
- * <p>This class names no v1 document type, so the frozen archive services do not
- * depend on the v1 document closure; the v1 document services map through
- * {@link DocumentGrpcErrors}.
  */
 final class GrpcErrors {
 

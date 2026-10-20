@@ -155,10 +155,10 @@ Those paths already perform typed contract checks. Reuse the behavior where appr
 `surface/grpc/validation` server and client interceptors validate incoming server
 requests and outgoing client requests respectively. They do not validate successful
 server responses. `ReflectedMethodAction` separately validates upstream responses.
-None of these facts establishes a gate on DocumentService: DocumentGrpcService calls
-DocumentOperations, which calls SaveResolution and the managed/legacy save compositions.
-SaveResolution performs structural/identity checks; DocumentAttemptWriter explicitly
-leaves schema admission to the host. See R2.
+None of these facts establishes a gate on DocumentService. Its gate is its own:
+AccessionGrpcService (`repo/accession`) saves through DocumentSaves, which validates
+the composed candidate and checks semantic parts with DocumentSemanticAdmission
+(`repo/admission`). See R2.
 
 ### 8. Schema compatibility, registry storage and federation
 

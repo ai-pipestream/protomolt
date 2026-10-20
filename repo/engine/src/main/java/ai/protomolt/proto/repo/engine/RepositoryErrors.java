@@ -10,9 +10,8 @@ import java.util.function.Supplier;
 import static ai.protomolt.proto.repo.spi.RepositoryException.Code.*;
 
 /**
- * Domain failures shared by the archive, drive and document operations; wire translation belongs
- * to adapters. This class names only archive, drive and blob failures so the frozen archive
- * closure stays free of the v1 document ledger; v1 document failures are {@link DocumentErrors}.
+ * Domain failures shared by the archive and drive operations; wire translation belongs to
+ * adapters. This class names only archive, drive and blob failures.
  */
 final class RepositoryErrors {
     private RepositoryErrors() {}
