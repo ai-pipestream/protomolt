@@ -5,13 +5,11 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.schema.registry.git.RegistryFederation;
 import ai.protomolt.proto.registry.RegistryStoreException;
 import ai.protomolt.proto.schema.registry.v1.ImportedSubject;
 import ai.protomolt.proto.schema.registry.v1.RegistrySyncRequest;
 import ai.protomolt.proto.schema.registry.v1.RegistrySyncResponse;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 
@@ -25,8 +23,6 @@ public final class RegistrySyncAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "registry-sync";
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final RegistryFederation federation;
 

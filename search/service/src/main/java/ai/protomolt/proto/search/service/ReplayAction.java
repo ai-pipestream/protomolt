@@ -6,14 +6,12 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentSummary;
 import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
 import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import ai.protomolt.proto.search.v1.ReplayDocumentsRequest;
 import ai.protomolt.proto.search.v1.ReplayDocumentsResponse;
-import ai.protomolt.proto.validate.ProtoValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -52,12 +50,6 @@ public final class ReplayAction implements ProtoAction {
 
     /** The action name: {@value}. */
     public static final String NAME = "replay-documents";
-
-    /**
-     * Enforces the request contract on the catalog path, which does not sit behind the
-     * validating interceptor the gRPC surface uses.
-     */
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int PAGE_SIZE = 100;
@@ -194,21 +186,6 @@ public final class ReplayAction implements ProtoAction {
                     "cannot render the stored address of '" + address.getDocId() + "': "
                             + e.getMessage());
         }
-    }
-
-    private static String requiredString(ObjectNode input, String field) throws ActionException {
-        JsonNode value = input.get(field);
-        if (value == null || !value.isTextual() || value.asText().isBlank()) {
-            throw new ActionException("invalid-input", "'" + field + "' is required");
-        }
-        return value.asText();
-    }
-
-    private static String optionalString(ObjectNode input, String field) {
-        JsonNode value = input.get(field);
-        return value == null || !value.isTextual() || value.asText().isBlank()
-                ? null
-                : value.asText();
     }
 
     /**

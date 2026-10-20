@@ -6,7 +6,6 @@ import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.storage.v1.EncryptedRepositoryState;
 import ai.protomolt.proto.mesh.cluster.storage.v1.ClusterEventLog;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
-import ai.protomolt.proto.mesh.cluster.v1.ClusterEvent;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.GetDocumentResponse;
@@ -17,7 +16,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;

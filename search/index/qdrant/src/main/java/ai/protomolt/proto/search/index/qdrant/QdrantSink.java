@@ -9,7 +9,6 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import qdrant.Collections.CreateCollection;
 import qdrant.Collections.CollectionExistsRequest;
-import qdrant.Collections.Distance;
 import qdrant.Collections.VectorParams;
 import qdrant.Collections.VectorParamsMap;
 import qdrant.Collections.VectorsConfig;

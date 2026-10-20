@@ -11,12 +11,10 @@ import ai.protomolt.proto.sources.CompiledProtos;
 import ai.protomolt.proto.sources.ProtoSource;
 import ai.protomolt.proto.sources.ProtoSourceCompiler;
 import ai.protomolt.proto.sources.ProtoSourceSet;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.google.protobuf.Message;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 

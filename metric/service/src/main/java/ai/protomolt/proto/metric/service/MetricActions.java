@@ -5,7 +5,6 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
-import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
 import ai.protomolt.proto.metric.DescribeMappingRequest;
 import ai.protomolt.proto.metric.DescribeMappingResponse;
 import ai.protomolt.proto.metric.QueryMetricsRequest;
@@ -14,16 +13,12 @@ import ai.protomolt.proto.metric.RebuildRollupRequest;
 import ai.protomolt.proto.metric.RebuildRollupResponse;
 import ai.protomolt.proto.metric.spi.MetricQueries;
 import ai.protomolt.proto.metric.spi.MetricRefusal;
-import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
-import com.google.protobuf.util.JsonFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -38,15 +33,6 @@ import java.util.Map;
  * tool-using model can correct itself without parsing prose.
  */
 public final class MetricActions {
-
-    /**
-     * Enforces the request contract on the catalog path.
-     *
-     * <p>Calls arriving over gRPC pass a validating interceptor before they reach a handler.
-     * Calls arriving as catalog verbs do not, so without this the same request would be
-     * refused on one surface and accepted on the other.
-     */
-    private static final ProtoValidator VALIDATOR = ProtoValidator.create();
 
     private MetricActions() {
     }

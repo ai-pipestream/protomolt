@@ -22,7 +22,7 @@ import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
-import io.grpc.protobuf.services.ProtoReflectionService;
+import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.services.HealthStatusManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -648,7 +648,7 @@ public final class RepoServices implements AutoCloseable {
             var builder = NettyServerBuilder.forPort(port)
                     .maxInboundMessageSize(10 * 1024 * 1024)
                     .addService(health.getHealthService())
-                    .addService(ProtoReflectionService.newInstance());
+                    .addService(ProtoReflectionServiceV1.newInstance());
             builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
             Server server = registerAndStart(builder);
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);

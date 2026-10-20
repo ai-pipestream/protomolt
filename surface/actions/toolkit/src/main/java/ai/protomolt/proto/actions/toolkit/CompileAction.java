@@ -16,7 +16,6 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import java.util.Base64;
-import java.util.Map;
 
 /** Compiles inline proto sources into a serialized {@code FileDescriptorSet}. */
 final class CompileAction implements ProtoAction {

@@ -1,6 +1,5 @@
 package ai.protomolt.proto.search.index.opensearch;
 
-import ai.protomolt.proto.helpers.TypeConverter;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapper;
 import ai.protomolt.proto.search.index.spi.AnyIndexing;
@@ -109,16 +108,6 @@ public final class OpenSearchDocumentMapper implements SearchEngineIndexer {
         this.includeDefaults = includeDefaults;
         this.anyIndexing = new AnyIndexing(
                 context.descriptorRegistry(), context.mappingFactory(), payloadValidators);
-    }
-
-    /**
-     * @deprecated nested message conversion now goes through {@link JsonFormat}; the
-     *             {@code typeConverter} argument is ignored. Use
-     *             {@link #OpenSearchDocumentMapper(ProtoFieldMapper)}.
-     */
-    @Deprecated
-    public OpenSearchDocumentMapper(ProtoFieldMapper fieldMapper, TypeConverter typeConverter) {
-        this(fieldMapper);
     }
 
     @Override

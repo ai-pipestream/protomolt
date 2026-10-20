@@ -4,7 +4,6 @@ import ai.protomolt.proto.actions.ActionContext;
 import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Fields;
 import ai.protomolt.proto.actions.Inputs;
-import ai.protomolt.proto.actions.SchemaResolver;
 import ai.protomolt.proto.actions.SchemaResolverProvider;
 import ai.protomolt.proto.actions.SchemaResolver.ResolvedSchema;
 

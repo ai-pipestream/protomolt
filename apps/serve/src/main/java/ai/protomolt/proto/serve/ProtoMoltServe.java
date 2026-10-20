@@ -15,7 +15,6 @@ import ai.protomolt.proto.config.TrustSnapshotMounts;
 import ai.protomolt.proto.config.registry.RegistryConfigSource;
 import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
-import ai.protomolt.proto.delegation.CandidateReviewer;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
 import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;

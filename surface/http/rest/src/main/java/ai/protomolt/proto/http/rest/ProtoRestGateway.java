@@ -3,7 +3,6 @@ package ai.protomolt.proto.http.rest;
 import ai.protomolt.proto.http.json.ProtobufJsonException;
 import ai.protomolt.proto.http.json.ProtobufJsonTranscoder;
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -12,19 +12,16 @@ import ai.protomolt.proto.grpc.invoke.GrpcInvokeAction;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.v1.DescriptorArtifact;
 import ai.protomolt.proto.grpc.profile.v1.MethodPolicy;
-import ai.protomolt.proto.grpc.profile.v1.Operation;
 import ai.protomolt.proto.grpc.profile.v1.ServiceEndpoint;
 import ai.protomolt.proto.grpc.profile.v1.ServiceProfile;
 import ai.protomolt.proto.grpc.profile.v1.Transport;
 import ai.protomolt.proto.registry.SchemaRegistryStore;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
 import io.grpc.Metadata;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Base64;
 
 /** Invokes a registered service while keeping its descriptor inside ProtoMolt. */
@@ -151,18 +148,6 @@ public final class ServiceInvokeAction implements StreamingAction {
                     "/maxResponses");
         }
         return asked;
-    }
-
-    private static String optionalString(ObjectNode input, String field) throws ActionException {
-        JsonNode value = input.get(field);
-        if (value == null || value.isNull()) {
-            return null;
-        }
-        if (!value.isTextual() || value.asText().isBlank()) {
-            throw ServiceActionSupport.invalid("'" + field + "' must be a non-empty string",
-                    "/" + field);
-        }
-        return value.asText();
     }
 
     private record Invocation(ServiceProfile profile, ServiceEndpoint endpoint,

@@ -9,7 +9,6 @@ import ai.protomolt.proto.actions.SchemaResolver;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.actions.StreamEmitter;
 import ai.protomolt.proto.actions.StreamingAction;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors;
@@ -17,7 +16,6 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import ai.protomolt.proto.validate.ValidationResult;
 import io.grpc.Status;
@@ -350,26 +348,6 @@ public final class GrpcInvokeAction implements StreamingAction {
                 .set("status", "INVALID_UPSTREAM_RESPONSE")
                 .set("description", "upstream response violates its message contract")
                 .build();
-    }
-
-    private static String requireString(ObjectNode input, String field) throws ActionException {
-        JsonNode node = input.get(field);
-        if (node == null || !node.isTextual() || node.asText().isBlank()) {
-            throw invalidInput("'" + field + "' must be a non-empty string", "/" + field);
-        }
-        return node.asText();
-    }
-
-    private static int optionalInt(ObjectNode input, String field, int defaultValue)
-            throws ActionException {
-        JsonNode node = input.get(field);
-        if (node == null || node.isNull()) {
-            return defaultValue;
-        }
-        if (!node.canConvertToInt() || node.asInt() <= 0) {
-            throw invalidInput("'" + field + "' must be a positive integer", "/" + field);
-        }
-        return node.asInt();
     }
 
     // Mirrors the catalog's invalid-input envelope: {error, message, details: {pointer}}.

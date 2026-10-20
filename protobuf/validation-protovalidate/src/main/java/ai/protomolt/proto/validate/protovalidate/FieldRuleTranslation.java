@@ -48,7 +48,6 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 

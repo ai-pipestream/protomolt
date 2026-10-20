@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Message;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import java.util.Base64;
