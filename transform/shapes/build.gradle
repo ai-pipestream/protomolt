@@ -5,10 +5,6 @@ dependencies {
     implementation project(':protomolt-protobuf-metadata')
     api libs.protobuf.java
 
-    testImplementation platform(libs.junit.bom)
-    testImplementation libs.junit.jupiter
-    testImplementation libs.assertj.core
     testImplementation project(':protomolt-sources')
     testImplementation libs.protobuf.java.util
-    testRuntimeOnly libs.junit.platform.launcher
 }

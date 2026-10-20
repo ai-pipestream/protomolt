@@ -22,7 +22,7 @@ dependencies {
     implementation libs.grpc.protobuf
     implementation libs.grpc.netty.shaded
     // grpc codegen emits @javax.annotation.Generated.
-    compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
+    compileOnly libs.tomcat.annotations.api
 
     testImplementation libs.testcontainers.junit.jupiter
     testImplementation libs.grpc.inprocess

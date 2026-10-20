@@ -76,14 +76,6 @@ dependencies {
     testRuntimeOnly libs.slf4j.simple
 }
 
-// The search service links the Lucene 11 line, which ships Java 25 bytecode:
-// the app and its tests need a 25 runtime (same pin as :protomolt-search-index-lucene).
-tasks.withType(Test).configureEach {
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-}
-
 application {
     mainClass = 'ai.protomolt.proto.platform.DocumentPlatformMain'
 }

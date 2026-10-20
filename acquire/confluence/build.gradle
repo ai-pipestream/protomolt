@@ -47,7 +47,7 @@ dependencies {
     // Group reader, which materializes a Hadoop Configuration at run time.
     testImplementation libs.parquet.hadoop
     testCompileOnly libs.hadoop.client.api
-    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'
+    testRuntimeOnly libs.hadoop.client.runtime
 
     // The Kafka sink's integration test runs against a Redpanda container.
     testImplementation libs.testcontainers.redpanda
@@ -85,15 +85,6 @@ protobuf {
 // test task (and is assumption-gated on credentials as a second guard).
 tasks.named('test') {
     exclude 'ai/protomolt/proto/acquire/confluence/ConfluenceLiveSmokeIT.class'
-}
-
-// The projector and its test load Lucene (Java 25 bytecode), so this module's
-// test JVM stays on the toolchain JDK like the lucene module's; -PtestJdk is
-// ignored here.
-tasks.withType(Test).configureEach {
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
 }
 
 tasks.register('liveSmokeTest', Test) {

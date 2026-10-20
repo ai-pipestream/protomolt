@@ -44,15 +44,6 @@ dependencies {
     testImplementation libs.testcontainers.junit.jupiter
 }
 
-// The Lucene 11 line ships Java 25 bytecode, so the golden-path system test
-// cannot run on an older JVM: the test launcher stays on the toolchain JDK
-// and -PtestJdk is ignored here (same pin as :protomolt-search-index-lucene).
-tasks.withType(Test).configureEach {
-    javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-}
-
 // The checked-in action inventory is generated from the actual full and standalone
 // catalog constructors. Run this task whenever an action registration changes; the
 // system test makes a stale generated file fail the build.

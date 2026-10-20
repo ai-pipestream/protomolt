@@ -10,11 +10,6 @@ dependencies {
     api project(':protomolt-mapper')
     api project(':protomolt-mapper-cel')
     api libs.protobuf.java
-
-    testImplementation platform(libs.junit.bom)
-    testImplementation libs.junit.jupiter
-    testImplementation libs.assertj.core
-    testRuntimeOnly libs.junit.platform.launcher
 }
 
 protobuf {

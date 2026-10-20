@@ -11,7 +11,7 @@ dependencies {
 
     testImplementation project(':protomolt-protobuf-validation')
     testImplementation libs.protobuf.java.util
-    testImplementation 'com.networknt:json-schema-validator:3.0.8'
+    testImplementation libs.networknt.json.schema.validator
 }
 
 protobuf {

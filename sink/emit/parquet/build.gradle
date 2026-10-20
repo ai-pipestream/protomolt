@@ -10,7 +10,7 @@ dependencies {
     api project(':protomolt-protobuf-validation')
 
     implementation libs.parquet.hadoop
-    implementation 'org.xerial.snappy:snappy-java:1.1.10.12'
+    implementation libs.snappy.java
     // Hadoop appears in parquet-hadoop method signatures only; nothing on the write
     // path loads a Hadoop class at run time (HadoopFreeParquetTest proves it), so the
     // API jar is compile-time only and consumers get zero Hadoop jars.
@@ -20,5 +20,5 @@ dependencies {
     testImplementation project(':protomolt-sources')
     // The example Group reader used to verify round-trips materializes a Hadoop
     // Configuration; the writer under test never does.
-    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'
+    testRuntimeOnly libs.hadoop.client.runtime
 }
