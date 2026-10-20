@@ -1,7 +1,8 @@
 # Next session
 
-Operational handoff, written 2026-09-01. Product backlog lives in
-[docs/design/planned-work.md](docs/design/planned-work.md); this page is the
+Maintainer-host operational handoff for the krick fleet, written 2026-09-01.
+Product backlog lives in
+[docs/design/planned-work.md](../../docs/design/planned-work.md); this page is the
 narrower thing that page is not: what is deployed right now, what is mid-flight,
 and which traps cost time last session so they cost none this time.
 
@@ -10,8 +11,8 @@ Delete an entry once it is done. An empty page means the handoff is clean.
 ## Where the tree and the fleet stand
 
 `main` is the same commit on both remotes. Forgejo is master; GitHub receives
-`sync/forgejo-main` pull requests and its `main` is protected by five required
-checks (`build (21)`, `build (25)`, `conformance`, `console`, `integration`).
+`sync/forgejo-main` pull requests and its `main` is protected by four required
+checks (`build (25)`, `conformance`, `console`, `integration`).
 
 | Where | Runs | Pinned to |
 | --- | --- | --- |
@@ -78,11 +79,11 @@ GitHub self-hosted runner is nano1, an ARM64 Jetson. Forgejo's `nas-1` and
 It lives in the coordinator's registry, not on nano1, and the publisher drops the
 processor when `service-inspect` cannot find it. An empty `service-list` after a
 coordinator rebuild means the registration is owed again. See
-[deploy/nano1/README.md](deploy/nano1/README.md) for the exact call.
+[deploy/nano1/README.md](../nano1/README.md) for the exact call.
 
 **nano1 runs a hand-installed publisher.** `/opt/protomolt-mesh/scripts/` is a
 copy, not a checkout, so the tree moving does not move it. It is currently in
-sync — the host and repo both hash `cc421cff` — but it was seventeen days stale
+sync (the host and repo both hash `cc421cff`), but it was seventeen days stale
 once and will drift again. Compare `sha256sum` against the repo before believing
 anything about that host.
 

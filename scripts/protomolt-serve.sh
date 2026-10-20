@@ -7,18 +7,28 @@
 #   scripts/protomolt-serve.sh status
 #
 # Endpoint: http://127.0.0.1:8082/mcp (gRPC catalog on 9090, reflection on).
+# The HTTP default is 8082, not the 8080 the docs use for the server itself,
+# so this long-lived local instance never collides with the Docker demo or a
+# foreground `protomolt-serve --demo`, which both bind 8080. Set
+# PROTOMOLT_HTTP_PORT=8080 to use the documented port instead.
 # Kimi config lives in ~/.kimi-code/mcp.json; a new session picks it up.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="$REPO_ROOT/apps/serve/build/install/protomolt-serve/bin/protomolt-serve"
+INSTALL_DIR="$REPO_ROOT/apps/serve/build/install/protomolt-serve"
+BINARY="$INSTALL_DIR/bin/protomolt-serve"
 LOG=/tmp/protomolt-serve.log
 HTTP_PORT="${PROTOMOLT_HTTP_PORT:-8082}"
 GRPC_PORT="${PROTOMOLT_GRPC_PORT:-9090}"
 HOST="${PROTOMOLT_HOST:-127.0.0.1}"
 
-pid() { pgrep -f 'ProtoMoltServe' | head -1 || true; }
+# Match THIS clone's install directory, not the ProtoMoltServe class name:
+# the class name also appears in the command line of containerized instances
+# (docker compose, --demo containers), so matching it reports "already
+# running" for a process this script does not manage. The launcher execs
+# java, whose classpath carries the install directory path.
+pid() { pgrep -f "$INSTALL_DIR" | head -1 || true; }
 
 mcp_check() {
   curl -s -m 5 -X POST "http://$HOST:$HTTP_PORT/mcp" \
@@ -59,7 +69,7 @@ case "${1:-start}" in
     ;;
   stop)
     if [ -n "$(pid)" ]; then
-      pkill -f 'ProtoMoltServe' || true
+      pkill -f "$INSTALL_DIR" || true
       for _ in $(seq 1 10); do
         [ -z "$(pid)" ] && break
         sleep 1

@@ -1,3 +1,4 @@
+# Maintainer-host deployment config for the krick workstation; not part of the general contributor workflow.
 # Persistent agent hosts for the Krick workstation. Codex and Kimi execution
 # stays here; this stack is NOT part of the NAS Portainer coordinator stack and
 # must not be deployed there. The agents reach the coordinator over its public

@@ -1,3 +1,4 @@
+# Maintainer-host deployment config for the krick-1 workstation; not part of the general contributor workflow.
 # Persistent delegation workers and the Muse Glimmer sidecar for the krick-1
 # workstation. The stack runs a pinned Intel llm-scaler-vllm derivative serving
 # the verified local Muse Glimmer artifacts on one B70, a Kimi worker with
