@@ -71,8 +71,7 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
             }
             if (!sameOrigin(exchange)) { error(exchange, 403, "origin-denied"); return; }
             String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
-            if (contentType == null || !contentType.toLowerCase(Locale.ROOT).matches(
-                    "application/json(?:\\s*;.*)?")) {
+            if (contentType == null || !isJsonMediaType(contentType.toLowerCase(Locale.ROOT))) {
                 error(exchange, 415, "json-required"); return;
             }
             byte[] bytes = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
@@ -95,6 +94,41 @@ final class WorkflowLaunchConsoleApiHandler implements HttpHandler {
                 error(exchange, 500, "internal-error");
             }
         }
+    }
+
+    /**
+     * Exact non-regex equivalent of the retired {@code application/json(?:\s*;.*)?} match:
+     * the media type is {@code application/json} and any parameters follow a semicolon
+     * after optional whitespace. As in the pattern, {@code \s} is the ASCII whitespace set
+     * and the parameter text must not contain a line terminator ({@code .} never matched one).
+     */
+    private static boolean isJsonMediaType(String lowerCased) {
+        String mediaType = "application/json";
+        if (!lowerCased.startsWith(mediaType)) {
+            return false;
+        }
+        int index = mediaType.length();
+        while (index < lowerCased.length() && isPatternWhitespace(lowerCased.charAt(index))) {
+            index++;
+        }
+        if (index == lowerCased.length()) {
+            return index == mediaType.length();
+        }
+        if (lowerCased.charAt(index) != ';') {
+            return false;
+        }
+        for (int i = index + 1; i < lowerCased.length(); i++) {
+            char c = lowerCased.charAt(i);
+            if (c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The {@code \s} set of the retired pattern: space, tab, LF, VT, FF, CR. */
+    private static boolean isPatternWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r';
     }
 
     private static int status(String code) {

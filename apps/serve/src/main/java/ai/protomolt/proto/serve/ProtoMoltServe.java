@@ -342,10 +342,18 @@ public final class ProtoMoltServe implements AutoCloseable {
             String meshTrustDomain = System.getenv("PROTOMOLT_MESH_TRUST_DOMAIN");
             String meshCreatedAt = System.getenv("PROTOMOLT_MESH_CREATED_AT");
             if (inferenceModelsEnv != null && !inferenceModelsEnv.isBlank()) {
-                for (String spec : inferenceModelsEnv.split(";")) {
+                int start = 0;
+                while (start <= inferenceModelsEnv.length()) {
+                    int semi = inferenceModelsEnv.indexOf(';', start);
+                    String spec = semi < 0 ? inferenceModelsEnv.substring(start)
+                            : inferenceModelsEnv.substring(start, semi);
                     if (!spec.isBlank()) {
                         inferenceModels.add(spec.trim());
                     }
+                    if (semi < 0) {
+                        break;
+                    }
+                    start = semi + 1;
                 }
             }
             for (int i = 0; i < args.length; i++) {
@@ -601,7 +609,7 @@ public final class ProtoMoltServe implements AutoCloseable {
         private static Set<String> parseCsv(String value, String name) {
             Set<String> values = new LinkedHashSet<>();
             if (value != null && !value.isBlank()) {
-                for (String item : value.split(",", -1)) {
+                for (String item : commaSeparated(value)) {
                     if (item.isBlank()) {
                         throw new IllegalArgumentException(name + " contains an empty value");
                     }
@@ -613,13 +621,27 @@ public final class ProtoMoltServe implements AutoCloseable {
 
         private static Set<Integer> parsePorts(String value) {
             Set<Integer> ports = new LinkedHashSet<>();
-            for (String item : value.split(",", -1)) {
+            for (String item : commaSeparated(value)) {
                 if (item.isBlank()) {
                     throw new IllegalArgumentException("grpc allowed ports contains an empty value");
                 }
                 ports.add(parseInt(item.trim(), "grpc allowed port"));
             }
             return Set.copyOf(ports);
+        }
+
+        /** Comma-separated segments of {@code value} with {@code split(",", -1)} semantics: empty segments are kept, including trailing ones. */
+        private static java.util.List<String> commaSeparated(String value) {
+            java.util.List<String> items = new java.util.ArrayList<>();
+            int start = 0;
+            while (true) {
+                int comma = value.indexOf(',', start);
+                items.add(comma < 0 ? value.substring(start) : value.substring(start, comma));
+                if (comma < 0) {
+                    return items;
+                }
+                start = comma + 1;
+            }
         }
 
         private static OutboundChannelPolicy outboundPolicy(Set<String> schemes,
@@ -681,11 +703,25 @@ public final class ProtoMoltServe implements AutoCloseable {
     /** Opt-in trusted authoring policy and write-once launch authorization ledger. */
     public record WorkflowAuthoringOptions(String policySha256, Path authorizationDirectory) {
         public WorkflowAuthoringOptions {
-            if (policySha256 == null || !policySha256.matches("[0-9a-f]{64}")) {
+            if (policySha256 == null || !isLowercaseSha256Hex(policySha256)) {
                 throw new IllegalArgumentException("workflow authoring policy must be a lowercase SHA-256 digest");
             }
             Objects.requireNonNull(authorizationDirectory, "authorizationDirectory");
         }
+    }
+
+    /** Lowercase 64-character hex, the {@code [0-9a-f]{64}} full match. */
+    private static boolean isLowercaseSha256Hex(String value) {
+        if (value.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'f')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Opt-in durable preparation intent and trusted source restriction provider. */
@@ -810,19 +846,39 @@ public final class ProtoMoltServe implements AutoCloseable {
                                      Instant createdAt) {
 
         public MeshClusterOptions {
-            if (clusterId == null || !clusterId.matches(
-                    "[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
+            if (clusterId == null || !isPathSafeName(clusterId)) {
                 throw new IllegalArgumentException("mesh cluster id must be path-safe");
             }
             if (displayName == null || displayName.length() > 256) {
                 throw new IllegalArgumentException("mesh cluster name is invalid");
             }
-            if (trustDomain == null || !trustDomain.matches(
-                    "^$|[A-Za-z0-9][A-Za-z0-9._-]{0,127}")) {
+            if (trustDomain == null || !(trustDomain.isEmpty() || isPathSafeName(trustDomain))) {
                 throw new IllegalArgumentException("mesh trust domain is invalid");
             }
             Objects.requireNonNull(createdAt, "createdAt");
         }
+    }
+
+    /**
+     * The {@code [A-Za-z0-9][A-Za-z0-9._-]{0,127}} full match: one leading ASCII
+     * alphanumeric followed by up to 127 ASCII alphanumerics, dots, underscores, or dashes.
+     */
+    private static boolean isPathSafeName(String value) {
+        int length = value.length();
+        if (length < 1 || length > 128 || !isAsciiAlphanumeric(value.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < length; i++) {
+            char c = value.charAt(i);
+            if (!isAsciiAlphanumeric(c) && c != '.' && c != '_' && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphanumeric(char c) {
+        return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9';
     }
 
     private final ProtoMoltGrpcServer grpc;
