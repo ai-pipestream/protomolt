@@ -6,6 +6,7 @@ import ai.protomolt.proto.parse.v1.ParseCoordinatorServiceGrpc;
 import ai.protomolt.proto.parse.v1.ParseDocumentRequest;
 import ai.protomolt.proto.parse.v1.ParseDocumentResponse;
 import ai.protomolt.proto.parse.v1.RoutingRule;
+import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Document;

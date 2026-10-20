@@ -1,3 +1,7 @@
+plugins {
+    id 'java-test-fixtures'
+}
+
 description = 'Parts-based repository v2: the DocumentService save and read handlers over stacks and the catalog'
 
 dependencies {
@@ -14,6 +18,17 @@ dependencies {
     implementation libs.grpc.stub
     implementation libs.grpc.protobuf
     compileOnly libs.javax.annotation.api
+
+    testFixturesApi project(':protomolt-repo-admission')
+    testFixturesApi project(':protomolt-repo-schema-registry')
+    testFixturesApi project(':protomolt-authz-grpc')
+    testFixturesApi libs.awssdk.s3
+    testFixturesApi libs.grpc.api
+    testFixturesApi libs.testcontainers.postgresql
+    testFixturesApi libs.testcontainers.localstack
+    testFixturesImplementation project(':protomolt-repo-blob-s3')
+    testFixturesImplementation libs.awssdk.url.connection.client
+    testFixturesImplementation libs.grpc.inprocess
 
     testImplementation project(':protomolt-repo-blob-s3')
     testImplementation project(':protomolt-repo-container')

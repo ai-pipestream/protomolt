@@ -27,7 +27,7 @@ dependencies {
     testRuntimeOnly libs.slf4j.simple
 
     // v2 real-provider qualification (runtime stays on the wire contract).
-    testImplementation project(':protomolt-repo-accession')
+    testImplementation testFixtures(project(':protomolt-repo-accession'))
     testImplementation project(':protomolt-authz-grpc')
     testImplementation project(':protomolt-repo-admission')
     testImplementation project(':protomolt-repo-blob-s3')
