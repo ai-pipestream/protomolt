@@ -143,6 +143,9 @@ class IdentifiersTest {
             "has-dash",
             "has space",
             "café",
+            "a\u0663",
+            "\u0661a",
+            "\uFF21",
     })
     void identifierRejects(String value) {
         assertThat(Identifiers.isIdentifier(value)).isFalse();

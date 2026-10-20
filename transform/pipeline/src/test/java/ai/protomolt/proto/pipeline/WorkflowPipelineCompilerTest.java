@@ -15,6 +15,8 @@ import ai.protomolt.proto.pipeline.v1.PipelineStep;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Duration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
@@ -262,19 +264,58 @@ class WorkflowPipelineCompilerTest {
                 .hasMessageContaining("pipeline/test/pipeline.proto");
     }
 
-    @Test
-    void nonIdentifierStepNameFailsFast() {
-        Workflow workflow = workflowWithSteps(WorkflowStep.newBuilder()
-                .setName("my-step")
-                .setDependency("pipeline.test.Lookup")
-                .setMethod(PipelineFixtures.FETCH)
-                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
-                .build());
+    @ParameterizedTest
+    @ValueSource(strings = {"fetch", "fetch_2", "a1", "a_b_c", "x"})
+    void identifierStepNameCompiles(String name) {
+        Workflow workflow = workflowWithSteps(fetchStep(name));
+
+        Pipeline pipeline = WorkflowPipelineCompiler.compile(workflow, PipelineFixtures.files());
+
+        assertThat(pipeline.getStepsList()).singleElement()
+                .extracting(PipelineStep::getName)
+                .isEqualTo(name);
+    }
+
+    /**
+     * Slug step names pass the workflow gate, so these reach the compiler's own scope
+     * identifier check: a leading digit, a hyphen, a dot, and the two reserved bindings.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"1fetch", "9", "my-step", "a.b", "fetch-2.v1", "input", "target"})
+    void nonIdentifierStepNameFailsFast(String name) {
+        Workflow workflow = workflowWithSteps(fetchStep(name));
         assertThatThrownBy(() -> WorkflowPipelineCompiler.compile(workflow,
                 PipelineFixtures.files()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("my-step")
-                .hasMessageContaining("scope identifier");
+                .hasMessage("step name '" + name + "' is not a scope identifier; pipeline step"
+                        + " names become mapping scope variables other than 'input'/'target'");
+    }
+
+    /**
+     * Names the slug contract refuses never reach the compiler: empty, uppercase, a leading
+     * underscore, and non-ASCII letters and digits are rejected by workflow validation first.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"", "Fetch", "_fetch", "fetch\u0663", "caf\u00e9", "\u0661a"})
+    void nonSlugStepNameIsRejectedBeforeCompilation(String name) {
+        Workflow workflow = unvalidatedWorkflow(fetchStep(name));
+        assertThatThrownBy(() -> WorkflowValidation.validate(workflow))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> WorkflowPipelineCompiler.compile(workflow,
+                PipelineFixtures.files()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("name")
+                .hasMessageNotContaining("scope identifier");
+    }
+
+    private static WorkflowStep fetchStep(String name) {
+        return WorkflowStep.newBuilder()
+                .setName(name)
+                .setDependency("pipeline.test.Lookup")
+                .setMethod(PipelineFixtures.FETCH)
+                .addRules("title = input.title")
+                .setCompletion(StepCompletion.STEP_COMPLETION_LIVE)
+                .build();
     }
 
     @Test
@@ -286,6 +327,12 @@ class WorkflowPipelineCompilerTest {
     }
 
     private static Workflow workflowWithSteps(WorkflowStep... steps) {
+        Workflow built = unvalidatedWorkflow(steps);
+        WorkflowValidation.validate(built);
+        return built;
+    }
+
+    private static Workflow unvalidatedWorkflow(WorkflowStep... steps) {
         Workflow.Builder workflow = Workflow.newBuilder()
                 .setName("authored-workflow")
                 .setInputType(PipelineFixtures.TICKET)
@@ -305,8 +352,6 @@ class WorkflowPipelineCompilerTest {
             }
             workflow.addSteps(step);
         }
-        Workflow built = workflow.build();
-        WorkflowValidation.validate(built);
-        return built;
+        return workflow.build();
     }
 }

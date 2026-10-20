@@ -1,6 +1,7 @@
 package ai.protomolt.proto.pipeline;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.grpc.workflow.v1.Workflow;
 import ai.protomolt.proto.grpc.workflow.v1.WorkflowStep;
@@ -21,7 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /**
  * Compiles a validated {@link Workflow} into the streaming-aware {@link Pipeline} contract
@@ -40,7 +40,6 @@ import java.util.regex.Pattern;
  */
 public final class WorkflowPipelineCompiler {
 
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int DEFAULT_MAX_STREAM_MESSAGES = 10_000;
 
     private WorkflowPipelineCompiler() {
@@ -87,7 +86,7 @@ public final class WorkflowPipelineCompiler {
         Map<String, EdgeCardinality> scope = new LinkedHashMap<>();
         scope.put("input", EdgeCardinality.EDGE_CARDINALITY_ONE);
         for (WorkflowStep step : workflow.getStepsList()) {
-            if (!IDENTIFIER.matcher(step.getName()).matches()
+            if (!Formats.isIdentifier(step.getName())
                     || step.getName().equals("input") || step.getName().equals("target")) {
                 throw new IllegalArgumentException("step name '" + step.getName()
                         + "' is not a scope identifier; pipeline step names become mapping"
