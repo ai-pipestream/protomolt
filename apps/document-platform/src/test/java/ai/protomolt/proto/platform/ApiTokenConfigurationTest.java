@@ -9,7 +9,7 @@ class ApiTokenConfigurationTest {
     @Test
     void suppliedBlankSecretsDoNotOpenTheNode() {
         for (String token : new String[] {"", " ", "\t"}) {
-            assertThatThrownBy(() -> DocumentPlatform.apiTokenFromEnvironment(
+            assertThatThrownBy(() -> PlatformEnvironment.apiTokenFromEnvironment(
                     Map.of(DocumentPlatformConfig.ENV_API_TOKEN, token)))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("PROTOMOLT_API_TOKEN");
         }
@@ -17,8 +17,8 @@ class ApiTokenConfigurationTest {
 
     @Test
     void absentTokensAndExactSecretValuesRetainTheirMeaning() {
-        assertThat(DocumentPlatform.apiTokenFromEnvironment(Map.of())).isNull();
-        assertThat(DocumentPlatform.apiTokenFromEnvironment(
+        assertThat(PlatformEnvironment.apiTokenFromEnvironment(Map.of())).isNull();
+        assertThat(PlatformEnvironment.apiTokenFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_API_TOKEN, " secret "))).isEqualTo(" secret ");
     }
 }

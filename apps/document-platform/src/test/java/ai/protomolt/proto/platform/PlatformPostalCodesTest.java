@@ -16,22 +16,22 @@ class PlatformPostalCodesTest {
 
     @Test
     void absentOrBlankMeansNoFollow() {
-        assertThat(DocumentPlatform.postalCodesFromEnvironment(Map.of())).isFalse();
-        assertThat(DocumentPlatform.postalCodesFromEnvironment(
+        assertThat(PlatformEnvironment.postalCodesFromEnvironment(Map.of())).isFalse();
+        assertThat(PlatformEnvironment.postalCodesFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_POSTAL_CODES, "  "))).isFalse();
     }
 
     @Test
     void trueTurnsTheFollowOn() {
-        assertThat(DocumentPlatform.postalCodesFromEnvironment(
+        assertThat(PlatformEnvironment.postalCodesFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_POSTAL_CODES, "true"))).isTrue();
-        assertThat(DocumentPlatform.postalCodesFromEnvironment(
+        assertThat(PlatformEnvironment.postalCodesFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_POSTAL_CODES, " true "))).isTrue();
     }
 
     @Test
     void anythingElseRefusesByName() {
-        assertThatThrownBy(() -> DocumentPlatform.postalCodesFromEnvironment(
+        assertThatThrownBy(() -> PlatformEnvironment.postalCodesFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_POSTAL_CODES, "yes")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_POSTAL_CODES)

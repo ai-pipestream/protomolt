@@ -21,7 +21,6 @@ import ai.protomolt.proto.repo.service.RepoServiceModule;
 import ai.protomolt.proto.search.chunk.SentencePackedChunker;
 import ai.protomolt.proto.search.embedding.EmbeddingProvider;
 import ai.protomolt.proto.search.embedding.EmbeddingProviders;
-import ai.protomolt.proto.search.embedding.VectorizationPolicy;
 import ai.protomolt.proto.search.embedding.model2vec.Model2VecEmbeddingProvider;
 import ai.protomolt.proto.search.index.spi.ChunkingPolicy;
 import ai.protomolt.proto.search.index.spi.VectorSimilarity;
@@ -70,7 +69,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -143,9 +141,9 @@ public final class DocumentPlatform implements AutoCloseable {
             throw new IllegalArgumentException(
                     "resolver is required: this node mounts the intake service");
         }
-        this.apiToken = apiTokenFromEnvironment(config.environment());
+        this.apiToken = PlatformEnvironment.apiTokenFromEnvironment(config.environment());
         java.nio.file.Path accessPolicyFile =
-                accessPolicyFromEnvironment(config.environment());
+                PlatformEnvironment.accessPolicyFromEnvironment(config.environment());
         if (accessPolicyFile != null && apiToken == null) {
             throw new IllegalArgumentException(DocumentPlatformConfig.ENV_ACCESS_POLICY
                     + " is set but the operator token is not: an access policy"
@@ -271,9 +269,9 @@ public final class DocumentPlatform implements AutoCloseable {
                 ? SearchSnapshotConfig.fromEnvironment(config.environment())
                 : null;
         boolean searchReadOnly = config.mounts(SearchServiceModule.ROLE)
-                && searchReadOnly(config.environment());
+                && PlatformEnvironment.searchReadOnly(config.environment());
         long searchRefreshSeconds = config.mounts(SearchServiceModule.ROLE)
-                ? searchRefreshSeconds(config.environment())
+                ? PlatformEnvironment.searchRefreshSeconds(config.environment())
                 : 0L;
         if (searchRefreshSeconds > 0 && !searchReadOnly) {
             throw new IllegalArgumentException(
@@ -287,11 +285,13 @@ public final class DocumentPlatform implements AutoCloseable {
         // The taxonomy follow: names parsed up front, the swappable catalog
         // handed to the service before boot, the mounts swapped in once the
         // config lane exists. Fail-closed until then.
-        List<String> taxonomyNames = taxonomiesFromEnvironment(config.environment());
+        List<String> taxonomyNames = PlatformEnvironment.taxonomiesFromEnvironment(
+                config.environment());
         this.taxonomies = taxonomyNames.isEmpty() ? null : new SwappableTaxonomyCatalog();
-        this.screeningMountName = screeningFromEnvironment(config.environment());
+        this.screeningMountName = PlatformEnvironment.screeningFromEnvironment(
+                config.environment());
         this.screening = screeningMountName == null ? null : new SwappableScreening();
-        this.postalCodes = postalCodesFromEnvironment(config.environment())
+        this.postalCodes = PlatformEnvironment.postalCodesFromEnvironment(config.environment())
                 ? new SwappablePostalCodes() : null;
         this.search = config.mounts(SearchServiceModule.ROLE)
                 ? new SearchServiceModule(new SearchServiceModule.Config(
@@ -312,7 +312,8 @@ public final class DocumentPlatform implements AutoCloseable {
                         screening,
                         postalCodes)
                         .secured(apiToken, callerResolver)
-                        .vectorizing(vectorizationFromEnvironment(config.environment())))
+                        .vectorizing(PlatformEnvironment.vectorizationFromEnvironment(
+                                config.environment())))
                 : null;
         MetricsIcebergConfig lakeConfig = config.mounts(MetricServiceModule.ROLE)
                 ? MetricsIcebergConfig.fromEnvironment(config.environment())
@@ -324,7 +325,8 @@ public final class DocumentPlatform implements AutoCloseable {
         // so a plain single-engine mount keeps answering unset-backend
         // queries with Lucene.
         this.defaultRollupLake = config.mounts(MetricServiceModule.ROLE) && lakeConfig == null
-                ? new LocalLakeRollupSink(Path.of(metricsLakeDir(config.environment())))
+                ? new LocalLakeRollupSink(Path.of(PlatformEnvironment.metricsLakeDir(
+                        config.environment())))
                 : null;
         RollupSink rollupSink = lakeConfig != null
                 ? new IcebergRollupSink(metricsCatalog, lakeConfig.namespace())
@@ -386,7 +388,7 @@ public final class DocumentPlatform implements AutoCloseable {
             composer.module(module);
         }
 
-        long configRefreshSeconds = configRefreshSeconds(config.environment());
+        long configRefreshSeconds = PlatformEnvironment.configRefreshSeconds(config.environment());
         this.node = composer.build().boot(config.roles());
         try {
             if (registry != null) {
@@ -431,14 +433,13 @@ public final class DocumentPlatform implements AutoCloseable {
                                     + ", or unset the interval");
                 }
                 ai.protomolt.proto.config.kafka.KafkaConfigSource.Config kafka =
-                        kafkaConfigFamily(config.environment());
+                        PlatformEnvironment.kafkaConfigFamily(config.environment());
                 ai.protomolt.proto.config.ConfigSource configSource;
                 if (kafka != null) {
                     configSource = new ai.protomolt.proto.config.kafka.KafkaConfigSource(
                             kafka);
                 } else {
-                    String configUrl = config.environment()
-                            .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
+                    String configUrl = PlatformEnvironment.configUrl(config.environment());
                     if (configUrl.isEmpty()) {
                         if (registry == null) {
                             throw new IllegalArgumentException(
@@ -564,7 +565,8 @@ public final class DocumentPlatform implements AutoCloseable {
                     + " namespace " + lakeConfig.namespace());
         } else if (defaultRollupLake != null) {
             surfaces.add("metrics rollups land in the local lake "
-                    + metricsLakeDir(config.environment()) + " (created on first rebuild)");
+                    + PlatformEnvironment.metricsLakeDir(config.environment())
+                    + " (created on first rebuild)");
         }
         if (registry != null) {
             surfaces.add("registry http " + registry.httpPort());
@@ -596,8 +598,7 @@ public final class DocumentPlatform implements AutoCloseable {
         if (registry != null) {
             return () -> "http://127.0.0.1:" + registry.httpPort() + "/protomolt/actions";
         }
-        String remote = config.environment()
-                .getOrDefault(DocumentPlatformConfig.ENV_ACTIONS_URL, "");
+        String remote = PlatformEnvironment.actionsUrl(config.environment());
         return () -> remote;
     }
 
@@ -705,13 +706,6 @@ public final class DocumentPlatform implements AutoCloseable {
         if (jdbcCallers != null) {
             jdbcCallers.close();
         }
-    }
-
-    /** The default local metrics lake directory, per the environment. */
-    static String metricsLakeDir(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_METRICS_LAKE_DIR, "").trim();
-        return value.isEmpty() ? DocumentPlatformConfig.DEFAULT_METRICS_LAKE_DIR : value;
     }
 
     /**
@@ -876,115 +870,6 @@ public final class DocumentPlatform implements AutoCloseable {
     }
 
     /**
-     * The strict read of
-     * {@link DocumentPlatformConfig#ENV_SEARCH_REFRESH_SECONDS}: absent is
-     * restart-only ({@code 0}), anything set must be a positive whole
-     * number of seconds.
-     */
-    static long searchRefreshSeconds(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "").trim();
-        if (value.isEmpty()) {
-            return 0L;
-        }
-        long seconds;
-        try {
-            seconds = Long.parseLong(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS
-                            + " must be a positive number of seconds, got '" + value + "'");
-        }
-        if (seconds <= 0) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS
-                            + " must be a positive number of seconds, got '" + value
-                            + "'; unset it for restart-only");
-        }
-        return seconds;
-    }
-
-    /**
-     * The strict read of {@link DocumentPlatformConfig#ENV_SCREENING}: one
-     * screening mount name, trimmed. Absent means no screening, exactly as
-     * before.
-     */
-    /** The strict read of DOCUMENT_PLATFORM_POSTAL_CODES: true, or unset. */
-    static boolean postalCodesFromEnvironment(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_POSTAL_CODES, "").trim();
-        if (value.isEmpty()) {
-            return false;
-        }
-        if ("true".equals(value)) {
-            return true;
-        }
-        throw new IllegalArgumentException(DocumentPlatformConfig.ENV_POSTAL_CODES
-                + " must be 'true' or unset, not '" + value + "'");
-    }
-
-    /** The operator token ({@code PROTOMOLT_API_TOKEN}), or null for an open node. */
-    static String apiTokenFromEnvironment(Map<String, String> environment) {
-        String value = environment.get(DocumentPlatformConfig.ENV_API_TOKEN);
-        if (value != null && value.isBlank()) {
-            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_API_TOKEN
-                    + " must be nonblank when set; omit it for an open node");
-        }
-        return value;
-    }
-
-    /**
-     * Which sensitivity classes this node may vectorize
-     * ({@code DOCUMENT_PLATFORM_SEARCH_VECTORIZE_SENSITIVITY}). Absent means
-     * unclassified content only; the single value {@code *} permits every class.
-     */
-    static VectorizationPolicy vectorizationFromEnvironment(
-            Map<String, String> environment) {
-        String value = environment.getOrDefault(
-                DocumentPlatformConfig.ENV_SEARCH_VECTORIZE_SENSITIVITY, "").trim();
-        if (value.isEmpty()) {
-            // The platform's own decision, stated once rather than assumed: the
-            // repo document's body is classified 'screened', which marks the
-            // screening policy that applies to it rather than a restriction, and
-            // indexing that body is what this product does. Every other class
-            // still has to be named.
-            return VectorizationPolicy.permitting(
-                    Set.of(RepoDocumentMapping.BODY_SENSITIVITY));
-        }
-        if (value.equals("*")) {
-            return VectorizationPolicy.unrestricted();
-        }
-        java.util.Set<String> classes = new java.util.LinkedHashSet<>();
-        for (String entry : value.split(",")) {
-            String sensitivity = entry.trim();
-            if (!sensitivity.isEmpty()) {
-                classes.add(sensitivity);
-            }
-        }
-        if (classes.isEmpty()) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_SEARCH_VECTORIZE_SENSITIVITY
-                            + " names no sensitivity class; unset it to vectorize"
-                            + " unclassified content only");
-        }
-        return VectorizationPolicy.permitting(classes);
-    }
-
-    /** The boot access-policy file ({@code PROTOMOLT_ACCESS_POLICY}), or null. */
-    static java.nio.file.Path accessPolicyFromEnvironment(
-            Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_ACCESS_POLICY, "").trim();
-        return value.isEmpty() ? null : java.nio.file.Path.of(value);
-    }
-
-    static String screeningFromEnvironment(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_SCREENING, "").trim();
-        return value.isEmpty() ? null : value;
-    }
-
-    /**
      * Builds the mounted screener from one applied config document. The
      * model reference resolves as a local file ({@code file:<path>}) in this
      * slice: model artifacts are operator-mounted data, never bundled. A
@@ -1008,116 +893,6 @@ public final class DocumentPlatform implements AutoCloseable {
             throw new java.io.UncheckedIOException(
                     "cannot read the screening model at " + path, e);
         }
-    }
-
-    /**
-     * The strict read of {@link DocumentPlatformConfig#ENV_TAXONOMIES}: a
-     * comma-separated list of taxonomy names, trimmed, blanks skipped,
-     * duplicates collapsed in first-seen order. Absent means no taxonomy
-     * follow and no document gate, exactly as before.
-     */
-    static List<String> taxonomiesFromEnvironment(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_TAXONOMIES, "").trim();
-        if (value.isEmpty()) {
-            return List.of();
-        }
-        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
-        for (String part : value.split(",")) {
-            String name = part.trim();
-            if (!name.isEmpty()) {
-                names.add(name);
-            }
-        }
-        if (names.isEmpty()) {
-            throw new IllegalArgumentException(DocumentPlatformConfig.ENV_TAXONOMIES
-                    + " is set but names no taxonomy; unset it or name at least one");
-        }
-        return List.copyOf(names);
-    }
-
-    /**
-     * The strict read of the config lane's Kafka family. Absent bootstrap
-     * servers means the registry source, exactly as before. Set, the family
-     * must be complete (the serde's schema registry URL is required, because
-     * the lane is verify-then-swap or nothing) and must not contradict the
-     * registry source's URL: two sources named is a contradiction, refused
-     * by name, never resolved by preference.
-     */
-    static ai.protomolt.proto.config.kafka.KafkaConfigSource.Config kafkaConfigFamily(
-            Map<String, String> environment) {
-        String bootstrap = environment.getOrDefault(
-                DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "").trim();
-        if (bootstrap.isEmpty()) {
-            return null;
-        }
-        String configUrl = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_URL, "").trim();
-        if (!configUrl.isEmpty()) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS + " and "
-                            + DocumentPlatformConfig.ENV_CONFIG_URL + " are both set:"
-                            + " the config lane reads one source, so unset one");
-        }
-        String schemaRegistry = environment.getOrDefault(
-                DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL, "").trim();
-        if (schemaRegistry.isEmpty()) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL
-                            + " is required with "
-                            + DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS
-                            + ": the config serde verifies against the registry, and"
-                            + " the lane is verify-then-swap or nothing");
-        }
-        String topic = environment.getOrDefault(
-                DocumentPlatformConfig.ENV_CONFIG_KAFKA_TOPIC, "").trim();
-        return new ai.protomolt.proto.config.kafka.KafkaConfigSource.Config(
-                bootstrap,
-                topic.isEmpty()
-                        ? DocumentPlatformConfig.DEFAULT_CONFIG_KAFKA_TOPIC : topic,
-                schemaRegistry);
-    }
-
-    /**
-     * The strict read of
-     * {@link DocumentPlatformConfig#ENV_CONFIG_REFRESH_SECONDS}: absent is
-     * environment-only configuration ({@code 0}), anything set must be a
-     * positive whole number of seconds.
-     */
-    static long configRefreshSeconds(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS, "").trim();
-        if (value.isEmpty()) {
-            return 0L;
-        }
-        long seconds;
-        try {
-            seconds = Long.parseLong(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
-                            + " must be a positive number of seconds, got '" + value + "'");
-        }
-        if (seconds <= 0) {
-            throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_CONFIG_REFRESH_SECONDS
-                            + " must be a positive number of seconds, got '" + value
-                            + "'; unset it for environment-only configuration");
-        }
-        return seconds;
-    }
-
-    /** The strict read of {@link DocumentPlatformConfig#ENV_SEARCH_READ_ONLY}. */
-    static boolean searchReadOnly(Map<String, String> environment) {
-        String value = environment
-                .getOrDefault(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "").trim();
-        return switch (value) {
-            case "", "false" -> false;
-            case "true" -> true;
-            default -> throw new IllegalArgumentException(
-                    DocumentPlatformConfig.ENV_SEARCH_READ_ONLY
-                            + " must be true or false, got '" + value + "'");
-        };
     }
 
     /** The S3 client the snapshot store rides, per the family's settings. */

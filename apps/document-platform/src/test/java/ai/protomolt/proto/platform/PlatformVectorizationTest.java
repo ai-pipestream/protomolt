@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class PlatformVectorizationTest {
 
     private static VectorizationPolicy of(String value) {
-        return DocumentPlatform.vectorizationFromEnvironment(value == null
+        return PlatformEnvironment.vectorizationFromEnvironment(value == null
                 ? Map.of()
                 : Map.of(DocumentPlatformConfig.ENV_SEARCH_VECTORIZE_SENSITIVITY, value));
     }
