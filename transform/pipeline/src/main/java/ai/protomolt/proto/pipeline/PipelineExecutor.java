@@ -4,7 +4,6 @@ import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
 import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
-import ai.protomolt.proto.grpc.workflow.v1.BranchFailurePolicy;
 import ai.protomolt.proto.grpc.workflow.v1.CelMappingRule;
 import ai.protomolt.proto.grpc.workflow.v1.FanOutSpec;
 import ai.protomolt.proto.grpc.workflow.v1.ServiceDependency;
@@ -42,10 +41,8 @@ import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Executes a statically checked {@link Pipeline} in process. The engine owns typed dataflow,
@@ -175,11 +172,11 @@ public final class PipelineExecutor {
         scope.put("input", one(input));
         List<StepOutcome> outcomes = new ArrayList<>();
         List<BranchOutcome> branches = new ArrayList<>();
-        long deadlineNanos = deadlineFromNow(pipeline);
+        long deadlineNanos = StepDeadlines.pipelineDeadline(pipeline);
         Binding last = scope.get("input");
 
         for (PipelineStep step : pipeline.getStepsList()) {
-            requireTime(step.getName(), deadlineNanos);
+            StepDeadlines.requireTime(step.getName(), deadlineNanos);
             if (step.hasUnnest()) {
                 last = runUnnest(step, scope, pipeline.getMaxStreamMessages());
             } else if (step.hasCollect()) {
@@ -215,7 +212,7 @@ public final class PipelineExecutor {
             throws PipelineExecutionException {
         GrpcCallStep call = step.getGrpcCall();
         MethodDescriptor method = DescriptorSets.resolveMethod(files, call.getMethod());
-        long stepDeadlineNanos = stepDeadline(step, pipelineDeadlineNanos);
+        long stepDeadlineNanos = StepDeadlines.stepDeadline(step, pipelineDeadlineNanos);
 
         if (!step.getWhen().isBlank() && !evaluateGate(step, scope, method.getInputType())) {
             consumeRequestStream(call, method, scope);
@@ -248,7 +245,7 @@ public final class PipelineExecutor {
 
         List<DynamicMessage> requests = deliver(produced, call.getEdge(), registry,
                 step.getName());
-        long callMillis = remainingMillis(step.getName(), stepDeadlineNanos);
+        long callMillis = StepDeadlines.remainingMillis(step.getName(), stepDeadlineNanos);
         List<DynamicMessage> responses;
         try {
             responses = transport.invoke(dependencies.get(step.getDependency()), method,
@@ -285,7 +282,7 @@ public final class PipelineExecutor {
             throw failure(step.getName(), FailureKind.STRUCTURED,
                     "structured step needs a StructuredGenerator", null);
         }
-        long stepDeadlineNanos = stepDeadline(step, deadlineNanos);
+        long stepDeadlineNanos = StepDeadlines.stepDeadline(step, deadlineNanos);
         StructuredStep structured = step.getStructured();
         Descriptor target = registry.findDescriptorByFullName(
                 structured.getSpec().getTargetType());
@@ -310,13 +307,7 @@ public final class PipelineExecutor {
         Binding source = scope.get(step.getUnnest().getSource());
         FieldDescriptor field = StreamPaths.repeatedField(source.type(),
                 step.getUnnest().getPath());
-        Message holder = source.one();
-        String[] segments = step.getUnnest().getPath().split("\\.");
-        for (int i = 0; i < segments.length - 1; i++) {
-            holder = (Message) holder.getField(
-                    holder.getDescriptorForType().findFieldByName(segments[i]));
-        }
-        List<?> raw = (List<?>) holder.getField(field);
+        List<?> raw = StreamPaths.repeatedValues(source.one(), step.getUnnest().getPath());
         if (raw.size() > limit) {
             throw failure(step.getName(), FailureKind.PIPELINE,
                     "unnest produced " + raw.size() + " messages, over max_stream_messages "
@@ -349,9 +340,9 @@ public final class PipelineExecutor {
             throw failure(step.getName(), FailureKind.FAN_OUT,
                     "fan-out exceeds max_stream_messages " + streamLimit, null);
         }
-        List<DynamicMessage> outputs = parallelBranches(step.getName(), items, fanOut,
+        List<DynamicMessage> outputs = FanOutBranches.run(step.getName(), items, fanOut,
                 item -> {
-                    long callMillis = remainingMillis(step.getName(), deadlineNanos);
+                    long callMillis = StepDeadlines.remainingMillis(step.getName(), deadlineNanos);
                     List<DynamicMessage> responses;
                     try {
                         responses = transport.invoke(dependency, method, List.of(item),
@@ -384,114 +375,10 @@ public final class PipelineExecutor {
             throw failure(step.getName(), FailureKind.FAN_OUT,
                     "fan-out exceeds max_stream_messages " + streamLimit, null);
         }
-        List<DynamicMessage> outputs = parallelBranches(step.getName(), items, fanOut,
+        List<DynamicMessage> outputs = FanOutBranches.run(step.getName(), items, fanOut,
                 grounding -> generate(step.getName(), structured, target, grounding,
                         deadlineNanos), deadlineNanos, branches);
         return one(collect(fanOut, outputs, registry));
-    }
-
-    @FunctionalInterface
-    private interface BranchCall {
-        DynamicMessage run(DynamicMessage input) throws PipelineExecutionException;
-    }
-
-    private List<DynamicMessage> parallelBranches(String step, List<DynamicMessage> items,
-                                                  FanOutSpec fanOut, BranchCall call,
-                                                  long deadlineNanos,
-                                                  List<BranchOutcome> branchEvidence)
-            throws PipelineExecutionException {
-        DynamicMessage[] slots = new DynamicMessage[items.size()];
-        PipelineExecutionException[] failures = new PipelineExecutionException[items.size()];
-        Semaphore permits = new Semaphore(fanOut.getMaxConcurrency());
-        AtomicBoolean abandoned = new AtomicBoolean();
-        var executor = Executors.newVirtualThreadPerTaskExecutor();
-        try {
-            List<Future<?>> futures = new ArrayList<>(items.size());
-            for (int i = 0; i < items.size(); i++) {
-                int index = i;
-                futures.add(executor.submit(() -> {
-                    if (abandoned.get()) {
-                        return;
-                    }
-                    boolean acquired = false;
-                    try {
-                        permits.acquire();
-                        acquired = true;
-                        if (!abandoned.get()) {
-                            slots[index] = call.run(items.get(index));
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        failures[index] = failure(step, FailureKind.FAN_OUT,
-                                "branch interrupted", e);
-                    } catch (PipelineExecutionException e) {
-                        failures[index] = e;
-                        if (fanOut.getFailurePolicy()
-                                == BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST) {
-                            abandoned.set(true);
-                        }
-                    } catch (RuntimeException e) {
-                        failures[index] = failure(step, FailureKind.FAN_OUT,
-                                "branch failed: " + e.getMessage(), e);
-                        if (fanOut.getFailurePolicy()
-                                == BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST) {
-                            abandoned.set(true);
-                        }
-                    } finally {
-                        if (acquired) {
-                            permits.release();
-                        }
-                    }
-                }));
-            }
-            for (Future<?> future : futures) {
-                try {
-                    long remaining = deadlineNanos - System.nanoTime();
-                    if (remaining <= 0) {
-                        throw new TimeoutException("pipeline step deadline exhausted");
-                    }
-                    future.get(remaining, TimeUnit.NANOSECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw failure(step, FailureKind.FAN_OUT,
-                            "interrupted awaiting branches", e);
-                } catch (ExecutionException e) {
-                    throw failure(step, FailureKind.FAN_OUT,
-                            "branch worker failed: " + e.getCause().getMessage(), e.getCause());
-                } catch (TimeoutException e) {
-                    futures.forEach(pending -> pending.cancel(true));
-                    throw failure(step, FailureKind.DEADLINE,
-                            "pipeline step deadline exhausted during fan-out", e);
-                }
-            }
-        } finally {
-            executor.shutdownNow();
-        }
-        List<DynamicMessage> outputs = new ArrayList<>();
-        PipelineExecutionException firstFailure = null;
-        for (int i = 0; i < slots.length; i++) {
-            DynamicMessage slot = slots[i];
-            if (slot != null) {
-                outputs.add(slot);
-                branchEvidence.add(new BranchOutcome(step + "#" + i, i, true,
-                        null, ""));
-            } else {
-                PipelineExecutionException branchFailure = failures[i];
-                if (firstFailure == null && branchFailure != null) {
-                    firstFailure = branchFailure;
-                }
-                branchEvidence.add(new BranchOutcome(step + "#" + i, i, false,
-                        branchFailure == null ? FailureKind.FAN_OUT : branchFailure.kind(),
-                        branchFailure == null
-                                ? "abandoned after an earlier branch failure"
-                                : bounded(branchFailure.getMessage())));
-            }
-        }
-        if (firstFailure != null && fanOut.getFailurePolicy()
-                == BranchFailurePolicy.BRANCH_FAILURE_POLICY_FAIL_FAST) {
-            throw firstFailure;
-        }
-        return outputs;
     }
 
     private static List<DynamicMessage> mapEdge(TypedEdge edge,
@@ -555,15 +442,7 @@ public final class PipelineExecutor {
 
     private static List<DynamicMessage> fanOutItems(DynamicMessage holder,
                                                     FanOutSpec fanOut) {
-        FieldDescriptor field = StreamPaths.repeatedField(holder.getDescriptorForType(),
-                fanOut.getItems());
-        Message current = holder;
-        String[] segments = fanOut.getItems().split("\\.");
-        for (int i = 0; i < segments.length - 1; i++) {
-            current = (Message) current.getField(
-                    current.getDescriptorForType().findFieldByName(segments[i]));
-        }
-        return ((List<?>) current.getField(field)).stream()
+        return StreamPaths.repeatedValues(holder, fanOut.getItems()).stream()
                 .map(value -> dynamic((Message) value)).toList();
     }
 
@@ -641,8 +520,8 @@ public final class PipelineExecutor {
             mapper.map(messageScope.build(), target, rules);
             if (!celRules.isEmpty()) {
                 new CelProtoMapper(mapper.fieldMapper(), evaluator(values, type), "target",
-                        new LinkedHashMap<>(values)).map(target, celRules.stream()
-                        .map(PipelineExecutor::celRule).toList());
+                        new LinkedHashMap<>(values)).map(target,
+                        CelMappingRules.toMapperRules(celRules));
             }
             return target.build();
         } catch (Exception e) {
@@ -686,13 +565,6 @@ public final class PipelineExecutor {
                 factory.addMessageVar(name, value.getDescriptorForType()));
         factory.addMessageVar("target", target);
         return new CelEvaluator(factory.build());
-    }
-
-    private static ai.protomolt.proto.mapper.cel.CelMappingRule celRule(CelMappingRule rule) {
-        return new ai.protomolt.proto.mapper.cel.CelMappingRule(
-                rule.getFilter().isBlank() ? null : rule.getFilter(),
-                rule.getSelector().isBlank() ? null : rule.getSelector(),
-                rule.getTarget(), rule.getFallbackList());
     }
 
     private static Map<String, DynamicMessage> singleValues(Map<String, Binding> scope) {
@@ -743,63 +615,6 @@ public final class PipelineExecutor {
                 .findFirst().ifPresent(scope::remove);
     }
 
-    private static long deadlineFromNow(Pipeline pipeline) throws PipelineExecutionException {
-        try {
-            return Math.addExact(System.nanoTime(),
-                    durationNanos(pipeline.getDeadline(), "pipeline deadline"));
-        } catch (ArithmeticException e) {
-            throw failure("", FailureKind.PREFLIGHT,
-                    "pipeline deadline is too large", e);
-        }
-    }
-
-    private static long stepDeadline(PipelineStep step, long pipelineDeadlineNanos)
-            throws PipelineExecutionException {
-        if (step.getDeadline().getSeconds() == 0 && step.getDeadline().getNanos() == 0) {
-            return pipelineDeadlineNanos;
-        }
-        try {
-            long declared = durationNanos(step.getDeadline(), "step deadline");
-            return Math.min(pipelineDeadlineNanos,
-                    Math.addExact(System.nanoTime(), declared));
-        } catch (ArithmeticException e) {
-            return pipelineDeadlineNanos;
-        }
-    }
-
-    private static long remainingMillis(String step, long deadlineNanos)
-            throws PipelineExecutionException {
-        long remainingNanos = deadlineNanos - System.nanoTime();
-        if (remainingNanos <= 0) {
-            throw failure(step, FailureKind.DEADLINE,
-                    "pipeline step deadline exhausted", null);
-        }
-        return Math.floorDiv(remainingNanos - 1L, 1_000_000L) + 1L;
-    }
-
-    private static long durationNanos(com.google.protobuf.Duration duration, String field)
-            throws PipelineExecutionException {
-        try {
-            long nanos = Math.addExact(
-                    Math.multiplyExact(duration.getSeconds(), 1_000_000_000L),
-                    duration.getNanos());
-            if (nanos <= 0) {
-                throw failure("", FailureKind.PREFLIGHT, field + " must be positive", null);
-            }
-            return nanos;
-        } catch (ArithmeticException e) {
-            throw failure("", FailureKind.PREFLIGHT, field + " is too large", e);
-        }
-    }
-
-    private static void requireTime(String step, long deadlineNanos)
-            throws PipelineExecutionException {
-        if (System.nanoTime() >= deadlineNanos) {
-            throw failure(step, FailureKind.DEADLINE,
-                    "pipeline deadline exhausted before the step ran", null);
-        }
-    }
-
     private static Binding one(DynamicMessage value) {
         return new Binding(value.getDescriptorForType(),
                 EdgeCardinality.EDGE_CARDINALITY_ONE, List.of(value));
@@ -834,21 +649,16 @@ public final class PipelineExecutor {
                 .reduce((left, right) -> left + "; " + right).orElse("");
     }
 
-    private static String bounded(String value) {
-        if (value == null) {
-            return "branch failed";
-        }
-        return value.length() <= 4_000 ? value : value.substring(0, 4_000);
-    }
-
-    private static PipelineExecutionException failure(String step, FailureKind kind,
-                                                      String message, Throwable cause) {
+    /** Builds a classified failure that carries no gRPC status code. */
+    static PipelineExecutionException failure(String step, FailureKind kind,
+                                              String message, Throwable cause) {
         return failure(step, kind, null, message, cause);
     }
 
-    private static PipelineExecutionException failure(String step, FailureKind kind,
-                                                      Status.Code grpcCode,
-                                                      String message, Throwable cause) {
+    /** Builds a classified failure, with the gRPC status code when one applies. */
+    static PipelineExecutionException failure(String step, FailureKind kind,
+                                              Status.Code grpcCode,
+                                              String message, Throwable cause) {
         return new PipelineExecutionException(step, kind, grpcCode, message, cause);
     }
 }
