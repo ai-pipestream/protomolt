@@ -432,12 +432,14 @@ protects persisted review identities from changes during this extraction.
 
 ## Shared document operations
 
-The parts-based `DocumentService` (`ai.protomolt.proto.repo.v2`) is
-`AccessionGrpcService` in `repo/accession`, which adapts calls and errors over
-`DocumentSaves`, `DocumentReads` and `DocumentPurges`. HTTP document uploads run
-through `DocumentUploads`, the same save pipeline as `SaveDocument`, streaming the
-body to the stack with bounded heap memory. `UploadHttpServer` mounts that route
-and the archive rendition route; both require the operator credential.
+Document saves, reads, manifests, revision listings, lists, deletes and purges
+live in `repo/accession` (`DocumentSaves`, `DocumentReads`, `DocumentLists`,
+`DocumentDeletes`, `DocumentPurges`); `AccessionGrpcService` adapts calls and
+errors for the v2 `DocumentService` (`ai.protomolt.proto.repo.v2`). HTTP
+document uploads run through `DocumentUploads`, the same save pipeline as
+`SaveDocument`, via `UploadHttpHandler`, streaming the body into the
+document's drive stack with bounded heap memory. `UploadHttpServer` mounts that
+route and the archive rendition route; both require the operator credential.
 
 Document library calls require an explicit trusted `RepositoryCaller`. Until the
 account-policy implementation is installed, scoped principals fail closed rather

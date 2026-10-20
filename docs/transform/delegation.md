@@ -189,15 +189,15 @@ contract validation before lifecycle replay.
 `TranscriptRepository` is the coordinator's persistence boundary.
 `InMemoryTranscriptRepository` supports tests and process-local deployments.
 `RepositoryServiceTranscriptRepository` stores an encrypted snapshot through
-the repository service `PutBlob` and `GetBlob` RPCs.
+the repository service v2 `SaveDocument` and `GetDocument` RPCs.
 
 The repository-service adapter:
 
 - validates and reduces the complete transcript before each write;
 - encrypts it locally with AES-256-GCM and a unique 12-byte nonce;
 - binds the drive, object key, and key reference as authenticated data;
-- verifies the repository service's returned byte count, object coordinates,
-  and SHA-256 digest before accepting a write;
+- verifies the repository service's save acknowledgement (operation id,
+  address, and the expected next revision) before accepting a write;
 - verifies the encryption tag, plaintext digest, entry count, structural
   validation, and lifecycle reduction on read; and
 - restores the coordinator's task projection, event cursors, duplicate-frame
