@@ -22,13 +22,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 class TeiRerankProviderTest {
 
@@ -213,9 +213,7 @@ class TeiRerankProviderTest {
 
     @Test
     void firstUseWithoutConfigurationNamesBothKnobs() {
-        assumeThat(System.getenv(TeiRerankProvider.TARGET_ENVIRONMENT_VARIABLE)).isNull();
-
-        TeiRerankProvider provider = new TeiRerankProvider();
+        TeiRerankProvider provider = new TeiRerankProvider(Map.of());
 
         assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
                 .isInstanceOf(IllegalStateException.class)

@@ -11,6 +11,7 @@ import tei.v1.Tei.RerankResponse;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -46,6 +47,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
 
     private final Object lock = new Object();
     private final boolean callerOwned;
+    private final Map<String, String> environment;
     private volatile ManagedChannel channel;
     private volatile String target;
 
@@ -56,6 +58,18 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
      * {@link #close()} shuts down the channel once it has been created.
      */
     public TeiRerankProvider() {
+        this(System.getenv());
+    }
+
+    /**
+     * Same as the ServiceLoader constructor, except that the environment variables are read
+     * from {@code environment} instead of the process environment. System properties still
+     * take precedence over it.
+     *
+     * @param environment environment variables consulted when a system property is unset
+     */
+    public TeiRerankProvider(Map<String, String> environment) {
+        this.environment = Objects.requireNonNull(environment, "environment");
         this.callerOwned = false;
     }
 
@@ -67,6 +81,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         this.target = Objects.requireNonNull(target, "target");
         this.channel = ManagedChannelBuilder.forTarget(target).usePlaintext().build();
         this.callerOwned = false;
+        this.environment = System.getenv();
     }
 
     /**
@@ -76,6 +91,7 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         this.channel = Objects.requireNonNull(channel, "channel");
         this.target = channel.authority();
         this.callerOwned = true;
+        this.environment = System.getenv();
     }
 
     @Override
@@ -172,10 +188,10 @@ public final class TeiRerankProvider implements RerankProvider, AutoCloseable {
         }
     }
 
-    private static String configuredTarget() {
+    private String configuredTarget() {
         String resolved = System.getProperty(TARGET_PROPERTY);
         if (resolved == null) {
-            resolved = System.getenv(TARGET_ENVIRONMENT_VARIABLE);
+            resolved = environment.get(TARGET_ENVIRONMENT_VARIABLE);
         }
         if (resolved == null) {
             throw new IllegalStateException("No TEI rerank target configured; set the '"

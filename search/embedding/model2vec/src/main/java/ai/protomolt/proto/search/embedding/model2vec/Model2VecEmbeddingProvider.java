@@ -6,6 +6,7 @@ import opennlp.embeddings.StaticEmbeddingModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -35,6 +36,7 @@ public final class Model2VecEmbeddingProvider implements EmbeddingProvider {
     public static final String PATH_ENVIRONMENT_VARIABLE = "PROTOMOLT_MODEL2VEC_PATH";
 
     private final Object lock = new Object();
+    private final Map<String, String> environment;
     private volatile StaticEmbeddingModel model;
 
     /**
@@ -44,6 +46,19 @@ public final class Model2VecEmbeddingProvider implements EmbeddingProvider {
      * environment variable.
      */
     public Model2VecEmbeddingProvider() {
+        this(System.getenv());
+    }
+
+    /**
+     * Same as the ServiceLoader constructor, except that the
+     * {@value #PATH_ENVIRONMENT_VARIABLE} environment variable is read from
+     * {@code environment} instead of the process environment. The {@value #PATH_PROPERTY}
+     * system property still takes precedence over it.
+     *
+     * @param environment environment variables consulted when the system property is unset
+     */
+    public Model2VecEmbeddingProvider(Map<String, String> environment) {
+        this.environment = Objects.requireNonNull(environment, "environment");
     }
 
     /**
@@ -56,6 +71,7 @@ public final class Model2VecEmbeddingProvider implements EmbeddingProvider {
      */
     public Model2VecEmbeddingProvider(Path modelDirectory) {
         Objects.requireNonNull(modelDirectory, "modelDirectory");
+        this.environment = System.getenv();
         this.model = load(modelDirectory);
     }
 
@@ -101,10 +117,10 @@ public final class Model2VecEmbeddingProvider implements EmbeddingProvider {
         }
     }
 
-    private static Path configuredDirectory() {
+    private Path configuredDirectory() {
         String path = System.getProperty(PATH_PROPERTY);
         if (path == null) {
-            path = System.getenv(PATH_ENVIRONMENT_VARIABLE);
+            path = environment.get(PATH_ENVIRONMENT_VARIABLE);
         }
         if (path == null) {
             throw new IllegalStateException("No Model2Vec model directory configured; set the '"

@@ -18,13 +18,13 @@ import tei.v1.Tei.EmbedResponse;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 class TeiEmbeddingProviderTest {
 
@@ -105,8 +105,7 @@ class TeiEmbeddingProviderTest {
 
     @Test
     void embedRequestsServerSideTruncationByDefault() {
-        assumeThat(System.getenv(TeiEmbeddingProvider.TRUNCATE_ENVIRONMENT_VARIABLE)).isNull();
-        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel);
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel, Map.of());
 
         provider.embed("possibly overlength");
 
@@ -117,12 +116,35 @@ class TeiEmbeddingProviderTest {
     @Test
     void truncatePropertySetToFalseTurnsServerSideTruncationOff() {
         System.setProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY, "false");
-        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel);
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel, Map.of());
 
         provider.embed("keep whole or fail");
 
         assertThat(fake.requests).singleElement().satisfies(
                 request -> assertThat(request.getTruncate()).isFalse());
+    }
+
+    @Test
+    void truncateEnvironmentVariableSetToFalseTurnsServerSideTruncationOff() {
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.TRUNCATE_ENVIRONMENT_VARIABLE, "false"));
+
+        provider.embed("keep whole or fail");
+
+        assertThat(fake.requests).singleElement().satisfies(
+                request -> assertThat(request.getTruncate()).isFalse());
+    }
+
+    @Test
+    void truncatePropertyBeatsTheEnvironmentVariable() {
+        System.setProperty(TeiEmbeddingProvider.TRUNCATE_PROPERTY, "true");
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(channel,
+                Map.of(TeiEmbeddingProvider.TRUNCATE_ENVIRONMENT_VARIABLE, "false"));
+
+        provider.embed("possibly overlength");
+
+        assertThat(fake.requests).singleElement().satisfies(
+                request -> assertThat(request.getTruncate()).isTrue());
     }
 
     @Test
@@ -170,9 +192,7 @@ class TeiEmbeddingProviderTest {
 
     @Test
     void firstUseWithoutConfigurationNamesBothKnobs() {
-        assumeThat(System.getenv(TeiEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE)).isNull();
-
-        TeiEmbeddingProvider provider = new TeiEmbeddingProvider();
+        TeiEmbeddingProvider provider = new TeiEmbeddingProvider(Map.of());
 
         assertThatThrownBy(provider::dimension)
                 .isInstanceOf(IllegalStateException.class)

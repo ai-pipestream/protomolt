@@ -1,5 +1,6 @@
 package ai.protomolt.proto.search.index.qdrant;
 
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -74,10 +75,24 @@ public record QdrantConfig(String target, String collection, String apiKey, bool
 
     /** Resolves the configuration from system properties, then environment, then defaults. */
     public static QdrantConfig fromEnvironment() {
-        String target = resolve(TARGET_PROPERTY, TARGET_ENVIRONMENT_VARIABLE);
-        String collection = resolve(COLLECTION_PROPERTY, COLLECTION_ENVIRONMENT_VARIABLE);
-        String apiKey = resolve(API_KEY_PROPERTY, API_KEY_ENVIRONMENT_VARIABLE);
-        String tls = resolve(USE_TLS_PROPERTY, USE_TLS_ENVIRONMENT_VARIABLE);
+        return fromEnvironment(System.getenv());
+    }
+
+    /**
+     * Resolves the configuration from system properties, then {@code environment}, then
+     * defaults. The no-argument {@link #fromEnvironment()} passes the process environment;
+     * callers that must not depend on it pass their own map.
+     *
+     * @param environment environment variables consulted when a system property is unset
+     * @return the resolved configuration
+     */
+    public static QdrantConfig fromEnvironment(Map<String, String> environment) {
+        Objects.requireNonNull(environment, "environment");
+        String target = resolve(TARGET_PROPERTY, TARGET_ENVIRONMENT_VARIABLE, environment);
+        String collection =
+                resolve(COLLECTION_PROPERTY, COLLECTION_ENVIRONMENT_VARIABLE, environment);
+        String apiKey = resolve(API_KEY_PROPERTY, API_KEY_ENVIRONMENT_VARIABLE, environment);
+        String tls = resolve(USE_TLS_PROPERTY, USE_TLS_ENVIRONMENT_VARIABLE, environment);
         boolean useTls = tls != null ? Boolean.parseBoolean(tls) : apiKey != null && !apiKey.isBlank();
         return new QdrantConfig(
                 target == null || target.isBlank() ? DEFAULT_TARGET : target,
@@ -86,8 +101,9 @@ public record QdrantConfig(String target, String collection, String apiKey, bool
                 useTls);
     }
 
-    private static String resolve(String property, String environmentVariable) {
+    private static String resolve(String property, String environmentVariable,
+            Map<String, String> environment) {
         String value = System.getProperty(property);
-        return value != null ? value : System.getenv(environmentVariable);
+        return value != null ? value : environment.get(environmentVariable);
     }
 }

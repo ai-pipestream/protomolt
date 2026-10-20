@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -58,6 +59,7 @@ public final class OvmsRerankProvider implements RerankProvider {
 
     private final Object lock = new Object();
     private final HttpClient client;
+    private final Map<String, String> environment;
     private volatile String baseUrl;
     private volatile String modelName;
 
@@ -69,6 +71,18 @@ public final class OvmsRerankProvider implements RerankProvider {
      * environment variables.
      */
     public OvmsRerankProvider() {
+        this(System.getenv());
+    }
+
+    /**
+     * Same as the ServiceLoader constructor, except that the environment variables are read
+     * from {@code environment} instead of the process environment. System properties still
+     * take precedence over it.
+     *
+     * @param environment environment variables consulted when a system property is unset
+     */
+    public OvmsRerankProvider(Map<String, String> environment) {
+        this.environment = Objects.requireNonNull(environment, "environment");
         this.client = defaultClient();
     }
 
@@ -88,6 +102,7 @@ public final class OvmsRerankProvider implements RerankProvider {
         this.baseUrl = stripTrailingSlashes(Objects.requireNonNull(baseUrl, "baseUrl"));
         this.modelName = Objects.requireNonNull(modelName, "modelName");
         this.client = Objects.requireNonNull(client, "client");
+        this.environment = System.getenv();
     }
 
     @Override
@@ -232,10 +247,10 @@ public final class OvmsRerankProvider implements RerankProvider {
 
     /** The value of {@code property}, falling back to {@code environmentVariable}; null when
      * neither is set. */
-    private static String configured(String property, String environmentVariable) {
+    private String configured(String property, String environmentVariable) {
         String value = System.getProperty(property);
         if (value == null) {
-            value = System.getenv(environmentVariable);
+            value = environment.get(environmentVariable);
         }
         return value;
     }
