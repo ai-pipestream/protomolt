@@ -136,7 +136,7 @@ class AuthoringWorkerDiscoveryProcessTest {
             coordinator = startCoordinator(grpcPort, httpPort, postgres, registry, workspace,
                     authorization, preparations, policy.getSha256(), trustFile, signingKey,
                     accessPolicy, "127.0.0.1:" + repository.getPort(), coordinatorLog);
-            awaitHealth(coordinator, httpPort, coordinatorLog);
+            CoordinatorHealth.await(coordinator, httpPort, coordinatorLog);
 
             authorChannel = ManagedChannelBuilder.forAddress("127.0.0.1", grpcPort)
                     .usePlaintext().maxInboundMessageSize(16 * 1024 * 1024).build();
@@ -431,20 +431,6 @@ class AuthoringWorkerDiscoveryProcessTest {
             evidence.append("unreadable (").append(e.getClass().getSimpleName()).append(')');
         }
         throw new AssertionError(evidence.toString());
-    }
-
-    private static void awaitHealth(Process process, int port, Path log) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-        while (System.nanoTime() < deadline) {
-            if (!process.isAlive()) throw new AssertionError("coordinator exited:\n" + Files.readString(log));
-            try {
-                var response = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
-                                .timeout(Duration.ofSeconds(3)).GET().build(), HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) return;
-            } catch (Exception ignored) { }
-            Thread.sleep(100);
-        }
-        throw new AssertionError("coordinator health timeout:\n" + Files.readString(log));
     }
 
     private static Process startCoordinator(int grpcPort, int httpPort, PostgreSQLContainer<?> postgres,
