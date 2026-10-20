@@ -1,8 +1,6 @@
 package ai.protomolt.proto.workflow;
 
-import ai.protomolt.proto.cel.CelEnvironmentFactory;
 import ai.protomolt.proto.cel.CelEvaluator;
-import ai.protomolt.proto.mapper.cel.CelProtoMapper;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.grpc.invoke.DynamicGrpcCalls;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicyException;
@@ -11,14 +9,14 @@ import ai.protomolt.proto.inference.structured.StructuredGenerationException;
 import ai.protomolt.proto.inference.structured.StructuredGenerator;
 import ai.protomolt.proto.inference.v1.GenerateStructuredRequest;
 import ai.protomolt.proto.inference.v1.GenerateStructuredResponse;
-import ai.protomolt.proto.shapes.MessageScope;
 import ai.protomolt.proto.shapes.ScopedProtoMapper;
 import ai.protomolt.proto.validate.ProtoValidator;
 import ai.protomolt.proto.validate.ValidationResult;
+import ai.protomolt.proto.workflow.FanOutBranches.BranchFailure;
+import ai.protomolt.proto.workflow.FanOutBranches.BranchOutcome;
 import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
-import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import io.grpc.CallOptions;
 import io.grpc.ManagedChannel;
@@ -32,8 +30,24 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+
+import static ai.protomolt.proto.workflow.StepMessages.buildMessage;
+import static ai.protomolt.proto.workflow.StepMessages.contractValue;
+import static ai.protomolt.proto.workflow.StepMessages.outputTypeOf;
+import static ai.protomolt.proto.workflow.StepMessages.projectValue;
+import static ai.protomolt.proto.workflow.StepMessages.structuredRequest;
+import static ai.protomolt.proto.workflow.StepMessages.summary;
+import static ai.protomolt.proto.workflow.StepMessages.unpackStructured;
+import static ai.protomolt.proto.workflow.StepMessages.validateContractMessage;
+import static ai.protomolt.proto.workflow.StepMessages.validateResponse;
 
 /**
  * Executes a workflow: serial, fail-fast, deadline-bounded. Each step's request is built from
@@ -41,7 +55,7 @@ import java.util.function.Consumer;
  * rules and CEL (expressions also see {@code target}, the progressive request); a false
  * {@code when} gate skips the step, binding its name to the output type's default instance
  * so later references stay well-defined; {@code validate} runs the response's declared
- * rules before proceeding. Nothing persists between calls — a workflow execution lives inside one
+ * rules before proceeding. Nothing persists between calls - a workflow execution lives inside one
  * invocation, by design.
  */
 public final class WorkflowRunner {
@@ -273,7 +287,7 @@ public final class WorkflowRunner {
 
     /**
      * Synchronous execution: the whole workflow inside one invocation. Rejects
-     * external-completion steps — parking needs a job; submit the workflow with
+     * external-completion steps - parking needs a job; submit the workflow with
      * {@code submit-workflow} instead.
      */
     public Result run(CompiledWorkflow workflow, DynamicMessage input)
@@ -310,14 +324,14 @@ public final class WorkflowRunner {
     /**
      * Executes one segment of a workflow: replays the checkpoint prefix, then runs steps
      * until the workflow completes or an external-completion step parks it. The workflow
-     * deadline bounds this segment, not the job's wall-clock life — a workflow parked for
+     * deadline bounds this segment, not the job's wall-clock life - a workflow parked for
      * hours of human review must not hold a 30-second budget across the park.
      *
      * @param prior the persisted checkpoint prefix; entry i must name step i of the
      *        workflow, so a workflow definition edited under a live job fails loud instead of
      *        resuming against a shifted scope
      * @param onCheckpoint called with each newly executed (or gate-skipped) step's
-     *        checkpoint as it lands — the jobs worker's per-step persistence hook.
+     *        checkpoint as it lands - the jobs worker's per-step persistence hook.
      *        Replayed checkpoints are not re-reported. A throwing observer fails the
      *        segment as {@link FailureKind#WORKFLOW}: a checkpoint that did not persist
      *        must not be treated as done.
@@ -385,7 +399,7 @@ public final class WorkflowRunner {
                 }
                 if (step.structured() == null && step.when() != null
                         && !step.when().isBlank()) {
-                    CelEvaluator gateEvaluator = evaluator(values,
+                    CelEvaluator gateEvaluator = ScopedMapping.evaluator(values,
                             step.method().getInputType());
                     boolean go;
                     try {
@@ -418,65 +432,23 @@ public final class WorkflowRunner {
                     continue;
                 }
                 if (step.structured() != null) {
-                    Message generated = runStructured(step, values, outcomes, checkpoints,
-                            onCheckpoint, observer, deadlineNanos);
+                    Message generated = runStructured(step, null, values, outcomes,
+                            checkpoints, onCheckpoint, observer, deadlineNanos);
                     last = generated;
                     index++;
                     continue;
                 }
                 DynamicMessage request = buildMessage(mapper,
-                        evaluator(values, step.method().getInputType()), values,
+                        ScopedMapping.evaluator(values, step.method().getInputType()), values,
                         step.method().getInputType(), step.rules(), step.celRules(),
                         step.name());
                 if (workflow.validateContract()) validateContractMessage(request, step.name());
-                long remainingMs = TimeUnit.NANOSECONDS.toMillis(
-                        deadlineNanos - nanoClock.getAsLong());
-                if (remainingMs <= 0) {
-                    throw new WorkflowExecutionException(step.name(), FailureKind.DEADLINE, null,
-                            "workflow deadline exhausted before the step ran", null);
-                }
-                long callMs = step.deadlineMs() > 0
-                        ? Math.min(step.deadlineMs(), remainingMs)
-                        : remainingMs;
-                try {
-                    channels.validateTarget(step);
-                    channels.validateDeadline(callMs);
-                } catch (IllegalArgumentException e) {
-                    throw new WorkflowExecutionException(step.name(), FailureKind.WORKFLOW, null,
-                            "outbound channel policy rejected step: " + e.getMessage(), e);
-                }
-                ManagedChannel channel;
-                try {
-                    channel = open.computeIfAbsent(
-                            step.target() + (step.tls() ? "+tls" : ""),
-                            key -> channels.open(step));
-                } catch (OutboundChannelPolicyException e) {
-                    throw new WorkflowExecutionException(step.name(), FailureKind.GRPC,
-                            io.grpc.Status.Code.RESOURCE_EXHAUSTED,
-                            "outbound channel policy rejected step: " + e.getMessage(), e);
-                }
-                DynamicMessage response;
+                long callMs = remainingMs(step, deadlineNanos);
+                ManagedChannel channel = openChannel(step, open, callMs);
                 Instant stepStarted = Instant.now();
                 observer.stepStarted(step, request, stepStarted);
-                try {
-                    response = DynamicGrpcCalls.call(channel, step.method(), request,
-                            CallOptions.DEFAULT.withDeadlineAfter(callMs, TimeUnit.MILLISECONDS),
-                            new Metadata(), 1).getFirst();
-                } catch (StatusRuntimeException e) {
-                    throw new WorkflowExecutionException(step.name(), FailureKind.GRPC,
-                            e.getStatus().getCode(),
-                            "gRPC " + e.getStatus().getCode() + " from " + step.target()
-                                    + ": " + e.getStatus().getDescription(), e);
-                }
-                if (step.validate() || workflow.validateContract()) {
-                    ValidationResult result = ProtoValidator
-                            .forMessageType(step.method().getOutputType())
-                            .validate(response);
-                    if (!result.valid()) {
-                        throw new WorkflowExecutionException(step.name(), FailureKind.VALIDATION,
-                                null, "response failed validation: " + summary(result), null);
-                    }
-                }
+                DynamicMessage response = call(step, channel, request, callMs);
+                validateResponse(step, response, workflow.validateContract());
                 values.put(step.name(), response);
                 outcomes.add(new StepOutcome(step.name(), false));
                 observer.stepCompleted(step, request, response, false, stepStarted, Instant.now());
@@ -487,7 +459,8 @@ public final class WorkflowRunner {
             }
             Message output = workflow.output() == null
                     ? last
-                    : buildMessage(mapper, evaluator(values, workflow.output().type()), values,
+                    : buildMessage(mapper,
+                            ScopedMapping.evaluator(values, workflow.output().type()), values,
                             workflow.output().type(), workflow.output().rules(),
                             workflow.output().celRules(), "output");
             if (workflow.validateContract()) validateContractMessage(output, "output");
@@ -506,14 +479,17 @@ public final class WorkflowRunner {
      * scope exactly like a gRPC step's response. A coordinator failure fails the workflow
      * with the step named, like a gRPC failure.
      *
+     * @param grounding the edge-delivered value packed as the request's grounding, or
+     *        null for a step without an edge
      * @return the unpacked typed output, bound as the step's scope response
      */
-    private Message runStructured(CompiledWorkflow.Step step, Map<String, Message> values,
+    private Message runStructured(CompiledWorkflow.Step step, Any grounding,
+                                  Map<String, Message> values,
                                   List<StepOutcome> outcomes, List<Checkpoint> checkpoints,
                                   Consumer<Checkpoint> onCheckpoint,
                                   ExecutionObserver observer, long deadlineNanos)
             throws WorkflowExecutionException {
-        GenerateStructuredRequest request = structuredRequest(step, null);
+        GenerateStructuredRequest request = structuredRequest(step, grounding);
         Instant stepStarted = Instant.now();
         observer.structuredStepStarted(step, request, stepStarted);
         GenerateStructuredResponse generated = invokeCoordinator(step, request,
@@ -526,20 +502,6 @@ public final class WorkflowRunner {
         record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
                 step.name());
         return output;
-    }
-
-    /** The step's structured-generation request, with grounding when supplied. */
-    private static GenerateStructuredRequest structuredRequest(CompiledWorkflow.Step step,
-                                                               Any grounding) {
-        GenerateStructuredRequest.Builder request = GenerateStructuredRequest.newBuilder()
-                .setTargetType(step.structured().targetType().getFullName())
-                .setModel(step.structured().model())
-                .setMaxAttempts(step.structured().maxAttempts())
-                .setMode(step.structured().mode());
-        if (grounding != null) {
-            request.setGrounding(grounding);
-        }
-        return request.build();
     }
 
     /** Runs the coordinator for one structured request, failing the workflow on rejection. */
@@ -562,20 +524,6 @@ public final class WorkflowRunner {
         } catch (StructuredGenerationException e) {
             throw new WorkflowExecutionException(step.name(), FailureKind.STRUCTURED, null,
                     "structured generation failed: " + e.getMessage(), e);
-        }
-    }
-
-    /** The coordinator's packed output as the step's typed message. */
-    private static Message unpackStructured(CompiledWorkflow.Step step,
-                                            GenerateStructuredResponse generated)
-            throws WorkflowExecutionException {
-        try {
-            return DynamicMessage.parseFrom(step.structured().targetType(),
-                    generated.getMessage().getValue());
-        } catch (InvalidProtocolBufferException e) {
-            throw new WorkflowExecutionException(step.name(), FailureKind.WORKFLOW, null,
-                    "the coordinator's packed output does not parse as the step's "
-                            + "target type", e);
         }
     }
 
@@ -607,8 +555,8 @@ public final class WorkflowRunner {
             restricted.put(source, value);
         }
         DynamicMessage produced = buildMessage(mapper,
-                evaluator(restricted, edge.produceType()), restricted, edge.produceType(),
-                edge.rules(), edge.celRules(), step.name());
+                ScopedMapping.evaluator(restricted, edge.produceType()), restricted,
+                edge.produceType(), edge.rules(), edge.celRules(), step.name());
         if (step.fanOut() != null) {
             return runFanOut(step, produced, restricted.size(), values, registry, open,
                     outcomes, checkpoints, onCheckpoint, observer, deadlineNanos, validateContract);
@@ -631,19 +579,8 @@ public final class WorkflowRunner {
         observer.edgeEvaluated(step, produced, true, restricted.size(), 0);
 
         if (step.structured() != null) {
-            GenerateStructuredRequest request = structuredRequest(step, Any.pack(delivered));
-            Instant stepStarted = Instant.now();
-            observer.structuredStepStarted(step, request, stepStarted);
-            GenerateStructuredResponse generated = invokeCoordinator(step, request,
-                    deadlineNanos);
-            Message output = unpackStructured(step, generated);
-            values.put(step.name(), output);
-            outcomes.add(new StepOutcome(step.name(), false));
-            observer.structuredStepCompleted(step, request, output, generated, stepStarted,
-                    Instant.now());
-            record(checkpoints, new Checkpoint(step.name(), false, output), onCheckpoint,
-                    step.name());
-            return output;
+            return runStructured(step, Any.pack(delivered), values, outcomes, checkpoints,
+                    onCheckpoint, observer, deadlineNanos);
         }
 
         long callMs = remainingMs(step, deadlineNanos);
@@ -678,59 +615,20 @@ public final class WorkflowRunner {
                               Consumer<Checkpoint> onCheckpoint,
                               ExecutionObserver observer, long deadlineNanos, boolean validateContract)
             throws WorkflowExecutionException {
-        CompiledWorkflow.EdgeSpec edge = step.edge();
         CompiledWorkflow.FanOutSpec fanOut = step.fanOut();
-        List<Message> items;
-        try {
-            items = EdgeFlow.items(produced, fanOut.items());
-        } catch (IllegalArgumentException e) {
-            throw new WorkflowExecutionException(step.name(), FailureKind.EDGE, null,
-                    "fan-out items path rejected: " + e.getMessage(), e);
-        }
-        if (items.size() > fanOut.maxItems()) {
-            throw new WorkflowExecutionException(step.name(), FailureKind.EDGE, null,
-                    "fan-out produced " + items.size() + " items, over the max_items "
-                            + "cap of " + fanOut.maxItems(), null);
-        }
-
-        // Project and validate every item up front, before any invocation: an invalid
-        // item is a failed branch that never executes, and the all-items verdict is
-        // the step's deterministic validation evidence.
-        BranchOutcome[] slots = new BranchOutcome[items.size()];
-        Message[] branchValues = new Message[items.size()];
-        boolean allValid = true;
-        for (int i = 0; i < items.size(); i++) {
-            Message value = items.get(i);
-            if (edge.projectTo() != null) {
-                try {
-                    value = projectValue(step, edge.projectTo(), value, registry);
-                } catch (WorkflowExecutionException e) {
-                    slots[i] = new BranchOutcome(null, e.getMessage(), FailureKind.EDGE,
-                            null);
-                    allValid = false;
-                    continue;
-                }
-            }
-            if (edge.validate() || validateContract) {
-                ValidationResult result = ProtoValidator
-                        .forMessageType(value.getDescriptorForType()).validate(value);
-                if (!result.valid()) {
-                    slots[i] = new BranchOutcome(null,
-                            "branch value failed validation: " + summary(result),
-                            FailureKind.VALIDATION, null);
-                    allValid = false;
-                    continue;
-                }
-            }
-            branchValues[i] = value;
-        }
+        List<Message> items = FanOutBranches.items(step, produced);
+        FanOutBranches.Prepared prepared =
+                FanOutBranches.prepare(step, items, registry, validateContract);
+        BranchOutcome[] slots = prepared.slots();
+        Message[] branchValues = prepared.values();
+        boolean allValid = prepared.allValid();
         observer.edgeEvaluated(step, produced, allValid, sourceCount, items.size());
         if (validateContract && !allValid
                 && fanOut.failurePolicy() == CompiledWorkflow.BranchFailurePolicy.FAIL_FAST) {
             BranchOutcome rejected = null;
             for (int i = 0; i < slots.length; i++) {
                 var outcome = slots[i];
-                observer.branchCompleted(step, step.name() + "#" + i, i, null,
+                observer.branchCompleted(step, FanOutBranches.branchId(step.name(), i), i, null,
                         outcome == null ? "abandoned after input validation failed" : outcome.summary());
                 if (rejected == null && outcome != null) rejected = outcome;
             }
@@ -752,13 +650,10 @@ public final class WorkflowRunner {
             observer.stepStarted(step, produced, stepStarted);
         }
 
-        java.util.concurrent.Semaphore permits =
-                new java.util.concurrent.Semaphore(fanOut.maxConcurrency());
-        java.util.concurrent.atomic.AtomicBoolean abandoned =
-                new java.util.concurrent.atomic.AtomicBoolean();
-        try (var executor = java.util.concurrent.Executors
-                .newVirtualThreadPerTaskExecutor()) {
-            List<java.util.concurrent.Future<?>> futures = new ArrayList<>(items.size());
+        Semaphore permits = new Semaphore(fanOut.maxConcurrency());
+        AtomicBoolean abandoned = new AtomicBoolean();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<?>> futures = new ArrayList<>(items.size());
             for (int i = 0; i < items.size(); i++) {
                 int index = i;
                 if (slots[index] != null) {
@@ -798,7 +693,7 @@ public final class WorkflowRunner {
                     }
                 }));
             }
-            for (java.util.concurrent.Future<?> future : futures) {
+            for (Future<?> future : futures) {
                 try {
                     if (abandoned.get()) {
                         future.cancel(true);
@@ -809,8 +704,7 @@ public final class WorkflowRunner {
                     Thread.currentThread().interrupt();
                     throw new WorkflowExecutionException(step.name(), FailureKind.WORKFLOW, null,
                             "interrupted while fanning out", e);
-                } catch (java.util.concurrent.ExecutionException
-                         | java.util.concurrent.CancellationException e) {
+                } catch (ExecutionException | CancellationException e) {
                     // Branch bodies record their own outcomes; a cancelled branch was
                     // abandoned and keeps its null slot.
                 }
@@ -821,7 +715,7 @@ public final class WorkflowRunner {
         BranchOutcome firstFailure = null;
         int firstFailureIndex = -1;
         for (int i = 0; i < slots.length; i++) {
-            String branchId = step.name() + "#" + i;
+            String branchId = FanOutBranches.branchId(step.name(), i);
             BranchOutcome outcome = slots[i];
             if (outcome == null) {
                 observer.branchCompleted(step, branchId, i, null,
@@ -841,18 +735,11 @@ public final class WorkflowRunner {
                 == CompiledWorkflow.BranchFailurePolicy.FAIL_FAST) {
             throw new WorkflowExecutionException(step.name(), firstFailure.kind(),
                     firstFailure.grpcCode(),
-                    "branch '" + step.name() + "#" + firstFailureIndex + "' failed: "
-                            + firstFailure.summary(), null);
+                    "branch '" + FanOutBranches.branchId(step.name(), firstFailureIndex)
+                            + "' failed: " + firstFailure.summary(), null);
         }
 
-        DynamicMessage collected;
-        try {
-            collected = EdgeFlow.collect(fanOut.collectType(), fanOut.collectInto(),
-                    outputs);
-        } catch (IllegalArgumentException e) {
-            throw new WorkflowExecutionException(step.name(), FailureKind.EDGE, null,
-                    "fan-out collect rejected: " + e.getMessage(), e);
-        }
+        DynamicMessage collected = FanOutBranches.collect(step, outputs);
         if (validateContract) validateContractMessage(collected, step.name());
         values.put(step.name(), collected);
         outcomes.add(new StepOutcome(step.name(), false));
@@ -861,29 +748,6 @@ public final class WorkflowRunner {
         record(checkpoints, new Checkpoint(step.name(), false, collected), onCheckpoint,
                 step.name());
         return collected;
-    }
-
-    /** The verdict of one fan-out branch; exactly one of response/summary is null. */
-    private record BranchOutcome(Message response, String summary, FailureKind kind,
-                                 io.grpc.Status.Code grpcCode) {
-
-        static BranchOutcome success(Message response) {
-            return new BranchOutcome(response, null, null, null);
-        }
-    }
-
-    /** A branch failure carrying its recorded outcome. */
-    private static final class BranchFailure extends Exception {
-        private final BranchOutcome outcome;
-
-        BranchFailure(BranchOutcome outcome) {
-            super(outcome.summary());
-            this.outcome = outcome;
-        }
-
-        BranchOutcome outcome() {
-            return outcome;
-        }
     }
 
     /**
@@ -903,7 +767,7 @@ public final class WorkflowRunner {
                 throw new BranchFailure(new BranchOutcome(null,
                         e.kind() == FailureKind.STRUCTURED
                                 ? "structured generation failed at branch '"
-                                        + step.name() + "#" + index + "'"
+                                        + FanOutBranches.branchId(step.name(), index) + "'"
                                 : e.getMessage(),
                         e.kind(), e.grpcCode()));
             }
@@ -931,24 +795,6 @@ public final class WorkflowRunner {
             }
         }
         return BranchOutcome.success(response);
-    }
-
-    /** Projects one edge value to its consumer-visible form. */
-    private static Message projectValue(CompiledWorkflow.Step step,
-                                        com.google.protobuf.Descriptors.Descriptor projectTo,
-                                        Message value, DescriptorRegistry registry)
-            throws WorkflowExecutionException {
-        try {
-            return ai.protomolt.proto.projection.MessageProjection
-                    .forTarget(projectTo, registry)
-                    .orElseThrow(() -> new ai.protomolt.proto.projection
-                            .ProjectionException("projection target "
-                            + projectTo.getFullName() + " declares no projection sources"))
-                    .project(value);
-        } catch (ai.protomolt.proto.projection.ProjectionException e) {
-            throw new WorkflowExecutionException(step.name(), FailureKind.EDGE, null,
-                    "edge projection failed: " + e.getMessage(), e);
-        }
     }
 
     /** The per-call budget: the step's own deadline nested in the remaining workflow budget. */
@@ -1002,58 +848,6 @@ public final class WorkflowRunner {
         }
     }
 
-    /** Runs the response's declared validation rules when the step asks for them. */
-    private static void validateResponse(CompiledWorkflow.Step step, DynamicMessage response,
-            boolean validateContract)
-            throws WorkflowExecutionException {
-        if (step.validate() || validateContract) {
-            ValidationResult result = ProtoValidator
-                    .forMessageType(step.method().getOutputType())
-                    .validate(response);
-            if (!result.valid()) {
-                throw new WorkflowExecutionException(step.name(), FailureKind.VALIDATION,
-                        null, "response failed validation: " + summary(result), null);
-            }
-        }
-    }
-
-    private static DynamicMessage contractValue(Message message,
-            com.google.protobuf.Descriptors.Descriptor type, String where) throws WorkflowExecutionException {
-        if (!message.getDescriptorForType().getFullName().equals(type.getFullName())) {
-            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
-                    where + " does not name the workflow's declared type", null);
-        }
-        try {
-            // Java callers cannot replace the pinned rules with a weaker descriptor.
-            DynamicMessage pinned = DynamicMessage.parseFrom(type, message.toByteArray());
-            validateContractMessage(pinned, where);
-            return pinned;
-        } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
-            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
-                    where + " does not parse as the workflow's declared type", invalid);
-        }
-    }
-
-    private static void validateContractMessage(Message message, String where)
-            throws WorkflowExecutionException {
-        ValidationResult result = ProtoValidator.forMessageType(message.getDescriptorForType()).validate(message);
-        if (!result.valid()) {
-            throw new WorkflowExecutionException(where, FailureKind.VALIDATION, null,
-                    where + " contract validation failed: " + summary(result), null);
-        }
-    }
-
-    /** The type a step's response binds under its name, gRPC, structured, or collected. */
-    private static com.google.protobuf.Descriptors.Descriptor outputTypeOf(
-            CompiledWorkflow.Step step) {
-        if (step.fanOut() != null) {
-            return step.fanOut().collectType();
-        }
-        return step.structured() != null
-                ? step.structured().targetType()
-                : step.method().getOutputType();
-    }
-
     /** Appends a checkpoint and notifies the observer; an observer failure fails the segment. */
     private static void record(List<Checkpoint> checkpoints, Checkpoint checkpoint,
                                Consumer<Checkpoint> onCheckpoint, String step)
@@ -1066,49 +860,5 @@ public final class WorkflowRunner {
                     "checkpoint observer failed; the step's response may not have "
                             + "persisted: " + e.getMessage(), e);
         }
-    }
-
-    private static DynamicMessage buildMessage(ScopedProtoMapper mapper,
-                                               CelEvaluator evaluator,
-                                               Map<String, Message> values,
-                                               com.google.protobuf.Descriptors.Descriptor type,
-                                               List<String> rules,
-                                               List<ai.protomolt.proto.mapper.cel.CelMappingRule> celRules,
-                                               String where) throws WorkflowExecutionException {
-        MessageScope.Builder scope = MessageScope.builder();
-        values.forEach(scope::add);
-        DynamicMessage.Builder builder = DynamicMessage.newBuilder(type);
-        try {
-            mapper.map(scope.build(), builder, rules);
-            if (!celRules.isEmpty()) {
-                new CelProtoMapper(mapper.fieldMapper(), evaluator, "target",
-                        Map.copyOf(values)).map(builder, celRules);
-            }
-        } catch (Exception e) {
-            throw new WorkflowExecutionException(where, FailureKind.MAPPING, null,
-                    "mapping failed: " + e.getMessage(), e);
-        }
-        return builder.build();
-    }
-
-    /** A CEL environment over exactly the values in scope (plus 'target' for mappings). */
-    private static CelEvaluator evaluator(Map<String, Message> values,
-                                          com.google.protobuf.Descriptors.Descriptor targetType) {
-        CelEnvironmentFactory factory = CelEnvironmentFactory.builder();
-        values.forEach((name, message) ->
-                factory.addMessageVar(name, message.getDescriptorForType()));
-        factory.addMessageVar("target", targetType);
-        return new CelEvaluator(factory.build());
-    }
-
-    private static String summary(ValidationResult result) {
-        StringBuilder out = new StringBuilder();
-        for (ValidationResult.Violation violation : result.violations()) {
-            if (!out.isEmpty()) {
-                out.append("; ");
-            }
-            out.append(violation.path()).append(": ").append(violation.message());
-        }
-        return out.toString();
     }
 }
