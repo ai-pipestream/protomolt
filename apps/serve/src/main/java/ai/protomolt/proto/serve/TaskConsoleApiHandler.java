@@ -8,12 +8,10 @@ import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.delegation.lifecycle.DelegationReducer;
 import ai.protomolt.proto.delegation.InProcessDelegationCoordinator;
 import ai.protomolt.proto.delegation.receipt.DelegationRecordProjector;
-import ai.protomolt.proto.delegation.contract.DeliverableContracts;
 import ai.protomolt.proto.delegation.v1.CheckpointReference;
 import ai.protomolt.proto.delegation.v1.DeliverableContract;
 import ai.protomolt.proto.delegation.v1.Transcript;
 import ai.protomolt.proto.delegation.v1.AcceptanceCheck;
-import ai.protomolt.proto.delegation.v1.DelegateResponse;
 import ai.protomolt.proto.delegation.v1.TaskSpec;
 import ai.protomolt.proto.delegation.v1.TaskMessageKind;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
@@ -25,7 +23,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.Timestamps;
@@ -33,17 +30,22 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
 import java.io.IOException;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
-/** Purpose-built, cookie-authenticated HTTP projection of the delegation transcript. */
+/**
+ * Purpose-built, cookie-authenticated HTTP projection of the delegation transcript.
+ *
+ * <p>The handler owns authorization, routing, and the status mapping, in that order: an
+ * unauthenticated request is a 401, an authenticated caller without
+ * {@link Scopes#WORKER_COORDINATE} is a 403, and only then does the route decide; a refused
+ * input is a 400 and a refused state transition a 409. Inbound decoding lives in
+ * {@link TaskConsoleRequests} and the transcript-to-JSON rendering in
+ * {@link TaskConsoleProjection}.
+ */
 final class TaskConsoleApiHandler implements HttpHandler {
 
     private static final String PREFIX = "/api/tasks";
@@ -112,65 +114,55 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private void listWorkers(HttpExchange exchange) throws IOException {
-        ArrayNode workers = JSON.createArrayNode();
-        for (InProcessDelegationCoordinator.WorkerView worker
-                : bridge.coordinator().workers()) {
-            ObjectNode node = workers.addObject();
-            node.put("workerId", worker.workerId());
-            node.put("admitted", worker.admitted());
-            node.put("connected", worker.connected());
-            node.put("provider", worker.hello().getProvider());
-            node.put("model", worker.hello().getModel());
-            ArrayNode capabilities = node.putArray("capabilities");
-            worker.hello().getCapabilitiesList().forEach(capability ->
-                    capabilities.add(capability.getName()));
-        }
-        ObjectNode response = JSON.createObjectNode();
-        response.set("workers", workers);
-        respondJson(exchange, 200, response);
+        respondJson(exchange, 200, TaskConsoleProjection.workersJson(bridge.coordinator()));
     }
 
     private void listTasks(HttpExchange exchange) throws IOException {
-        Projection projection = projection();
-        ObjectNode response = JSON.createObjectNode();
-        ArrayNode tasks = response.putArray("tasks");
-        projection.states().values().forEach(state ->
-                tasks.add(taskJson(state, projection.offers().get(state.taskId()),
-                        projection.lastCursors().getOrDefault(state.taskId(), 0L))));
-        response.put("cursor", projection.cursor());
-        response.set("findings", findingsJson(projection.reduced().findings()));
-        respondJson(exchange, 200, response);
+        respondJson(exchange, 200,
+                TaskConsoleProjection.tasksJson(TaskConsoleProjection.project(
+                        bridge.coordinator())));
     }
 
     private void taskRoute(HttpExchange exchange, String method, String rest)
             throws IOException {
-        String[] parts = rest.split("/", -1);
-        if (parts.length < 2 || parts[1].isBlank()) {
+        // rest is "/{taskId}" or "/{taskId}/{messages|review|review-retry|record|cancel}".
+        if (rest.length() < 2 || rest.charAt(0) != '/') {
             exchange.sendResponseHeaders(404, -1);
             return;
         }
-        String taskId = decodedUuid(parts[1]);
-        if (parts.length == 2 && "GET".equals(method)) {
-            taskDetail(exchange, taskId);
+        int slash = rest.indexOf('/', 1);
+        String idSegment = slash < 0 ? rest.substring(1) : rest.substring(1, slash);
+        if (idSegment.isBlank()) {
+            exchange.sendResponseHeaders(404, -1);
             return;
         }
-        if (parts.length == 3 && "messages".equals(parts[2]) && "POST".equals(method)) {
+        String taskId = TaskConsoleRequests.decodedUuid(idSegment);
+        if (slash < 0) {
+            if ("GET".equals(method)) {
+                taskDetail(exchange, taskId);
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            return;
+        }
+        String sub = rest.substring(slash + 1);
+        if ("messages".equals(sub) && "POST".equals(method)) {
             sendMessage(exchange, taskId);
             return;
         }
-        if (parts.length == 3 && "review".equals(parts[2]) && "POST".equals(method)) {
+        if ("review".equals(sub) && "POST".equals(method)) {
             review(exchange, taskId);
             return;
         }
-        if (parts.length == 3 && "review-retry".equals(parts[2]) && "POST".equals(method)) {
+        if ("review-retry".equals(sub) && "POST".equals(method)) {
             retryReview(exchange, taskId);
             return;
         }
-        if (parts.length == 3 && "record".equals(parts[2]) && "POST".equals(method)) {
+        if ("record".equals(sub) && "POST".equals(method)) {
             exportRecord(exchange, taskId);
             return;
         }
-        if (parts.length == 3 && "cancel".equals(parts[2]) && "POST".equals(method)) {
+        if ("cancel".equals(sub) && "POST".equals(method)) {
             cancelTask(exchange, taskId);
             return;
         }
@@ -178,34 +170,28 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private void taskDetail(HttpExchange exchange, String taskId) throws IOException {
-        Projection projection = projection();
+        TaskConsoleProjection.Projection projection =
+                TaskConsoleProjection.project(bridge.coordinator());
         DelegationReducer.TaskState state = projection.states().get(taskId);
         if (state == null) {
             respondError(exchange, 404, "unknown task");
             return;
         }
-        ObjectNode response = JSON.createObjectNode();
-        response.set("task", taskJson(state, projection.offers().get(taskId),
-                projection.lastCursors().getOrDefault(taskId, 0L)));
-        ArrayNode events = response.putArray("events");
-        bridge.coordinator().eventsAfter(taskId, 0).stream().limit(MAX_EVENTS)
-                .map(this::eventJson).forEach(events::add);
-        response.put("cursor", projection.cursor());
-        response.set("findings", findingsJson(projection.reduced().findings().stream()
-                .filter(finding -> taskId.equals(finding.taskId())).toList()));
-        respondJson(exchange, 200, response);
+        respondJson(exchange, 200, TaskConsoleProjection.taskDetailJson(bridge.coordinator(),
+                projection, taskId, state, MAX_EVENTS));
     }
 
     private void watchEvents(HttpExchange exchange) throws IOException {
-        Map<String, String> query = query(exchange);
-        long after = boundedLong(query.get("after"), 0, Long.MAX_VALUE, 0, "after");
-        int timeout = (int) boundedLong(query.get("timeoutMs"), 0, 30_000, 25_000,
-                "timeoutMs");
-        int max = (int) boundedLong(query.get("maxEvents"), 1, MAX_EVENTS, 64,
-                "maxEvents");
+        Map<String, String> query = TaskConsoleRequests.query(exchange);
+        long after = TaskConsoleRequests.boundedLong(query.get("after"), 0, Long.MAX_VALUE, 0,
+                "after");
+        int timeout = (int) TaskConsoleRequests.boundedLong(query.get("timeoutMs"), 0, 30_000,
+                25_000, "timeoutMs");
+        int max = (int) TaskConsoleRequests.boundedLong(query.get("maxEvents"), 1, MAX_EVENTS,
+                64, "maxEvents");
         String taskId = query.getOrDefault("taskId", "");
         if (!taskId.isBlank()) {
-            taskId = decodedUuid(taskId);
+            taskId = TaskConsoleRequests.decodedUuid(taskId);
         }
         List<InProcessDelegationCoordinator.Event> events =
                 bridge.coordinator().eventsAfter(taskId, after);
@@ -221,7 +207,8 @@ final class TaskConsoleApiHandler implements HttpHandler {
         }
         ObjectNode response = JSON.createObjectNode();
         ArrayNode result = response.putArray("events");
-        events.stream().limit(max).map(this::eventJson)
+        events.stream().limit(max)
+                .map(event -> TaskConsoleProjection.eventJson(bridge.coordinator(), event))
                 .forEach(result::add);
         long cursor = events.stream().limit(max).mapToLong(
                 InProcessDelegationCoordinator.Event::cursor).max().orElse(after);
@@ -231,28 +218,20 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private void sendMessage(HttpExchange exchange, String taskId) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
-        if (body == null) {
+        JsonNode parsed = TaskConsoleRequests.readObjectBody(exchange, MAX_BODY_BYTES, "message");
+        if (parsed == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
         }
-        JsonNode parsed;
-        try {
-            parsed = JSON.readTree(body);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("invalid JSON");
-        }
-        if (parsed == null || !parsed.isObject()) {
-            throw new IllegalArgumentException("message body must be a JSON object");
-        }
-        String recipient = requiredText(parsed, "recipient", 128);
-        String text = requiredText(parsed, "text", 16_384);
-        String replyTo = optionalText(parsed, "replyTo", 128);
-        TaskMessageKind kind = messageKind(requiredText(parsed, "kind", 32));
+        String recipient = TaskConsoleRequests.requiredText(parsed, "recipient", 128);
+        String text = TaskConsoleRequests.requiredText(parsed, "text", 16_384);
+        String replyTo = TaskConsoleRequests.optionalText(parsed, "replyTo", 128);
+        TaskMessageKind kind = TaskConsoleRequests.messageKind(
+                TaskConsoleRequests.requiredText(parsed, "kind", 32));
         var message = bridge.sendCoordinatorMessage(recipient, taskId, kind, text,
                 replyTo, List.of());
         ObjectNode response = JSON.createObjectNode();
-        response.set("message", protoJson(message));
+        response.set("message", TaskConsoleProjection.protoJson(message));
         respondJson(exchange, 201, response);
     }
 
@@ -263,23 +242,15 @@ final class TaskConsoleApiHandler implements HttpHandler {
      * like any other protocol fact.
      */
     private void offerTask(HttpExchange exchange) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_OFFER_BYTES);
-        if (body == null) {
+        JsonNode parsed = TaskConsoleRequests.readObjectBody(exchange, MAX_OFFER_BYTES, "offer");
+        if (parsed == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
         }
-        JsonNode parsed;
-        try {
-            parsed = JSON.readTree(body);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("invalid JSON");
-        }
-        if (parsed == null || !parsed.isObject()) {
-            throw new IllegalArgumentException("offer body must be a JSON object");
-        }
-        String workerId = requiredText(parsed, "workerId", 128);
-        String requestedId = optionalText(parsed, "taskId", 36);
-        String taskId = requestedId.isBlank() ? UUID.randomUUID().toString() : decodedUuid(requestedId);
+        String workerId = TaskConsoleRequests.requiredText(parsed, "workerId", 128);
+        String requestedId = TaskConsoleRequests.optionalText(parsed, "taskId", 36);
+        String taskId = requestedId.isBlank() ? UUID.randomUUID().toString()
+                : TaskConsoleRequests.decodedUuid(requestedId);
         TaskSpec previous = TaskSpec.getDefaultInstance();
         if (!requestedId.isBlank()) {
             if (!bridge.coordinator().state().tasks().containsKey(taskId)) {
@@ -294,7 +265,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
         // Retain protocol fields the bounded form cannot edit (constraints/context).
         TaskSpec.Builder spec = TaskSpec.newBuilder()
                 .mergeFrom(previous).clearAllowedScope().clearRequiredChecks().clearContract()
-                .setObjective(requiredText(parsed, "objective", 4096));
+                .setObjective(TaskConsoleRequests.requiredText(parsed, "objective", 4096));
         JsonNode contract = parsed.get("contract");
         if (contract != null && !contract.isNull()) {
             if (!contract.isObject() || contract.has("jsonSchema")) {
@@ -304,7 +275,8 @@ final class TaskConsoleApiHandler implements HttpHandler {
             byte[] descriptor;
             try {
                 descriptor = java.util.Base64.getDecoder().decode(
-                        requiredText(contract, "descriptorSet", MAX_OFFER_BYTES));
+                        TaskConsoleRequests.requiredText(contract, "descriptorSet",
+                                MAX_OFFER_BYTES));
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("contract.descriptorSet must be base64 descriptor bytes");
             }
@@ -313,7 +285,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
             }
             spec.setContract(DeliverableContract.newBuilder()
                     .setDescriptorSet(ByteString.copyFrom(descriptor))
-                    .setTypeName(requiredText(contract, "typeName", 512)));
+                    .setTypeName(TaskConsoleRequests.requiredText(contract, "typeName", 512)));
         }
         JsonNode scopes = parsed.get("allowedScopes");
         if (scopes != null && !scopes.isNull()) {
@@ -342,11 +314,13 @@ final class TaskConsoleApiHandler implements HttpHandler {
                             "each required check is an object with 'name' and 'description'");
                 }
                 spec.addRequiredChecks(AcceptanceCheck.newBuilder()
-                        .setName(requiredText(check, "name", 128))
-                        .setDescription(optionalText(check, "description", 2048)));
+                        .setName(TaskConsoleRequests.requiredText(check, "name", 128))
+                        .setDescription(TaskConsoleRequests.optionalText(check, "description",
+                                2048)));
             }
         }
-        long leaseMinutes = boundedLong(parsed.path("leaseMinutes").isMissingNode()
+        long leaseMinutes = TaskConsoleRequests.boundedLong(
+                parsed.path("leaseMinutes").isMissingNode()
                         || parsed.path("leaseMinutes").isNull() ? null
                         : parsed.path("leaseMinutes").asText(),
                 1, 24 * 60, 30, "leaseMinutes");
@@ -357,9 +331,11 @@ final class TaskConsoleApiHandler implements HttpHandler {
                 throw new IllegalArgumentException("resumeFrom requires an existing taskId and checkpoint object");
             }
             resumeFrom = CheckpointReference.newBuilder()
-                    .setAttempt(requiredPositiveInt(resume, "attempt"))
-                    .setCheckpointSeq(requiredPositiveInt(resume, "checkpointSeq"))
-                    .setResumeToken(requiredText(resume, "resumeToken", 512)).build();
+                    .setAttempt(TaskConsoleRequests.requiredPositiveInt(resume, "attempt"))
+                    .setCheckpointSeq(TaskConsoleRequests.requiredPositiveInt(resume,
+                            "checkpointSeq"))
+                    .setResumeToken(TaskConsoleRequests.requiredText(resume, "resumeToken",
+                            512)).build();
         }
         TaskOffer offer = bridge.offer(workerId, taskId, spec.build(),
                 Duration.ofMinutes(leaseMinutes), resumeFrom);
@@ -371,21 +347,12 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private void cancelTask(HttpExchange exchange, String taskId) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
-        if (body == null) {
+        JsonNode parsed = TaskConsoleRequests.readObjectBody(exchange, MAX_BODY_BYTES, "cancel");
+        if (parsed == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
         }
-        JsonNode parsed;
-        try {
-            parsed = JSON.readTree(body);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("invalid JSON");
-        }
-        if (parsed == null || !parsed.isObject()) {
-            throw new IllegalArgumentException("cancel body must be a JSON object");
-        }
-        bridge.cancel(taskId, requiredText(parsed, "reason", 2048));
+        bridge.cancel(taskId, TaskConsoleRequests.requiredText(parsed, "reason", 2048));
         respondJson(exchange, 200, JSON.createObjectNode().put("taskId", taskId));
     }
 
@@ -432,31 +399,23 @@ final class TaskConsoleApiHandler implements HttpHandler {
      * without a reason is not one the transcript can defend later.
      */
     private void review(HttpExchange exchange, String taskId) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
-        if (body == null) {
+        JsonNode parsed = TaskConsoleRequests.readObjectBody(exchange, MAX_BODY_BYTES, "review");
+        if (parsed == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
         }
-        JsonNode parsed;
-        try {
-            parsed = JSON.readTree(body);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("invalid JSON");
-        }
-        if (parsed == null || !parsed.isObject()) {
-            throw new IllegalArgumentException("review body must be a JSON object");
-        }
-        String decision = requiredText(parsed, "decision", 16);
+        String decision = TaskConsoleRequests.requiredText(parsed, "decision", 16);
         CandidateReviewer.ReviewDecision applied = switch (decision) {
             case "accept" -> CandidateReviewer.ReviewDecision.accept(
-                    requiredText(parsed, "verdict", 4096));
+                    TaskConsoleRequests.requiredText(parsed, "verdict", 4096));
             case "revise" -> CandidateReviewer.ReviewDecision.revise(
-                    requiredText(parsed, "feedback", 4096), failedChecks(parsed));
+                    TaskConsoleRequests.requiredText(parsed, "feedback", 4096),
+                    TaskConsoleRequests.failedChecks(parsed));
             default -> throw new IllegalArgumentException(
                     "decision must be 'accept' or 'revise'");
         };
-        int attempt = requiredPositiveInt(parsed, "attempt");
-        int revision = requiredPositiveInt(parsed, "revision");
+        int attempt = TaskConsoleRequests.requiredPositiveInt(parsed, "attempt");
+        int revision = TaskConsoleRequests.requiredPositiveInt(parsed, "revision");
         bridge.review(taskId, attempt, revision, applied);
         DelegationReducer.TaskState state = bridge.coordinator().state().tasks().get(taskId);
         ObjectNode response = JSON.createObjectNode();
@@ -467,7 +426,7 @@ final class TaskConsoleApiHandler implements HttpHandler {
     }
 
     private void retryReview(HttpExchange exchange, String taskId) throws IOException {
-        byte[] body = BoundedBodies.read(exchange.getRequestBody(), MAX_BODY_BYTES);
+        byte[] body = TaskConsoleRequests.readBody(exchange, MAX_BODY_BYTES);
         if (body == null) {
             exchange.sendResponseHeaders(413, -1);
             return;
@@ -486,211 +445,6 @@ final class TaskConsoleApiHandler implements HttpHandler {
         respondJson(exchange, 200, JSON.readTree(PROTO_JSON.print(response)));
     }
 
-    private static int requiredPositiveInt(JsonNode parsed, String name) {
-        JsonNode value = parsed.get(name);
-        if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()
-                || value.intValue() < 1) {
-            throw new IllegalArgumentException(name + " must be a positive 32-bit integer");
-        }
-        return value.intValue();
-    }
-
-    private static List<String> failedChecks(JsonNode parsed) {
-        JsonNode named = parsed.get("failedChecks");
-        if (named == null || named.isNull()) {
-            return List.of();
-        }
-        if (!named.isArray() || named.size() > 64) {
-            throw new IllegalArgumentException(
-                    "failedChecks must be an array of at most 64 check names");
-        }
-        List<String> checks = new java.util.ArrayList<>(named.size());
-        for (JsonNode check : named) {
-            if (!check.isTextual() || check.asText().isBlank()
-                    || check.asText().length() > 128) {
-                throw new IllegalArgumentException(
-                        "each failed check is a non-empty name of at most 128 characters");
-            }
-            checks.add(check.asText());
-        }
-        return List.copyOf(checks);
-    }
-
-    private Projection projection() {
-        var coordinator = bridge.coordinator();
-        DelegationReducer.Result reduced = coordinator.state();
-        Map<String, OfferView> offers = new LinkedHashMap<>();
-        Map<String, Long> lastCursors = new HashMap<>();
-        long cursor = 0;
-        for (InProcessDelegationCoordinator.Event event : coordinator.eventsAfter("", 0)) {
-            cursor = Math.max(cursor, event.cursor());
-            if (!event.taskId().isBlank()) {
-                lastCursors.put(event.taskId(), event.cursor());
-            }
-            TranscriptEntry entry = event.entry();
-            if (entry.hasCoordinatorFrame()) {
-                DelegateResponse frame = entry.getCoordinatorFrame();
-                if (frame.hasOffer()) {
-                    offers.put(frame.getTaskId(), new OfferView(entry.getWorkerId(),
-                            frame.getOffer()));
-                }
-            }
-        }
-        return new Projection(reduced, offers, lastCursors, cursor);
-    }
-
-    private static ObjectNode taskJson(DelegationReducer.TaskState state, OfferView offer,
-                                       long lastCursor) {
-        ObjectNode node = JSON.createObjectNode();
-        node.put("taskId", state.taskId());
-        node.put("phase", state.phase().name().toLowerCase(Locale.ROOT));
-        node.put("attempt", state.attempt());
-        node.put("workerId", offer == null ? state.holder() : offer.workerId());
-        node.put("objective", offer == null ? "" : offer.offer().getSpec().getObjective());
-        node.put("candidateRevision", state.candidateRevision());
-        node.put("lastProgressSeq", state.lastProgressSeq());
-        node.put("lastCheckpointSeq", state.lastCheckpointSeq());
-        node.put("lastCursor", lastCursor);
-        var review = state.review();
-        ObjectNode reviewJson = node.putObject("review");
-        reviewJson.put("status", review.status().name().toLowerCase(Locale.ROOT));
-        if (review.started().hasIdentity()) {
-            var identity = review.started().getIdentity();
-            reviewJson.put("invocationId", identity.getInvocationId());
-            reviewJson.put("attempt", identity.getAttempt());
-            reviewJson.put("revision", identity.getRevision());
-            reviewJson.put("startedAt", Timestamps.toString(review.started().getStartedAt()));
-            reviewJson.put("deadline", Timestamps.toString(review.started().getDeadline()));
-        }
-        if (review.failureCode().getNumber() != 0) {
-            reviewJson.put("failureCode", review.failureCode().name()
-                    .replace("REVIEW_FAILURE_CODE_", "").toLowerCase(Locale.ROOT));
-        }
-        return node;
-    }
-
-    private static ArrayNode findingsJson(List<DelegationReducer.Finding> findings) {
-        ArrayNode result = JSON.createArrayNode();
-        findings.forEach(finding -> {
-            ObjectNode node = result.addObject();
-            node.put("taskId", finding.taskId());
-            node.put("frameId", finding.frameId());
-            node.put("kind", finding.kind());
-            node.put("error", finding.error());
-        });
-        return result;
-    }
-
-    private ObjectNode eventJson(InProcessDelegationCoordinator.Event event) {
-        ObjectNode node = JSON.createObjectNode();
-        node.put("cursor", event.cursor());
-        node.put("workerId", event.workerId());
-        node.put("taskId", event.taskId());
-        node.put("lane", event.entry().getLane().name());
-        // Resolve Any against the offer that preceded this event, not a global registry:
-        // callers may reuse a type name in different tasks or later attempts.
-        JsonFormat.Printer printer = PROTO_JSON;
-        DeliverableContract contract = null;
-        for (var prior : bridge.coordinator().eventsAfter(event.taskId(), 0)) {
-            if (prior.cursor() > event.cursor()) break;
-            if (prior.entry().hasCoordinatorFrame()
-                    && prior.entry().getCoordinatorFrame().hasOffer()) {
-                var spec = prior.entry().getCoordinatorFrame().getOffer().getSpec();
-                contract = spec.hasContract() ? spec.getContract() : null;
-            }
-        }
-        if (contract != null) {
-            printer = printer.usingTypeRegistry(DeliverableContracts.typeRegistry(contract));
-        }
-        node.set("entry", protoJson(event.entry(), printer));
-        return node;
-    }
-
-    private static JsonNode protoJson(com.google.protobuf.Message message) {
-        return protoJson(message, PROTO_JSON);
-    }
-
-    private static JsonNode protoJson(com.google.protobuf.Message message, JsonFormat.Printer printer) {
-        try {
-            return JSON.readTree(printer.print(message));
-        } catch (InvalidProtocolBufferException e) {
-            throw new IllegalStateException("could not render delegation event", e);
-        } catch (IOException e) {
-            throw new IllegalStateException("could not parse rendered delegation event", e);
-        }
-    }
-
-    private static TaskMessageKind messageKind(String value) {
-        return switch (value.toLowerCase(Locale.ROOT)) {
-            case "question" -> TaskMessageKind.TASK_MESSAGE_KIND_QUESTION;
-            case "answer" -> TaskMessageKind.TASK_MESSAGE_KIND_ANSWER;
-            case "guidance" -> TaskMessageKind.TASK_MESSAGE_KIND_GUIDANCE;
-            case "note" -> TaskMessageKind.TASK_MESSAGE_KIND_NOTE;
-            default -> throw new IllegalArgumentException(
-                    "kind must be question, answer, guidance, or note");
-        };
-    }
-
-    private static String requiredText(JsonNode object, String field, int maxLength) {
-        String value = optionalText(object, field, maxLength);
-        if (value.isBlank()) {
-            throw new IllegalArgumentException(field + " is required");
-        }
-        return value;
-    }
-
-    private static String optionalText(JsonNode object, String field, int maxLength) {
-        JsonNode node = object.get(field);
-        if (node == null || node.isNull()) {
-            return "";
-        }
-        if (!node.isTextual() || node.asText().length() > maxLength) {
-            throw new IllegalArgumentException(field + " must be a bounded string");
-        }
-        return node.asText();
-    }
-
-    private static String decodedUuid(String value) {
-        String decoded = URLDecoder.decode(value, StandardCharsets.UTF_8);
-        try {
-            return UUID.fromString(decoded).toString();
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("task id must be a UUID");
-        }
-    }
-
-    private static Map<String, String> query(HttpExchange exchange) {
-        Map<String, String> result = new HashMap<>();
-        String raw = exchange.getRequestURI().getRawQuery();
-        if (raw == null || raw.isBlank()) {
-            return result;
-        }
-        for (String pair : raw.split("&")) {
-            int equals = pair.indexOf('=');
-            String name = equals < 0 ? pair : pair.substring(0, equals);
-            String value = equals < 0 ? "" : pair.substring(equals + 1);
-            result.put(URLDecoder.decode(name, StandardCharsets.UTF_8),
-                    URLDecoder.decode(value, StandardCharsets.UTF_8));
-        }
-        return result;
-    }
-
-    private static long boundedLong(String value, long minimum, long maximum,
-                                    long fallback, String name) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            long parsed = Long.parseLong(value);
-            if (parsed < minimum || parsed > maximum) {
-                throw new IllegalArgumentException(name + " is outside its allowed range");
-            }
-            return parsed;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(name + " must be an integer");
-        }
-    }
-
     private static void respondJson(HttpExchange exchange, int status, JsonNode json)
             throws IOException {
         byte[] body = JSON.writeValueAsBytes(json);
@@ -704,19 +458,5 @@ final class TaskConsoleApiHandler implements HttpHandler {
         ObjectNode body = JSON.createObjectNode();
         body.put("error", message == null || message.isBlank() ? "request failed" : message);
         respondJson(exchange, status, body);
-    }
-
-    private record OfferView(String workerId, TaskOffer offer) {
-    }
-
-    private record Projection(DelegationReducer.Result reduced,
-                              Map<String, OfferView> offers,
-                              Map<String, Long> lastCursors,
-                              long cursor) {
-
-        /** Derived, not stored: the task states are the reduction's own, always. */
-        Map<String, DelegationReducer.TaskState> states() {
-            return reduced.tasks();
-        }
     }
 }
