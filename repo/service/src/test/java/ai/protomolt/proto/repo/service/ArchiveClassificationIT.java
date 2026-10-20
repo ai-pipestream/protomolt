@@ -86,7 +86,7 @@ class ArchiveClassificationIT {
                 LOCALSTACK.getSecretKey(),
                 "it-classify",
                 0,
-                null, null, null, null, 0, 0L);
+                null, null, 0, 0L);
         services = RepoServices.build(config);
         services.startInProcess("classify-it");
         channel = InProcessChannelBuilder.forName("classify-it").build();

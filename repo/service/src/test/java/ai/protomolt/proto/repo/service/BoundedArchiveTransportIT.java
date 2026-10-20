@@ -82,7 +82,7 @@ class BoundedArchiveTransportIT {
             var config = new RepoServiceConfig(0,
                     new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                     "http://127.0.0.1:1", "us-east-1", "unused", "unused", "bounded-transport", 0,
-                    "redis", null, null, "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024)
+                    "redis", "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024)
                     .withManagedStorage(new ManagedStoragePolicy("bounded-transport", "bounded-realm", true));
             var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(16, 2048, 4), budget, 1,
                     new ai.protomolt.proto.repo.engine.ArchiveGetAdmission.Limits(16, responseLimit, 4, manifestLimit));

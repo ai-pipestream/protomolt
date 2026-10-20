@@ -135,7 +135,7 @@ class BoundedArchiveRedisReplyIT {
                 var sql = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
             var config = new RepoServiceConfig(0,
                     new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                    null, "us-east-1", null, null, "reply-gate", 0, "redis", null, null, gate.uri(), 0, 1024)
+                    null, "us-east-1", null, null, "reply-gate", 0, "redis", gate.uri(), 0, 1024)
                     .withManagedStorage(new ManagedStoragePolicy("reply-gate", "reply-realm", true));
             var profile = new BoundedArchiveProfile(new ArchivePutAdmission.Limits(1024, 2048, 4), budget, 1);
             try (var host = new RepoServices(config, BridgeEngine.standard(), BlobStores.discover(), profile)) {

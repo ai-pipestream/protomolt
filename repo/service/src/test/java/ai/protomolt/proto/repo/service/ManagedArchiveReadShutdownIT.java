@@ -78,7 +78,7 @@ class ManagedArchiveReadShutdownIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
-                "read-shutdown", 0, null, null, null, null, 0, 0L)
+                "read-shutdown", 0, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("read-shutdown", "shutdown-realm", true));
         var host = new RepoServices(config, BridgeEngine.standard(), decorated);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {

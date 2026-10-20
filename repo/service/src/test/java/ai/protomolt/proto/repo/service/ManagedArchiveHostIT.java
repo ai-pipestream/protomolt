@@ -28,7 +28,7 @@ class ManagedArchiveHostIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
-                "managed-host", 0, null, null, null, null, 0, 0L)
+                "managed-host", 0, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("host-original", "host-realm", true));
         String token = UUID.randomUUID().toString();
         String operation = UUID.randomUUID().toString();
@@ -82,7 +82,7 @@ class ManagedArchiveHostIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
-                "managed-host", 0, null, null, null, null, 0, 0L)
+                "managed-host", 0, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("host-original", "host-realm", true));
         try (var occupied = new java.net.ServerSocket(0); var host = RepoServices.build(config)) {
             var failure = catchThrowable(() -> host.startNetty(occupied.getLocalPort(), "synthetic-operator-key", null));
@@ -98,7 +98,7 @@ class ManagedArchiveHostIT {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 S3.getEndpoint().toString(), S3.getRegion(), S3.getAccessKey(), S3.getSecretKey(),
-                "replica-host", 0, null, null, null, null, 0, 0L)
+                "replica-host", 0, null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy("replica-original", "replica-realm", true));
         String account = "replica-" + UUID.randomUUID();
         String token = UUID.randomUUID().toString();

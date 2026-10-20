@@ -37,18 +37,10 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        {@code RepoServices.startHttp(0, token)} directly)
  * @param blobStore which {@code BlobStore} implementation backs the services
  *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
- *        direct object-storage path), {@code "repo"} (delegate bytes to
- *        another repo-service over gRPC at {@code repoTarget}),
- *        {@code "repo-inprocess"} (same, over the in-process transport —
- *        {@code repoTarget} is the in-process server name), {@code "redis"}
+ *        direct object-storage path), {@code "redis"}
  *        (objects live in Redis at {@code redisUri}), or
  *        {@code "s3-redis-cache"} (S3 of record with a Redis read-through/
  *        write-through cache in front)
- * @param repoTarget the remote repo-service address
- *        ({@code DOCUMENT_PLATFORM_REPO_TARGET}, {@code host:port} for
- *        {@code "repo"}, an in-process server name for
- *        {@code "repo-inprocess"}); required for both {@code repo} modes
- * @param repoDrive legacy constructor field retained for configuration compatibility
  * @param redisUri the Redis connection URI
  *        ({@code DOCUMENT_PLATFORM_REDIS_URI}, default
  *        {@code redis://localhost:6379}) — used by the {@code redis} and
@@ -108,7 +100,6 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC}, default
  *        {@code "document-purges"}); used only when {@code purgeQueue} is
  *        {@code "kafka"}
- * @param repoBucketBindings explicit local bucket to remote drive map for remote modes
  * @param s3ConditionalWrites explicitly enable conditional S3 writes only for a
  *        qualified backing endpoint ({@code DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES},
  *        default false)
@@ -128,8 +119,6 @@ public record RepoServiceConfig(
         String defaultBucketBase,
         int httpPort,
         String blobStore,
-        String repoTarget,
-        String repoDrive,
         String redisUri,
         int redisTtlSeconds,
         long redisMaxObjectBytes,
@@ -146,7 +135,6 @@ public record RepoServiceConfig(
         String purgeQueue,
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
-        java.util.Map<String, String> repoBucketBindings,
         ManagedStoragePolicy managedStorage,
         long readBudgetBytes) {
 
@@ -161,8 +149,6 @@ public record RepoServiceConfig(
         String defaultBucketBase,
         int httpPort,
         String blobStore,
-        String repoTarget,
-        String repoDrive,
         String redisUri,
         int redisTtlSeconds,
         long redisMaxObjectBytes,
@@ -179,9 +165,8 @@ public record RepoServiceConfig(
         String purgeQueue,
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
-        java.util.Map<String, String> repoBucketBindings,
         ManagedStoragePolicy managedStorage) {
-        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, managedStorage, DEFAULT_READ_BUDGET_BYTES);
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, managedStorage, DEFAULT_READ_BUDGET_BYTES);
     }
 
     /** Compatibility constructor: managed ingestion requires separate explicit qualification. */
@@ -195,46 +180,6 @@ public record RepoServiceConfig(
         String defaultBucketBase,
         int httpPort,
         String blobStore,
-        String repoTarget,
-        String repoDrive,
-        String redisUri,
-        int redisTtlSeconds,
-        long redisMaxObjectBytes,
-        boolean lifecycleEnabled,
-        long purgeIntervalMs,
-        long sweepIntervalMs,
-        boolean reconcileEnabled,
-        boolean reconcileDryRun,
-        long reconcileMinAgeMs,
-        String kafkaBootstrapServers,
-        String kafkaTopic,
-        String schemaRegistryUrl,
-        String seedAccountId,
-        String purgeQueue,
-        String kafkaPurgeTopic,
-        boolean s3ConditionalWrites,
-        java.util.Map<String, String> repoBucketBindings) {
-        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, ManagedStoragePolicy.disabled());
-    }
-
-    public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, policy, readBudgetBytes);
-    }
-
-
-    /** Compatibility constructor; remote mode requires explicit bindings before startup. */
-    public RepoServiceConfig(
-        int grpcPort,
-        LedgerConfig ledger,
-        String s3Endpoint,
-        String s3Region,
-        String s3AccessKey,
-        String s3SecretKey,
-        String defaultBucketBase,
-        int httpPort,
-        String blobStore,
-        String repoTarget,
-        String repoDrive,
         String redisUri,
         int redisTtlSeconds,
         long redisMaxObjectBytes,
@@ -251,13 +196,13 @@ public record RepoServiceConfig(
         String purgeQueue,
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites) {
-        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, java.util.Map.of());
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, ManagedStoragePolicy.disabled());
     }
 
-    /** Copies this configuration with explicit local-bucket to remote-drive bindings. */
-    public RepoServiceConfig withRepoBucketBindings(java.util.Map<String, String> bindings) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings, managedStorage, readBudgetBytes);
+    public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, policy, readBudgetBytes);
     }
+
 
     /** Environment variable for the gRPC listen port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_GRPC_PORT";
@@ -277,10 +222,6 @@ public record RepoServiceConfig(
     public static final String ENV_HTTP_PORT = "DOCUMENT_PLATFORM_HTTP_PORT";
     /** Environment variable selecting the BlobStore implementation. */
     public static final String ENV_BLOB_STORE = "DOCUMENT_PLATFORM_BLOB_STORE";
-    /** Environment variable for the remote repo-service target (repo blob-store modes). */
-    public static final String ENV_REPO_TARGET = "DOCUMENT_PLATFORM_REPO_TARGET";
-    /** Environment variable for the drive the repo-backed store addresses remotely. */
-    public static final String ENV_REPO_DRIVE = "DOCUMENT_PLATFORM_REPO_DRIVE";
     /** Environment variable for the Redis connection URI (redis blob-store modes). */
     public static final String ENV_REDIS_URI = "DOCUMENT_PLATFORM_REDIS_URI";
     /** Environment variable for the Redis per-object TTL in seconds. */
@@ -331,15 +272,14 @@ public record RepoServiceConfig(
     static final int DEFAULT_HTTP_PORT = 8080;
     /** Blob-store selection value: direct S3 object storage (the default). */
     public static final String BLOB_STORE_S3 = "s3";
-    /** Blob-store selection value: a remote repo-service over gRPC. */
+    /** Retired blob-store value, retained only to report an explicit configuration error. */
     public static final String BLOB_STORE_REPO = "repo";
-    /** Blob-store selection value: a remote repo-service over the in-process transport. */
+    /** Retired in-process blob-store value, retained only for explicit refusal. */
     public static final String BLOB_STORE_REPO_INPROCESS = "repo-inprocess";
     /** Blob-store selection value: objects live in Redis. */
     public static final String BLOB_STORE_REDIS = "redis";
     /** Blob-store selection value: S3 of record with a Redis cache in front. */
     public static final String BLOB_STORE_S3_REDIS_CACHE = "s3-redis-cache";
-    static final String DEFAULT_REPO_DRIVE = "default";
     static final String DEFAULT_REDIS_URI = "redis://localhost:6379";
     static final int DEFAULT_REDIS_TTL_SECONDS = 3600;
     static final long DEFAULT_REDIS_MAX_OBJECT_BYTES = 8388608L;
@@ -361,15 +301,15 @@ public record RepoServiceConfig(
     public static final long DEFAULT_READ_BUDGET_BYTES = 256L * 1024 * 1024;
 
     /**
-     * Compatibility constructor: the 14 pre-lifecycle components, with the
+     * Compatibility constructor: the pre-lifecycle components, with the
      * lifecycle and eventing settings at their defaults.
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
                 DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
                 DEFAULT_RECONCILE_MIN_AGE_MS);
@@ -378,10 +318,10 @@ public record RepoServiceConfig(
     /** Embedding constructor for a specifically qualified conditional S3 endpoint. */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean s3ConditionalWrites) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, DEFAULT_LIFECYCLE_ENABLED, DEFAULT_PURGE_INTERVAL_MS,
                 DEFAULT_SWEEP_INTERVAL_MS, DEFAULT_RECONCILE_ENABLED, DEFAULT_RECONCILE_DRY_RUN,
                 DEFAULT_RECONCILE_MIN_AGE_MS, null, DEFAULT_KAFKA_TOPIC, null, null,
@@ -391,86 +331,86 @@ public record RepoServiceConfig(
     /** Compatibility constructor: conditional S3 writes remain off by default. */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
             long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
             boolean reconcileDryRun, long reconcileMinAgeMs, String kafkaBootstrapServers,
             String kafkaTopic, String schemaRegistryUrl, String seedAccountId,
             String purgeQueue, String kafkaPurgeTopic) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
                 kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, false);
     }
 
     /**
-     * Compatibility constructor: the 20 pre-eventing components, with Kafka
+     * Compatibility constructor: the pre-eventing components, with Kafka
      * eventing off (no bootstrap servers).
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
             long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
             boolean reconcileDryRun, long reconcileMinAgeMs) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, null, DEFAULT_KAFKA_TOPIC);
     }
 
     /**
-     * Compatibility constructor: the 22 pre-schema-registry components, with
+     * Compatibility constructor: the pre-schema-registry components, with
      * the relay registry-free (no schema registry URL; frames stamp schema
      * id 0).
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
             long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
             boolean reconcileDryRun, long reconcileMinAgeMs,
             String kafkaBootstrapServers, String kafkaTopic) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
                 kafkaTopic, null);
     }
 
     /**
-     * Compatibility constructor: the 24 pre-seed-account components, with no
+     * Compatibility constructor: the pre-seed-account components, with no
      * seeded default account (no boot-time drive seeding).
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
             long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
             boolean reconcileDryRun, long reconcileMinAgeMs,
             String kafkaBootstrapServers, String kafkaTopic, String schemaRegistryUrl) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
                 kafkaTopic, schemaRegistryUrl, null);
     }
 
     /**
-     * Compatibility constructor: the 25 pre-purge-queue components, with the
+     * Compatibility constructor: the pre-purge-queue components, with the
      * JDBC purge queue (the default; no Kafka claim distribution).
      */
     public RepoServiceConfig(int grpcPort, LedgerConfig ledger, String s3Endpoint, String s3Region,
             String s3AccessKey, String s3SecretKey, String defaultBucketBase, int httpPort,
-            String blobStore, String repoTarget, String repoDrive, String redisUri,
+            String blobStore, String redisUri,
             int redisTtlSeconds, long redisMaxObjectBytes, boolean lifecycleEnabled,
             long purgeIntervalMs, long sweepIntervalMs, boolean reconcileEnabled,
             boolean reconcileDryRun, long reconcileMinAgeMs,
             String kafkaBootstrapServers, String kafkaTopic, String schemaRegistryUrl,
             String seedAccountId) {
         this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase,
-                httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds,
+                httpPort, blobStore, redisUri, redisTtlSeconds,
                 redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs,
                 reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers,
                 kafkaTopic, schemaRegistryUrl, seedAccountId, PURGE_QUEUE_JDBC,
@@ -479,13 +419,6 @@ public record RepoServiceConfig(
 
     public RepoServiceConfig {
         java.util.Objects.requireNonNull(managedStorage, "managedStorage");
-        repoBucketBindings = java.util.Map.copyOf(repoBucketBindings);
-        var remoteTargets = new java.util.HashSet<String>();
-        for (var binding : repoBucketBindings.entrySet()) {
-            if (binding.getKey().isBlank() || binding.getValue().isBlank()
-                    || !remoteTargets.add(binding.getValue()))
-                throw new IllegalArgumentException("Remote bucket bindings must be nonblank and one-to-one");
-        }
         if (grpcPort < 0) {
             grpcPort = DEFAULT_GRPC_PORT;
         }
@@ -512,29 +445,19 @@ public record RepoServiceConfig(
             blobStore = BLOB_STORE_S3;
         }
         blobStore = blobStore.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!blobStore.equals(BLOB_STORE_S3) && !blobStore.equals(BLOB_STORE_REPO)
-                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS)
+        if (blobStore.equals(BLOB_STORE_REPO) || blobStore.equals(BLOB_STORE_REPO_INPROCESS)) {
+            throw new IllegalArgumentException("Remote repository blob storage is retired: " + blobStore);
+        }
+        if (!blobStore.equals(BLOB_STORE_S3)
                 && !blobStore.equals(BLOB_STORE_REDIS)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_BLOB_STORE
-                    + " must be one of s3|repo|repo-inprocess|redis|s3-redis-cache");
+                    + " must be one of s3|redis|s3-redis-cache");
         }
         if (s3ConditionalWrites && !blobStore.equals(BLOB_STORE_S3)
                 && !blobStore.equals(BLOB_STORE_S3_REDIS_CACHE)) {
             throw new IllegalArgumentException(ENV_S3_CONDITIONAL_WRITES
                     + " requires s3 or s3-redis-cache backing storage");
-        }
-        if (!repoBucketBindings.isEmpty() && !blobStore.equals(BLOB_STORE_REPO)
-                && !blobStore.equals(BLOB_STORE_REPO_INPROCESS))
-            throw new IllegalArgumentException("Remote bucket bindings require a remote storage mode");
-        repoTarget = blankToNull(repoTarget);
-        if ((blobStore.equals(BLOB_STORE_REPO) || blobStore.equals(BLOB_STORE_REPO_INPROCESS))
-                && repoTarget == null) {
-            throw new IllegalArgumentException(ENV_REPO_TARGET + " is required when " + ENV_BLOB_STORE
-                    + "=" + blobStore);
-        }
-        if (repoDrive == null || repoDrive.isBlank()) {
-            repoDrive = DEFAULT_REPO_DRIVE;
         }
         if (redisUri == null || redisUri.isBlank()) {
             redisUri = DEFAULT_REDIS_URI;
@@ -623,8 +546,6 @@ public record RepoServiceConfig(
                 env.text(ENV_DEFAULT_BUCKET_BASE, DEFAULT_BUCKET_BASE),
                 env.httpPort(ENV_HTTP_PORT, DEFAULT_HTTP_PORT),
                 env.text(ENV_BLOB_STORE, BLOB_STORE_S3),
-                environment.get(ENV_REPO_TARGET),
-                env.text(ENV_REPO_DRIVE, DEFAULT_REPO_DRIVE),
                 env.text(ENV_REDIS_URI, DEFAULT_REDIS_URI),
                 (int) env.number(ENV_REDIS_TTL_SECONDS, DEFAULT_REDIS_TTL_SECONDS, 0, Integer.MAX_VALUE),
                 env.number(ENV_REDIS_MAX_OBJECT_BYTES, DEFAULT_REDIS_MAX_OBJECT_BYTES, 0, Long.MAX_VALUE),
@@ -640,7 +561,7 @@ public record RepoServiceConfig(
                 environment.get(ENV_SEED_ACCOUNT_ID),
                 env.text(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
                 env.text(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
-                env.flag(ENV_S3_CONDITIONAL_WRITES, false), java.util.Map.of(),
+                env.flag(ENV_S3_CONDITIONAL_WRITES, false),
                 ManagedStoragePolicy.fromEnvironment(environment),
                 env.number(ENV_READ_BUDGET_BYTES, DEFAULT_READ_BUDGET_BYTES, 1, Long.MAX_VALUE));
     }

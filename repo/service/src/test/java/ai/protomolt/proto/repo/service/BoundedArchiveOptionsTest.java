@@ -29,7 +29,7 @@ class BoundedArchiveOptionsTest {
     @Test void publicFactoryRejectsUnqualifiedStorageBeforeConnecting() {
         var limits = new BoundedArchiveOptions(16, 1024, 4, 8192, 2);
         var config = new RepoServiceConfig(0, new LedgerConfig("jdbc:postgresql://127.0.0.1:1/missing", "unused", "unused"),
-                null, null, null, null, "bounded", 0, "redis", null, null, "redis://127.0.0.1:1", 0, 1024);
+                null, null, null, null, "bounded", 0, "redis", "redis://127.0.0.1:1", 0, 1024);
         assertThatThrownBy(() -> RepoServices.buildBoundedArchive(config, limits)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("requires managed Redis");
         var qualified = config.withManagedStorage(new ManagedStoragePolicy("bounded", "realm", true));

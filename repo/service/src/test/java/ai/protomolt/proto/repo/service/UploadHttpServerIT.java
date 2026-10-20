@@ -62,7 +62,7 @@ class UploadHttpServerIT {
                 LOCALSTACK.getAccessKey(),
                 LOCALSTACK.getSecretKey(),
                 "it-http-docs",
-                0, null, null, null, null, 0, 0L);
+                0, null, null, 0, 0L);
         services = RepoServices.build(config.withManagedStorage(new ManagedStoragePolicy("http-test-v1", "test-realm", true)));
         services.startInProcess("it-http");
         http = services.startHttp(0, "synthetic-http-operator-key"); // ephemeral port

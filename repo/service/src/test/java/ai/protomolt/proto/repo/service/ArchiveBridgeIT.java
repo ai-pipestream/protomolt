@@ -106,7 +106,7 @@ class ArchiveBridgeIT {
                 LOCALSTACK.getSecretKey(),
                 "it-bridge",
                 0,
-                null, null, null, null, 0, 0L);
+                null, null, 0, 0L);
         // The standard bridges plus a stand-in for the parser lane: prose
         // that finds nothing, and OCR that recovers text with a measured
         // score. What is under test is the archive's escalation, not a

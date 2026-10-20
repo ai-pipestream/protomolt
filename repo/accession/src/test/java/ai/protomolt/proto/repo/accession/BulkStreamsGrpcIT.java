@@ -4,6 +4,14 @@ import static ai.protomolt.proto.repo.accession.AccessionFixture.*;
 import static org.assertj.core.api.Assertions.*;
 
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
+import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Optional;
+import java.time.Clock;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
@@ -284,6 +292,70 @@ class BulkStreamsGrpcIT {
         }
     }
 
+
+    @Test void readBudgetRefusalIsPerItemAndLeaseCoversEveryPartCallback() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var account = "acct-" + UUID.randomUUID();
+            var address = address(account, "budget");
+            f.saves.save(processAuthority(), create("op-budget", address, document(account, "budget", "title")).build());
+            var selector = PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE).build();
+            long length = f.catalog.manifest(address, 1).orElseThrow().getPartsList().stream()
+                    .filter(p -> p.getEntry().getSelector().equals(selector)).findFirst().orElseThrow().getRef().getLength();
+            var refuse = new AtomicBoolean(true);
+            var held = new AtomicLong();
+            var resolutions = new AtomicInteger();
+            var drives = DocumentSaves.Drives.dynamic("default", (a, d) -> Optional.of(f.stack), id -> {
+                resolutions.incrementAndGet();
+                return Optional.of(f.stack);
+            });
+            var reads = new DocumentReads(f.catalog, drives, limits(), bytes -> {
+                if (refuse.get()) throw new RepositoryException(
+                        RepositoryException.Code.RESOURCE_EXHAUSTED, "budget full");
+                held.addAndGet(bytes);
+                return () -> held.addAndGet(-bytes);
+            }, Clock.systemUTC());
+            try (var server = server(f, reads)) {
+                var received = new ArrayList<ReadDocumentsResponse>();
+                var heldAtFrames = new ArrayList<Long>();
+                var heldAtCompletion = new ArrayList<Long>();
+                var error = new AtomicReference<Throwable>();
+                var done = new CountDownLatch(1);
+                var stream = DocumentServiceGrpc.newStub(server.channel).readDocuments(new StreamObserver<ReadDocumentsResponse>() {
+                    @Override public void onNext(ReadDocumentsResponse response) {
+                        received.add(response);
+                        if (response.getFrame().hasPartData()) heldAtFrames.add(held.get());
+                        if (response.getFrame().hasComplete()) heldAtCompletion.add(held.get());
+                    }
+                    @Override public void onError(Throwable failure) { error.set(failure); done.countDown(); }
+                    @Override public void onCompleted() { done.countDown(); }
+                });
+                var request = ReadDocumentRequest.newBuilder().setAddress(address)
+                        .setSelection(PartSelection.newBuilder().addSelectors(selector)).build();
+                stream.onNext(readItem("refused", request));
+                assertThat(resolutions.get()).as("refusal precedes storage resolution/open").isZero();
+                refuse.set(false);
+                stream.onNext(readItem("accepted", request));
+                stream.onCompleted();
+                assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+                assertThat(error.get()).isNull();
+                assertThat(heldAtFrames).isNotEmpty().allMatch(bytes -> bytes == length);
+                assertThat(heldAtCompletion).containsExactly(0L);
+                var refused = received.stream().filter(r -> r.getRequestId().equals("refused")).toList();
+                assertThat(refused).anySatisfy(r -> assertThat(r.getError().getCode())
+                        .isEqualTo(Status.Code.RESOURCE_EXHAUSTED.value()));
+                assertThat(refused).noneMatch(r -> r.getFrame().hasPartData() || r.getFrame().hasComplete());
+                assertThat(received).anyMatch(r -> r.getRequestId().equals("accepted") && r.getFrame().hasComplete());
+                assertThat(held.get()).isZero();
+            }
+            assertThatThrownBy(() -> reads.readDocument(processAuthority(), ReadDocumentRequest.newBuilder()
+                    .setAddress(address).setSelection(PartSelection.newBuilder().addSelectors(selector)).build(),
+                    (Consumer<ReadDocumentResponse>) frame -> {
+                        if (frame.hasPartData()) throw new IllegalStateException("consumer failed");
+                    })).isInstanceOf(IllegalStateException.class).hasMessage("consumer failed");
+            assertThat(held.get()).as("callback failure returns the part reservation").isZero();
+        }
+    }
+
     // ------------------------------------------------------------------ harness
 
     private record ServerHarness(Server server, ManagedChannel channel) implements AutoCloseable {
@@ -294,9 +366,13 @@ class BulkStreamsGrpcIT {
     }
 
     private static ServerHarness server(AccessionFixture f) throws java.io.IOException {
+        return server(f, f.reads);
+    }
+
+    private static ServerHarness server(AccessionFixture f, DocumentReads reads) throws java.io.IOException {
         var name = "bulk-" + UUID.randomUUID();
         var server = InProcessServerBuilder.forName(name).directExecutor()
-                .addService(new AccessionGrpcService(f.saves, f.reads, authentication -> new RepositoryCaller(
+                .addService(new AccessionGrpcService(f.saves, reads, authentication -> new RepositoryCaller(
                         authentication.caller().name(), authentication.caller().unrestricted()))).build().start();
         return new ServerHarness(server, InProcessChannelBuilder.forName(name).directExecutor().build());
     }

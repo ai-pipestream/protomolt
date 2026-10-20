@@ -30,7 +30,7 @@ class BoundedArchiveEmbeddingIT {
     @Test void publicFactorySupportsLocalAndAuthenticatedRemoteArchiveUse() throws Exception {
         var config = new RepoServiceConfig(0,
                 new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
-                null, null, null, null, "embedded-archive", 0, "redis", null, null,
+                null, null, null, null, "embedded-archive", 0, "redis",
                 "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379), 0, 1024 * 1024)
                 .withManagedStorage(new ManagedStoragePolicy("embedded-redis", "embedded-realm", true));
         var limits = new BoundedArchiveOptions(1024 * 1024, 2 * 1024 * 1024, 16, 64L * 1024 * 1024, 4);

@@ -14,7 +14,7 @@ public final class ReplicaHostProcess {
                 new LedgerConfig(env.get("TEST_JDBC"), env.get("TEST_DB_USER"), env.get("TEST_DB_PASSWORD"),
                         poolSize, LedgerConfig.DEFAULT_MIGRATION_LOCATION),
                 env.get("TEST_S3_ENDPOINT"), env.get("TEST_S3_REGION"), env.get("TEST_S3_KEY"), env.get("TEST_S3_SECRET"),
-                "process-host", 0, null, null, null, null, 0, 0L,
+                "process-host", 0, null, null, 0, 0L,
                 true, 1000, 1000, false, true, 1000)
                 .withManagedStorage(new ManagedStoragePolicy("process-original", "process-realm", true));
         boolean measured = "true".equals(env.get("TEST_METRICS"));

@@ -91,7 +91,7 @@ class PlatformRoleNodeIT {
                                 LOCALSTACK.getSecretKey(),
                                 "platform-role-node-docs",
                                 0,
-                                null, null, null, null, 0, 0L),
+                                null, null, 0, 0L),
                         Map.of(DocumentPlatformConfig.ENV_API_TOKEN, OPERATOR_TOKEN)),
                 null);
 

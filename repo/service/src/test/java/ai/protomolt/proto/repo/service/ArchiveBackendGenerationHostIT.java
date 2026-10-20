@@ -120,7 +120,7 @@ class ArchiveBackendGenerationHostIT {
     private static RepoServiceConfig config(String generation) {
         return new RepoServiceConfig(0, new LedgerConfig(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()),
                 STORAGE.getEndpoint().toString(), STORAGE.getRegion(), STORAGE.getAccessKey(), STORAGE.getSecretKey(), "archive-generation", 0,
-                null, null, null, null, 0, 0L)
+                null, null, 0, 0L)
                 .withManagedStorage(new ManagedStoragePolicy(generation, "archive-generation-realm", true));
     }
 

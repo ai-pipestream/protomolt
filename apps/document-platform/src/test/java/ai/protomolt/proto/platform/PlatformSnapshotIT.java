@@ -90,7 +90,7 @@ class PlatformSnapshotIT {
                 LOCALSTACK.getSecretKey(),
                 "platform-snapshot-docs",
                 0,
-                null, null, null, null, 0, 0L);
+                null, null, 0, 0L);
     }
 
     @org.junit.jupiter.api.BeforeAll

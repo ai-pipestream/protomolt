@@ -134,7 +134,7 @@ class DocumentPlatformSmokeIT {
                                 LOCALSTACK.getSecretKey(),
                                 "platform-docs",
                                 0,
-                                null, null, null, null, 0, 0L),
+                                null, null, 0, 0L),
                         new WorkflowRunStoreConfig(
                                 JOBS_DB.getJdbcUrl(),
                                 JOBS_DB.getUsername(),

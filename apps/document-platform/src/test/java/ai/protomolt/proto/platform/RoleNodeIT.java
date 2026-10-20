@@ -82,7 +82,7 @@ class RoleNodeIT {
                 LOCALSTACK.getSecretKey(),
                 "role-node-docs",
                 0,
-                null, null, null, null, 0, 0L));
+                null, null, 0, 0L));
         repoNode = Composer.emptyBuilder()
                 .module(repoModule)
                 .environment(Map.of("PROTOMOLT_API_TOKEN", OPERATOR_TOKEN))
