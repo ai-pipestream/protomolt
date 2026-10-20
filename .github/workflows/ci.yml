@@ -6,6 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes the running build. Runs on
+# main are never cancelled, so every commit there keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Compilation is pinned to --release 25, and the test JVM runs on that same baseline.
   # The matrix stays a matrix so a newer JDK can be added beside it without reshaping

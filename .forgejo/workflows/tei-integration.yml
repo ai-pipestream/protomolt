@@ -12,6 +12,15 @@ on:
   # because a lane this expensive is worth being able to start by hand.
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes the running build. Runs on
+# main are never cancelled, so every commit there keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tei-integration:
     runs-on: ubuntu-latest
