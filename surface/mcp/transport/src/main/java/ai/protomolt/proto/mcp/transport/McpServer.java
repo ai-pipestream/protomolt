@@ -1,9 +1,7 @@
 package ai.protomolt.proto.mcp.transport;
 
 import ai.protomolt.proto.actions.ActionCatalog;
-import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.Caller;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -11,27 +9,25 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -64,15 +60,10 @@ public final class McpServer {
 
     private static final List<String> SUPPORTED_VERSIONS =
             List.of("2025-06-18", "2025-03-26", "2024-11-05");
-    private static final int RESOURCE_PAGE_SIZE = 100;
     private static final int MAX_IN_FLIGHT_PER_SESSION = 64;
 
-    private final ActionCatalog catalog;
-    private final McpResources resources;
-    private final String serverName;
-    private final String serverVersion;
-    private final String instructions;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final McpMethodDispatcher dispatcher;
 
     public static boolean supportsProtocolVersion(String version) {
         return version != null && SUPPORTED_VERSIONS.contains(version);
@@ -99,13 +90,15 @@ public final class McpServer {
      */
     public McpServer(ActionCatalog catalog, McpResources resources,
                      String serverName, String serverVersion, String instructions) {
-        this.catalog = Objects.requireNonNull(catalog, "catalog");
-        this.serverName = Objects.requireNonNull(serverName, "serverName");
-        this.serverVersion = Objects.requireNonNull(serverVersion, "serverVersion");
-        this.instructions = Objects.requireNonNull(instructions, "instructions");
-        this.resources = CompositeResources.of(
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(serverName, "serverName");
+        Objects.requireNonNull(serverVersion, "serverVersion");
+        Objects.requireNonNull(instructions, "instructions");
+        McpResources composed = CompositeResources.of(
                 new WorkspaceResources(catalog, serverName, serverVersion, instructions),
                 resources);
+        this.dispatcher = new McpMethodDispatcher(
+                catalog, composed, serverName, serverVersion, instructions, mapper);
     }
 
     /**
@@ -114,32 +107,7 @@ public final class McpServer {
      * terminating the session.
      */
     public void run(InputStream in, OutputStream out) throws IOException {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
-        Object writeLock = new Object();
-        try (Session session = openSession()) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank()) {
-                    continue;
-                }
-                JsonNode message;
-                try {
-                    message = mapper.readTree(line);
-                } catch (JsonProcessingException e) {
-                    synchronized (writeLock) {
-                        write(writer, JsonRpc.error(mapper, null, JsonRpc.PARSE_ERROR, "Parse error"));
-                    }
-                    continue;
-                }
-                session.dispatch(message, response -> response.ifPresent(value -> {
-                    synchronized (writeLock) {
-                        write(writer, value);
-                    }
-                }));
-            }
-            session.awaitInFlight(30_000);
-        }
+        StdioLineTransport.run(mapper, openSession(), in, out);
     }
 
     /** Opens an isolated MCP lifecycle for a stdio connection. HTTP mounts should not retain it. */
@@ -165,112 +133,14 @@ public final class McpServer {
 
     /** Dispatches one JSON-RPC message as {@code caller}. */
     public Optional<ObjectNode> handle(JsonNode message, Caller caller) {
-        return handle(message, caller, false);
-    }
-
-    /**
-     * Dispatches one JSON-RPC message as {@code caller}. When {@code moonshotDialect} is set,
-     * tool schemas in {@code initialize} and {@code tools/list} are rendered in the
-     * Moonshot-sanitized form.
-     */
-    private Optional<ObjectNode> handle(JsonNode message, Caller caller, boolean moonshotDialect) {
-        if (!message.isObject()) {
-            return Optional.of(JsonRpc.error(mapper, null, JsonRpc.INVALID_REQUEST, "Invalid request"));
-        }
-        if (!message.has("method")) {
-            if (message.has("result") || message.has("error")) {
-                // A response to a server-initiated request; this server never sends any.
-                return Optional.empty();
-            }
-            return Optional.of(JsonRpc.error(mapper, message.get("id"), JsonRpc.INVALID_REQUEST,
-                    "Invalid request"));
-        }
-        if (JsonRpc.isNotification(message)) {
-            return Optional.empty();
-        }
-        JsonNode id = message.get("id");
-        String method = message.get("method").asText();
-        JsonNode params = message.has("params") ? message.get("params") : mapper.createObjectNode();
-        try {
-            return switch (method) {
-                case "initialize" -> Optional.of(JsonRpc.result(mapper, id,
-                        initialize(params, caller, moonshotDialect)));
-                case "ping" -> Optional.of(JsonRpc.result(mapper, id, mapper.createObjectNode()));
-                case "tools/list" -> Optional.of(JsonRpc.result(mapper, id, listTools(caller, moonshotDialect)));
-                case "tools/call" -> Optional.of(JsonRpc.result(mapper, id,
-                        callTool(params, caller)));
-                case "resources/list" -> Optional.of(JsonRpc.result(mapper, id, listResources(params)));
-                case "resources/templates/list" -> Optional.of(JsonRpc.result(mapper, id,
-                        listResourceTemplates(params)));
-                case "resources/read" -> readResource(params)
-                        .map(contents -> JsonRpc.result(mapper, id, contents))
-                        .or(() -> Optional.of(JsonRpc.error(mapper, id, JsonRpc.RESOURCE_NOT_FOUND,
-                                "Unknown resource: " + params.path("uri").asText())));
-                default -> Optional.of(JsonRpc.error(mapper, id, JsonRpc.METHOD_NOT_FOUND,
-                        "Method not found: " + method));
-            };
-        } catch (IllegalArgumentException e) {
-            return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS, e.getMessage()));
-        } catch (Exception e) {
-            // Exception class names and messages can leak paths, targets, or upstream
-            // detail; the wire gets a correlation id, the log gets the stack trace.
-            String correlationId = java.util.UUID.randomUUID().toString();
-            LOG.error("MCP request '{}' failed, correlation id {}", method, correlationId, e);
-            return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INTERNAL_ERROR,
-                    "Internal error (correlation id " + correlationId + ")"));
-        }
-    }
-
-    private ObjectNode initialize(JsonNode params, Caller caller, boolean moonshotDialect) {
-        if (params == null || !params.isObject()) {
-            throw new IllegalArgumentException("initialize params must be an object");
-        }
-        String requested = params.path("protocolVersion").asText(PROTOCOL_VERSION);
-        ObjectNode result = mapper.createObjectNode();
-        result.put("protocolVersion",
-                supportsProtocolVersion(requested) ? requested : PROTOCOL_VERSION);
-        ObjectNode capabilities = result.putObject("capabilities");
-        capabilities.putObject("tools").put("listChanged", false);
-        capabilities.putObject("resources")
-                .put("subscribe", false)
-                .put("listChanged", false);
-        ObjectNode serverInfo = result.putObject("serverInfo");
-        serverInfo.put("name", serverName);
-        serverInfo.put("version", serverVersion);
-        ArrayNode manifest = catalog.list(caller);
-        if (moonshotDialect) {
-            manifest = sanitizeForMoonshot(manifest);
-        }
-        addToolCatalogMetadata(result, manifest);
-        if (!instructions.isEmpty()) {
-            result.put("instructions", instructions);
-        }
-        return result;
-    }
-
-    private ObjectNode listTools(Caller caller, boolean moonshotDialect) {
-        ObjectNode result = mapper.createObjectNode();
-        // The catalog manifest entries ({name, description, inputSchema}) are already the
-        // MCP tool shape; inputSchema is JSON Schema in both worlds. The manifest is the
-        // caller's view: only tools whose scope the caller holds.
-        ArrayNode manifest = catalog.list(caller);
-        if (moonshotDialect) {
-            manifest = sanitizeForMoonshot(manifest);
-        }
-        result.set("tools", manifest);
-        addToolCatalogMetadata(result, manifest);
-        return result;
+        return dispatcher.handle(message, caller, false);
     }
 
     /**
      * Determines whether the given MCP client info name represents a Moonshot/Kimi client.
      */
     public static boolean isMoonshotClient(String clientName) {
-        if (clientName == null || clientName.isBlank()) {
-            return false;
-        }
-        String normalized = clientName.toLowerCase(Locale.ROOT);
-        return normalized.contains("kimi") || normalized.contains("moonshot");
+        return MoonshotDialect.isMoonshotClient(clientName);
     }
 
     /**
@@ -280,16 +150,7 @@ public final class McpServer {
      * The input is not modified; returns a sanitized deep copy, or {@code null} for {@code null}.
      */
     public static ArrayNode sanitizeForMoonshot(ArrayNode manifest) {
-        if (manifest == null) {
-            return null;
-        }
-        ArrayNode copy = manifest.deepCopy();
-        for (JsonNode tool : copy) {
-            if (tool.isObject() && tool.has("inputSchema")) {
-                sanitizeSchemaForMoonshot(tool.get("inputSchema"));
-            }
-        }
-        return copy;
+        return MoonshotDialect.sanitizeForMoonshot(manifest);
     }
 
     /**
@@ -300,147 +161,7 @@ public final class McpServer {
      * {@code exclusiveMaximum} keywords the strict validator refuses beside a union.
      */
     public static void sanitizeSchemaForMoonshot(JsonNode node) {
-        if (node == null) {
-            return;
-        }
-        if (node.isObject()) {
-            ObjectNode obj = (ObjectNode) node;
-            boolean hasAnyOf = obj.has("anyOf");
-            boolean hasOneOf = obj.has("oneOf");
-            if (hasAnyOf || hasOneOf) {
-                JsonNode parentType = obj.remove("type");
-                if (parentType != null && parentType.isTextual()) {
-                    String typeStr = parentType.asText();
-                    Consumer<JsonNode> ensureType = branch -> {
-                        if (branch.isObject() && !branch.has("type")) {
-                            ((ObjectNode) branch).put("type", typeStr);
-                        }
-                    };
-                    if (hasAnyOf && obj.get("anyOf").isArray()) {
-                        obj.get("anyOf").forEach(ensureType);
-                    }
-                    if (hasOneOf && obj.get("oneOf").isArray()) {
-                        obj.get("oneOf").forEach(ensureType);
-                    }
-                }
-                obj.remove("pattern");
-                obj.remove("minimum");
-                obj.remove("maximum");
-                obj.remove("exclusiveMinimum");
-                obj.remove("exclusiveMaximum");
-            }
-            obj.properties().forEach(entry -> sanitizeSchemaForMoonshot(entry.getValue()));
-        } else if (node.isArray()) {
-            node.forEach(McpServer::sanitizeSchemaForMoonshot);
-        }
-    }
-
-    private void addToolCatalogMetadata(ObjectNode result, ArrayNode manifest) {
-        ObjectNode toolCatalog = WorkspaceResources.toolCatalog(manifest, mapper);
-        ObjectNode metadata = result.putObject("_meta");
-        metadata.put("ai.protomolt/toolCatalogFingerprint",
-                toolCatalog.path("fingerprint").asText());
-        metadata.put("ai.protomolt/toolCount", toolCatalog.path("count").asInt());
-        metadata.put("ai.protomolt/workspace", WorkspaceResources.URI);
-    }
-
-    private ObjectNode callTool(JsonNode params, Caller caller) {
-        String name = params.path("name").asText(null);
-        if (name == null) {
-            throw new IllegalArgumentException("tools/call requires params.name");
-        }
-        JsonNode arguments = params.path("arguments");
-        if (arguments.isMissingNode() || arguments.isNull()) {
-            arguments = mapper.createObjectNode();
-        }
-        if (!arguments.isObject()) {
-            throw new IllegalArgumentException("tools/call arguments must be an object");
-        }
-        try {
-            ObjectNode output = catalog.execute(name, (ObjectNode) arguments, caller);
-            return toolResult(output, false);
-        } catch (ActionException e) {
-            // Tool execution failures are results with isError, not protocol errors, so the
-            // calling model sees the structured envelope and can repair its input.
-            return toolResult(e.toJson(mapper), true);
-        }
-    }
-
-    private ObjectNode toolResult(ObjectNode payload, boolean isError) {
-        ObjectNode result = mapper.createObjectNode();
-        ArrayNode content = result.putArray("content");
-        ObjectNode text = content.addObject();
-        text.put("type", "text");
-        text.put("text", payload.toString());
-        result.set("structuredContent", payload);
-        result.put("isError", isError);
-        return result;
-    }
-
-    private ObjectNode listResources(JsonNode params) {
-        if (params == null || !params.isObject()) {
-            throw new IllegalArgumentException("resources/list params must be an object");
-        }
-        JsonNode cursor = params.get("cursor");
-        String cursorValue = null;
-        if (cursor != null && !cursor.isNull()) {
-            if (!cursor.isTextual() || cursor.asText().isBlank()) {
-                throw new IllegalArgumentException("resources/list cursor must be a non-empty string");
-            }
-            cursorValue = cursor.asText();
-        }
-        if (resources == null && cursorValue != null) {
-            throw new IllegalArgumentException("resource cursor is invalid");
-        }
-        McpResources.Page page = resources == null
-                ? new McpResources.Page(mapper.createArrayNode(), null)
-                : resources.page(mapper, cursorValue, RESOURCE_PAGE_SIZE);
-        ObjectNode result = mapper.createObjectNode();
-        result.set("resources", page.resources());
-        if (page.nextCursor() != null) {
-            result.put("nextCursor", page.nextCursor());
-        }
-        return result;
-    }
-
-    private ObjectNode listResourceTemplates(JsonNode params) {
-        if (params == null || !params.isObject()) {
-            throw new IllegalArgumentException("resources/templates/list params must be an object");
-        }
-        int offset = cursorOffset(params.get("cursor"), "resource template");
-        ArrayNode all = resources.templates(mapper);
-        if (offset > all.size()) {
-            throw new IllegalArgumentException("resource template cursor is invalid");
-        }
-        int end = Math.min(offset + RESOURCE_PAGE_SIZE, all.size());
-        ArrayNode page = mapper.createArrayNode();
-        for (int i = offset; i < end; i++) {
-            page.add(all.get(i));
-        }
-        ObjectNode result = mapper.createObjectNode();
-        result.set("resourceTemplates", page);
-        if (end < all.size()) {
-            result.put("nextCursor", Integer.toString(end));
-        }
-        return result;
-    }
-
-    private static int cursorOffset(JsonNode cursor, String label) {
-        if (cursor == null || cursor.isNull()) {
-            return 0;
-        }
-        if (!cursor.isTextual() || cursor.asText().isBlank()) {
-            throw new IllegalArgumentException(label + " cursor must be a non-empty string");
-        }
-        try {
-            int offset = Integer.parseInt(cursor.asText());
-            if (offset < 0) {
-                throw new NumberFormatException();
-            }
-            return offset;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(label + " cursor is invalid");
-        }
+        MoonshotDialect.sanitizeSchemaForMoonshot(node);
     }
 
     /** Per-connection MCP lifecycle used by stdio and the streamable HTTP adapter. */
@@ -453,19 +174,18 @@ public final class McpServer {
         private final Caller caller;
         private volatile State state = State.NEW;
         private volatile String negotiatedProtocolVersion;
+        private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        private final ConcurrentMap<String, FutureTask<Optional<ObjectNode>>> inFlight =
+                new ConcurrentHashMap<>();
+        private final AtomicReference<Throwable> asynchronousFailure =
+                new AtomicReference<>();
+        private final Semaphore inFlightSlots =
+                new Semaphore(MAX_IN_FLIGHT_PER_SESSION);
+        private volatile boolean moonshotDialect = false;
 
         private Session(Caller caller) {
             this.caller = caller;
         }
-        private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        private final ConcurrentMap<String, FutureTask<Optional<ObjectNode>>> inFlight =
-                new ConcurrentHashMap<>();
-        private final java.util.concurrent.atomic.AtomicReference<Throwable> asynchronousFailure =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        private final java.util.concurrent.Semaphore inFlightSlots =
-                new java.util.concurrent.Semaphore(MAX_IN_FLIGHT_PER_SESSION);
-
-        private volatile boolean moonshotDialect = false;
 
         public State state() {
             return state;
@@ -492,7 +212,7 @@ public final class McpServer {
                         "Invalid request"));
             }
             if (!message.has("method")) {
-                return McpServer.this.handle(message, caller, moonshotDialect);
+                return dispatcher.handle(message, caller, moonshotDialect);
             }
             String method = message.get("method").asText();
             if (JsonRpc.isNotification(message)) {
@@ -513,7 +233,7 @@ public final class McpServer {
                 }
                 ObjectNode result;
                 try {
-                    result = initialize(initParams, caller, moonshotDialect);
+                    result = dispatcher.initialize(initParams, caller, moonshotDialect);
                 } catch (IllegalArgumentException e) {
                     return Optional.of(JsonRpc.error(mapper, id, JsonRpc.INVALID_PARAMS,
                             e.getMessage()));
@@ -532,7 +252,7 @@ public final class McpServer {
             if (state == State.CLOSED) {
                 return Optional.of(lifecycleError(id, "MCP session is closed"));
             }
-            return McpServer.this.handle(message, caller, moonshotDialect);
+            return dispatcher.handle(message, caller, moonshotDialect);
         }
 
         private void handleNotification(String method, JsonNode params) {
@@ -580,13 +300,13 @@ public final class McpServer {
                 throw new IllegalArgumentException("tool request is not valid in this session state");
             }
             if (!inFlightSlots.tryAcquire()) {
-                throw new java.util.concurrent.RejectedExecutionException(
+                throw new RejectedExecutionException(
                         "MCP session in-flight tool limit is exhausted");
             }
             String key = idKey(message.get("id"));
-            var taskIdentity = new java.util.concurrent.atomic.AtomicReference<FutureTask<Optional<ObjectNode>>>();
+            var taskIdentity = new AtomicReference<FutureTask<Optional<ObjectNode>>>();
             FutureTask<Optional<ObjectNode>> task = new FutureTask<>(() -> {
-                Optional<ObjectNode> response = McpServer.this.handle(message, caller, moonshotDialect);
+                Optional<ObjectNode> response = dispatcher.handle(message, caller, moonshotDialect);
                 if (completion != null && inFlight.get(key) == taskIdentity.get()
                         && !Thread.currentThread().isInterrupted()) {
                     completion.accept(response);
@@ -623,7 +343,7 @@ public final class McpServer {
             }
             try {
                 executor.execute(task);
-            } catch (java.util.concurrent.RejectedExecutionException e) {
+            } catch (RejectedExecutionException e) {
                 inFlight.remove(key, task);
                 task.cancel(false);
                 throw new IllegalArgumentException("MCP session is closed", e);
@@ -637,7 +357,7 @@ public final class McpServer {
             if (isToolCallReady(message)) {
                 try {
                     submit(message, completion);
-                } catch (java.util.concurrent.RejectedExecutionException e) {
+                } catch (RejectedExecutionException e) {
                     completion.accept(Optional.of(JsonRpc.error(mapper, message.get("id"),
                             -32000, e.getMessage())));
                 }
@@ -669,7 +389,7 @@ public final class McpServer {
                     throw new IllegalStateException("Interrupted awaiting MCP responses", e);
                 } catch (TimeoutException e) {
                     throw new IllegalStateException("Timed out awaiting MCP responses", e);
-                } catch (java.util.concurrent.ExecutionException e) {
+                } catch (ExecutionException e) {
                     throw new IllegalStateException("MCP asynchronous response failed", e.getCause());
                 } catch (CancellationException cancelled) {
                     // Explicit cancellation has no response to publish.
@@ -701,32 +421,6 @@ public final class McpServer {
             cancelInFlight();
             executor.shutdownNow();
             checkAsynchronousFailure();
-        }
-    }
-
-    private Optional<ObjectNode> readResource(JsonNode params) {
-        String uri = params.path("uri").asText(null);
-        if (uri == null) {
-            throw new IllegalArgumentException("resources/read requires params.uri");
-        }
-        if (resources == null) {
-            return Optional.empty();
-        }
-        return resources.read(mapper, uri).map(contents -> {
-            ObjectNode result = mapper.createObjectNode();
-            ArrayNode list = result.putArray("contents");
-            list.add(contents);
-            return result;
-        });
-    }
-
-    private void write(BufferedWriter writer, ObjectNode response) {
-        try {
-            writer.write(response.toString());
-            writer.newLine();
-            writer.flush();
-        } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
         }
     }
 }
