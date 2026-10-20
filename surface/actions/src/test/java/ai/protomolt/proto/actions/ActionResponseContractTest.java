@@ -38,15 +38,29 @@ class ActionResponseContractTest {
     }
 
     @Test
-    void validResponsesPreserveMessagesAndEquivalentDescriptorsWork() throws Exception {
+    void validResponsesPreserveMessages() throws Exception {
         var valid = person("Ada");
         assertThat(catalog(action(valid)).execute("probe", Empty.getDefaultInstance())).isSameAs(valid);
+    }
+
+    @Test
+    void sameNamedButDistinctDescriptorsAreNotTheDeclaredResponseContract() throws Exception {
+        var valid = person("Ada");
         var file = response.getFile();
         var copied = Descriptors.FileDescriptor.buildFrom(file.toProto(),
                 file.getDependencies().toArray(Descriptors.FileDescriptor[]::new)).findMessageTypeByName("Person");
         var copy = DynamicMessage.parseFrom(copied, valid.toByteString());
-        assertThat(catalog(action(copy)).execute("probe", Empty.getDefaultInstance()).toByteString())
-                .isEqualTo(valid.toByteString());
+        for (var catalog : List.of(ActionCatalog.defaults(ActionContext.create()), ActionCatalog.empty(ActionContext.create()))) {
+            catalog.register(action(copy));
+            assertInvalid(() -> catalog.execute("probe", Empty.getDefaultInstance()));
+            assertInvalid(() -> catalog.execute("probe", TestFixtures.obj("{}")));
+            assertInvalid(() -> catalog.executeStreaming("probe", Empty.getDefaultInstance(), message -> {
+                throw new AssertionError("Invalid response reached caller");
+            }));
+            assertInvalid(() -> catalog.executeStreaming("probe", TestFixtures.obj("{}"), message -> {
+                throw new AssertionError("Invalid response reached JSON caller");
+            }));
+        }
     }
 
     @Test

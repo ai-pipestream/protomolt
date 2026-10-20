@@ -282,29 +282,27 @@ public final class CatalogContract {
 
     /**
      * Checks a successful response against the action's declared descriptor.
-     * Distinct descriptor instances are decoded using the declared contract so
-     * a provider cannot remove rules by supplying a same-named descriptor.
-     * The canonical message is returned for transport and downstream consumers.
+     * The response must use the declared descriptor; a same-named descriptor
+     * from a different schema is a provider error, not an implicit conversion.
      */
     public static Message checkedResponse(Message response, Descriptor descriptor, String verb)
             throws ActionException {
         if (response == null) {
             throw new ActionException("invalid-response", verb + " returned a null response");
         }
-        if (!response.getDescriptorForType().getFullName().equals(descriptor.getFullName())) {
-            throw new ActionException("invalid-response", verb + " returned "
-                    + response.getDescriptorForType().getFullName() + "; expected " + descriptor.getFullName());
+        if (!response.getDescriptorForType().equals(descriptor)) {
+            throw new ActionException("invalid-response", verb + " returned a descriptor other than the declared "
+                    + descriptor.getFullName() + " response (received "
+                    + response.getDescriptorForType().getFullName() + ")");
         }
         try {
-            Message checked = response.getDescriptorForType() == descriptor ? response
-                    : DynamicMessage.parseFrom(descriptor, response.toByteString());
-            ValidationResult result = inspect(checked);
+            ValidationResult result = inspect(response);
             if (!result.valid()) {
                 throw new ActionException("invalid-response",
                         verb + " does not satisfy the response contract: " + describe(result), violations(result));
             }
-            return checked;
-        } catch (InvalidProtocolBufferException | RuntimeException e) {
+            return response;
+        } catch (RuntimeException e) {
             ActionException failure = new ActionException("invalid-response",
                     verb + " response could not be validated against " + descriptor.getFullName());
             failure.initCause(e);

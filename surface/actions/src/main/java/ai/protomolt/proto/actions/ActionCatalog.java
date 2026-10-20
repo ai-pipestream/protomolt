@@ -26,6 +26,12 @@ import java.util.ServiceLoader;
  * {@code protomolt-actions-toolkit} for toolkit verbs and {@code protomolt-actions-index}
  * for index rendering; the full launchers include both explicitly. Provider loading failures abort
  * construction rather than silently returning a partially populated catalog.
+ *
+ * <p>Successful results must match the declared response descriptor and its validation
+ * rules before they reach a caller, including each streaming emission. A provider
+ * contract failure is {@code invalid-response} (server INTERNAL), not a client request
+ * error. This post-execution check cannot undo side effects already performed by the
+ * action or retract earlier valid stream emissions.
  */
 public final class ActionCatalog {
 
