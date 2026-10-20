@@ -1803,7 +1803,7 @@ public final class DocumentSaves {
             reusable.putIfAbsent(new ContentIdentity(ref.getSha256(), ref.getLength()), ref);
     }
 
-    private static StackRef putOrReuse(Stack stack, ByteString bytes, Map<ContentIdentity, StackRef> reusable,
+    private StackRef putOrReuse(Stack stack, ByteString bytes, Map<ContentIdentity, StackRef> reusable,
             List<StackRef> newObjects) {
         var expectedSha256 = sha256(bytes);
         var existing = reusable.get(new ContentIdentity(expectedSha256, bytes.size()));
@@ -1814,11 +1814,21 @@ public final class DocumentSaves {
         return ref;
     }
 
-    /** Writes one object and checks the stack's reference against the bytes it was given. */
-    private static StackRef put(Stack stack, ByteString bytes, String expectedSha256) {
+    /**
+     * Writes one object and checks the stack's reference against the bytes it was given.
+     *
+     * <p>The write streams the fragment ({@code ByteString.newInput} copies nothing;
+     * a body past the stack's part buffer uploads in parts), and the host reservation
+     * is held for the duration of the write: a save past the host budget is
+     * RESOURCE_EXHAUSTED before the stack allocates anything, the same answer the
+     * read path gives, and the lease is released when the write completes or fails.
+     * The stack computes the digest over the streamed bytes itself; the reference it
+     * returns must restate the expected digest and length or the write is refused.
+     */
+    private StackRef put(Stack stack, ByteString bytes, String expectedSha256) {
         final StackRef ref;
-        try {
-            ref = stack.put(bytes.toByteArray());
+        try (var reserved = reservations.reserve(bytes.size())) {
+            ref = stack.put(bytes.newInput(), bytes.size());
         } catch (IOException failure) {
             throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);
         }
