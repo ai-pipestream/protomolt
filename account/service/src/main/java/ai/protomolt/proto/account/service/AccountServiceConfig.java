@@ -156,7 +156,8 @@ public record AccountServiceConfig(
                 System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
                 envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
                 System.getenv(ENV_SCHEMA_REGISTRY_URL),
-                parseBoolOrDefault(System.getenv(ENV_LIFECYCLE_ENABLED), DEFAULT_LIFECYCLE_ENABLED),
+                parseBoolOrDefault(ENV_LIFECYCLE_ENABLED, System.getenv(ENV_LIFECYCLE_ENABLED),
+                        DEFAULT_LIFECYCLE_ENABLED),
                 parseLongOrDefault(ENV_RELAY_INTERVAL_MS, System.getenv(ENV_RELAY_INTERVAL_MS),
                         DEFAULT_RELAY_INTERVAL_MS));
     }
@@ -195,11 +196,18 @@ public record AccountServiceConfig(
     }
 
     /** Boolean parse: {@code "true"/"1"/"yes"/"on"} (case-insensitive) is true, anything else false. */
-    private static boolean parseBoolOrDefault(String value, boolean fallback) {
+    /** Strict boolean: unset/blank keeps the default, anything else must be a recognized form. */
+    static boolean parseBoolOrDefault(String name, String value, boolean fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         String v = value.trim().toLowerCase(java.util.Locale.ROOT);
-        return v.equals("true") || v.equals("1") || v.equals("yes") || v.equals("on");
+        if (v.equals("true") || v.equals("1")) {
+            return true;
+        }
+        if (v.equals("false") || v.equals("0")) {
+            return false;
+        }
+        throw new IllegalArgumentException(name + " must be true/false or 1/0: " + value);
     }
 }

@@ -141,7 +141,7 @@ public final class AcceptedWorkflowKafkaBridge {
             String target = requiredEnv("PROTOMOLT_COORDINATOR_TARGET");
             String token = readCredential(Path.of(requiredEnv("PROTOMOLT_WORKFLOW_LAUNCH_TOKEN_FILE")));
             long deadlineSeconds = positiveSeconds(System.getenv("PROTOMOLT_LAUNCH_RPC_TIMEOUT_SECONDS"));
-            boolean plaintext = "true".equals(System.getenv("PROTOMOLT_COORDINATOR_PLAINTEXT"));
+            boolean plaintext = plaintext(System.getenv("PROTOMOLT_COORDINATOR_PLAINTEXT"));
 
             Properties properties = new Properties();
             String propertiesFile = System.getenv("PROTOMOLT_KAFKA_CLIENT_PROPERTIES_FILE");
@@ -179,6 +179,25 @@ public final class AcceptedWorkflowKafkaBridge {
         } finally {
             if (channel != null) channel.shutdownNow();
         }
+    }
+
+    /**
+     * Strict TLS opt-out: unset or blank keeps TLS, true/1 opts out, false/0 keeps TLS,
+     * anything else is refused by name. Package-private for direct testing.
+     */
+    static boolean plaintext(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.equals("true") || v.equals("1")) {
+            return true;
+        }
+        if (v.equals("false") || v.equals("0")) {
+            return false;
+        }
+        throw new IllegalArgumentException(
+                "PROTOMOLT_COORDINATOR_PLAINTEXT must be true/false or 1/0: " + value);
     }
 
     private static String requiredEnv(String name) {

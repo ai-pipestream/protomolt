@@ -17,6 +17,34 @@ class AccountServiceConfigTest {
             new AccountStoreConfig("jdbc:postgresql://localhost:5432/x", "u", "p");
 
     @Test
+    void lifecycleFlagParsesRecognizedFormsOnly() {
+        String name = AccountServiceConfig.ENV_LIFECYCLE_ENABLED;
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, "true", false)).isTrue();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, "TRUE", false)).isTrue();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, " 1 ", false)).isTrue();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, "false", true)).isFalse();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, "0", true)).isFalse();
+    }
+
+    @Test
+    void lifecycleFlagKeepsTheDefaultWhenUnsetOrBlank() {
+        String name = AccountServiceConfig.ENV_LIFECYCLE_ENABLED;
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, null, true)).isTrue();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, null, false)).isFalse();
+        assertThat(AccountServiceConfig.parseBoolOrDefault(name, "  ", true)).isTrue();
+    }
+
+    @Test
+    void lifecycleFlagRefusesUnrecognizedValuesByName() {
+        String name = AccountServiceConfig.ENV_LIFECYCLE_ENABLED;
+        for (String bad : new String[] {"yes", "no", "on", "off", "ture", "enabled"}) {
+            assertThatThrownBy(() -> AccountServiceConfig.parseBoolOrDefault(name, bad, true))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("DOCUMENT_PLATFORM_ACCOUNT_LIFECYCLE_ENABLED");
+        }
+    }
+
+    @Test
     void defaults() {
         AccountServiceConfig config = new AccountServiceConfig(-1, STORE, null, null, null, null,
                 true, -1L);

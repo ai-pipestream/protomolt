@@ -45,6 +45,23 @@ class AcceptedWorkflowKafkaBridgeTest {
             DockerImageName.parse("docker.redpanda.com/redpandadata/redpanda:v22.2.1"));
 
     @Test
+    void plaintextOptOutParsesRecognizedFormsOnly() {
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext(null)).isFalse();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("")).isFalse();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("  ")).isFalse();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("true")).isTrue();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("TRUE")).isTrue();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext(" 1 ")).isTrue();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("false")).isFalse();
+        assertThat(AcceptedWorkflowKafkaBridge.plaintext("0")).isFalse();
+        for (String bad : new String[] {"yes", "no", "on", "off", "ture"}) {
+            assertThatThrownBy(() -> AcceptedWorkflowKafkaBridge.plaintext(bad))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("PROTOMOLT_COORDINATOR_PLAINTEXT");
+        }
+    }
+
+    @Test
     void lostLaunchReplyReplaysSameRecordAndChangedIntentCannotAdvanceOffset() throws Exception {
         String topic = unique("accepted-launch-replay");
         String group = unique("accepted-launch-group");
