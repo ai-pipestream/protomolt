@@ -33,7 +33,9 @@ import org.junit.jupiter.api.Test;
  * part's catalog length before opening or allocating anything, a tampered oversized
  * catalog length is refused RESOURCE_EXHAUSTED without a single stack open, every
  * reservation is released after success and after failure, and a read the remaining
- * budget does not cover fails fast instead of buffering.
+ * budget does not cover fails fast instead of buffering. On these paths and on the
+ * streaming {@code ReadDocument} path for non-opaque parts, no buffer handed to the
+ * stack stream is ever larger than the bytes reserved at that moment.
  */
 class UnaryReadBudgetIT {
     private static final long TAMPERED_LENGTH = 1536L * 1024 * 1024;
@@ -248,7 +250,59 @@ class UnaryReadBudgetIT {
         assertThat(held.get()).as("every reservation is released after the failed reads").isZero();
     }
 
+    @Test void streamingReadBuffersASmallPartWithinItsLiveReservation() {
+        var address = address(account, "doc-stream-small-buffer");
+        f.saves.save(processAuthority(), create("op-1", address,
+                document(account, "doc-stream-small-buffer", "title")).build());
+
+        var held = new AtomicLong();
+        var largest = new AtomicLong();
+        var violations = new ArrayList<String>();
+        var reads = reads(new BufferObservingStack(f.stack, held, largest, violations), tracking(held));
+
+        var stream = streamRead(reads, coreRead(address));
+        assertThat(stream.error()).isNull();
+        assertThat(stream.frames().getLast().hasComplete()).isTrue();
+        assertThat(stream.frames()).anyMatch(ReadDocumentResponse::hasPartData);
+        assertThat(largest.get()).as("the stack stream was read into a caller buffer").isPositive();
+        assertThat(violations).as("no buffer handed to the stack outgrows the bytes reserved for it").isEmpty();
+        assertThat(held.get()).as("every reservation is released after the read").isZero();
+    }
+
+    @Test void streamingReadOfAZeroRecordedLengthAllocatesNoUnreservedBufferAndFailsDataLoss() throws Exception {
+        var address = address(account, "doc-stream-empty-buffer");
+        f.saves.save(processAuthority(), create("op-1", address,
+                document(account, "doc-stream-empty-buffer", "title")).build());
+        corruptCorePartLength(0);
+
+        var held = new AtomicLong();
+        var largest = new AtomicLong();
+        var violations = new ArrayList<String>();
+        var reads = reads(new BufferObservingStack(f.stack, held, largest, violations), tracking(held));
+
+        var stream = streamRead(reads, coreRead(address));
+        assertThat(Status.fromThrowable(stream.error()).getCode()).isEqualTo(Status.Code.DATA_LOSS);
+        assertThat(stream.frames()).noneMatch(ReadDocumentResponse::hasPartData);
+        assertThat(violations).as("a zero-byte reservation never backs a scratch buffer").isEmpty();
+        assertThat(held.get()).as("every reservation is released after the failed read").isZero();
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private record StreamedRead(java.util.List<ReadDocumentResponse> frames, Throwable error) {}
+
+    /** Runs a streaming ReadDocument to its end without flow control and collects what it sent. */
+    private static StreamedRead streamRead(DocumentReads reads, ReadDocumentRequest request) {
+        var frames = new ArrayList<ReadDocumentResponse>();
+        var error = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        new DocumentStreams(reads).readDocument(processAuthority(), request,
+                new io.grpc.stub.StreamObserver<>() {
+                    @Override public void onNext(ReadDocumentResponse frame) { frames.add(frame); }
+                    @Override public void onError(Throwable failure) { error.set(failure); }
+                    @Override public void onCompleted() {}
+                });
+        return new StreamedRead(frames, error.get());
+    }
 
     private DocumentReads reads(ai.protomolt.proto.repo.stack.Stack stack,
             DocumentAdmissionReservations reservations) {

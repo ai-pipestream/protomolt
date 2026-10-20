@@ -19,6 +19,7 @@ import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.StoredPartEntry;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -439,9 +440,11 @@ public final class DocumentStreams {
          * Prepares one part for emission. A non-opaque part is read in full and verified
          * before any of its frames go out: the stack stream checks length and digest at
          * end of stream, and the part is then decoded against its retained schemas. Its
-         * buffered bytes are bounded by an admission reservation taken for the catalog
-         * length before anything is allocated and held until the part's final frame
-         * callback returns; a refused reservation fails the read before any buffering.
+         * catalog length is checked against the part ceiling (negative is DATA_LOSS,
+         * above {@code maxFragmentBytes} is RESOURCE_EXHAUSTED) and then reserved before
+         * the stack is opened; the part is buffered in one array of exactly that length,
+         * and the reservation is held until the part's final frame callback returns. A
+         * refused reservation fails the read before any buffering.
          * An opaque part has no retained-schema check, so it streams chunk by chunk
          * under a fixed two-chunk reservation covering its pending and lookahead chunk
          * buffers; the stack stream verifies length and digest at end of stream, which
@@ -451,6 +454,7 @@ public final class DocumentStreams {
             var entry = part.getEntry();
             var ref = part.getRef();
             boolean opaque = entry.getOpaque();
+            if (!opaque) reads.requirePartWithinCeiling(ref);
             long reserved = opaque ? 2L * CHUNK_SIZE : ref.getLength();
             var lease = Objects.requireNonNull(
                     reads.reservations().reserve(reserved), "reservation lease");
@@ -619,21 +623,29 @@ public final class DocumentStreams {
         }
 
         /**
-         * Drains the stream to end of stream, where the verifying stack stream enforces
-         * that the stored object matches {@code expectedLength} and its recorded digest.
-         * The output's initial capacity never trusts the catalog length beyond one chunk:
-         * the buffered total is already bounded by the reservation taken for that length
-         * before this method runs, and the output grows without copying flushed buffers.
+         * Reads the stream into a single array of exactly {@code expectedLength} bytes,
+         * the catalog length {@code loadPart} checked against the part ceiling and
+         * reserved before this method runs, so the read allocates no scratch chunk and no
+         * growable output beyond the reserved bytes. The array fills at most one chunk
+         * per read call so cancellation is checked between reads, and the returned
+         * {@link ByteString} wraps the array without copying it. Reading to end of
+         * stream lets the verifying stack stream check length and digest; a stream that
+         * ends early or runs past {@code expectedLength} is a {@link StackDataLoss}.
+         * A cancelled read returns an empty string that the caller discards.
          */
         private ByteString readFully(InputStream stream, long expectedLength) throws IOException {
-            var output = ByteString.newOutput(boundedPreSize(expectedLength));
-            var chunk = new byte[CHUNK_SIZE];
-            while (!cancelled) {
-                int n = stream.read(chunk, 0, chunk.length);
+            var bytes = new byte[Math.toIntExact(expectedLength)];
+            int filled = 0;
+            while (!cancelled && filled < bytes.length) {
+                int n = stream.read(bytes, filled, Math.min(CHUNK_SIZE, bytes.length - filled));
                 if (n < 0) break;
-                output.write(chunk, 0, n);
+                filled += n;
             }
-            return output.toByteString();
+            if (cancelled) return ByteString.EMPTY;
+            if (filled != bytes.length || stream.read() >= 0)
+                throw new StackDataLoss("Stored object length differs from its reference: "
+                        + expectedLength + " bytes");
+            return UnsafeByteOperations.unsafeWrap(bytes);
         }
 
         private void failWith(Throwable primary, RuntimeException statusError) {
@@ -774,15 +786,6 @@ public final class DocumentStreams {
             total += n;
         }
         return total;
-    }
-
-    /**
-     * The initial capacity hint for buffering one part: the catalog length is untrusted
-     * until the stack stream verifies it at end of stream, so the hint is capped at one
-     * chunk and never allocates from a corrupt or oversized recorded length.
-     */
-    static int boundedPreSize(long untrustedLength) {
-        return (int) Math.min(Math.max(untrustedLength, 0L), CHUNK_SIZE);
     }
 
     private static void closeOnFailure(InputStream stream, Throwable primary) {

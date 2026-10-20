@@ -49,7 +49,8 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  * (issue #423): an opaque part streams chunk by chunk under a fixed two-chunk
  * reservation instead of being buffered in full, a refused reservation is
  * RESOURCE_EXHAUSTED before anything is opened or allocated, and a corrupt
- * catalog length is stopped by the reservation, never pre-allocated.
+ * oversized catalog length on a non-opaque part is refused by the part ceiling
+ * before any reservation, open or allocation.
  */
 class OpaqueStreamReadIT {
     private static final String OPAQUE_URL = "type.test/opaque.Widget";
@@ -203,7 +204,7 @@ class OpaqueStreamReadIT {
         assertThat(frames).noneMatch(ReadDocumentResponse::hasComplete);
     }
 
-    @Test void aCorruptOversizedCatalogLengthIsStoppedByTheReservationWithoutAllocation() throws Exception {
+    @Test void aCorruptOversizedCatalogLengthIsRefusedBeforeReservationOrAllocation() throws Exception {
         var address = address(account, "doc-corrupt-length");
         f.saves.save(processAuthority(), create("op-1", address,
                 document(account, "doc-corrupt-length", "title")).build());
@@ -235,7 +236,9 @@ class OpaqueStreamReadIT {
             @Override public void onCompleted() { throw new AssertionError("unexpected onCompleted"); }
         });
 
-        assertThat(requested).contains(corruptLength);
+        assertThat(requested)
+                .as("the part ceiling refuses the corrupt length before any reservation is asked for")
+                .doesNotContain(corruptLength);
         assertThat(error.get()).isInstanceOfSatisfying(StatusRuntimeException.class, failure ->
                 assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
         assertThat(opens.get())
