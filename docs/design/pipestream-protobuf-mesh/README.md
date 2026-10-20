@@ -1,5 +1,9 @@
 # ProtoMolt PipeStream protobuf mesh
 
+> **Non-normative design history.** This set is a design proposal, not a
+> description of the current code; it names components that are not built.
+> See [docs/README.md](../../README.md#design-history-and-work-records-non-normative).
+
 ## Purpose
 
 ProtoMolt can act as a contract-driven processing node in a distributed

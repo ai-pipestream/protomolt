@@ -2,11 +2,26 @@
 
 ## Prerequisites
 
-- JDK 25 or newer. The build uses Gradle toolchains (with the Foojay
-  resolver), so any recent JDK can run the wrapper; artifacts target 25.
-- [buf](https://buf.build/docs/installation) on the `PATH` for proto
-  linting (`buf lint` runs as part of `check`).
-- Docker, only if you want to run the registry integration tests.
+This is the authoritative prerequisites list; README and CONTRIBUTING defer
+to it.
+
+- **JDK 25, the only supported runtime.** The build pins a Java 25 toolchain
+  (`JavaLanguageVersion.of(25)` in `build.gradle`) and compiles with
+  `--release 25`; the Foojay resolver downloads a 25 toolchain when the
+  launching JDK is something else. The Gradle 9.6.1 wrapper itself needs
+  JDK 17 or newer to start.
+- **[buf](https://buf.build/docs/installation) 1.70.0** on the `PATH` for
+  proto linting. CI pins 1.70.0 because the bundled well-known descriptors
+  vary by CLI version. `buf lint` runs standalone or through the root
+  `./gradlew check` task; `./gradlew build` does not run it.
+- **Node 22 or newer**, only for the browser console. `apps/console` is a
+  standalone Vite app; `apps/serve` bundles `apps/console/dist` only when
+  it exists, so `/console` serves nothing until `npm ci && npm run build`
+  has run in `apps/console`. The JVM build does not need Node.
+- **Docker**, for the Testcontainers integration suites (Redpanda,
+  Apicurio, OpenSearch, Iceberg, LocalStack). They are part of the default
+  `test` task: they run wherever Docker is available and skip otherwise,
+  so a build without Docker stays green.
 
 ## Building from a clone
 
@@ -16,9 +31,11 @@ cd protomolt
 ./gradlew build
 ```
 
-`build` compiles all modules, runs every unit test, runs `buf lint`, and
-runs the in-build protovalidate conformance gate (which fails the build on
-any drift from the expected 100% pass rate).
+`build` compiles all modules, runs every unit test (including the
+Docker-backed suites when Docker is present), and runs the in-build
+protovalidate conformance gate (which fails the build on any drift from the
+expected 100% pass rate). It does not run `buf lint`; that hangs off the
+root `check` task (see [Proto linting](#proto-linting)).
 
 The catalog inventory is generated from the built-in, standalone MCP, and full
 catalog constructors. Refresh the checked-in machine-readable document after
@@ -42,6 +59,59 @@ Versions are derived from `v*` git tags via Axion; an untagged clone
 publishes a snapshot version. A specific version can be forced with
 `-PpublishVersion=…`. Artifact signing activates only when
 `GPG_PRIVATE_KEY` is set, so local publishing needs no signing setup.
+
+## Build cost and the inner loop
+
+`settings.gradle` includes 181 modules, the default `test` task includes the
+Docker-backed integration suites, and the conformance gate runs in-build, so
+a full `./gradlew build` is a long operation: expect tens of minutes on a
+developer laptop, dominated by the test and container time rather than
+compilation. The Gradle daemon is capped at `-Xmx2g`
+(`gradle.properties`), and each module's tests fork up to half the
+machine's cores (`maxParallelForks`).
+
+Day-to-day work targets one module by its Gradle project path (the
+`include` name in `settings.gradle`, which differs from the directory
+name):
+
+```shell
+# Test and javadoc one module:
+./gradlew :protomolt-mapper:test :protomolt-mapper:javadoc --max-workers=2
+
+# Compile without running tests:
+./gradlew :protomolt-mapper:classes --max-workers=2
+```
+
+Gradle builds the module's dependencies as needed, so the first run of a
+deep module compiles more than later ones. On a small machine keep
+`--max-workers` low (2 is a safe default); the module-level test forking
+already uses the cores.
+
+## Snapshot dependencies
+
+Everything resolves from Maven Central, including stock
+`org.apache.lucene` (version `lucene` in `gradle/libs.versions.toml`), with
+one exception: the experimental OpenNLP fork (`ai.pipestream:opennlp-*`,
+a `-SNAPSHOT` version in the catalog). `build.gradle` resolves it from
+`mavenLocal()` first, then Maven Central's snapshot repository, then the
+ai-pipestream Forgejo package registry
+(`https://git.rokkon.com/api/packages/ai-pipestream/maven`) as a fallback.
+Both remote repositories are content-filtered to exactly the fork, so no
+other dependency is ever looked up there.
+
+Two failure modes to know about:
+
+- Central's snapshot storage expires artifacts, so a clean clone can fail
+  with `Could not find ai.pipestream:opennlp-...`. That means a fresh fork
+  snapshot needs publishing (or the Forgejo fallback is unreachable); it is
+  not a fault in your checkout.
+- A stale copy in `~/.m2/repository/ai/pipestream` shadows the published
+  one, because `mavenLocal()` is consulted first. Clear it and re-resolve:
+
+```shell
+rm -rf ~/.m2/repository/ai/pipestream
+./gradlew build --refresh-dependencies
+```
 
 ## Proto linting
 
@@ -72,10 +142,11 @@ Testcontainers Redpanda, which serves the Confluent Schema Registry API.
 They run wherever Docker is available and skip otherwise.
 
 The OpenSearch index lane (`:protomolt-search-index-opensearch`) also provisions
-its own engine: a Testcontainers container running
-`opensearchproject/opensearch:3.7.0` (the same image the compose stack
-pins), started through the OpenSearch project's `opensearch-testcontainers`
-module. It likewise runs wherever Docker is available and skips otherwise,
+its own engine: a Testcontainers container running the
+`opensearchproject/opensearch` image pinned in the suite's test classes
+(`OpenSearchLiveIntegrationTest` and siblings; the compose stack pins its
+own version in `docker-compose.integration.yml`), started through the
+OpenSearch project's `opensearch-testcontainers` module. It likewise runs wherever Docker is available and skips otherwise,
 so the compose stack's `opensearch` service is not needed for tests.
 
 The Iceberg lanes self-provision the same way. The `:protomolt-iceberg`
@@ -91,8 +162,11 @@ The S3 store convention is three lanes by environment: LocalStack for
 tests, the compose stack's `rustfs` for live runs on a laptop or server,
 and real S3 on AWS. The Apicurio lanes self-provision the same way: the
 `:protomolt-schema-apicurio` suites and the confluent module's two ccompat
-suites each boot an `apicurio/apicurio-registry:3.3.0` container (the
-ccompat suites hit its `/apis/ccompat/v7` facade). They run wherever
+suites each boot the `apicurio/apicurio-registry` image pinned in each
+module's `ApicurioRegistryContainer` test class (the compose stack and the
+Apicurio SDK dependency pin their own versions in
+`docker-compose.integration.yml` and `gradle/libs.versions.toml`; the
+ccompat suites hit the registry's `/apis/ccompat/v7` facade). They run wherever
 Docker is available and skip otherwise, so the compose stack's `apicurio`
 service is not needed for tests:
 
@@ -116,9 +190,9 @@ compose stack's, with a system property or environment variable:
           -Dprotomolt.it.apicurio.url=http://my-registry:8080
 ```
 
-An unreachable override endpoint still skips via a JUnit assumption (a
-quick ~2 second probe), so a plain `./gradlew build` stays green without
-containers.
+An unreachable override endpoint fails the suite rather than skipping, so
+a typo in the URL cannot silently hand the run back to the Testcontainers
+registry. Without the override the suites provision their own containers.
 
 ## ACP protocol round trips
 
@@ -157,9 +231,11 @@ GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on every push
 to `main` and on pull requests:
 
 - **build**: compiles all modules, runs the unit test suite and the
-  in-build conformance gate, runs `buf lint`, and (for pull requests)
-  `buf breaking` against the target branch. Tests run on JDK 25
-  (`-PtestJdk=25`), the only supported runtime.
+  in-build conformance gate (`./gradlew build`), then the ACP protocol
+  lane, `buf lint` (buf pinned at 1.70.0), the deployment and starter
+  static checks, and (for pull requests) `buf breaking` against the target
+  branch. Tests run on JDK 25 (`-PtestJdk=25`), the only supported
+  runtime; the matrix form stays so a newer JDK can be added beside it.
 - **console**: installs the console's npm dependencies and runs its tests,
   its TypeScript typecheck, and its production build. The console is a
   standalone Vite app that the JVM build does not need, so a broken bundle
