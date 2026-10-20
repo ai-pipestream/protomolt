@@ -153,9 +153,8 @@ built-in action exposed by the standalone and full catalogs.
 
 ## Architecture and records
 
-- [PipeStream protobuf mesh](design/pipestream-protobuf-mesh/README.md):
-  contract-driven `Any` routing, service advertisement, recursive processing,
-  LLM software generation, and OpenNLP PII policy across mesh nodes
+These design documents describe current behavior or current plans:
+
 - [Planned work](design/planned-work.md): open product and hardening work
 - [Work tiers and skill tags](design/work-tags.md): the vocabulary offers and workers use to describe delegated work; the `protomolt-worker` skill under `.claude/skills/` walks a session through both roles
 - [Metric mappings](design/metric-mapping.md): governed aggregate queries on a mapping subject (Cube comparison, option dialect, `query-metrics`)
@@ -172,8 +171,29 @@ built-in action exposed by the standalone and full catalogs.
 - [Screening](design/screening.md): model-driven PII and entity detection
 - [Well-known types](design/well-known-types.md): the validated typed commons, wire-plain and server-strict
 - [Archive version metadata](design/archive-version-metadata.md): descriptive metadata snapshots for archive versions
-- [Repo service contract and component mapping](design/repo-v2-contract-draft/component-mapping.md): the v2 contract mapped onto existing components
 - [Worker harness guide](design/worker-harness-guide.md): failing and working invocations for delegation workers
 - [Website feature inventory](website-feature-inventory.md): capability inventory prepared for the website team
-- [Plans](plans): goal plans, inventories and verification records
+
+The repository design source of record is
+[parts-based repository requirements](design/parts-based-repository-requirements.md).
+
+## Design history and work records (non-normative)
+
+Everything in this section is a historical planning, audit or review
+artifact. These documents record proposals and the state of the tree at the
+time they were written; they name types and components that may no longer
+exist (or never existed) and are not a description of the current code. The
+live guides above and the code itself take precedence on any disagreement.
+
+- [PipeStream protobuf mesh](design/pipestream-protobuf-mesh/README.md):
+  a design proposal for contract-driven `Any` routing, service
+  advertisement, recursive processing, LLM software generation, and OpenNLP
+  PII policy across mesh nodes; only parts of it are built
+- [Repo service contract and component mapping](design/repo-v2-contract-draft/component-mapping.md):
+  a draft that mapped the v2 contract onto the components of its time
+- [Source audit](design/protobuf-toolkit-audit.md) and
+  [source/test index](design/protobuf-toolkit-source-index.md): the dated
+  October 13 reconciliation records
+- [Plans](plans): goal plans, inventories and verification work logs
 - [Review records](reviews): dated correctness and security reviews
+- [Evidence](evidence): captured outputs backing specific past goals

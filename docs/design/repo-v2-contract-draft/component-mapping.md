@@ -1,5 +1,10 @@
 # Repo service: contract and component mapping
 
+> **Non-normative design history.** This draft maps the v2 contract onto the
+> components that existed when it was written; many of the names below no
+> longer match the tree. The design source of record is
+> [parts-based repository requirements](../parts-based-repository-requirements.md).
+
 The v2 contract is built and compiled; this document maps it onto existing
 components. Requirements v2.5 remain normative. Section 7 records what changed
 between the reviewed draft and the built contract; the draft proto is deleted.
