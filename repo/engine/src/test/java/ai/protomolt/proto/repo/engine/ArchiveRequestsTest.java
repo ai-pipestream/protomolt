@@ -64,6 +64,21 @@ class ArchiveRequestsTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {".", "..", "a/b", "a\\b", "/", "\\", "../x", "acct/"})
+    void accountIdsThatWouldBeDotSegmentsOrCarryASeparatorAreRefused(String accountId) {
+        String message = "account_id must not be '.', '..' or contain a path separator";
+        refused(() -> ArchiveRequests.accountId(accountId), message);
+        refused(() -> ArchiveRequests.address(true, address(accountId, "docs", "e1")), message);
+    }
+
+    @Test
+    void accountIdsThatOnlyContainDotsAmongOtherCharactersAreAdmitted() {
+        for (String accountId : new String[] {"...", ".a", "a.", "a..b", " .. "}) {
+            assertThat(ArchiveRequests.accountId(accountId)).isEqualTo(accountId);
+        }
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"Docs", "-docs", "docs-", "do--cs", "do cs", "docs/x", "décs"})
     void archiveNamesThatAreNotSlugsAreRefusedUnderTheCallersFieldName(String name) {
         refused(() -> ArchiveRequests.archiveName(name, "target.archive"),

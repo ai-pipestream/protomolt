@@ -1,10 +1,13 @@
 package ai.protomolt.proto.repo.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Archive object keys are write identities: every physical write gets a fresh key under the
@@ -28,7 +31,28 @@ class ArchiveKeysTest {
         assertThat(ArchiveKeys.sanitize("a/b c\\d:e")).isEqualTo("a_b_c_d_e");
         assertThat(ArchiveKeys.sanitize("café")).isEqualTo("caf_");
         assertThat(ArchiveKeys.sanitize("😀")).isEqualTo("__");
-        assertThat(ArchiveKeys.sanitize("")).isEmpty();
+        assertThat(ArchiveKeys.sanitize("...")).isEqualTo("...");
+        assertThat(ArchiveKeys.sanitize("./")).isEqualTo("._");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", ".", ".."})
+    void sanitizeRefusesASegmentThatIsEmptyOrDotOnly(String segment) {
+        assertThatThrownBy(() -> ArchiveKeys.sanitize(segment))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("archive key segment must not be empty, '.' or '..': '" + segment + "'");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {".", ".."})
+    void everyKeyBuilderRefusesADotOnlyAccountEvenWhenTheCallerSkippedValidation(String account) {
+        UUID upload = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
+        assertThatThrownBy(() -> ArchiveKeys.rendition(drive("tenant/"), account, "docs", ENTRY, "original", null, SHA))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ArchiveKeys.staging(drive("tenant/"), account, "docs", ENTRY, upload))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ArchiveKeys.streamed(drive("tenant/"), account, "docs", ENTRY))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
