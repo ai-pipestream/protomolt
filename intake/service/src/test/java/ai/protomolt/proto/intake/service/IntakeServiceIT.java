@@ -10,6 +10,7 @@ import ai.protomolt.proto.intake.v1.IngestDocumentRequest;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
 import ai.protomolt.proto.intake.v1.IntakeServiceGrpc;
 import ai.protomolt.proto.intake.v1.RawPayload;
+import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import com.google.protobuf.ByteString;

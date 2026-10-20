@@ -9,6 +9,7 @@ import ai.protomolt.proto.intake.service.IntakeServices;
 import ai.protomolt.proto.intake.service.identity.InMemoryApiKeyIdentityResolver;
 import ai.protomolt.proto.intake.service.identity.IntakeScope;
 import ai.protomolt.proto.intake.v1.IngestDocumentResponse;
+import ai.protomolt.proto.repo.accession.V2RepositoryFixture;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
