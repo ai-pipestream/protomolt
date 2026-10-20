@@ -24,7 +24,9 @@ import java.util.Objects;
  * @param spaces space keys to crawl ({@code CONFLUENCE_SPACES},
  *        comma-separated); empty = every space the credentials can see
  * @param pageSize the page size for list endpoints
- *        ({@code CONFLUENCE_PAGE_SIZE}, default 100, capped at the API's 250)
+ *        ({@code CONFLUENCE_PAGE_SIZE}, default 100 when unset); must be
+ *        between 1 and the API's maximum of 250, anything else is refused by
+ *        name rather than clamped or defaulted
  * @param bodyFormat the body representation to fetch for pages and blog posts
  *        ({@code CONFLUENCE_BODY_FORMAT}, default {@code "storage"}; the v2
  *        list endpoints accept {@code storage} or {@code atlas_doc_format})
@@ -135,10 +137,10 @@ public record ConfluenceConnectorConfig(
         } else {
             spaces = List.copyOf(spaces);
         }
-        if (pageSize <= 0) {
-            pageSize = DEFAULT_PAGE_SIZE;
+        if (pageSize <= 0 || pageSize > MAX_PAGE_SIZE) {
+            throw new IllegalArgumentException("pageSize must be between 1 and "
+                    + MAX_PAGE_SIZE + " (configured via " + ENV_PAGE_SIZE + ")");
         }
-        pageSize = Math.min(pageSize, MAX_PAGE_SIZE);
         if (bodyFormat == null || bodyFormat.isBlank()) {
             bodyFormat = DEFAULT_BODY_FORMAT;
         }
@@ -217,7 +219,7 @@ public record ConfluenceConnectorConfig(
                 .email(firstNonBlank(env.get(ENV_EMAIL), env.get(ENV_EMAIL_ALIAS)))
                 .apiToken(firstNonBlank(env.get(ENV_API_TOKEN), env.get(ENV_API_TOKEN_ALIAS)))
                 .spaces(parseSpaces(env.get(ENV_SPACES)))
-                .pageSize(parseIntOrDefault(env.get(ENV_PAGE_SIZE), DEFAULT_PAGE_SIZE))
+                .pageSize(parsePageSize(env.get(ENV_PAGE_SIZE)))
                 .bodyFormat(env.get(ENV_BODY_FORMAT))
                 .kafkaBootstrapServers(env.get(ENV_KAFKA_BOOTSTRAP_SERVERS))
                 .schemaRegistryUrl(env.get(ENV_SCHEMA_REGISTRY_URL))
@@ -248,15 +250,22 @@ public record ConfluenceConnectorConfig(
         return canonical == null || canonical.isBlank() ? alias : canonical;
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
+    private static int parsePageSize(String value) {
         if (value == null || value.isBlank()) {
-            return fallback;
+            return DEFAULT_PAGE_SIZE;
         }
+        String message = ENV_PAGE_SIZE + " must be an integer between 1 and " + MAX_PAGE_SIZE
+                + " (the v2 list endpoints' page size limit)";
+        int parsed;
         try {
-            return Integer.parseInt(value.trim());
+            parsed = Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(message, e);
         }
+        if (parsed <= 0 || parsed > MAX_PAGE_SIZE) {
+            throw new IllegalArgumentException(message);
+        }
+        return parsed;
     }
 
     /** Secrets stay out of any log line this record lands in. */

@@ -13,15 +13,17 @@ import java.util.Map;
  * silently pointed itself at a defaulted local database would look healthy
  * while authenticating against the wrong (or an empty) key table, so the
  * JDBC URL, username, and password are all required and rejected loudly by
- * name when missing. Only the pool size and migration location fall back.
+ * name when missing. Only an unset pool size and migration location fall
+ * back; a pool size that is present but malformed or non-positive is refused
+ * by name, never silently defaulted.
  *
  * @param jdbcUrl           JDBC URL of the PostgreSQL database; required
  * @param username          database username; required
  * @param password          database password; required to be present — an
  *                          empty password is a deliberate configuration
  *                          (trust auth), a null one is a missing one
- * @param maxPoolSize       HikariCP maximum pool size; values &lt;= 0 fall
- *                          back to {@link #DEFAULT_POOL_SIZE}. Keep this
+ * @param maxPoolSize       HikariCP maximum pool size; must be positive (use
+ *                          {@link #DEFAULT_POOL_SIZE} when unconfigured). Keep this
  *                          small: callers run on virtual threads, so the
  *                          pool — not the thread count — is the concurrency
  *                          limit against the database.
@@ -68,7 +70,8 @@ public record IntakeKeyStoreConfig(
             throw new IllegalArgumentException("password must not be null");
         }
         if (maxPoolSize <= 0) {
-            maxPoolSize = DEFAULT_POOL_SIZE;
+            throw new IllegalArgumentException(
+                    "maxPoolSize must be positive (configured via " + ENV_POOL_SIZE + ")");
         }
         if (migrationLocation == null || migrationLocation.isBlank()) {
             migrationLocation = DEFAULT_MIGRATION_LOCATION;
@@ -103,7 +106,8 @@ public record IntakeKeyStoreConfig(
      * {@link #ENV_USERNAME} and {@link #ENV_PASSWORD} are REQUIRED and
      * rejected loudly by name when missing — no localhost fallback, see the
      * class javadoc for why. {@link #ENV_POOL_SIZE} falls back to
-     * {@link #DEFAULT_POOL_SIZE}; the migration location is always
+     * {@link #DEFAULT_POOL_SIZE} when unset and is refused by name when
+     * malformed or non-positive; the migration location is always
      * {@link #DEFAULT_MIGRATION_LOCATION}.
      *
      * @param env the environment map (injectable for tests)
@@ -131,18 +135,25 @@ public record IntakeKeyStoreConfig(
                 jdbcUrl.trim(),
                 username.trim(),
                 password,
-                parseIntOrDefault(env.get(ENV_POOL_SIZE), DEFAULT_POOL_SIZE),
+                parsePoolSize(env.get(ENV_POOL_SIZE)),
                 DEFAULT_MIGRATION_LOCATION);
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
+    private static int parsePoolSize(String value) {
         if (value == null || value.isBlank()) {
-            return fallback;
+            return DEFAULT_POOL_SIZE;
         }
+        int parsed;
         try {
-            return Integer.parseInt(value.trim());
+            parsed = Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(
+                    ENV_POOL_SIZE + " must be a positive integer (a HikariCP pool size)", e);
         }
+        if (parsed <= 0) {
+            throw new IllegalArgumentException(
+                    ENV_POOL_SIZE + " must be a positive integer (a HikariCP pool size)");
+        }
+        return parsed;
     }
 }

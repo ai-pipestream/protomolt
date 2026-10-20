@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Projection and batching semantics against a stub {@link S3Client} (a JDK proxy):
@@ -341,6 +342,46 @@ class ProjectedParquetChangeSinkTest {
                         ProjectedParquetChangeSink.ENV_SECRET_ACCESS_KEY, "rustfsadmin"))
                 .orElseThrow()) {
             assertThat(sink).isNotNull();
+        }
+    }
+
+    @Test
+    void fromEnvironmentRefusesAMalformedOrNonPositiveBatchSizeByName() {
+        for (String bad : List.of("1OO", "many", "2.5", "0", "-3")) {
+            assertThatThrownBy(() -> ProjectedParquetChangeSink.fromEnvironment(Map.of(
+                            ProjectedParquetChangeSink.ENV_BUCKET, "lake",
+                            ProjectedParquetChangeSink.ENV_ENDPOINT, "http://localhost:9000",
+                            ProjectedParquetChangeSink.ENV_BATCH_SIZE, bad)))
+                    .as("batch size %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(ProjectedParquetChangeSink.ENV_BATCH_SIZE);
+        }
+    }
+
+    @Test
+    void fromEnvironmentAcceptsAPositiveOrBlankBatchSize() {
+        for (String good : List.of("7", " 250 ", " ")) {
+            try (ProjectedParquetChangeSink sink = ProjectedParquetChangeSink.fromEnvironment(Map.of(
+                            ProjectedParquetChangeSink.ENV_BUCKET, "lake",
+                            ProjectedParquetChangeSink.ENV_ENDPOINT, "http://localhost:9000",
+                            ProjectedParquetChangeSink.ENV_ACCESS_KEY_ID, "rustfsadmin",
+                            ProjectedParquetChangeSink.ENV_SECRET_ACCESS_KEY, "rustfsadmin",
+                            ProjectedParquetChangeSink.ENV_BATCH_SIZE, good))
+                    .orElseThrow()) {
+                assertThat(sink).as("batch size '%s'", good).isNotNull();
+            }
+        }
+    }
+
+    @Test
+    void constructorRefusesANonPositiveBatchSizeInsteadOfDefaulting() {
+        for (int bad : new int[] {0, -1}) {
+            FakeS3 fake = new FakeS3();
+            assertThatThrownBy(() -> new ProjectedParquetChangeSink(fake.client(), "b", "lake", bad))
+                    .as("batch size %d", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("batchSize")
+                    .hasMessageContaining(ProjectedParquetChangeSink.ENV_BATCH_SIZE);
         }
     }
 }

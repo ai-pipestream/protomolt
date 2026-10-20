@@ -3,6 +3,7 @@ package ai.protomolt.proto.intake.service.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -10,7 +11,8 @@ import org.junit.jupiter.api.Test;
  * {@link IntakeKeyStoreConfig}: the deliberate difference from the account
  * store's config is pinned here — connection settings are REQUIRED, never
  * defaulted (an air-gapped key store silently pointed at localhost would be
- * a lie), while pool size and migration location keep the fallback style.
+ * a lie), while an unset pool size and a blank migration location fall back
+ * and a malformed or non-positive pool size is refused by name.
  * No containers.
  */
 class IntakeKeyStoreConfigTest {
@@ -49,11 +51,18 @@ class IntakeKeyStoreConfigTest {
     }
 
     @Test
-    void onlyPoolAndLocationFallBack() {
-        IntakeKeyStoreConfig config = new IntakeKeyStoreConfig(URL, "u", "p", -3, " ");
-        assertThat(config.maxPoolSize()).isEqualTo(IntakeKeyStoreConfig.DEFAULT_POOL_SIZE);
+    void onlyLocationFallsBackAndANonPositivePoolSizeIsRefused() {
+        IntakeKeyStoreConfig config = new IntakeKeyStoreConfig(URL, "u", "p", 3, " ");
+        assertThat(config.maxPoolSize()).isEqualTo(3);
         assertThat(config.migrationLocation())
                 .isEqualTo(IntakeKeyStoreConfig.DEFAULT_MIGRATION_LOCATION);
+        for (int bad : new int[] {0, -3}) {
+            assertThatThrownBy(() -> new IntakeKeyStoreConfig(URL, "u", "p", bad, " "))
+                    .as("pool size %d", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("maxPoolSize")
+                    .hasMessageContaining(IntakeKeyStoreConfig.ENV_POOL_SIZE);
+        }
     }
 
     @Test
@@ -97,12 +106,26 @@ class IntakeKeyStoreConfigTest {
     }
 
     @Test
-    void unparseablePoolSizeFallsBackToDefault() {
+    void malformedOrNonPositivePoolSizeIsRefusedByName() {
+        for (String bad : List.of("many", "1O", "2.5", "0", "-3")) {
+            assertThatThrownBy(() -> IntakeKeyStoreConfig.fromEnvironmentMap(Map.of(
+                            IntakeKeyStoreConfig.ENV_JDBC_URL, URL,
+                            IntakeKeyStoreConfig.ENV_USERNAME, "keys",
+                            IntakeKeyStoreConfig.ENV_PASSWORD, "p",
+                            IntakeKeyStoreConfig.ENV_POOL_SIZE, bad)))
+                    .as("pool size %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(IntakeKeyStoreConfig.ENV_POOL_SIZE);
+        }
+    }
+
+    @Test
+    void blankPoolSizeKeepsTheDefault() {
         IntakeKeyStoreConfig config = IntakeKeyStoreConfig.fromEnvironmentMap(Map.of(
                 IntakeKeyStoreConfig.ENV_JDBC_URL, URL,
                 IntakeKeyStoreConfig.ENV_USERNAME, "keys",
                 IntakeKeyStoreConfig.ENV_PASSWORD, "p",
-                IntakeKeyStoreConfig.ENV_POOL_SIZE, "many"));
+                IntakeKeyStoreConfig.ENV_POOL_SIZE, " "));
         assertThat(config.maxPoolSize()).isEqualTo(IntakeKeyStoreConfig.DEFAULT_POOL_SIZE);
     }
 }
