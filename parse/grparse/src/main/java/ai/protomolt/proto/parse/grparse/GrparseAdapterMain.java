@@ -57,7 +57,7 @@ public final class GrparseAdapterMain {
                         GrparseAdapterOptions.DEFAULT_PARSER_VERSION,
                         GrparseAdapterOptions.DEFAULT_MAX_DOCUMENT_BYTES,
                         GrparseAdapterOptions.DEFAULT_DEADLINE,
-                        Boolean.parseBoolean(System.getenv(ENV_EMITS_PREVIEWS))));
+                        emitsPreviews(System.getenv(ENV_EMITS_PREVIEWS))));
         HealthStatusManager health = new HealthStatusManager();
         Server server = NettyServerBuilder.forPort(port)
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
@@ -77,14 +77,37 @@ public final class GrparseAdapterMain {
         server.awaitTermination();
     }
 
-    private static int port(String spec) {
+    /** Package-private for direct testing of the port refusals. */
+    static int port(String spec) {
         if (spec == null || spec.isBlank()) {
             return DEFAULT_PORT;
         }
+        int parsed;
         try {
-            return Integer.parseInt(spec.trim());
+            parsed = Integer.parseInt(spec.trim());
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(ENV_PORT + " is not a port: '" + spec + "'", e);
+            throw new IllegalArgumentException(ENV_PORT + " must be a port number in 0..65535", e);
         }
+        if (parsed < 0 || parsed > 65535) {
+            throw new IllegalArgumentException(ENV_PORT + " must be a port number in 0..65535");
+        }
+        return parsed;
+    }
+
+    /**
+     * The previews flag, strictly {@code true}/{@code false} (case-insensitive); unset or
+     * blank is {@code false}. Package-private for direct testing.
+     */
+    static boolean emitsPreviews(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return false;
+        }
+        if (spec.trim().equalsIgnoreCase("true")) {
+            return true;
+        }
+        if (spec.trim().equalsIgnoreCase("false")) {
+            return false;
+        }
+        throw new IllegalArgumentException(ENV_EMITS_PREVIEWS + " must be true or false");
     }
 }

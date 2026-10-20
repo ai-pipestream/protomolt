@@ -8,12 +8,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -107,7 +110,7 @@ class ProtoMoltCliTest {
     @Test
     void anInputFlagWithoutAValueIsAUsageError() throws Exception {
         assertThat(run(new String[]{"compile", "--input"}, compileInput())).isEqualTo(2);
-        assertThat(err()).contains("Could not read input").contains("--input needs a JSON value");
+        assertThat(err()).contains("--input needs a JSON value").contains("Usage:");
     }
 
     @Test
@@ -127,6 +130,47 @@ class ProtoMoltCliTest {
         int code = run(new String[]{"console"}, "compile \"text\"\nexit\n");
         assertThat(code).isZero();
         assertThat(out()).contains("Input must be a JSON object").contains("string");
+    }
+
+    @Test
+    void anUnknownOptionIsRefusedInsteadOfSilentlyIgnored() throws Exception {
+        assertThat(run(new String[]{"compile", "--inptu", compileInput()}, "")).isEqualTo(2);
+        assertThat(err()).contains("Unknown option '--inptu'").contains("Usage:");
+    }
+
+    @Test
+    void anExtraPositionalArgumentIsRefused() throws Exception {
+        assertThat(run(new String[]{"compile", compileInput(), "extra"}, "")).isEqualTo(2);
+        assertThat(err()).contains("Unexpected extra argument 'extra'").contains("Usage:");
+    }
+
+    @Test
+    void aSecondInputSourceIsRefused() throws Exception {
+        assertThat(run(new String[]{"compile", "--input", compileInput(), "--input", compileInput()},
+                "")).isEqualTo(2);
+        assertThat(err()).contains("already given").contains("Usage:");
+    }
+
+    @Test
+    void listAndConsoleRefuseArguments() throws Exception {
+        assertThat(run(new String[]{"list", "extra"}, "")).isEqualTo(2);
+        assertThat(err()).contains("Unexpected argument 'extra'");
+        assertThat(run(new String[]{"console", "extra"}, "")).isEqualTo(2);
+    }
+
+    @Test
+    void anInputFileThatDoesNotExistIsAUsageError(@TempDir Path dir) throws Exception {
+        Path missing = dir.resolve("no-such-input.json");
+        assertThat(run(new String[]{"compile", "--input-file", missing.toString()}, "")).isEqualTo(2);
+        assertThat(err()).contains("Could not read input").contains("no-such-input.json");
+    }
+
+    @Test
+    void inputFileRunsTheVerb(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("input.json");
+        Files.writeString(file, compileInput());
+        assertThat(run(new String[]{"compile", "--input-file", file.toString()}, "")).isZero();
+        assertThat(MAPPER.readTree(out()).path("ok").asBoolean()).isTrue();
     }
 
     @Test

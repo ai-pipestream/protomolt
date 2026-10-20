@@ -11,15 +11,16 @@ import java.util.Map;
  * connection itself. This store is an authentication authority — a caller store that
  * silently pointed itself at a defaulted local database would look healthy while
  * authenticating against the wrong (or an empty) table, so the JDBC URL, username, and
- * password are all required and rejected loudly by name when missing. Only the pool size
- * and migration location fall back.
+ * password are all required and rejected loudly by name when missing. Only an unset
+ * pool size and migration location fall back; a pool size that is present but
+ * malformed or non-positive is refused by name, never silently defaulted.
  *
  * @param jdbcUrl JDBC URL of the PostgreSQL database; required
  * @param username database username; required
  * @param password database password; required to be present — an empty password is a
  *        deliberate configuration (trust auth), a null one is a missing one
- * @param maxPoolSize HikariCP maximum pool size; values &lt;= 0 fall back to
- *        {@link #DEFAULT_POOL_SIZE}
+ * @param maxPoolSize HikariCP maximum pool size; must be positive (use
+ *        {@link #DEFAULT_POOL_SIZE} when unconfigured)
  * @param migrationLocation Flyway location for the caller store's migrations; blank
  *        falls back to {@link #DEFAULT_MIGRATION_LOCATION}
  */
@@ -62,7 +63,8 @@ public record CallerStoreConfig(
             throw new IllegalArgumentException("password must not be null");
         }
         if (maxPoolSize <= 0) {
-            maxPoolSize = DEFAULT_POOL_SIZE;
+            throw new IllegalArgumentException(
+                    "maxPoolSize must be positive (configured via " + ENV_POOL_SIZE + ")");
         }
         if (migrationLocation == null || migrationLocation.isBlank()) {
             migrationLocation = DEFAULT_MIGRATION_LOCATION;
@@ -84,8 +86,9 @@ public record CallerStoreConfig(
      * Builds a config from an environment map: {@link #ENV_JDBC_URL},
      * {@link #ENV_USERNAME} and {@link #ENV_PASSWORD} are REQUIRED and rejected loudly
      * by name when missing — no localhost fallback, see the class javadoc for why.
-     * {@link #ENV_POOL_SIZE} falls back to {@link #DEFAULT_POOL_SIZE}; the migration
-     * location is always {@link #DEFAULT_MIGRATION_LOCATION}.
+     * {@link #ENV_POOL_SIZE} falls back to {@link #DEFAULT_POOL_SIZE} when unset and is
+     * refused by name when malformed or non-positive; the migration location is always
+     * {@link #DEFAULT_MIGRATION_LOCATION}.
      *
      * @param env the environment map (injectable for tests)
      * @return the resolved config
@@ -112,18 +115,25 @@ public record CallerStoreConfig(
                 jdbcUrl.trim(),
                 username.trim(),
                 password,
-                parseIntOrDefault(env.get(ENV_POOL_SIZE), DEFAULT_POOL_SIZE),
+                parsePoolSize(env.get(ENV_POOL_SIZE)),
                 DEFAULT_MIGRATION_LOCATION);
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
+    private static int parsePoolSize(String value) {
         if (value == null || value.isBlank()) {
-            return fallback;
+            return DEFAULT_POOL_SIZE;
         }
+        int parsed;
         try {
-            return Integer.parseInt(value.trim());
+            parsed = Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(
+                    ENV_POOL_SIZE + " must be a positive integer (a HikariCP pool size)", e);
         }
+        if (parsed <= 0) {
+            throw new IllegalArgumentException(
+                    ENV_POOL_SIZE + " must be a positive integer (a HikariCP pool size)");
+        }
+        return parsed;
     }
 }

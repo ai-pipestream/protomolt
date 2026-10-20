@@ -48,10 +48,18 @@ public final class ProtoMoltCli {
         String verb = args[0];
         switch (verb) {
             case "list" -> {
+                if (args.length > 1) {
+                    return usageError(err, catalog,
+                            "Unexpected argument '" + args[1] + "': 'list' takes no arguments");
+                }
                 list(out, catalog);
                 return 0;
             }
             case "console" -> {
+                if (args.length > 1) {
+                    return usageError(err, catalog,
+                            "Unexpected argument '" + args[1] + "': 'console' takes no arguments");
+                }
                 return new Console(catalog, MAPPER).run(new BufferedReader(
                         new InputStreamReader(stdin, StandardCharsets.UTF_8)), out);
             }
@@ -66,6 +74,8 @@ public final class ProtoMoltCli {
         ObjectNode input;
         try {
             input = readInput(args, stdin);
+        } catch (IllegalArgumentException e) {
+            return usageError(err, catalog, e.getMessage());
         } catch (Exception e) {
             err.println("Could not read input: " + e.getMessage());
             return 2;
@@ -83,27 +93,46 @@ public final class ProtoMoltCli {
         }
     }
 
-    /** Reads the verb input: an inline {@code --input}/positional JSON, {@code --input-file}, or stdin. */
+    /**
+     * Reads the verb input: an inline {@code --input}/positional JSON, {@code --input-file}, or
+     * stdin. Exactly one input source may be given: an unrecognized option, a second input
+     * source, or an extra positional argument is refused rather than silently ignored, so a
+     * mistyped flag can never run the verb against stdin or the wrong payload.
+     */
     private static ObjectNode readInput(String[] args, InputStream stdin) throws IOException {
         String json = null;
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
                 case "-i", "--input" -> {
+                    if (json != null) {
+                        throw new IllegalArgumentException(
+                                "Input is already given; " + args[i] + " would replace it. Give exactly one input");
+                    }
                     if (i + 1 >= args.length) {
                         throw new IllegalArgumentException(args[i] + " needs a JSON value");
                     }
                     json = args[++i];
                 }
                 case "--input-file" -> {
+                    if (json != null) {
+                        throw new IllegalArgumentException(
+                                "Input is already given; --input-file would replace it. Give exactly one input");
+                    }
                     if (i + 1 >= args.length) {
                         throw new IllegalArgumentException(args[i] + " needs a path");
                     }
                     json = Files.readString(Path.of(args[++i]));
                 }
                 default -> {
-                    if (json == null && !args[i].startsWith("-")) {
-                        json = args[i];
+                    if (args[i].startsWith("-")) {
+                        throw new IllegalArgumentException("Unknown option '" + args[i]
+                                + "'. Known options: --input <json>, --input-file <path>");
                     }
+                    if (json != null) {
+                        throw new IllegalArgumentException(
+                                "Unexpected extra argument '" + args[i] + "': the input is already given");
+                    }
+                    json = args[i];
                 }
             }
         }
@@ -113,6 +142,13 @@ public final class ProtoMoltCli {
         return json.isBlank()
                 ? MAPPER.createObjectNode()
                 : CliJson.readObject(MAPPER, json);
+    }
+
+    /** A usage error: the refusal plus the usage text on stderr, exit code 2. */
+    private static int usageError(PrintStream err, ActionCatalog catalog, String message) {
+        err.println(message);
+        usage(err, catalog);
+        return 2;
     }
 
     private static void usage(PrintStream out, ActionCatalog catalog) {
