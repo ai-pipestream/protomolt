@@ -397,7 +397,7 @@ public final class DocumentReads {
      * fragment ceiling is refused RESOURCE_EXHAUSTED before anything is opened or
      * allocated, the same fail-fast surface as an exhausted read budget.
      */
-    private void requirePartWithinCeiling(StackRef ref) {
+    void requirePartWithinCeiling(StackRef ref) {
         long length = ref.getLength();
         if (length < 0)
             throw new AccessionException(Status.Code.DATA_LOSS,
