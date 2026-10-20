@@ -3,7 +3,9 @@ package ai.protomolt.proto.acquire.confluence;
 import ai.protomolt.proto.acquire.confluence.v1.Attachment;
 import ai.protomolt.proto.acquire.confluence.v1.BlogPost;
 import ai.protomolt.proto.acquire.confluence.v1.BlogPostContentStatus;
+import ai.protomolt.proto.acquire.confluence.v1.Body;
 import ai.protomolt.proto.acquire.confluence.v1.BodyFormat;
+import ai.protomolt.proto.acquire.confluence.v1.BodyType;
 import ai.protomolt.proto.acquire.confluence.v1.ClassificationLevel;
 import ai.protomolt.proto.acquire.confluence.v1.ClassificationLevelColor;
 import ai.protomolt.proto.acquire.confluence.v1.Comment;
@@ -15,6 +17,7 @@ import ai.protomolt.proto.acquire.confluence.v1.Folder;
 import ai.protomolt.proto.acquire.confluence.v1.InlineCommentResolutionStatus;
 import ai.protomolt.proto.acquire.confluence.v1.Label;
 import ai.protomolt.proto.acquire.confluence.v1.Page;
+import ai.protomolt.proto.acquire.confluence.v1.ParentContentType;
 import ai.protomolt.proto.acquire.confluence.v1.PropertyKey;
 import ai.protomolt.proto.acquire.confluence.v1.PropertyValue;
 import ai.protomolt.proto.acquire.confluence.v1.Space;
@@ -359,5 +362,134 @@ class ConfluenceMapperTest {
         assertThat(ConfluenceMapper.bodyFormat("wiki")).isEqualTo(BodyFormat.BODY_FORMAT_WIKI);
         assertThat(ConfluenceMapper.bodyFormat("raw")).isEqualTo(BodyFormat.BODY_FORMAT_RAW);
         assertThat(ConfluenceMapper.bodyFormat("plain")).isEqualTo(BodyFormat.BODY_FORMAT_PLAIN_TEXT);
+    }
+
+    @Test
+    void mapsWholePageFixtureToTheExactProto() throws Exception {
+        Page page = mapper.toPage(tree(
+                ConfluenceFixtures.pageJson("200", "100", "Design Doc", "2024-03-01T12:00:00.000Z")));
+
+        Page expected = Page.newBuilder()
+                .setId("200")
+                .setStatus(ContentStatus.CONTENT_STATUS_CURRENT)
+                .setTitle("Design Doc")
+                .setSpaceId("100")
+                .setParentType(ParentContentType.PARENT_CONTENT_TYPE_PAGE)
+                .setPosition(1)
+                .setAuthorId("acc-1")
+                .setOwnerId("acc-1")
+                .setSubtype("page")
+                .setCreatedAt(ConfluenceMapper.timestamp("2024-02-01T10:00:00.000Z"))
+                .setVersion(Version.newBuilder()
+                        .setCreatedAt(ConfluenceMapper.timestamp("2024-03-01T12:00:00.000Z"))
+                        .setMessage("edit")
+                        .setNumber(3)
+                        .setAuthorId("acc-2"))
+                .setBody(Body.newBuilder()
+                        .setStorage(BodyType.newBuilder()
+                                .setFormat(BodyFormat.BODY_FORMAT_STORAGE_XHTML)
+                                .setValue("<p>Hello Design Doc</p>")))
+                .setWebUrl(BASE + "/spaces/ENG/pages/200/Design+Doc")
+                .build();
+        assertThat(page).isEqualTo(expected);
+    }
+
+    @Test
+    void trailingSlashesOnTheBaseUrlAreDropped() throws Exception {
+        ConfluenceMapper slashed = new ConfluenceMapper(BASE + "///");
+        String json = """
+                {"id": "1", "_links": {"webui": "/spaces/ENG/pages/1"}}
+                """;
+        assertThat(slashed.toPage(tree(json)).getWebUrl())
+                .isEqualTo(BASE + "/spaces/ENG/pages/1");
+        assertThat(slashed.absolute("/wiki/download/attachments/a1/x.png"))
+                .isEqualTo(BASE + "/download/attachments/a1/x.png");
+        assertThat(slashed.absolute("spaces/ENG")).isEqualTo(BASE + "/spaces/ENG");
+        assertThat(slashed.absolute("https://elsewhere.example/x"))
+                .isEqualTo("https://elsewhere.example/x");
+        assertThat(slashed.absolute("  ")).isEmpty();
+    }
+
+    @Test
+    void missingMetadataLeavesEveryOptionalFieldUnset() throws Exception {
+        Page page = mapper.toPage(tree("{}"));
+        assertThat(page).isEqualTo(Page.getDefaultInstance());
+
+        Space space = mapper.toSpace(tree("{}"));
+        assertThat(space.hasDescription()).isFalse();
+        assertThat(space.hasIcon()).isFalse();
+        assertThat(space.getWebUrl()).isEmpty();
+
+        Comment comment = mapper.toComment(tree("""
+                {"id": "c1", "createdAt": "yesterday", "version": "seven"}
+                """));
+        assertThat(comment.getId()).isEqualTo("c1");
+        assertThat(comment.hasVersion()).isFalse();
+        assertThat(comment.hasBody()).isFalse();
+    }
+
+    @Test
+    void malformedBodiesKeepTheMarkupVerbatimAndSkipNonObjectSlots() throws Exception {
+        Page notAnObject = mapper.toPage(tree("""
+                {"id": "1", "body": "<p>stray"}
+                """));
+        assertThat(notAnObject.hasBody()).isFalse();
+
+        Page page = mapper.toPage(tree("""
+                {"id": "2", "body": {
+                  "storage": "<p>not a slot</p>",
+                  "view": {"value": "<p>unclosed <b>markup"},
+                  "atlas_doc_format": {"representation": "hologram", "value": "{\\"type\\":"},
+                  "raw": {"representation": " RAW ", "value": 7}
+                }}
+                """));
+        Body body = page.getBody();
+        assertThat(body.hasStorage()).isFalse();
+        // No representation: the slot's own format, the broken markup unchanged.
+        assertThat(body.getView()).isEqualTo(BodyType.newBuilder()
+                .setFormat(BodyFormat.BODY_FORMAT_RENDERED_XHTML)
+                .setValue("<p>unclosed <b>markup")
+                .build());
+        // Unknown representation: UNSPECIFIED, value still carried.
+        assertThat(body.getAtlasDocFormat()).isEqualTo(BodyType.newBuilder()
+                .setFormat(BodyFormat.BODY_FORMAT_UNSPECIFIED)
+                .setValue("{\"type\":")
+                .build());
+        // Representation is trimmed and case-folded; a non-string value reads as empty.
+        assertThat(body.getRaw()).isEqualTo(BodyType.newBuilder()
+                .setFormat(BodyFormat.BODY_FORMAT_RAW)
+                .build());
+    }
+
+    @Test
+    void taskBodiesHaveNoRawSlot() throws Exception {
+        Task task = mapper.toTask(tree("""
+                {"id": "t1", "body": {
+                  "storage": {"representation": "storage", "value": "<p>s</p>"},
+                  "atlas_doc_format": {"representation": "atlas_doc_format", "value": "{}"},
+                  "raw": {"representation": "raw", "value": "r"}
+                }}
+                """));
+        assertThat(task.getBody().getStorage().getValue()).isEqualTo("<p>s</p>");
+        assertThat(task.getBody().getAtlasDocFormat().getFormat())
+                .isEqualTo(BodyFormat.BODY_FORMAT_ATLAS_DOC_FORMAT);
+        assertThat(task.getBody().hasView()).isFalse();
+        assertThat(task.getBody().hasRaw()).isFalse();
+    }
+
+    @Test
+    void spaceDescriptionKeepsPlainAndViewOnly() throws Exception {
+        Space space = mapper.toSpace(tree("""
+                {"id": "1", "description": {
+                  "plain": {"value": "Engineering"},
+                  "view": {"representation": "view", "value": "<p>Eng</p>"},
+                  "storage": {"representation": "storage", "value": "<p>dropped</p>"}
+                }}
+                """));
+        assertThat(space.getDescription().getPlain()).isEqualTo(BodyType.newBuilder()
+                .setFormat(BodyFormat.BODY_FORMAT_PLAIN_TEXT)
+                .setValue("Engineering")
+                .build());
+        assertThat(space.getDescription().getView().getValue()).isEqualTo("<p>Eng</p>");
     }
 }
