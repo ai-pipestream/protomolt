@@ -3,9 +3,4 @@ description = 'Descriptor models and utilities for protobuf schemas'
 dependencies {
     api libs.protobuf.java
     api libs.slf4j.api
-
-    testImplementation platform(libs.junit.bom)
-    testImplementation libs.junit.jupiter
-    testImplementation libs.assertj.core
-    testRuntimeOnly libs.junit.platform.launcher
 }

@@ -21,8 +21,8 @@ dependencies {
     // The live suite boots its own Iceberg REST catalog fixture container.
     testImplementation libs.testcontainers.junit.jupiter
     // iceberg-data's format registry insists on the ORC model class even for Parquet reads.
-    testRuntimeOnly 'org.apache.iceberg:iceberg-orc:1.12.0'
-    testRuntimeOnly 'org.apache.hadoop:hadoop-client-runtime:3.5.0'
+    testRuntimeOnly libs.iceberg.orc
+    testRuntimeOnly libs.hadoop.client.runtime
 }
 
 // One plugin.path directory: the connector jar plus its runtime dependencies
