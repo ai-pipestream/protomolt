@@ -458,8 +458,19 @@ public record DocumentPlatformConfig(
     }
 
     private static int intEnv(String name, int fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : Integer.parseInt(value.trim());
+        return intValue(name, System.getenv(name), fallback);
+    }
+
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int intValue(String name, String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+        }
     }
 
     private static String blankToNull(String value) {

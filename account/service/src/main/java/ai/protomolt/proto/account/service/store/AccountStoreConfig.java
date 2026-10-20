@@ -94,7 +94,7 @@ public record AccountStoreConfig(
                 envOrDefault(ENV_JDBC_URL, DEFAULT_JDBC_URL),
                 envOrDefault(ENV_USERNAME, DEFAULT_USERNAME),
                 envOrDefault(ENV_PASSWORD, DEFAULT_PASSWORD),
-                parseIntOrDefault(System.getenv(ENV_POOL_SIZE), DEFAULT_POOL_SIZE),
+                parseIntOrDefault(ENV_POOL_SIZE, System.getenv(ENV_POOL_SIZE), DEFAULT_POOL_SIZE),
                 DEFAULT_MIGRATION_LOCATION);
     }
 
@@ -103,14 +103,15 @@ public record AccountStoreConfig(
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int parseIntOrDefault(String name, String value, int fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         try {
             return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
         }
     }
 }

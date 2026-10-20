@@ -3,6 +3,7 @@ package ai.protomolt.proto.account.service.store;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link AccountStoreConfig}: the record's normalization rules — which blanks
@@ -56,5 +57,15 @@ class AccountStoreConfigTest {
         assertThat(config.maxPoolSize()).isEqualTo(AccountStoreConfig.DEFAULT_POOL_SIZE);
         assertThat(config.migrationLocation())
                 .isEqualTo(AccountStoreConfig.DEFAULT_MIGRATION_LOCATION);
+    }
+
+    @Test
+    void malformedPoolSizeIsRefusedByVariableName() {
+        assertThatThrownBy(() -> AccountStoreConfig.parseIntOrDefault(
+                AccountStoreConfig.ENV_POOL_SIZE, "ten", AccountStoreConfig.DEFAULT_POOL_SIZE))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(AccountStoreConfig.ENV_POOL_SIZE + " must be an integer: ten");
+        assertThat(AccountStoreConfig.parseIntOrDefault(AccountStoreConfig.ENV_POOL_SIZE, " ",
+                AccountStoreConfig.DEFAULT_POOL_SIZE)).isEqualTo(AccountStoreConfig.DEFAULT_POOL_SIZE);
     }
 }
