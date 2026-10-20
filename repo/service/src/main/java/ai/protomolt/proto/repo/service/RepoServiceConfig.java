@@ -112,6 +112,11 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  * @param s3ConditionalWrites explicitly enable conditional S3 writes only for a
  *        qualified backing endpoint ({@code DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES},
  *        default false)
+ * @param readBudgetBytes the host byte budget shared by concurrent verified reads
+ *        ({@code DOCUMENT_PLATFORM_READ_BUDGET_BYTES}, default 268435456 = 256 MiB).
+ *        Each read reserves a part's catalog length before buffering it; a read
+ *        that would exceed the remaining budget fails fast with
+ *        {@code RESOURCE_EXHAUSTED} instead of allocating
  */
 public record RepoServiceConfig(
         int grpcPort,
@@ -142,7 +147,42 @@ public record RepoServiceConfig(
         String kafkaPurgeTopic,
         boolean s3ConditionalWrites,
         java.util.Map<String, String> repoBucketBindings,
+        ManagedStoragePolicy managedStorage,
+        long readBudgetBytes) {
+
+    /** Compatibility constructor: the pre-read-budget components, with the default read budget. */
+    public RepoServiceConfig(
+        int grpcPort,
+        LedgerConfig ledger,
+        String s3Endpoint,
+        String s3Region,
+        String s3AccessKey,
+        String s3SecretKey,
+        String defaultBucketBase,
+        int httpPort,
+        String blobStore,
+        String repoTarget,
+        String repoDrive,
+        String redisUri,
+        int redisTtlSeconds,
+        long redisMaxObjectBytes,
+        boolean lifecycleEnabled,
+        long purgeIntervalMs,
+        long sweepIntervalMs,
+        boolean reconcileEnabled,
+        boolean reconcileDryRun,
+        long reconcileMinAgeMs,
+        String kafkaBootstrapServers,
+        String kafkaTopic,
+        String schemaRegistryUrl,
+        String seedAccountId,
+        String purgeQueue,
+        String kafkaPurgeTopic,
+        boolean s3ConditionalWrites,
+        java.util.Map<String, String> repoBucketBindings,
         ManagedStoragePolicy managedStorage) {
+        this(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, managedStorage, DEFAULT_READ_BUDGET_BYTES);
+    }
 
     /** Compatibility constructor: managed ingestion requires separate explicit qualification. */
     public RepoServiceConfig(
@@ -178,7 +218,7 @@ public record RepoServiceConfig(
     }
 
     public RepoServiceConfig withManagedStorage(ManagedStoragePolicy policy) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, policy);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, repoBucketBindings, policy, readBudgetBytes);
     }
 
 
@@ -216,7 +256,7 @@ public record RepoServiceConfig(
 
     /** Copies this configuration with explicit local-bucket to remote-drive bindings. */
     public RepoServiceConfig withRepoBucketBindings(java.util.Map<String, String> bindings) {
-        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings, managedStorage);
+        return new RepoServiceConfig(grpcPort, ledger, s3Endpoint, s3Region, s3AccessKey, s3SecretKey, defaultBucketBase, httpPort, blobStore, repoTarget, repoDrive, redisUri, redisTtlSeconds, redisMaxObjectBytes, lifecycleEnabled, purgeIntervalMs, sweepIntervalMs, reconcileEnabled, reconcileDryRun, reconcileMinAgeMs, kafkaBootstrapServers, kafkaTopic, schemaRegistryUrl, seedAccountId, purgeQueue, kafkaPurgeTopic, s3ConditionalWrites, bindings, managedStorage, readBudgetBytes);
     }
 
     /** Environment variable for the gRPC listen port. */
@@ -282,6 +322,8 @@ public record RepoServiceConfig(
     public static final String ENV_PURGE_QUEUE = "DOCUMENT_PLATFORM_PURGE_QUEUE";
     /** Environment variable for the purge-commands topic (kafka purge queue only). */
     public static final String ENV_KAFKA_PURGE_TOPIC = "DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC";
+    /** Environment variable for the read-side byte budget shared by concurrent verified reads. */
+    public static final String ENV_READ_BUDGET_BYTES = "DOCUMENT_PLATFORM_READ_BUDGET_BYTES";
 
     static final int DEFAULT_GRPC_PORT = 9090;
     static final String DEFAULT_S3_REGION = "us-east-1";
@@ -315,6 +357,8 @@ public record RepoServiceConfig(
     public static final String PURGE_QUEUE_KAFKA = "kafka";
     /** Default purge-commands topic (kafka purge queue). */
     public static final String DEFAULT_KAFKA_PURGE_TOPIC = "document-purges";
+    /** Default read-side byte budget: 256 MiB shared by concurrent verified reads. */
+    public static final long DEFAULT_READ_BUDGET_BYTES = 256L * 1024 * 1024;
 
     /**
      * Compatibility constructor: the 14 pre-lifecycle components, with the
@@ -531,6 +575,9 @@ public record RepoServiceConfig(
         if (kafkaPurgeTopic == null || kafkaPurgeTopic.isBlank()) {
             kafkaPurgeTopic = DEFAULT_KAFKA_PURGE_TOPIC;
         }
+        if (readBudgetBytes < 1) {
+            readBudgetBytes = DEFAULT_READ_BUDGET_BYTES;
+        }
     }
 
     /**
@@ -594,7 +641,8 @@ public record RepoServiceConfig(
                 env.text(ENV_PURGE_QUEUE, PURGE_QUEUE_JDBC),
                 env.text(ENV_KAFKA_PURGE_TOPIC, DEFAULT_KAFKA_PURGE_TOPIC),
                 env.flag(ENV_S3_CONDITIONAL_WRITES, false), java.util.Map.of(),
-                ManagedStoragePolicy.fromEnvironment(environment));
+                ManagedStoragePolicy.fromEnvironment(environment),
+                env.number(ENV_READ_BUDGET_BYTES, DEFAULT_READ_BUDGET_BYTES, 1, Long.MAX_VALUE));
     }
 
     private static String blankToNull(String value) {

@@ -15,6 +15,7 @@ import ai.protomolt.proto.repo.v2.ReadBlobResponse;
 import ai.protomolt.proto.repo.v2.ReadComplete;
 import ai.protomolt.proto.repo.v2.ReadDocumentRequest;
 import ai.protomolt.proto.repo.v2.ReadDocumentResponse;
+import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.StoredPartEntry;
 import com.google.protobuf.ByteString;
@@ -35,16 +36,21 @@ import java.util.Objects;
  * first response frame, enforce gRPC outbound flow control via {@link ServerCallStreamObserver},
  * and close underlying stack streams immediately on client cancellation.
  * <p>
- * {@code ReadDocument} buffers each selected part in full, verifies its stack digest
- * and, for non-opaque parts, its retained schemas, before emitting the first frame of
- * that part. A corrupt part therefore fails the stream without any of its bytes
- * reaching the client, matching the frame contract documented on
+ * {@code ReadDocument} buffers each selected non-opaque part in full, verifies its
+ * stack digest and retained schemas, and only then emits the first frame of that part,
+ * so a corrupt typed part fails the stream without any of its bytes reaching the
+ * client, matching the frame contract documented on
  * {@link DocumentReads#readDocument(RepositoryCaller, ReadDocumentRequest, java.util.function.Consumer)}.
  * The per-part buffer is bounded by an admission reservation taken before the part is
  * read and held until the part's final {@link PartData} frame callback returns (after
  * {@code onNext} returns, any remaining transport buffering is governed by gRPC flow
- * control). {@code ReadBlob} streams raw bytes as they arrive and verifies the digest at
- * end of stream, since a raw blob may far exceed what a host can buffer.
+ * control). An opaque part has no retained-schema check and may far exceed what a host
+ * wants to buffer, so it streams chunk by chunk under a fixed two-chunk reservation;
+ * the stack stream verifies length and digest at end of stream, reached before the
+ * part's final chunk is emitted, so a corrupt opaque part terminates the stream with
+ * an error and never delivers its {@code last} frame or {@link ReadComplete}.
+ * {@code ReadBlob} streams raw bytes as they arrive and verifies the digest at end of
+ * stream, since a raw blob may far exceed what a host can buffer.
  */
 public final class DocumentStreams {
     private static final System.Logger LOG = System.getLogger(DocumentStreams.class.getName());
@@ -283,6 +289,16 @@ public final class DocumentStreams {
         private ByteString currentBytes;
         private DocumentAdmissionReservations.Lease currentLease;
         private long currentOffset;
+        // Streaming state of an opaque part: the open stack stream, the chunk waiting to
+        // be emitted, and the one-chunk lookahead that detects end of stream (where the
+        // stack verifies length and digest) before the final chunk goes out. The two
+        // buffers are allocated for the part under its two-chunk reservation and discarded
+        // before that reservation is released.
+        private InputStream opaqueStream;
+        private byte[] pendingChunk;
+        private byte[] lookaheadChunk;
+        private int pendingLength = -1;
+        private boolean opaqueEof;
 
         DocumentStreamSession(
                 DocumentReads reads,
@@ -315,6 +331,11 @@ public final class DocumentStreams {
                 if (!inPump) {
                     currentSelector = null;
                     currentBytes = null;
+                    opaqueStream = null;
+                    pendingChunk = null;
+                    lookaheadChunk = null;
+                    pendingLength = -1;
+                    opaqueEof = false;
                     leaseToRelease = currentLease;
                     currentLease = null;
                 }
@@ -337,7 +358,7 @@ public final class DocumentStreams {
                         observer.onNext(ReadDocumentResponse.newBuilder().setManifest(manifest).build());
                         continue;
                     }
-                    if (currentBytes == null) {
+                    if (currentBytes == null && pendingLength < 0) {
                         if (partIndex >= selectedParts.size()) {
                             completed = true;
                             observer.onNext(ReadDocumentResponse.newBuilder()
@@ -351,25 +372,33 @@ public final class DocumentStreams {
                             loadPart(nextPart);
                             return null;
                         });
-                        if (cancelled || currentBytes == null) {
+                        if (cancelled || (currentBytes == null && pendingLength < 0)) {
                             releaseLease();
                             return;
                         }
                     }
 
-                    int length = (int) Math.min(CHUNK_SIZE, currentBytes.size() - currentOffset);
-                    boolean isLast = currentOffset + length == currentBytes.size();
-                    var partData = PartData.newBuilder()
-                            .setSelector(currentSelector)
-                            .setOffset(currentOffset)
-                            .setData(currentBytes.substring((int) currentOffset, (int) currentOffset + length))
-                            .setLast(isLast)
-                            .build();
-                    currentOffset += length;
-                    observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
-                    if (isLast) {
-                        releaseLease();
-                        partIndex++;
+                    if (currentBytes != null) {
+                        int length = (int) Math.min(CHUNK_SIZE, currentBytes.size() - currentOffset);
+                        boolean isLast = currentOffset + length == currentBytes.size();
+                        var partData = PartData.newBuilder()
+                                .setSelector(currentSelector)
+                                .setOffset(currentOffset)
+                                .setData(currentBytes.substring((int) currentOffset, (int) currentOffset + length))
+                                .setLast(isLast)
+                                .build();
+                        currentOffset += length;
+                        observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
+                        if (isLast) {
+                            releaseLease();
+                            partIndex++;
+                        }
+                    } else {
+                        emitOpaqueChunk();
+                        if (cancelled) {
+                            releaseLease();
+                            return;
+                        }
                     }
                 }
             } catch (AccessionException failure) {
@@ -390,6 +419,11 @@ public final class DocumentStreams {
                         activeStream = null;
                         currentSelector = null;
                         currentBytes = null;
+                        opaqueStream = null;
+                        pendingChunk = null;
+                        lookaheadChunk = null;
+                        pendingLength = -1;
+                        opaqueEof = false;
                         leaseToRelease = currentLease;
                         currentLease = null;
                     }
@@ -402,22 +436,34 @@ public final class DocumentStreams {
         }
 
         /**
-         * Reads one part in full and verifies it before any of its frames go out: the
-         * stack stream checks length and digest at end of stream, and a non-opaque part
-         * is then decoded against its retained schemas. The buffered bytes are bounded
-         * by an admission reservation held until the part's final frame callback returns.
+         * Prepares one part for emission. A non-opaque part is read in full and verified
+         * before any of its frames go out: the stack stream checks length and digest at
+         * end of stream, and the part is then decoded against its retained schemas. Its
+         * buffered bytes are bounded by an admission reservation taken for the catalog
+         * length before anything is allocated and held until the part's final frame
+         * callback returns; a refused reservation fails the read before any buffering.
+         * An opaque part has no retained-schema check, so it streams chunk by chunk
+         * under a fixed two-chunk reservation covering its pending and lookahead chunk
+         * buffers; the stack stream verifies length and digest at end of stream, which
+         * the one-chunk lookahead reaches before the part's final chunk is emitted.
          */
         private void loadPart(StoredPartEntry part) {
             var entry = part.getEntry();
             var ref = part.getRef();
+            boolean opaque = entry.getOpaque();
+            long reserved = opaque ? 2L * CHUNK_SIZE : ref.getLength();
             var lease = Objects.requireNonNull(
-                    reads.reservations().reserve(ref.getLength()), "reservation lease");
+                    reads.reservations().reserve(reserved), "reservation lease");
             synchronized (stateLock) {
                 if (cancelled) {
                     lease.close();
                     return;
                 }
                 currentLease = lease;
+            }
+            if (opaque) {
+                openOpaquePart(entry.getSelector(), ref);
+                return;
             }
             InputStream stream = null;
             final ByteString bytes;
@@ -446,7 +492,7 @@ public final class DocumentStreams {
                 throw new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure);
             }
             if (cancelled) return;
-            if (!entry.getOpaque()) reads.decodeRetained(stored, entry.getSelector(), bytes);
+            reads.decodeRetained(stored, entry.getSelector(), bytes);
             synchronized (stateLock) {
                 if (cancelled) return;
                 currentSelector = entry.getSelector();
@@ -455,13 +501,132 @@ public final class DocumentStreams {
             }
         }
 
+        /** Opens an opaque part's stack stream and reads its first chunk, without buffering the part. */
+        private void openOpaquePart(PartSelector selector, StackRef ref) {
+            pendingChunk = new byte[CHUNK_SIZE];
+            lookaheadChunk = new byte[CHUNK_SIZE];
+            InputStream stream = null;
+            final int first;
+            try {
+                stream = reads.drives().byId(ref.getStackId()).open(ref);
+                activeStream = stream;
+                if (cancelled) {
+                    activeStream = null;
+                    closeOnCancel(stream);
+                    return;
+                }
+                first = readChunk(stream, pendingChunk);
+                if (cancelled) {
+                    activeStream = null;
+                    closeOnCancel(stream);
+                    return;
+                }
+                if (first < 0) {
+                    // Empty part: end of stream already verified length and digest.
+                    activeStream = null;
+                    stream.close();
+                    stream = null;
+                }
+            } catch (StackDataLoss loss) {
+                activeStream = null;
+                closeOnFailure(stream, loss);
+                throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
+            } catch (IOException failure) {
+                activeStream = null;
+                closeOnFailure(stream, failure);
+                throw new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure);
+            }
+            synchronized (stateLock) {
+                if (cancelled) {
+                    var open = stream;
+                    activeStream = null;
+                    closeOnCancel(open);
+                    return;
+                }
+                currentSelector = selector;
+                currentOffset = 0L;
+                opaqueStream = stream;
+                pendingLength = Math.max(first, 0);
+                opaqueEof = first < 0;
+            }
+        }
+
+        /**
+         * Emits the pending chunk of the streaming opaque part, after reading one chunk
+         * ahead: end of stream, where the stack verifies length and digest, is therefore
+         * reached before the final chunk is emitted, so a corrupt part fails the stream
+         * without its {@code last} frame ever going out.
+         */
+        private void emitOpaqueChunk() {
+            if (!opaqueEof) {
+                var stream = opaqueStream;
+                final int next;
+                try {
+                    next = readChunk(stream, lookaheadChunk);
+                    if (next < 0) {
+                        activeStream = null;
+                        opaqueStream = null;
+                        opaqueEof = true;
+                        stream.close();
+                    }
+                } catch (StackDataLoss loss) {
+                    activeStream = null;
+                    opaqueStream = null;
+                    closeOnFailure(stream, loss);
+                    throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
+                } catch (IOException failure) {
+                    activeStream = null;
+                    opaqueStream = null;
+                    closeOnFailure(stream, failure);
+                    throw new AccessionException(Status.Code.UNAVAILABLE, "Stack read failed", null, failure);
+                }
+                if (cancelled) return;
+                var partData = PartData.newBuilder()
+                        .setSelector(currentSelector)
+                        .setOffset(currentOffset)
+                        .setData(ByteString.copyFrom(pendingChunk, 0, pendingLength))
+                        .setLast(opaqueEof)
+                        .build();
+                currentOffset += pendingLength;
+                if (opaqueEof) {
+                    pendingLength = -1;
+                } else {
+                    var emitted = pendingChunk;
+                    pendingChunk = lookaheadChunk;
+                    lookaheadChunk = emitted;
+                    pendingLength = next;
+                }
+                observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
+                if (partData.getLast()) {
+                    releaseLease();
+                    opaqueEof = false;
+                    partIndex++;
+                }
+                return;
+            }
+            // Empty part verified at end of stream: one empty frame carries last = true.
+            var partData = PartData.newBuilder()
+                    .setSelector(currentSelector)
+                    .setOffset(currentOffset)
+                    .setData(ByteString.empty())
+                    .setLast(true)
+                    .build();
+            pendingLength = -1;
+            opaqueEof = false;
+            observer.onNext(ReadDocumentResponse.newBuilder().setPartData(partData).build());
+            releaseLease();
+            partIndex++;
+        }
+
         /**
          * Drains the stream to end of stream, where the verifying stack stream enforces
-         * that the stored object matches {@code expectedLength} and its recorded digest,
-         * so pre-sizing the output from {@code expectedLength} cannot be silently exceeded.
+         * that the stored object matches {@code expectedLength} and its recorded digest.
+         * The output's initial capacity never trusts the catalog length beyond one chunk:
+         * the buffered total is already bounded by the reservation taken for that length
+         * before this method runs, and the output grows without copying flushed buffers.
          */
         private ByteString readFully(InputStream stream, long expectedLength) throws IOException {
-            var output = ByteString.newOutput((int) Math.min(Math.max(expectedLength, 0L), Integer.MAX_VALUE));
+            var output = ByteString.newOutput(boundedPreSize(expectedLength));
             var chunk = new byte[CHUNK_SIZE];
             while (!cancelled) {
                 int n = stream.read(chunk, 0, chunk.length);
@@ -487,6 +652,11 @@ public final class DocumentStreams {
             synchronized (stateLock) {
                 currentSelector = null;
                 currentBytes = null;
+                opaqueStream = null;
+                pendingChunk = null;
+                lookaheadChunk = null;
+                pendingLength = -1;
+                opaqueEof = false;
                 lease = currentLease;
                 currentLease = null;
             }
@@ -587,18 +757,32 @@ public final class DocumentStreams {
                 pumping = false;
             }
         }
+    }
 
-        private static int readChunk(InputStream stream, byte[] buffer) throws IOException {
-            int total = 0;
-            while (total < buffer.length) {
-                int n = stream.read(buffer, total, buffer.length - total);
-                if (n < 0) {
-                    return total == 0 ? -1 : total;
-                }
-                total += n;
+    /**
+     * Reads up to one full buffer, returning {@code -1} only at end of stream with no
+     * bytes read. End of stream after a partial buffer returns the partial count; the
+     * next call returns {@code -1}.
+     */
+    private static int readChunk(InputStream stream, byte[] buffer) throws IOException {
+        int total = 0;
+        while (total < buffer.length) {
+            int n = stream.read(buffer, total, buffer.length - total);
+            if (n < 0) {
+                return total == 0 ? -1 : total;
             }
-            return total;
+            total += n;
         }
+        return total;
+    }
+
+    /**
+     * The initial capacity hint for buffering one part: the catalog length is untrusted
+     * until the stack stream verifies it at end of stream, so the hint is capped at one
+     * chunk and never allocates from a corrupt or oversized recorded length.
+     */
+    static int boundedPreSize(long untrustedLength) {
+        return (int) Math.min(Math.max(untrustedLength, 0L), CHUNK_SIZE);
     }
 
     private static void closeOnFailure(InputStream stream, Throwable primary) {
