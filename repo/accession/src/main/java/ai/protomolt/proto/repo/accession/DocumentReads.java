@@ -18,6 +18,7 @@ import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.Status;
 import java.io.IOException;
 import java.time.Clock;
@@ -408,18 +409,26 @@ public final class DocumentReads {
     }
 
     /**
-     * Buffers one stack object in full. The initial capacity hint never trusts the
-     * catalog length beyond {@link DocumentStreams#boundedPreSize(long)}: callers
-     * reserve that length against the read budget before this method allocates, and
-     * the output grows without copying flushed buffers.
+     * Buffers one stack object in full into a single array of exactly its catalog
+     * length, which callers reserve against the read budget before this method runs.
+     * The stack stream is read straight into that array, so the read allocates no
+     * scratch chunk and no growable output beyond the reserved bytes, and the returned
+     * {@link ByteString} wraps the array without copying it. Reading to end of stream
+     * lets the verifying stack stream check length and digest; a stream that ends
+     * early or runs past the catalog length is DATA_LOSS.
      */
     ByteString read(StackRef ref) {
+        long length = ref.getLength();
+        if (length < 0 || length > Integer.MAX_VALUE)
+            throw new AccessionException(Status.Code.DATA_LOSS,
+                    "Part records an unreadable length: " + length, null);
         try (var stream = drives.byId(ref.getStackId()).open(ref)) {
-            var output = ByteString.newOutput(DocumentStreams.boundedPreSize(ref.getLength()));
-            var chunk = new byte[DocumentStreams.CHUNK_SIZE];
-            int n;
-            while ((n = stream.read(chunk, 0, chunk.length)) >= 0) output.write(chunk, 0, n);
-            return output.toByteString();
+            var bytes = new byte[(int) length];
+            int filled = stream.readNBytes(bytes, 0, bytes.length);
+            if (filled != bytes.length || stream.read() >= 0)
+                throw new AccessionException(Status.Code.DATA_LOSS,
+                        "Stored object length differs from its reference: " + length + " bytes", null);
+            return UnsafeByteOperations.unsafeWrap(bytes);
         } catch (StackDataLoss loss) {
             throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
         } catch (IOException failure) {

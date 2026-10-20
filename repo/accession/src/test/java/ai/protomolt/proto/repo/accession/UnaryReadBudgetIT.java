@@ -198,6 +198,56 @@ class UnaryReadBudgetIT {
         assertThat(remaining.get()).as("the budget is whole again after the read").isEqualTo(budget);
     }
 
+    @Test void aSmallPartIsBufferedWithinItsLiveReservation() {
+        var address = address(account, "doc-small-buffer");
+        f.saves.save(processAuthority(), create("op-1", address,
+                document(account, "doc-small-buffer", "title")).build());
+        long coreLength = f.catalog.manifest(address, 1).orElseThrow().getPartsList().stream()
+                .filter(part -> part.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_CORE)
+                .findFirst().orElseThrow().getRef().getLength();
+        assertThat(coreLength).as("the CORE part is far below one 64 KiB chunk")
+                .isPositive().isLessThan(DocumentStreams.CHUNK_SIZE);
+
+        var held = new AtomicLong();
+        var largest = new AtomicLong();
+        var violations = new ArrayList<String>();
+        var reads = reads(new BufferObservingStack(f.stack, held, largest, violations), tracking(held));
+
+        var response = reads.getDocument(processAuthority(), coreGet(address));
+        assertThat(response.getDocument().getDocId()).isEqualTo("doc-small-buffer");
+        var frames = new ArrayList<ReadDocumentResponse>();
+        reads.readDocument(processAuthority(), coreRead(address), frames::add);
+        assertThat(frames.getLast().hasComplete()).isTrue();
+
+        assertThat(largest.get()).as("the stack stream was read into a caller buffer").isPositive();
+        assertThat(violations).as("no buffer handed to the stack outgrows the bytes reserved for it").isEmpty();
+        assertThat(held.get()).as("every reservation is released after the reads").isZero();
+    }
+
+    @Test void aZeroRecordedLengthAllocatesNoUnreservedBufferAndFailsDataLoss() throws Exception {
+        var address = address(account, "doc-empty-buffer");
+        f.saves.save(processAuthority(), create("op-1", address,
+                document(account, "doc-empty-buffer", "title")).build());
+        corruptCorePartLength(0);
+
+        var held = new AtomicLong();
+        var largest = new AtomicLong();
+        var violations = new ArrayList<String>();
+        var reads = reads(new BufferObservingStack(f.stack, held, largest, violations), tracking(held));
+
+        assertThatThrownBy(() -> reads.getDocument(processAuthority(), coreGet(address)))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.DATA_LOSS));
+        var frames = new ArrayList<ReadDocumentResponse>();
+        assertThatThrownBy(() -> reads.readDocument(processAuthority(), coreRead(address), frames::add))
+                .isInstanceOfSatisfying(AccessionException.class, failure ->
+                        assertThat(failure.code()).isEqualTo(Status.Code.DATA_LOSS));
+
+        assertThat(violations).as("a zero-byte reservation never backs a scratch buffer").isEmpty();
+        assertThat(frames).noneMatch(ReadDocumentResponse::hasPartData);
+        assertThat(held.get()).as("every reservation is released after the failed reads").isZero();
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private DocumentReads reads(ai.protomolt.proto.repo.stack.Stack stack,
@@ -306,6 +356,50 @@ class UnaryReadBudgetIT {
                 @Override public void close() throws IOException {
                     closes.incrementAndGet();
                     super.close();
+                }
+            };
+        }
+        @Override public InputStream openRange(StackRef ref, long offset, long length) throws IOException {
+            return delegate.openRange(ref, offset, length);
+        }
+        @Override public long head(StackRef ref) throws IOException { return delegate.head(ref); }
+        @Override public void delete(StackRef ref) throws IOException { delegate.delete(ref); }
+        @Override public void close() throws IOException { delegate.close(); }
+    }
+
+    /**
+     * Forwards to the fixture stack and, on every bulk read of an opened stream, compares
+     * the capacity of the buffer the reader passed in with the bytes reserved at that
+     * moment, recording a violation whenever the buffer is the larger. Violations are
+     * recorded rather than thrown so the read path cannot translate them.
+     */
+    private static final class BufferObservingStack implements ai.protomolt.proto.repo.stack.Stack {
+        private final ai.protomolt.proto.repo.stack.Stack delegate;
+        private final AtomicLong held;
+        private final AtomicLong largest;
+        private final java.util.List<String> violations;
+
+        BufferObservingStack(ai.protomolt.proto.repo.stack.Stack delegate, AtomicLong held,
+                AtomicLong largest, java.util.List<String> violations) {
+            this.delegate = delegate;
+            this.held = held;
+            this.largest = largest;
+            this.violations = violations;
+        }
+
+        @Override public String stackId() { return delegate.stackId(); }
+        @Override public StackRef put(InputStream body, long expectedLength) throws IOException {
+            return delegate.put(body, expectedLength);
+        }
+        @Override public StackRef put(byte[] body) throws IOException { return delegate.put(body); }
+        @Override public InputStream open(StackRef ref) throws IOException {
+            return new FilterInputStream(delegate.open(ref)) {
+                @Override public int read(byte[] b, int off, int len) throws IOException {
+                    largest.accumulateAndGet(b.length, Math::max);
+                    long reserved = held.get();
+                    if (b.length > reserved)
+                        violations.add(b.length + "-byte buffer with " + reserved + " bytes reserved");
+                    return super.read(b, off, len);
                 }
             };
         }
