@@ -87,7 +87,8 @@ class TeiSemanticSearchLiveIntegrationTest {
     @BeforeAll
     static void startContainers() {
         opensearch = new OpenSearchContainer<>(
-                DockerImageName.parse("opensearchproject/opensearch:3.7.0"));
+                DockerImageName.parse(System.getProperty(
+                    "protomolt.test.opensearch.image", "opensearchproject/opensearch:3.9.0")));
         embeddings = tei("sentence-transformers/all-MiniLM-L6-v2");
         reranker = tei("BAAI/bge-reranker-base");
         // Parallel start: each container's log-message wait strategy handles its own readiness.

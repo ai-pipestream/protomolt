@@ -143,10 +143,10 @@ They run wherever Docker is available and skip otherwise.
 
 The OpenSearch index lane (`:protomolt-search-index-opensearch`) also provisions
 its own engine: a Testcontainers container running the
-`opensearchproject/opensearch` image pinned in the suite's test classes
-(`OpenSearchLiveIntegrationTest` and siblings; the compose stack pins its
-own version in `docker-compose.integration.yml`), started through the
-OpenSearch project's `opensearch-testcontainers` module. It likewise runs wherever Docker is available and skips otherwise,
+`opensearchproject/opensearch` image whose tag comes from `opensearch-image`
+in `gradle/libs.versions.toml` (the compose stack pins the same version),
+started through the OpenSearch project's `opensearch-testcontainers`
+module. It likewise runs wherever Docker is available and skips otherwise,
 so the compose stack's `opensearch` service is not needed for tests.
 
 The Iceberg lanes self-provision the same way. The `:protomolt-iceberg`
@@ -162,11 +162,9 @@ The S3 store convention is three lanes by environment: LocalStack for
 tests, the compose stack's `rustfs` for live runs on a laptop or server,
 and real S3 on AWS. The Apicurio lanes self-provision the same way: the
 `:protomolt-schema-apicurio` suites and the confluent module's two ccompat
-suites each boot the `apicurio/apicurio-registry` image pinned in each
-module's `ApicurioRegistryContainer` test class (the compose stack and the
-Apicurio SDK dependency pin their own versions in
-`docker-compose.integration.yml` and `gradle/libs.versions.toml`; the
-ccompat suites hit the registry's `/apis/ccompat/v7` facade). They run wherever
+suites each boot an `apicurio/apicurio-registry` container whose tag comes
+from the `apicurio` version in `gradle/libs.versions.toml` (the ccompat
+suites hit its `/apis/ccompat/v7` facade). They run wherever
 Docker is available and skip otherwise, so the compose stack's `apicurio`
 service is not needed for tests:
 

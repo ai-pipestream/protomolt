@@ -35,6 +35,11 @@ opennlp = "0.1.0-alpha4-SNAPSHOT"
 # offline model source; version bumps are deliberate re-derivations)
 opennlp-models = "1.3.0"
 apicurio = "3.3.3"
+# Container image tag for the OpenSearch integration suites and the compose
+# stack. The apicurio key above doubles as the registry image tag; the root
+# build injects both into every Test task as system properties, so the
+# Testcontainers suites track this file instead of hardcoding tags.
+opensearch-image = "3.9.0"
 spring = "7.0.9"
 # Boot line matching Spring Framework 7
 spring-boot = "4.1.1"

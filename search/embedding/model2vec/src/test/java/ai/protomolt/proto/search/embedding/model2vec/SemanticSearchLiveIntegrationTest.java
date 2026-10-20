@@ -57,7 +57,8 @@ class SemanticSearchLiveIntegrationTest {
     // so the suite talks plain HTTP with no auth.
     @Container
     static final OpenSearchContainer<?> OPENSEARCH = new OpenSearchContainer<>(
-            DockerImageName.parse("opensearchproject/opensearch:3.7.0"));
+            DockerImageName.parse(System.getProperty(
+                    "protomolt.test.opensearch.image", "opensearchproject/opensearch:3.9.0")));
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()

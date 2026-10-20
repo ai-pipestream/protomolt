@@ -13,6 +13,7 @@
 name: protomolt-it
 services:
   apicurio:
+    # Keep in sync with the apicurio version in gradle/libs.versions.toml.
     image: apicurio/apicurio-registry:3.3.3
     ports:
       - "18780:8080"
@@ -182,6 +183,7 @@ services:
       retries: 30
 
   opensearch:
+    # Keep in sync with opensearch-image in gradle/libs.versions.toml.
     image: opensearchproject/opensearch:3.9.0
     ports:
       - "19200:9200"
