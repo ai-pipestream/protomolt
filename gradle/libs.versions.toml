@@ -25,7 +25,7 @@ axion-release = "1.21.4"
 nmcp = "1.6.2"
 grpc = "1.85.0"
 chicory = "1.7.5"
-lucene = "11.0.0-experimental-SNAPSHOT"
+lucene = "10.5.0"
 # The 0.1.0-alpha4 line, not 3.x-preview: the 3.x snapshots stamp
 # "OpenNLP-Version: 3.x-preview-SNAPSHOT", which their own Version.parse
 # rejects, so BaseModel loading (sentence-detector models et al.) fails on
@@ -101,8 +101,8 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
 quarkus-arc = { module = "io.quarkus:quarkus-arc" }
 quarkus-arc-deployment = { module = "io.quarkus:quarkus-arc-deployment" }
-lucene-core = { module = "ai.pipestream:lucene-core", version.ref = "lucene" }
-lucene-analysis-common = { module = "ai.pipestream:lucene-analysis-common", version.ref = "lucene" }
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
+lucene-analysis-common = { module = "org.apache.lucene:lucene-analysis-common", version.ref = "lucene" }
 opennlp-embeddings = { module = "ai.pipestream:opennlp-embeddings", version.ref = "opennlp" }
 opennlp-api = { module = "ai.pipestream:opennlp-api", version.ref = "opennlp" }
 opennlp-runtime = { module = "ai.pipestream:opennlp-runtime", version.ref = "opennlp" }
