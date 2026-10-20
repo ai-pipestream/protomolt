@@ -6,25 +6,24 @@ streaming HTTP upload route) — no framework, blocking style, virtual threads.
 
 ## What it is
 
-The canonical public API is the parts-based `DocumentService`. Two wire
-generations are mounted side by side by `RepoServices` (full profile):
-`ai.protomolt.proto.repo.v1.DocumentService` (the ledger-backed store below)
-and `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`,
-the parts-based Repository Service v2; see
-[the design requirements](../docs/design/parts-based-repository-requirements.md)).
-The side-by-side mounting is transitional: Step 5B (#392) retires the v1
-document service, after which `RepoServices` mounts the v2
-`AccessionGrpcService` alongside the frozen `Archive*` and `Drive*` services
-only. See the [current document guide](../docs/repo/publication.md). The
-separate publication transport is removed; internal publication and recovery
-components remain.
+The canonical public API is the parts-based
+`ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`, the
+parts-based Repository Service v2; see
+[the design requirements](../docs/design/parts-based-repository-requirements.md)
+and the [current document guide](../docs/repo/publication.md)).
+`RepoServices` (full profile) mounts it alongside the frozen `Archive*` and
+`Drive*` services; the v1 document service, its ledger stack and its protos
+are retired (#320 Steps 4-5, #430). The separate publication transport is
+removed; internal publication and recovery components remain.
 
 When any part of the pipeline needs to persist a `Document` (the platform's
-core document protobuf), it comes here. The service writes the document body
-to S3-compatible object storage and records a row in Postgres that points at
-those objects. On read it does the reverse: look up the row, fetch the
-objects, hand back the assembled document. Postgres is the card catalog, S3
-is the stacks.
+core document protobuf), it comes here. The service writes each part as a
+write-once object to S3-compatible object storage and records the revision
+in the Postgres v2 catalog (`repo_catalog` schema) that references those
+objects. On read it does the reverse: resolve the manifest, fetch and
+verify the selected objects, hand back the assembled document. Postgres is
+the card catalog, S3 is the stacks. The older Hibernate ledger in
+`repo/container` now serves only the frozen archive and drive subsystems.
 
 Two design choices explain almost everything else.
 
@@ -36,11 +35,13 @@ manifest that lists them. A reader fetches only
 the parts it needs (CORE without multi-megabyte BLOBS), and the full document
 reassembles byte-for-byte from the parts.
 
-Second, the store is **intentionally non-ACID**. The object write and the
-ledger row that references it are not committed atomically. The standing rule
-that makes that safe: an object with no live ledger row that owns it is an
-orphan, and orphans are reclaimable. Deletes and the purge path are built
-around that rule.
+Second, object bytes are **write-once** and the catalog commit is one
+transaction. Fragments are streamed to the stack first; the revision, its
+recorded outcome and exactly one outbox event then commit atomically with
+compare-and-swap on the expected revision. A failed save can leave
+unreferenced stack objects behind - never a revision pointing at missing
+bytes - and purge is the two-phase path that reclaims objects once no
+unpurged reference points at them.
 
 ## Tenets
 
@@ -67,13 +68,15 @@ around that rule.
 | `repo/codec` | `:protomolt-repo-codec` | Document part layouts, splitting and typed assembly |
 | `repo/blob/spi` | `:protomolt-repo-blob-spi` | JDK-only byte storage contracts and provider discovery |
 | `repo/blob/s3`, `repo/blob/redis`, `repo/blob/cache` | `:protomolt-repo-blob-s3`, `:protomolt-repo-blob-redis`, `:protomolt-repo-blob-cache` | Object storage providers and cache decorator |
-| `repo/spi` | `:protomolt-repo-spi` | Shared document, archive, drive and raw-blob invocation contracts, caller identity and domain errors |
-| `repo/engine` | `:protomolt-repo-engine` | Shared document, archive, drive and raw-blob operations over ledgers and selected byte storage |
-| `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
-| `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
+| `repo/spi` | `:protomolt-repo-spi` | Caller identity and grants (`RepositoryCaller`, `DocumentAccessPolicy`, `PurgeAuthorization`), read/save controls, domain errors, and the frozen archive/drive repository interfaces |
+| `repo/admission` | `:protomolt-repo-admission` | v2 candidate admission: retained-schema fragment decoding, CEL document rules, semantic (segmentation/embedding) checks, opaque-occurrence attestation |
+| `repo/schema/registry` | `:protomolt-repo-schema-registry` | Retained schema assets the admission and historical decoding paths resolve against |
+| `repo/engine` | `:protomolt-repo-engine` | The frozen archive and drive operations over the container ledger and selected byte storage |
+| `repo/container` | `:protomolt-repo-container` | The archive/drive storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
+| `repo/service` | `:protomolt-repo-service` | The host: mounts the v2 `AccessionGrpcService`, archive and drive gRPC services, the streaming HTTP upload route, per-account dynamic drives and the v2 outbox relay (`RepoServices` wiring) |
 | `repo/stack` | `:protomolt-repo-stack` | v2 write-once stacks: streamed puts that return a `StackRef`, reads verified against it |
 | `repo/catalog` | `:protomolt-repo-catalog` | v2 catalog over JDBC + HikariCP + Flyway: revisions, part references, outcomes, writer grants, outbox (mounted in the dedicated `repo_catalog` schema) |
-| `repo/accession` | `:protomolt-repo-accession` | v2 `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`): all 13 RPCs — save/read/manifest/revisions/outcome, streamed upload/read + blob reads, delete/list/purge, bulk streams and the Kafka outbox relay; mounted by full-profile `RepoServices` alongside the v1 service |
+| `repo/accession` | `:protomolt-repo-accession` | v2 `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`): all 13 RPCs — save/read/manifest/revisions/outcome, streamed upload/read + blob reads, delete/list/purge, bulk streams and the Kafka outbox relay; mounted by full-profile `RepoServices` |
 
 ## Repository v2 (parts-based)
 
@@ -96,186 +99,90 @@ and document-ACL checks as key-bound writers.
 
 ## Storage model
 
-Every stored state is one ledger row addressed by the canonical
-**`NodeAddress`** — the single addressing concept of the whole API. It
-carries the four segments `doc_id | graph_address_id | account_id |
-graph_id`, hashed into a deterministic `node_id`; manifests, by-reference
-reads, partial-save copy sources, deletes and list echoes all speak
-`NodeAddress`, and `node_id` strings are derived echoes, never truth.
-Intake rows are addressed at the datasource and
-carry the account's intake graph (`intake:<accountId>`); pipeline rows are
-addressed at a graph node and carry the owning graph. The raw `doc_id` never
-reaches an object key — keys are built from the deterministic UUIDs.
+Every document is addressed by the canonical **`NodeAddress`** - the four
+segments `doc_id | graph_address_id | account_id | graph_id`. Manifests,
+reads, sources, deletes and list echoes all speak `NodeAddress`; derived
+`node_id` strings are echoes, never truth, and the raw `doc_id` never
+reaches an object key. Intake documents are addressed at the datasource
+and carry the account's intake graph (`intake:<accountId>`); pipeline
+documents are addressed at a graph node and carry the owning graph.
 
-Payload bytes live only in object storage:
+Payload bytes live only in object storage, in two shapes:
 
-- **Part objects** at `<drive.prefix>/documents/<accountId>/<nodeId>/...`
-  (`core.pb`, `blobs.pb`, `chunks/<subKey>.pb`, `parsed.pb`), written by the
-  part fan-out with per-part SHA-256 manifest entries.
-- **Raw upload blobs** at `<drive.prefix>/blobs/<accountId>/<blobId>.bin`,
-  staged by the HTTP upload route; the `Document`'s `blob_bag` references
-  them by `FileStorageReference` (the claim check).
-- **Content-addressed blobs** at `<drive.prefix>/blobs/<uuid-of-sha256>`,
-  written by `PutBlob` when no explicit key is given — identical puts land
-  idempotently on one object.
+- **Part fragments** - each part of a revision is one write-once stack
+  object (`StackRef`: stack, key, length, SHA-256) under the save drive's
+  `documents` namespace. The catalog manifest records every part's state,
+  size, digest and writer; readers fetch only the selected parts and
+  re-verify their bytes against the manifest before answering. Unchanged
+  parts carry forward by reference - the same object serves every revision
+  that did not rewrite it.
+- **Raw blobs** - the file bytes behind a document's blob bag, written by
+  `UploadDocument` or the HTTP upload route as their own stack objects.
+  The stored BLOBS fragment references them by `FileStorageReference` (the
+  claim check); `ReadBlob` streams them back with an end-to-end SHA-256
+  check.
 
-Intake dedupe: a re-save whose split root checksum matches the AVAILABLE
-row's checksum skips the object writes, marks the row re-processed, and
-answers `deduplicated=true` with the existing coordinates. `force_save`
-bypasses the skip with a store-verified write (the SHA-256 rides the PUT as
-the checksum trailer, so the store rejects landed bytes that mismatch).
+Rewriting byte-identical content reuses the existing object (still a new
+revision); there is no separate dedupe response - idempotent retries are
+the `operation_id` outcome replay described in the
+[document guide](../docs/repo/publication.md).
 
-## The purge lifecycle (two-phase delete)
+The frozen archive subsystem keeps its own storage model on the container
+ledger (entry-local content-addressed rendition objects); drives bind
+(bucket, prefix, region, credentialsRef) for both worlds and are the only
+thing that resolves to object-storage coordinates.
 
-`DeleteDocument` with `purge_storage=false` is a **two-phase delete**.
+## Delete and purge
 
-**Phase A** (synchronous, in the gRPC call): the row tombstones to
-`PENDING_PURGE` — metadata-only, fast, and deliberately NOT bumping
-`updated_at` — and one `document_purges` record per row is enqueued **in the
-same transaction** (Flyway V3). The record snapshots every object key to
-delete (the manifest's PRESENT part keys plus, for INTAKE rows, the derived
-raw-blob key `blobs/<accountId>/<blobId>.bin`), so Phase B never recomputes
-keys. The document is immediately unreadable; its objects still exist.
+`DeleteDocument` writes a **tombstone accession** - a revision like any
+other, with its own `operation_id` and exact expected revision. No bytes
+are removed: earlier revisions stay readable by exact address, and the
+current read answers `NOT_FOUND`.
 
-**Phase B** (async, `RepoServices.startLifecycle()`): the purger
-(`S3Purger.drainOnce`) claims a batch of PENDING records
-(`SELECT ... FOR UPDATE SKIP LOCKED` — competing purgers never double-take
-from the same select, and every terminal transition is conditional on
-PENDING, so a re-claim settles to one winner) and per record:
-
-1. re-reads the document row under a row lock and applies the **staleness
-   guard**: row AVAILABLE (revived), or `updated_at` strictly after the
-   record's `requested_at` (body re-staged after the delete was requested —
-   the revive-before-PUT race) → the purge is **VOID**, objects and row left
-   alone. The guard is re-checked under a fresh lock in the same transaction
-   that removes the row, so a revive landing mid-drain still wins.
-2. batch-deletes the snapshot keys from the record's bucket (drive resolved
-   via `drive_name`; `deleteAll`, NoSuchKey-is-success — idempotent
-   throughout), removes the row, marks the record **PURGED**. A row already
-   gone still gets its snapshot objects deleted.
-3. Any store/DB error (including a missing drive or partial batch failure) →
-   `markFailed`: attempts + 1 and back to PENDING, until **10 attempts** land
-   the record in **FAILED** and the row in `PURGE_FAILED`. The FAILED record
-   IS the dead-letter queue for now — recovery is operator territory.
-
-**Kafka claim distribution** (`DOCUMENT_PLATFORM_PURGE_QUEUE=kafka`, Flyway
-V5): the `document_purges` row stays the ledger of record and Phase A is
-byte-for-byte unchanged, but the `PurgeQueue` implementation becomes
-`KafkaPurgeQueue`. Each claim first relays every unrelayed PENDING row
-(`relayed_at IS NULL`, still `FOR UPDATE SKIP LOCKED`) to the purge topic as
-a `DocumentPurgeCommand` (`repo/proto/.../document_purge.proto`) keyed by
-node_id through the protomolt serde (validate-on-write), stamps `relayed_at`
-after the broker ack, then claims the batch by polling its member of the
-`repo-purger` consumer group. Settling is unchanged (the conditional DB
-transitions above), and each settle commits the consumer offset at the
-highest *contiguous* settled offset per partition, so a crash before settling
-redelivers the command and a duplicate on the topic (a crash between the ack
-and the `relayed_at` stamp) settles to one winner. Below the attempts ceiling
-`markFailed` republishes the command instead of just returning the row to
-PENDING (the retry rides the tail of the topic; if the republication itself
-fails, the row goes back on the unrelayed scan); at 10 attempts the FAILED
-row is the DLQ, no extra topic. A row whose command fails
-serialization/validation goes straight to FAILED (it can never be relayed),
-and a topic record that does not decode is logged and settled past. Neither
-may wedge the group. Requires `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS`;
-the topic defaults to `document-purges` (`DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC`).
-
-The **sweeper** (`PurgeSweeper.sweepOnce`) periodically rescans for rows
-stuck in `PENDING_PURGE` with no PENDING purge record (crashed Phase A, or
-pre-lifecycle tombstones) and enqueues a record for each (snapshot from the
-row's manifest, `requested_at` = sweep time so a later revive voids it). It
-deliberately never re-enqueues FAILED records.
-
-The **reconciler** (`StorageReconciler.reconcile(store, bucket, prefix,
-minAge, dryRun)`) diffs the bucket listing against what the ledger owns —
-every row's manifest-PRESENT keys (rows of every status; a PENDING_PURGE
-row's keys are owned until the purger lands), plus the `blobs/` namespace by
-convention (content-addressed raw blobs are untracked by the ledger; their
-lifecycle is `DeleteBlob`'s). Orphans older than `minAge` (default 1h — the
-in-flight-upload guard) are reported, or deleted when armed. **Dry-run by
-default.** The report carries the exact orphan count, a bounded key sample
-(50), the scanned count and the skipped-too-young count.
-
-The **coherence probe** (`CoherenceProbe.probe(store, sampleSize)`) is the
-other direction: for a bounded sample of AVAILABLE rows, every
-manifest-PRESENT key is HEAD-probed, and confirmed-missing objects get their
-manifest entry tombstoned to `PART_STATE_DELETED` with
-`deleted_reason = "COHERENCE_PROBE"` (size/sha/key retained). The row stays
-AVAILABLE by design — the remaining parts are still valid — and `updated_at`
-does not move (bookkeeping, not a body rewrite). Reconciler and probe are
-library calls; when `DOCUMENT_PLATFORM_RECONCILE_ENABLED` is set, a slow
-periodic loop reconciles every drive (dry-run logging unless
-`DOCUMENT_PLATFORM_RECONCILE_DRY_RUN=false`). No RPCs yet.
-
-`purge_storage=true` keeps its synchronous behavior: objects first
-(best-effort), then hard-delete the rows — no queue involved.
+`PurgeDocument` is the administrative erasure, idempotent by `purge_id`.
+The catalog transaction marks every reference of the document purged and
+counts the objects that no unpurged reference (from any document, via
+carry-forward or sourcing) still points at; those objects are then deleted
+from their stacks, and a later call with the **same** `purge_id` resumes an
+interrupted purge (`PostgresPurges.mark` returns the recorded plan for a
+known `(account_id, purge_id)`; a new `purge_id` would re-mark the document
+with an empty plan and never execute the pending deletions). Purge requires a credential-bound administrator through
+the `PurgeAuthorization` port: process authority cannot purge, and the
+mounted host denies all purges until an admin identity is bound.
 
 ## Kafka eventing (transactional outbox)
 
-When `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` is set, the service emits
-document lifecycle events to Kafka through a **transactional outbox**. When
-it is unset, nothing changes: no outbox writes, no relay loop, no producer
-(zero overhead).
+When `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` is set, every accession
+writes exactly one outbox event (a `DocumentEvent` of kind `Accessioned`:
+address, revision,
+changed parts with SHA-256s, validation verdict - see
+`repo/proto/.../v2/events.proto`) **in its catalog commit transaction**, so
+an event can never drift from the state change it describes. When it is
+unset, nothing changes: no outbox relay, no producer.
 
-Every lifecycle commit point writes one row to `document_events_outbox`
-(Flyway V4) **in the same transaction** as the ledger mutation, so an event
-can never drift from the state change it describes:
+The `repo-v2-outbox-relay` lifecycle loop claims pending events in commit
+order, publishes each to the `document-events` topic through the protomolt
+serde (registry-framed when `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` is set),
+and marks them relayed in batches per pass; failed publishes record an
+attempt and retry on a later pass. Semantics:
 
-| Event | Commit point |
-|-------|--------------|
-| `DocumentSaved` | Full/partial save upsert (revives included; checksum dedupe hits elide the write and fire nothing) |
-| `DocumentDeleted` | Hard delete (`purge_storage=true` row removal) |
-| `PurgeRequested` | Soft delete (tombstone + purge enqueue, Phase A) |
-| `DocumentPurged` | Purge finalization (row removal + PURGED transition, Phase B) |
-
-The row's payload is the serialized `DocumentEvent` protobuf (see
-`repo/proto/.../document_events.proto`): a wrapper with an `event_id` (the
-outbox row id) and a `oneof` of the four event messages, each carrying the
-canonical `NodeAddress`, the manifest root checksum where meaningful, and
-timestamps. A virtual-thread **relay** (`EventRelay`, started by
-`startLifecycle()`) claims PENDING rows (`FOR UPDATE SKIP LOCKED`), publishes
-each to the single **`document-events`** topic keyed by **doc_id** (so one
-document's events are partition-ordered), waits for the broker ack, and marks
-the row PUBLISHED. Publication goes through the protomolt serde
-(`sink/kafka/serde`), pinned to the `DocumentEvent` type against the packaged
-descriptor set, so every record is validated and Confluent-framed. By default
-no schema registry is involved and frames stamp schema id 0, which only
-protomolt consumers resolve; set `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` to
-point the relay's serde at a Confluent-compatible registry (the
-`DocumentEvent` subject registered under `<topic>-value`) and frames carry
-the registry-assigned id, so standard Confluent tooling can read the topic.
-
-Semantics and operational notes:
-
-- **At-least-once.** Publish precedes the PUBLISHED transition, so a relay
-  crash mid-flight republishes on restart. Consumers must dedupe on
-  `DocumentEvent.event_id`.
-- **Retry and DLQ.** A failed publish increments `attempts`; at 10 attempts
-  the row lands FAILED, which IS the dead-letter queue for now (operator
-  territory; the relay never re-enqueues it).
-- **PUBLISHED rows are retained**, not deleted (same choice as the purge
-  queue's PURGED rows).
-- **No backfill.** Enabling Kafka on an existing deployment starts the event
-  stream from that moment: rows saved or deleted before the first configured
-  boot produce no events. If consumers need history, replay from storage,
-  not from the topic.
-
-Eventing is orthogonal to the purge-queue selection (`DOCUMENT_PLATFORM_PURGE_QUEUE`)
-in the lifecycle section: the outbox publishes lifecycle EVENTS for
-downstream consumers, while the optional Kafka purge queue distributes purge
-WORK to the purger fleet. The two share only the bootstrap servers (and the
-schema registry URL, when set).
+- **At-least-once.** Publish precedes the relayed stamp, so a crash
+  mid-pass republishes up to a pass of events on restart. Consumers must
+  dedupe on the event identity.
+- **No backfill.** Enabling Kafka on an existing deployment starts the
+  stream from that moment; earlier revisions produce no events. Replay
+  history from `ListRevisions`, not from the topic.
 
 ## Building and testing
 
 From the repository root:
 
 ```bash
-./gradlew :protomolt-repo-proto:build :protomolt-repo-container:build :protomolt-repo-service:build
+./gradlew :protomolt-repo-accession:build :protomolt-repo-catalog:build :protomolt-repo-service:build
 buf lint   # proto contract lint (repo/proto is a buf module)
 ```
 
-Tests are testcontainers integration tests (Docker required): PostgreSQL 17
+Tests are testcontainers integration tests (Docker required): `postgres:18-alpine`
 for the ledger, LocalStack for S3, the full stack booted through
 `RepoServices` with no mocks.
 
@@ -298,27 +205,13 @@ for the ledger, LocalStack for S3, the full stack booted through
   client-streaming with and without a declared hash, HTTP POST), exact
   counters, rendition tombstones, pruning, both versioning policies, and
   the contract's refusals.
-- `RepoServiceIT` — the gRPC surface end to end: drives (including the
-  `provider_config` jsonb round trip), full/partial saves, dedupe,
-  delete/purge, the tombstone→enqueue→drain lifecycle, `PutBlob`/`GetBlob`/
-  `DeleteBlob`.
-- `S3PurgerIT` / `PurgeSweeperIT` / `JdbcPurgeQueueIT` — the two-phase
-  delete: drain semantics, the staleness guard and revive race, the
-  attempts→DLQ ladder (poison-key failing store), SKIP-LOCKED claiming.
-- `StorageReconcilerIT` / `CoherenceProbeIT` — the orphan diff (min-age
-  guard, dry-run rail, `blobs/` convention) and the manifest-repair probe.
-- `DocumentEventOutboxIT` / `EventRelayIT` - the Kafka outbox: same-tx
-  enqueue and rollback atomicity, SKIP-LOCKED claim order, the
-  attempts→FAILED ladder, relay publish/consume round trip over Redpanda,
-  dead-broker and crash-mid-flight recovery.
-- `KafkaEventingIT` - eventing end to end through `RepoServices` (Postgres,
-  LocalStack, Redpanda): save/delete commit points write the outbox
-  atomically, the relay publishes, and a `ProtoMoltProtobufDeserializer`
-  consumer reads and revalidates the events.
-- `KafkaPurgeQueueIT` - the Kafka-backed purge queue (Postgres + Redpanda):
-  rolled-back enqueues never relay, the relay/claim/settle round trip, crash
-  redelivery through the consumer group, duplicate deliveries settling to one
-  winner, the republication ladder to FAILED, poison frames settled past.
+- The v2 accession suites (`repo/accession`) — `AccessionGrpcIT`,
+  `DocumentSavesIT`, `SemanticPartsIT`, `OpaqueSavesIT`,
+  `StreamingUploadAndReadIT`, `BulkStreamsGrpcIT`, `DocumentDeletesIT` /
+  `DocumentListsIT` / `DocumentPurgesIT`, the outbox ITs
+  (`OutboxOrderIT`, `OutboxKafkaIT`) and `RealisticPipelineAndEdgeCasesIT`:
+  the 13-RPC surface over Postgres, S3, and Redpanda with no mocks,
+  including save-intent goldens that pin fragment bytes and retry identity.
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
@@ -328,8 +221,8 @@ for the ledger, LocalStack for S3, the full stack booted through
 - `RedisBlobStoreIT` — the Redis blob store against `redis:7-alpine`:
   verified writes, the two-entries-per-object mapping, 1000-key pipelined
   deletes, SCAN listing, TTL expiry.
-- `CachingBlobStoreTest` — the caching decorator's read-through/write-through
-  semantics over in-memory stores.
+- `CacheCloseTest` / `CacheProviderIT` — the caching decorator's
+  read-through/write-through semantics over in-memory stores.
 
 ## Running
 
@@ -341,7 +234,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 |---------|---------|---------|
 | `DOCUMENT_PLATFORM_GRPC_PORT` | `9090` | gRPC listen port |
 | `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | HTTP upload listen port; `0` or `off` disables the HTTP server |
-| `DOCUMENT_PLATFORM_JDBC_URL` / `_USERNAME` / `_PASSWORD` / `_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`) |
+| `DOCUMENT_PLATFORM_JDBC_URL`, `DOCUMENT_PLATFORM_USERNAME`, `DOCUMENT_PLATFORM_PASSWORD`, `DOCUMENT_PLATFORM_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`; only the URL carries the `JDBC_` infix) |
 | `DOCUMENT_PLATFORM_S3_ENDPOINT` | _(provider default)_ | S3 endpoint override for S3-compatible stores (LocalStack, SeaweedFS, MinIO); path-style is forced when set |
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
@@ -350,16 +243,15 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
-| `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background purge loops (purger + sweeper) when `startLifecycle()` is called |
-| `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Purge-drain idle backoff; a non-empty drain loops again immediately |
-| `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | Sweeper rescan interval (also the reconcile loop's cadence) |
-| `DOCUMENT_PLATFORM_RECONCILE_ENABLED` | `false` | Run the slow periodic storage-reconcile loop over every drive |
-| `DOCUMENT_PLATFORM_RECONCILE_DRY_RUN` | `true` | Periodic reconcile reports only; `false` arms orphan deletion |
-| `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for the periodic reconcile (in-flight-upload protection) |
-| `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
-| `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the relay publishes to |
-| `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | Purge-queue selection: `jdbc` (the purger claims rows straight from `document_purges`) or `kafka` (each PENDING row is relayed to the purge topic and claimed through the `repo-purger` consumer group; the row stays the ledger of record). `kafka` requires `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` |
-| `DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC` | `document-purges` | The purge-commands topic (Kafka purge queue only) |
+| `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC and HTTP (repo-service mounts no MCP surface) |
+| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Total bytes independently buffered across verified document and blob reads. Streaming `ReadDocument` reserves each non-opaque part's catalog length while decoding and streaming it (a bounded 131,072-byte chunk buffer for opaque parts); `ReadBlob` streams in 64 KiB chunks without a catalog-length reservation; unary `GetDocument` and bulk `ReadDocuments` reserve each selected part's catalog length |
+| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | Require S3 `If-None-Match` semantics for write-once stack-object creation |
+| `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background loops when `startLifecycle()` is called (archive mutation recovery, archive reconciliation, the v2 outbox relay) |
+| `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Lifecycle cadence: archive mutation-recovery lookback and idle sleep; also the v2 outbox relay's idle sleep |
+| `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | Archive-reconciliation loop cadence |
+| `DOCUMENT_PLATFORM_RECONCILE_MIN_AGE_MS` | `3600000` | Min-age guard for archive reconciliation (objects younger than this are never reconciled) |
+| `DOCUMENT_PLATFORM_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; outbox rows are always written in the commit transaction, and leaving this unset only disables the outbox relay/publisher |
+| `DOCUMENT_PLATFORM_KAFKA_TOPIC` | `document-events` | The document-events topic the v2 outbox relay publishes to |
 | `DOCUMENT_PLATFORM_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
 | `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` | _(none)_ | Standalone default account: at boot the service idempotently ensures this account's `intake` and `pipeline` drives exist; unset = no seeding. Permanent namespace once used — never change it against an existing store (see below) |
 
@@ -385,33 +277,30 @@ under the old id. Pick it once and keep it.
 
 ## API surface
 
-### gRPC `DocumentService` (`repo/proto`)
+### gRPC `DocumentService` v2 (`repo/proto`, `repo/v2`)
 
-- `SaveDocument` / `GetDocument` / `GetDocumentByReference` /
-  `GetDocumentManifest` / `DeleteDocument` / `ListDocuments` — the
-  claim-check document API (full and partial saves, partial reads).
-- `GetBlob` — raw blob fetch by `FileStorageReference`.
-- `PutBlob` — store raw blob bytes on a drive. Unary: the payload transits
-  the service in memory, so this is for small/medium blobs — bulk bytes
-  belong on the HTTP route. The write is verified: the server computes the
-  SHA-256 and the store rejects landed bytes that mismatch it. A blank
-  `object_key` generates a content-addressed key
-  (`<drive.prefix>/blobs/<uuid-of-sha256>`), so identical puts are
-  idempotent.
-- `DeleteBlob` — delete by `FileStorageReference`; idempotent
-  (`deleted=false` when absent).
+The 13-RPC parts-based contract - `SaveDocument`, `SaveDocuments`,
+`UploadDocument`, `DeleteDocument`, `PurgeDocument`,
+`GetOperationOutcome`, `GetDocument`, `ReadDocument`, `ReadDocuments`,
+`ReadBlob`, `GetManifest`, `ListRevisions`, `ListDocuments` - documented
+in the [current document guide](../docs/repo/publication.md): partial
+saves by `PartSelector` with carry-forward from the expected revision,
+cross-document `PartSource` references, selective verified reads, and
+claim-check raw blobs. The v1 document surface (`SaveDocument` /
+`GetDocumentByReference` / `PutBlob` and friends) is retired.
 
-Generic blob PUT, conditional PUT and DELETE reject keys containing the exact
-path segment `archive`, `documents` or `.protomolt-managed`, including keys generated from a
-drive prefix. These namespaces belong to repository publication and cleanup.
-The reservation protects historical archive keys and applies through drive
+Generic blob PUT, conditional PUT and DELETE on the remaining byte-storage
+surfaces reject keys containing the exact path segment `archive`,
+`documents` or `.protomolt-managed`, including keys generated from a drive
+prefix. These namespaces belong to repository publication and cleanup. The
+reservation protects historical archive keys and applies through drive
 aliases as well. Administrative reads remain available. Keys are opaque:
 `archive-backup` is not reserved, and percent-encoded text is not decoded.
-This intentionally makes any pre-release loose blob under those exact reserved
-segments read-only through the generic API; existing bytes are not rewritten.
-The general orphan sweep also excludes these namespaces. Archive and managed-raw
-recovery use their own ledgers; abandoned document-part cleanup is awaiting its
-write-attempt ledger. Explicit document purge still processes admitted snapshots.
+This intentionally makes any pre-release loose blob under those exact
+reserved segments read-only through the generic API; existing bytes are not
+rewritten. The general orphan sweep also excludes these namespaces. Archive
+and managed-raw recovery use their own ledgers; explicit v2 document purge
+still processes admitted snapshots (see Delete and purge above).
 
 ### gRPC `ArchiveService` (`repo/proto`, `archive/v1`)
 
