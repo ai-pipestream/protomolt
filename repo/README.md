@@ -339,17 +339,20 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 
 | Env var | Default | Meaning |
 |---------|---------|---------|
+| `PROTOMOLT_API_TOKEN` | _(none, required)_ | Operator credential for every network call: gRPC (including health and reflection) takes it as `api_token` metadata or `authorization: Bearer`, the HTTP upload routes as `Authorization: Bearer`. Missing or blank fails startup |
 | `DOCUMENT_PLATFORM_GRPC_PORT` | `9090` | gRPC listen port |
 | `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | HTTP upload listen port; `0` or `off` disables the HTTP server |
 | `DOCUMENT_PLATFORM_JDBC_URL` / `_USERNAME` / `_PASSWORD` / `_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`) |
 | `DOCUMENT_PLATFORM_S3_ENDPOINT` | _(provider default)_ | S3 endpoint override for S3-compatible stores (LocalStack, SeaweedFS, MinIO); path-style is forced when set |
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
+| `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `false` | Enables S3 conditional operations (ETag-checked read-for-update and conditional puts); turn it on only for an endpoint qualified for atomic S3 preconditions. Off, those operations fail with `S3 conditional operations require a qualified endpoint`. Accepted only with the `s3` or `s3-redis-cache` blob store; takes `true`/`false`, `1`/`0`, `yes`/`no` or `on`/`off` |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
 | `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `redis` (objects live in Redis), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache). The former `repo` / `repo-inprocess` delegation modes are retired (Step 5A) and fail construction with `Remote repository blob storage is retired` |
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
+| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | Host byte budget shared by concurrent verified reads. Each read reserves a part's catalog length before buffering it; a read that does not fit the remaining budget fails fast with `RESOURCE_EXHAUSTED`. Integer from 1 to 2^63-1 |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background purge loops (purger + sweeper) when `startLifecycle()` is called |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Purge-drain idle backoff; a non-empty drain loops again immediately |
 | `DOCUMENT_PLATFORM_SWEEP_INTERVAL_MS` | `60000` | Sweeper rescan interval (also the reconcile loop's cadence) |
