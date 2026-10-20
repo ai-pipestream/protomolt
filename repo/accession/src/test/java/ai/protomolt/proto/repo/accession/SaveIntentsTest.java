@@ -8,12 +8,17 @@ import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.Descriptors;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.utility.DockerImageName;
+import org.testcontainers.utility.MountableFile;
 
 /**
  * The canonical SaveIntent encoding (requirements §7) frozen by golden vectors:
@@ -124,28 +129,26 @@ class SaveIntentsTest {
      * Cross-language proof, independent of MessageFingerprints: a Python wire
      * decoder/encoder in the goldens directory re-parses every vector, requires
      * canonical field order and minimal varints, re-encodes, and must reproduce
-     * the exact .pb bytes and the .sha256 digest.
+     * the exact .pb bytes and the .sha256 digest. The script runs in a pinned
+     * Python container so the proof never depends on the host's interpreter.
      */
     @Test void anIndependentWireEncoderReproducesTheGoldens() throws Exception {
         var script = getClass().getResource("/save-intent/verify_save_intent_goldens.py");
         assertThat(script).isNotNull();
-        var goldens = java.nio.file.Path.of(script.toURI()).getParent();
-        String python = null;
-        try {
-            var probe = new ProcessBuilder("python3", "--version").redirectErrorStream(true).start();
-            if (probe.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) && probe.exitValue() == 0) python = "python3";
-        } catch (java.io.IOException absent) {
-            // No python3 on this host: the Java checks above still pin bytes and digests.
+        var goldens = Path.of(script.toURI()).getParent();
+        long count;
+        try (var files = Files.list(goldens)) {
+            count = files.filter(path -> path.toString().endsWith(".pb")).count();
         }
-        org.junit.jupiter.api.Assumptions.assumeTrue(python != null, "python3 is not on this host");
-        var run = new ProcessBuilder(python, goldens.resolve("verify_save_intent_goldens.py").toString(),
-                goldens.toString()).redirectErrorStream(true).start();
-        var output = new String(run.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        assertThat(run.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)).as(output).isTrue();
-        assertThat(run.exitValue()).as(output).isZero();
-        try (var files = java.nio.file.Files.list(goldens)) {
-            var count = files.filter(path -> path.toString().endsWith(".pb")).count();
-            assertThat(output).contains(count + " vectors verified");
+        assertThat(count).isPositive();
+        try (var python = new GenericContainer<>(DockerImageName.parse("python:3.12-slim"))
+                .withCopyFileToContainer(MountableFile.forHostPath(goldens), "/goldens")
+                .withCommand("sleep", "infinity")) {
+            python.start();
+            var run = python.execInContainer("python3", "/goldens/verify_save_intent_goldens.py", "/goldens");
+            var output = run.getStdout() + run.getStderr();
+            assertThat(run.getExitCode()).as(output).isZero();
+            assertThat(run.getStdout()).as(output).contains(count + " vectors verified");
         }
     }
 

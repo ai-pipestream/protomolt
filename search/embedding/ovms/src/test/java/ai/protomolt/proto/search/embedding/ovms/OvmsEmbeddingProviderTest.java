@@ -23,12 +23,12 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 class OvmsEmbeddingProviderTest {
 
@@ -225,10 +225,7 @@ class OvmsEmbeddingProviderTest {
 
     @Test
     void firstUseWithoutConfigurationNamesAllKnobs() {
-        assumeThat(System.getenv(OvmsEmbeddingProvider.TARGET_ENVIRONMENT_VARIABLE)).isNull();
-        assumeThat(System.getenv(OvmsEmbeddingProvider.MODEL_ENVIRONMENT_VARIABLE)).isNull();
-
-        OvmsEmbeddingProvider provider = new OvmsEmbeddingProvider();
+        OvmsEmbeddingProvider provider = new OvmsEmbeddingProvider(Map.of());
 
         assertThatThrownBy(provider::dimension)
                 .isInstanceOf(IllegalStateException.class)

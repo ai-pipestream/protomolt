@@ -15,6 +15,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -96,6 +97,7 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
 
     private final Object lock = new Object();
     private final boolean callerOwned;
+    private final Map<String, String> environment;
     private volatile ManagedChannel channel;
     private volatile String target;
     private volatile String modelName;
@@ -112,6 +114,18 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
      * the channel once it has been created.
      */
     public OvmsEmbeddingProvider() {
+        this(System.getenv());
+    }
+
+    /**
+     * Same as the ServiceLoader constructor, except that the environment variables are read
+     * from {@code environment} instead of the process environment. System properties still
+     * take precedence over it.
+     *
+     * @param environment environment variables consulted when a system property is unset
+     */
+    public OvmsEmbeddingProvider(Map<String, String> environment) {
+        this.environment = Objects.requireNonNull(environment, "environment");
         this.callerOwned = false;
     }
 
@@ -124,6 +138,7 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
         this.modelName = Objects.requireNonNull(modelName, "modelName");
         this.channel = ManagedChannelBuilder.forTarget(target).usePlaintext().build();
         this.callerOwned = false;
+        this.environment = System.getenv();
     }
 
     /**
@@ -138,6 +153,7 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
         this.inputName = Objects.requireNonNull(inputName, "inputName");
         this.outputName = Objects.requireNonNull(outputName, "outputName");
         this.callerOwned = true;
+        this.environment = System.getenv();
     }
 
     @Override
@@ -390,10 +406,10 @@ public final class OvmsEmbeddingProvider implements EmbeddingProvider, AutoClose
 
     /** The value of {@code property}, falling back to {@code environmentVariable}; null when
      * neither is set. */
-    private static String configured(String property, String environmentVariable) {
+    private String configured(String property, String environmentVariable) {
         String value = System.getProperty(property);
         if (value == null) {
-            value = System.getenv(environmentVariable);
+            value = environment.get(environmentVariable);
         }
         return value;
     }

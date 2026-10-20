@@ -10,6 +10,7 @@ import tei.v1.Tei.EmbedResponse;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -69,6 +70,7 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
 
     private final Object lock = new Object();
     private final boolean callerOwned;
+    private final Map<String, String> environment;
     private volatile ManagedChannel channel;
     private volatile String target;
     private volatile Integer dimension;
@@ -82,6 +84,18 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
      * the channel once it has been created.
      */
     public TeiEmbeddingProvider() {
+        this(System.getenv());
+    }
+
+    /**
+     * Same as the ServiceLoader constructor, except that the environment variables are read
+     * from {@code environment} instead of the process environment. System properties still
+     * take precedence over it.
+     *
+     * @param environment environment variables consulted when a system property is unset
+     */
+    public TeiEmbeddingProvider(Map<String, String> environment) {
+        this.environment = Objects.requireNonNull(environment, "environment");
         this.callerOwned = false;
     }
 
@@ -93,14 +107,29 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         this.target = Objects.requireNonNull(target, "target");
         this.channel = ManagedChannelBuilder.forTarget(target).usePlaintext().build();
         this.callerOwned = false;
+        this.environment = System.getenv();
     }
 
     /**
      * Embeds over a caller-owned channel. {@link #close()} leaves {@code channel} open.
      */
     public TeiEmbeddingProvider(ManagedChannel channel) {
+        this(channel, System.getenv());
+    }
+
+    /**
+     * Embeds over a caller-owned channel, reading the {@value #TRUNCATE_ENVIRONMENT_VARIABLE}
+     * environment variable from {@code environment} instead of the process environment. The
+     * {@value #TRUNCATE_PROPERTY} system property still takes precedence over it.
+     * {@link #close()} leaves {@code channel} open.
+     *
+     * @param channel caller-owned channel to the TEI server
+     * @param environment environment variables consulted when a system property is unset
+     */
+    public TeiEmbeddingProvider(ManagedChannel channel, Map<String, String> environment) {
         this.channel = Objects.requireNonNull(channel, "channel");
         this.target = channel.authority();
+        this.environment = Objects.requireNonNull(environment, "environment");
         this.callerOwned = true;
     }
 
@@ -263,10 +292,10 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         }
     }
 
-    private static String configuredTarget() {
+    private String configuredTarget() {
         String resolved = System.getProperty(TARGET_PROPERTY);
         if (resolved == null) {
-            resolved = System.getenv(TARGET_ENVIRONMENT_VARIABLE);
+            resolved = environment.get(TARGET_ENVIRONMENT_VARIABLE);
         }
         if (resolved == null) {
             throw new IllegalStateException("No TEI target configured; set the '"
@@ -276,10 +305,10 @@ public final class TeiEmbeddingProvider implements EmbeddingProvider, AutoClosea
         return resolved;
     }
 
-    private static boolean configuredTruncate() {
+    private boolean configuredTruncate() {
         String configured = System.getProperty(TRUNCATE_PROPERTY);
         if (configured == null) {
-            configured = System.getenv(TRUNCATE_ENVIRONMENT_VARIABLE);
+            configured = environment.get(TRUNCATE_ENVIRONMENT_VARIABLE);
         }
         return configured == null || Boolean.parseBoolean(configured);
     }

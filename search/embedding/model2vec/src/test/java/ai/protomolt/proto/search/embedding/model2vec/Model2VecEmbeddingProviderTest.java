@@ -10,10 +10,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 class Model2VecEmbeddingProviderTest {
 
@@ -77,10 +77,26 @@ class Model2VecEmbeddingProviderTest {
     }
 
     @Test
-    void firstUseWithoutConfigurationNamesBothKnobs() {
-        assumeThat(System.getenv(Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE)).isNull();
+    void environmentVariableNamesTheModelDirectory() {
+        Model2VecEmbeddingProvider provider = new Model2VecEmbeddingProvider(Map.of(
+                Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE, modelDirectory.toString()));
 
-        Model2VecEmbeddingProvider provider = new Model2VecEmbeddingProvider();
+        assertThat(provider.dimension()).isEqualTo(Model2VecTestModel.DIMENSION);
+    }
+
+    @Test
+    void pathPropertyBeatsTheEnvironmentVariable() {
+        System.setProperty(Model2VecEmbeddingProvider.PATH_PROPERTY, modelDirectory.toString());
+        Model2VecEmbeddingProvider provider = new Model2VecEmbeddingProvider(Map.of(
+                Model2VecEmbeddingProvider.PATH_ENVIRONMENT_VARIABLE,
+                modelDirectory.resolve("absent").toString()));
+
+        assertThat(provider.dimension()).isEqualTo(Model2VecTestModel.DIMENSION);
+    }
+
+    @Test
+    void firstUseWithoutConfigurationNamesBothKnobs() {
+        Model2VecEmbeddingProvider provider = new Model2VecEmbeddingProvider(Map.of());
 
         assertThatThrownBy(provider::dimension)
                 .isInstanceOf(IllegalStateException.class)

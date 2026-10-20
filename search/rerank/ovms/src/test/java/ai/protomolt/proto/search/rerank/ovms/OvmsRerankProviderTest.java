@@ -19,11 +19,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assumptions.assumeThat;
 
 class OvmsRerankProviderTest {
 
@@ -257,10 +257,7 @@ class OvmsRerankProviderTest {
 
     @Test
     void firstUseWithoutConfigurationNamesAllKnobs() {
-        assumeThat(System.getenv(OvmsRerankProvider.URL_ENVIRONMENT_VARIABLE)).isNull();
-        assumeThat(System.getenv(OvmsRerankProvider.MODEL_ENVIRONMENT_VARIABLE)).isNull();
-
-        OvmsRerankProvider provider = new OvmsRerankProvider();
+        OvmsRerankProvider provider = new OvmsRerankProvider(Map.of());
 
         assertThatThrownBy(() -> provider.score("bamboo", List.of("a")))
                 .isInstanceOf(IllegalStateException.class)
