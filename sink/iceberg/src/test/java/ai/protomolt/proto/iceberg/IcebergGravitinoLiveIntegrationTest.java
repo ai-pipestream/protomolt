@@ -43,11 +43,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * stands in for the reference catalog. Nothing in the sink changes: Gravitino speaks the Iceberg
  * REST spec, so the same {@code ensureTable}/{@code append} that drives any catalog lands tables in
  * a federated metadata lake, and Iceberg's own reader gets the rows back. A Testcontainers
- * instance provides the service; the suite skips when Docker is unavailable.
+ * instance provides the service; Docker is required.
  *
  * <p>Gravitino serves the REST endpoint under {@code /iceberg}, not the root.</p>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IcebergGravitinoLiveIntegrationTest {
 
     // Its own warehouse tree: sharing one with the reference catalog means two services (each

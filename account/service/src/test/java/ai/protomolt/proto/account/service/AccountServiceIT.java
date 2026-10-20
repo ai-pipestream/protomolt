@@ -59,7 +59,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * outbox is active: the tests assert the outbox rows land in the same
  * transaction as the account mutations.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AccountServiceIT {
 
     private static final String REPO_INPROCESS = "it-repo";

@@ -47,7 +47,7 @@ import org.testcontainers.utility.DockerImageName;
  * intake service is read back from A's store, and surfaces outside a node's role
  * list refuse by role name.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class PlatformRoleNodeIT {
 
     static final String ACCOUNT = "acct-platform-rolenode";

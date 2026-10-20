@@ -45,7 +45,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * parse's side effect (the coordinator's PARSED save) landing exactly once
  * per successful execution.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class DurableParseJobIT {
 
     static final String ACCOUNT = "acct-durable";

@@ -109,7 +109,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Installed-process proof of remote authoring, independent review, signed preparation and launch. */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AuthoringRemoteProcessTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()

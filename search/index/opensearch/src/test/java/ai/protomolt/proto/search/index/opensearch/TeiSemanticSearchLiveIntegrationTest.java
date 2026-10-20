@@ -54,11 +54,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>The suite is tagged {@code tei} and excluded from the default test task; it runs via
  * {@code ./gradlew :protomolt-search-index-opensearch:teiIntegrationTest}, in CI on the Forgejo lane
- * ({@code .forgejo/workflows/tei-integration.yml}). It skips when Docker is unavailable.
+ * ({@code .forgejo/workflows/tei-integration.yml}). Docker is required.
  */
 @Tag("integration")
 @Tag("tei")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class TeiSemanticSearchLiveIntegrationTest {
 
     /** Environment variable naming an existing directory to reuse as the TEI model cache. */

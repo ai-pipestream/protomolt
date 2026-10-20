@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * channel's outage behavior. The RPC semantics are AccountServiceIT's
  * territory; this pins the boot/serve/stop envelope around them.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AccountServicesIT {
 
     @Container

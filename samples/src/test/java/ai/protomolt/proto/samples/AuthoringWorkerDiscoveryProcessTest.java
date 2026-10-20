@@ -81,7 +81,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Installed idle-worker recovery through a committed fixture effect and exact retry. */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AuthoringWorkerDiscoveryProcessTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();

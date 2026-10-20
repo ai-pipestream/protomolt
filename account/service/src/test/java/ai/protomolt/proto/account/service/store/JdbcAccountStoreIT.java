@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * their row locking, and list paging. No mocks — the schema, the SQL, and
  * the JSONB metadata round-trip are all exercised as deployed.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcAccountStoreIT {
 
     @Container

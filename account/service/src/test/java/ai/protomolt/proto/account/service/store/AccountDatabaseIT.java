@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the read-only lane's error wrap, the fail-fast boot, and the datasource
  * accessor. The store SQL itself is {@code JdbcAccountStoreIT}'s territory.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AccountDatabaseIT {
 
     @Container

@@ -25,7 +25,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * shape, the operator-mint refusal, the misconfigured-row refusal, and — most
  * load-bearing — the guarantee that raw credential material never lands in the table.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcCallerResolverIT {
 
     @Container

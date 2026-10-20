@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * this pins the outbox's own semantics — the caller-transaction enqueue, the
  * conditional terminal transitions, and the claim window's limit.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcAccountEventOutboxIT {
 
     @Container

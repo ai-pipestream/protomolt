@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * what the relay owes Kafka is exercised by the serde lane elsewhere; what
  * the relay owes the OUTBOX is all here.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AccountEventRelayIT {
 
     @Container

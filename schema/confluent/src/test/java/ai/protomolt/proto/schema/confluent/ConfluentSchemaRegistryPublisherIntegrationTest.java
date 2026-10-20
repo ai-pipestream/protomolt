@@ -7,9 +7,9 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * Runs the Confluent publisher suite against a Testcontainers Redpanda, which serves the
- * Confluent Schema Registry API on 8081; the suite skips when Docker is unavailable.
+ * Confluent Schema Registry API on 8081; Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ConfluentSchemaRegistryPublisherIntegrationTest extends AbstractConfluentPublisherIntegrationTest {
 
     // Protobuf schema references (which this suite registers) were only added to Redpanda's

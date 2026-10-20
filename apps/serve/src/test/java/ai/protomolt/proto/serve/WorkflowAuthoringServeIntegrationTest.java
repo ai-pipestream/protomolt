@@ -66,7 +66,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Exercises the opt-in authoring mount in the installed serve process and on each host surface. */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class WorkflowAuthoringServeIntegrationTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String TOKEN = "mount-integration-operator-token";

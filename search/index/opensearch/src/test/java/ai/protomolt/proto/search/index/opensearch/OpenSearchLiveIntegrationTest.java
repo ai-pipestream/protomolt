@@ -46,11 +46,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * created by {@link OpenSearchSink#ensureIndex} must carry the generated mappings, documents
  * mapped from dynamic messages must land through {@link OpenSearchSink#bulkWrite}, and the
  * analyzed / keyword / sorted / kNN behaviors the hints promise must answer real queries.
- * The engine is a Testcontainers OpenSearch instance; the suite skips when Docker is
- * unavailable.
+ * The engine is a Testcontainers OpenSearch instance; Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class OpenSearchLiveIntegrationTest {

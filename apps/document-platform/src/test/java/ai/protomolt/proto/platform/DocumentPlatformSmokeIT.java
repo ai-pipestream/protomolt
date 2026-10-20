@@ -76,7 +76,7 @@ import org.testcontainers.utility.DockerImageName;
  * through the search service, a replay that re-derives without duplicating, and
  * the delete-and-unindex workflow leaving the document unsearchable.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class DocumentPlatformSmokeIT {
 

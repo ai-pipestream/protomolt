@@ -37,9 +37,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the deserializer quietly fell back to what it had packaged and the lane is not working.</p>
  *
  * <p>The registry is a Testcontainers Redpanda, which serves the Confluent Schema Registry API;
- * the suite skips when Docker is unavailable.</p>
+ * Docker is required.</p>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class SerdeRegistryLiveIntegrationTest {
 
     // Same baseline image as the connector lane (testcontainers' own pinned tag).

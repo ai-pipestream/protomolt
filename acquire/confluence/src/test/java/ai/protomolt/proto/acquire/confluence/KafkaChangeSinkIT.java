@@ -40,9 +40,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * protomolt deserializer, and a change that violates the schema's declared
  * rules (UPSERT without its entity, a blank change id) is rejected at the
  * serde edge instead of reaching the topic. The broker is a Testcontainers
- * Redpanda instance; the suite skips when Docker is unavailable.
+ * Redpanda instance; Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaChangeSinkIT {
 
     // The image the connector module's own Kafka suite pins (its baseline).

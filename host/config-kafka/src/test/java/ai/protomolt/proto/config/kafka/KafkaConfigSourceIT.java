@@ -48,7 +48,7 @@ import org.testcontainers.utility.DockerImageName;
  * keeps serving what it runs; a compacted topic consumed as a table
  * gives latest-per-subject with {@code partition:offset} as evidence.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaConfigSourceIT {
 
     @Container
