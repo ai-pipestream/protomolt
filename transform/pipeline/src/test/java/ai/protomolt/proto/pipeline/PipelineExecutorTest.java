@@ -341,6 +341,32 @@ class PipelineExecutorTest {
         assertThat(transport.calls()).isZero();
     }
 
+    @Test
+    void checkerFindingFailsBeforeTransportAndNamesTheFinding() {
+        RecordingTransport transport = new RecordingTransport();
+        Pipeline pipeline = PipelineFixtures.base("drift-run", PipelineFixtures.TICKET)
+                .addDependencies(PipelineFixtures.dependency("pipeline.test.Lookup"))
+                .addSteps(PipelineFixtures.grpcStep("fetch", "pipeline.test.Lookup",
+                        PipelineFixtures.FETCH, MethodShape.METHOD_SHAPE_SERVER_STREAMING,
+                        EdgeCardinality.EDGE_CARDINALITY_ONE,
+                        EdgeCardinality.EDGE_CARDINALITY_ONE,
+                        PipelineFixtures.edge(PipelineFixtures.TICKET, List.of("input"),
+                                "title = input.title")))
+                .build();
+
+        assertThatThrownBy(() -> executor(transport).run(pipeline,
+                PipelineFixtures.files(), ticket("alpha")))
+                .isInstanceOfSatisfying(PipelineExecutor.PipelineExecutionException.class,
+                        failure -> {
+                            assertThat(failure.kind()).isEqualTo(FailureKind.PREFLIGHT);
+                            assertThat(failure.step()).isEmpty();
+                            assertThat(failure.getMessage())
+                                    .startsWith("pipeline failed static checking: fetch/shape: ")
+                                    .contains("METHOD_SHAPE_SERVER_STREAMING");
+                        });
+        assertThat(transport.calls()).isZero();
+    }
+
     private static PipelineExecutor executor(RecordingTransport transport) {
         return new PipelineExecutor(transport);
     }

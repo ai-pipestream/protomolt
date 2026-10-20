@@ -8,7 +8,10 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -81,6 +84,72 @@ class StreamPathsTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("path 'note.items' walks through 'note', "
                         + "which is not a singular message field");
+    }
+
+    @Test
+    void segmentsKeepLeadingAndInteriorEmptiesAndDropTrailingOnes() {
+        assertThat(StreamPaths.segments("items")).containsExactly("items");
+        assertThat(StreamPaths.segments("holder.items")).containsExactly("holder", "items");
+        assertThat(StreamPaths.segments("")).containsExactly("");
+        assertThat(StreamPaths.segments(".items")).containsExactly("", "items");
+        assertThat(StreamPaths.segments("holder..items"))
+                .containsExactly("holder", "", "items");
+        assertThat(StreamPaths.segments("holder.items.")).containsExactly("holder", "items");
+        assertThat(StreamPaths.segments(".")).isEmpty();
+        assertThat(StreamPaths.segments("..")).isEmpty();
+    }
+
+    @Test
+    void anAllDotsPathHasNoSegmentsAndIsRefusedAsEmpty() {
+        assertThatThrownBy(() -> StreamPaths.repeatedField(ROOT, "."))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("path must not be empty");
+    }
+
+    @Test
+    void anInteriorEmptySegmentNamesTheTypeItWasLookedUpOn() {
+        assertThatThrownBy(() -> StreamPaths.repeatedField(ROOT, "holder..items"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("path 'holder..items' does not resolve: "
+                        + "paths.test.Holder has no field ''");
+    }
+
+    @Test
+    void repeatedValuesWalksTheNestedValueInFieldOrder() {
+        DynamicMessage first = item("first");
+        DynamicMessage second = item("second");
+        DynamicMessage holder = DynamicMessage.newBuilder(HOLDER)
+                .addRepeatedField(HOLDER.findFieldByName("items"), first)
+                .addRepeatedField(HOLDER.findFieldByName("items"), second)
+                .build();
+        DynamicMessage root = DynamicMessage.newBuilder(ROOT)
+                .setField(ROOT.findFieldByName("holder"), holder)
+                .addRepeatedField(ROOT.findFieldByName("items"), item("top"))
+                .build();
+
+        assertThat(StreamPaths.repeatedValues(root, "holder.items"))
+                .isEqualTo(List.of(first, second));
+        assertThat(StreamPaths.repeatedValues(root, "items")).isEqualTo(List.of(item("top")));
+    }
+
+    @Test
+    void repeatedValuesOfAnUnsetNestedHolderIsEmpty() {
+        assertThat(StreamPaths.repeatedValues(DynamicMessage.getDefaultInstance(ROOT),
+                "holder.items")).isEmpty();
+    }
+
+    @Test
+    void repeatedValuesRefusesAPathTheDescriptorWalkRefuses() {
+        assertThatThrownBy(() -> StreamPaths.repeatedValues(
+                DynamicMessage.getDefaultInstance(ROOT), "holders.items"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("path 'holders.items' walks through 'holders', "
+                        + "which is not a singular message field");
+    }
+
+    private static DynamicMessage item(String name) {
+        return DynamicMessage.newBuilder(ITEM).setField(ITEM.findFieldByName("name"), name)
+                .build();
     }
 
     private static FileDescriptor file() {
