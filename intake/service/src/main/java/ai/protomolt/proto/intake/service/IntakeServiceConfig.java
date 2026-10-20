@@ -98,12 +98,36 @@ public record IntakeServiceConfig(
         String httpPort = System.getenv(ENV_HTTP_PORT);
         String writers = System.getenv(ENV_STEP_WRITERS);
         return new IntakeServiceConfig(
-                port == null || port.isBlank() ? DEFAULT_GRPC_PORT : Integer.parseInt(port),
+                intValue(ENV_GRPC_PORT, port, DEFAULT_GRPC_PORT),
                 repoTarget,
-                cap == null || cap.isBlank() ? DEFAULT_MAX_PAYLOAD_BYTES : Long.parseLong(cap),
-                httpPort == null || httpPort.isBlank() ? 0 : Integer.parseInt(httpPort),
+                longValue(ENV_MAX_PAYLOAD_BYTES, cap, DEFAULT_MAX_PAYLOAD_BYTES),
+                intValue(ENV_HTTP_PORT, httpPort, 0),
                 writers == null ? DEFAULT_STEP_WRITERS
                         : java.util.Arrays.stream(writers.split(",")).map(String::trim)
                                 .filter(writer -> !writer.isEmpty()).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int intValue(String name, String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+        }
+    }
+
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static long longValue(String name, String value, long fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+        }
     }
 }

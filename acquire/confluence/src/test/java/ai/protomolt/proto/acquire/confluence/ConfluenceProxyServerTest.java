@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@link ConfluenceProxyServer#startNetty} end to end: a real Netty socket,
@@ -106,5 +107,21 @@ class ConfluenceProxyServerTest {
         }
         assertThat(files).contains(
                 "ai/protomolt/proto/acquire/confluence/v1/confluence_service.proto");
+    }
+
+    @Test
+    void malformedNumbersAreRefusedByVariableName() {
+        assertThatThrownBy(() -> ConfluenceProxyServer.parseInt(
+                ConfluenceProxyServer.ENV_GRPC_PORT, "port", 9100))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ConfluenceProxyServer.ENV_GRPC_PORT + " must be an integer: port");
+        assertThatThrownBy(() -> ConfluenceProxyServer.parseLong(
+                ConfluenceProxyServer.ENV_ATTACHMENT_MAX_BYTES, "10MB", 1L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ConfluenceProxyServer.ENV_ATTACHMENT_MAX_BYTES + " must be an integer: 10MB");
+        assertThat(ConfluenceProxyServer.parseInt(ConfluenceProxyServer.ENV_GRPC_PORT, null, 9100))
+                .isEqualTo(9100);
+        assertThat(ConfluenceProxyServer.parseLong(ConfluenceProxyServer.ENV_ATTACHMENT_MAX_BYTES, " 42 ", 1L))
+                .isEqualTo(42L);
     }
 }

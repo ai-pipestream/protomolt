@@ -88,11 +88,33 @@ public record ParseCoordinatorConfig(
         String drive = System.getenv(ENV_DRIVE);
         String deadline = System.getenv(ENV_PARSE_DEADLINE_SECONDS);
         return new ParseCoordinatorConfig(
-                port == null || port.isBlank() ? DEFAULT_GRPC_PORT : Integer.parseInt(port),
+                intValue(ENV_GRPC_PORT, port, DEFAULT_GRPC_PORT),
                 repoTarget,
                 drive == null || drive.isBlank() ? DEFAULT_DRIVE : drive,
-                deadline == null || deadline.isBlank()
-                        ? DEFAULT_PARSE_DEADLINE_SECONDS
-                        : Long.parseLong(deadline));
+                longValue(ENV_PARSE_DEADLINE_SECONDS, deadline, DEFAULT_PARSE_DEADLINE_SECONDS));
+    }
+
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int intValue(String name, String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+        }
+    }
+
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static long longValue(String name, String value, long fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
+        }
     }
 }

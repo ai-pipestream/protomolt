@@ -4,6 +4,7 @@ import ai.protomolt.proto.account.service.store.AccountStoreConfig;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link AccountServiceConfig}: the defaults, the kafka-off
@@ -66,5 +67,26 @@ class AccountServiceConfigTest {
         assertThat(config.store()).isNotNull();
         assertThat(config.store().jdbcUrl()).isNotBlank();
         assertThat(config.store().maxPoolSize()).isPositive();
+    }
+
+    @Test
+    void malformedNumbersAreRefusedByVariableName() {
+        assertThatThrownBy(() -> AccountServiceConfig.parseIntOrDefault(
+                AccountServiceConfig.ENV_GRPC_PORT, "90x1", 9091))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(AccountServiceConfig.ENV_GRPC_PORT + " must be an integer: 90x1");
+        assertThatThrownBy(() -> AccountServiceConfig.parseLongOrDefault(
+                AccountServiceConfig.ENV_RELAY_INTERVAL_MS, "5s", 5000L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(AccountServiceConfig.ENV_RELAY_INTERVAL_MS + " must be an integer: 5s");
+    }
+
+    @Test
+    void unsetOrBlankNumbersKeepTheirDefault() {
+        assertThat(AccountServiceConfig.parseIntOrDefault("X", null, 9091)).isEqualTo(9091);
+        assertThat(AccountServiceConfig.parseIntOrDefault("X", "  ", 9091)).isEqualTo(9091);
+        assertThat(AccountServiceConfig.parseIntOrDefault("X", " 7 ", 9091)).isEqualTo(7);
+        assertThat(AccountServiceConfig.parseLongOrDefault("X", "", 5000L)).isEqualTo(5000L);
+        assertThat(AccountServiceConfig.parseLongOrDefault("X", "250", 5000L)).isEqualTo(250L);
     }
 }

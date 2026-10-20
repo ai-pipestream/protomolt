@@ -106,10 +106,10 @@ public final class ConfluenceProxyServer {
                 projectedParquet.isPresent());
         ConfluenceGrpcService service = new ConfluenceGrpcService(config,
                 new ConfluenceClient(config),
-                parseLong(System.getenv(ENV_ATTACHMENT_MAX_BYTES),
+                parseLong(ENV_ATTACHMENT_MAX_BYTES, System.getenv(ENV_ATTACHMENT_MAX_BYTES),
                         ConfluenceGrpcService.DEFAULT_ATTACHMENT_MAX_BYTES),
                 downstream);
-        Server server = startNetty(service, parseInt(System.getenv(ENV_GRPC_PORT),
+        Server server = startNetty(service, parseInt(ENV_GRPC_PORT, System.getenv(ENV_GRPC_PORT),
                 DEFAULT_GRPC_PORT));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.shutdown();
@@ -159,25 +159,27 @@ public final class ConfluenceProxyServer {
         return server;
     }
 
-    private static int parseInt(String value, int fallback) {
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int parseInt(String name, String value, int fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         try {
             return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
         }
     }
 
-    private static long parseLong(String value, long fallback) {
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static long parseLong(String name, String value, long fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         try {
             return Long.parseLong(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
         }
     }
 }

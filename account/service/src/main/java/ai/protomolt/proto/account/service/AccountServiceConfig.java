@@ -150,14 +150,15 @@ public record AccountServiceConfig(
      */
     public static AccountServiceConfig fromEnvironment() {
         return new AccountServiceConfig(
-                parseIntOrDefault(System.getenv(ENV_GRPC_PORT), DEFAULT_GRPC_PORT),
+                parseIntOrDefault(ENV_GRPC_PORT, System.getenv(ENV_GRPC_PORT), DEFAULT_GRPC_PORT),
                 AccountStoreConfig.fromEnvironment(),
                 envOrDefault(ENV_REPO_GRPC_TARGET, DEFAULT_REPO_GRPC_TARGET),
                 System.getenv(ENV_KAFKA_BOOTSTRAP_SERVERS),
                 envOrDefault(ENV_KAFKA_TOPIC, DEFAULT_KAFKA_TOPIC),
                 System.getenv(ENV_SCHEMA_REGISTRY_URL),
                 parseBoolOrDefault(System.getenv(ENV_LIFECYCLE_ENABLED), DEFAULT_LIFECYCLE_ENABLED),
-                parseLongOrDefault(System.getenv(ENV_RELAY_INTERVAL_MS), DEFAULT_RELAY_INTERVAL_MS));
+                parseLongOrDefault(ENV_RELAY_INTERVAL_MS, System.getenv(ENV_RELAY_INTERVAL_MS),
+                        DEFAULT_RELAY_INTERVAL_MS));
     }
 
     private static String envOrDefault(String name, String fallback) {
@@ -169,25 +170,27 @@ public record AccountServiceConfig(
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private static int parseIntOrDefault(String value, int fallback) {
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static int parseIntOrDefault(String name, String value, int fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         try {
             return Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
         }
     }
 
-    private static long parseLongOrDefault(String value, long fallback) {
+    /** {@code fallback} when unset or blank; a malformed value is refused naming {@code name}. */
+    static long parseLongOrDefault(String name, String value, long fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
         }
         try {
             return Long.parseLong(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(name + " must be an integer: " + value, e);
         }
     }
 
