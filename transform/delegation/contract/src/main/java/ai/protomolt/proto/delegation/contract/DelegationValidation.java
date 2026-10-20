@@ -21,7 +21,6 @@ import ai.protomolt.proto.delegation.v1.ProgressEvent;
 import ai.protomolt.proto.delegation.v1.RevisionRequested;
 import ai.protomolt.proto.delegation.v1.ReviewDeferred;
 import ai.protomolt.proto.delegation.v1.ReviewFailed;
-import ai.protomolt.proto.delegation.v1.ReviewFailureCode;
 import ai.protomolt.proto.delegation.v1.ReviewStarted;
 import ai.protomolt.proto.delegation.v1.TaskOffer;
 import ai.protomolt.proto.delegation.v1.TaskMessage;
@@ -34,13 +33,8 @@ import ai.protomolt.proto.delegation.v1.WorkerCapability;
 import ai.protomolt.proto.delegation.v1.WorkerHello;
 import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.formats.Formats;
-import com.google.protobuf.Timestamp;
-import com.google.protobuf.Descriptors.FieldDescriptor;
-import com.google.protobuf.Message;
-import com.google.protobuf.util.Timestamps;
 
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -49,6 +43,10 @@ import java.util.Set;
  * workflow contract. Lifecycle, sequencing, and evidence-completeness checks are the
  * delegation lifecycle reducer's job; this class only guarantees a frame or transcript is
  * well-formed enough to carry and to reduce.
+ *
+ * <p>The shared atoms live in {@link ValidationChecks} and the review-identity binding
+ * checks in {@link ReviewValidation}; both are package-private, so the public entry points
+ * and the order of their checks are unchanged.
  */
 public final class DelegationValidation {
 
@@ -66,156 +64,150 @@ public final class DelegationValidation {
     private static final int MAX_REFERENCES = 64;
     private static final int MAX_SCOPE_ITEMS = 256;
     private static final int MAX_NEEDS = 32;
-    private static final int MAX_ATTEMPT = 1_024;
-    private static final int MAX_NAME_LENGTH = 128;
     private static final int MAX_DESCRIPTOR_SET_BYTES = 4 * 1024 * 1024;
     private static final int MAX_JSON_SCHEMA_LENGTH = 262_144;
-
-    /** A full proto message name: dot-separated identifiers, nested types included. */
-    private static final java.util.regex.Pattern PROTO_NAME = java.util.regex.Pattern
-            .compile("[A-Za-z_][A-Za-z0-9_]*([.][A-Za-z_][A-Za-z0-9_]*)*");
 
     private DelegationValidation() {
     }
 
     /** Validates one worker-to-coordinator frame: envelope plus payload. */
     public static void validate(DelegateRequest frame) {
-        require(frame != null, "frame must not be null");
-        require(frame.getSerializedSize() <= MAX_FRAME_BYTES,
+        ValidationChecks.require(frame != null, "frame must not be null");
+        ValidationChecks.require(frame.getSerializedSize() <= MAX_FRAME_BYTES,
                 "frame exceeds the maximum serialized size of " + MAX_FRAME_BYTES
                         + " bytes");
-        validateEnvelope(frame.getFrameId(), frame.getTaskId(), frame.getSeq(),
-                frame.hasSentAt(), frame.getSentAt());
+        ValidationChecks.validateEnvelope(frame.getFrameId(), frame.getTaskId(),
+                frame.getSeq(), frame.hasSentAt(), frame.getSentAt());
         switch (frame.getPayloadCase()) {
             case HELLO -> {
-                require(frame.getTaskId().isEmpty(),
+                ValidationChecks.require(frame.getTaskId().isEmpty(),
                         "frame.task_id must be empty on the session-scoped hello");
                 validate(frame.getHello());
             }
             case ACCEPT -> {
-                requireTaskScoped(frame.getTaskId());
-                validateAttempt(frame.getAccept().getAttempt(), "accept.attempt");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.validateAttempt(frame.getAccept().getAttempt(), "accept.attempt");
             }
             case REJECT -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getReject());
             }
             case HEARTBEAT -> {
-                requireTaskScoped(frame.getTaskId());
-                validateAttempt(frame.getHeartbeat().getAttempt(), "heartbeat.attempt");
-                bounded(frame.getHeartbeat().getNote(), 1_024, "heartbeat.note");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.validateAttempt(frame.getHeartbeat().getAttempt(), "heartbeat.attempt");
+                ValidationChecks.bounded(frame.getHeartbeat().getNote(), 1_024, "heartbeat.note");
             }
             case PROGRESS -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getProgress());
             }
             case CHECKPOINT -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getCheckpoint());
             }
             case BLOCKED -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getBlocked());
             }
             case FAILED -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getFailed());
             }
             case CANCELLED -> {
-                requireTaskScoped(frame.getTaskId());
-                validateAttempt(frame.getCancelled().getAttempt(), "cancelled.attempt");
-                bounded(frame.getCancelled().getNote(), 1_024, "cancelled.note");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.validateAttempt(frame.getCancelled().getAttempt(), "cancelled.attempt");
+                ValidationChecks.bounded(frame.getCancelled().getNote(), 1_024, "cancelled.note");
             }
             case COMPLETION -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getCompletion());
             }
             case TASK_MESSAGE -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getTaskMessage(), frame.getTaskId());
             }
-            default -> require(false, "frame.payload must be set");
+            default -> ValidationChecks.require(false, "frame.payload must be set");
         }
     }
 
     /** Validates one coordinator-to-worker frame: envelope plus payload. */
     public static void validate(DelegateResponse frame) {
-        require(frame != null, "frame must not be null");
-        require(frame.getSerializedSize() <= MAX_FRAME_BYTES,
+        ValidationChecks.require(frame != null, "frame must not be null");
+        ValidationChecks.require(frame.getSerializedSize() <= MAX_FRAME_BYTES,
                 "frame exceeds the maximum serialized size of " + MAX_FRAME_BYTES
                         + " bytes");
-        validateEnvelope(frame.getFrameId(), frame.getTaskId(), frame.getSeq(),
-                frame.hasSentAt(), frame.getSentAt());
+        ValidationChecks.validateEnvelope(frame.getFrameId(), frame.getTaskId(),
+                frame.getSeq(), frame.hasSentAt(), frame.getSentAt());
         switch (frame.getPayloadCase()) {
             case ADMISSION -> {
-                require(frame.getTaskId().isEmpty(),
+                ValidationChecks.require(frame.getTaskId().isEmpty(),
                         "frame.task_id must be empty on the session-scoped admission");
                 validate(frame.getAdmission());
             }
             case OFFER -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getOffer());
             }
             case RENEWAL -> {
-                requireTaskScoped(frame.getTaskId());
-                validateAttempt(frame.getRenewal().getAttempt(), "renewal.attempt");
-                require(frame.getRenewal().hasExpiresAt(),
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.validateAttempt(frame.getRenewal().getAttempt(), "renewal.attempt");
+                ValidationChecks.require(frame.getRenewal().hasExpiresAt(),
                         "renewal.expires_at must be set");
-                validateTimestamp(frame.getRenewal().getExpiresAt(),
+                ValidationChecks.validateTimestamp(frame.getRenewal().getExpiresAt(),
                         "renewal.expires_at");
             }
             case EXPIRED -> {
-                requireTaskScoped(frame.getTaskId());
-                validateAttempt(frame.getExpired().getAttempt(), "expired.attempt");
-                bounded(frame.getExpired().getReason(), 2_048, "expired.reason");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.validateAttempt(frame.getExpired().getAttempt(), "expired.attempt");
+                ValidationChecks.bounded(frame.getExpired().getReason(), 2_048, "expired.reason");
             }
             case CANCELLATION -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getCancellation());
             }
             case REVISION_REQUESTED -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getRevisionRequested());
             }
             case ACCEPTED -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getAccepted());
             }
             case REVIEW_STARTED -> {
-                requireTaskScoped(frame.getTaskId());
-                requireNoUnknown(frame, "review frame");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireNoUnknown(frame, "review frame");
                 validate(frame.getReviewStarted());
-                require(frame.getReviewStarted().getIdentity().getTaskId().equals(frame.getTaskId()),
+                ValidationChecks.require(frame.getReviewStarted().getIdentity().getTaskId().equals(frame.getTaskId()),
                         "review_started.identity.task_id must match frame.task_id");
-                require(frame.getReviewStarted().getStartedAt().equals(frame.getSentAt()),
+                ValidationChecks.require(frame.getReviewStarted().getStartedAt().equals(frame.getSentAt()),
                         "review_started.started_at must match frame.sent_at");
             }
             case REVIEW_FAILED -> {
-                requireTaskScoped(frame.getTaskId());
-                requireNoUnknown(frame, "review frame");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireNoUnknown(frame, "review frame");
                 validate(frame.getReviewFailed());
-                require(frame.getReviewFailed().getIdentity().getTaskId().equals(frame.getTaskId()),
+                ValidationChecks.require(frame.getReviewFailed().getIdentity().getTaskId().equals(frame.getTaskId()),
                         "review_failed.identity.task_id must match frame.task_id");
             }
             case REVIEW_DEFERRED -> {
-                requireTaskScoped(frame.getTaskId());
-                requireNoUnknown(frame, "review frame");
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireNoUnknown(frame, "review frame");
                 validate(frame.getReviewDeferred());
-                require(frame.getReviewDeferred().getIdentity().getTaskId().equals(frame.getTaskId()),
+                ValidationChecks.require(frame.getReviewDeferred().getIdentity().getTaskId().equals(frame.getTaskId()),
                         "review_deferred.identity.task_id must match frame.task_id");
             }
             case TASK_MESSAGE -> {
-                requireTaskScoped(frame.getTaskId());
+                ValidationChecks.requireTaskScoped(frame.getTaskId());
                 validate(frame.getTaskMessage(), frame.getTaskId());
             }
-            default -> require(false, "frame.payload must be set");
+            default -> ValidationChecks.require(false, "frame.payload must be set");
         }
     }
 
     /** Validates a recorded transcript: bounds plus every entry's lane and frame. */
     public static void validate(Transcript transcript) {
-        require(transcript != null, "transcript must not be null");
-        require(transcript.getEntriesCount() <= MAX_TRANSCRIPT_ENTRIES,
+        ValidationChecks.require(transcript != null, "transcript must not be null");
+        ValidationChecks.require(transcript.getEntriesCount() <= MAX_TRANSCRIPT_ENTRIES,
                 "transcript.entries exceeds the maximum of " + MAX_TRANSCRIPT_ENTRIES);
         for (TranscriptEntry entry : transcript.getEntriesList()) {
             validate(entry);
@@ -224,17 +216,17 @@ public final class DelegationValidation {
 
     /** Validates one transcript entry: lane, stream identity, and lane/frame agreement. */
     public static void validate(TranscriptEntry entry) {
-        require(entry != null, "entry must not be null");
-        require(entry.getLane() == Lane.LANE_WORKER
+        ValidationChecks.require(entry != null, "entry must not be null");
+        ValidationChecks.require(entry.getLane() == Lane.LANE_WORKER
                         || entry.getLane() == Lane.LANE_COORDINATOR,
                 "entry.lane must be WORKER or COORDINATOR");
-        validateName(entry.getWorkerId(), "entry.worker_id");
+        ValidationChecks.validateName(entry.getWorkerId(), "entry.worker_id");
         if (entry.getLane() == Lane.LANE_WORKER) {
-            require(entry.hasWorkerFrame(),
+            ValidationChecks.require(entry.hasWorkerFrame(),
                     "entry.worker_frame must be set when lane is WORKER");
             validate(entry.getWorkerFrame());
         } else {
-            require(entry.hasCoordinatorFrame(),
+            ValidationChecks.require(entry.hasCoordinatorFrame(),
                     "entry.coordinator_frame must be set when lane is COORDINATOR");
             validate(entry.getCoordinatorFrame());
         }
@@ -242,32 +234,32 @@ public final class DelegationValidation {
 
     /** Validates a worker hello. */
     public static void validate(WorkerHello hello) {
-        require(hello != null, "hello must not be null");
-        validateName(hello.getWorkerId(), "hello.worker_id");
-        require(hello.getProtocolVersion() == 1,
+        ValidationChecks.require(hello != null, "hello must not be null");
+        ValidationChecks.validateName(hello.getWorkerId(), "hello.worker_id");
+        ValidationChecks.require(hello.getProtocolVersion() == 1,
                 "hello.protocol_version must be 1, the only defined version");
-        bounded(hello.getProvider(), 128, "hello.provider");
-        bounded(hello.getModel(), 256, "hello.model");
-        bounded(hello.getModelVersion(), 512, "hello.model_version");
-        require(hello.getCapabilitiesCount() <= MAX_CAPABILITIES,
+        ValidationChecks.bounded(hello.getProvider(), 128, "hello.provider");
+        ValidationChecks.bounded(hello.getModel(), 256, "hello.model");
+        ValidationChecks.bounded(hello.getModelVersion(), 512, "hello.model_version");
+        ValidationChecks.require(hello.getCapabilitiesCount() <= MAX_CAPABILITIES,
                 "hello.capabilities exceeds the maximum of " + MAX_CAPABILITIES);
         Set<String> names = new HashSet<>();
         for (WorkerCapability capability : hello.getCapabilitiesList()) {
-            validateName(capability.getName(), "hello.capabilities.name");
-            require(names.add(capability.getName()),
+            ValidationChecks.validateName(capability.getName(), "hello.capabilities.name");
+            ValidationChecks.require(names.add(capability.getName()),
                     "duplicate capability name: " + capability.getName());
-            bounded(capability.getDescription(), 2_048,
+            ValidationChecks.bounded(capability.getDescription(), 2_048,
                     "hello.capabilities.description");
         }
     }
 
     /** Validates an admission decision. */
     public static void validate(AdmissionDecision admission) {
-        require(admission != null, "admission must not be null");
-        require(admission.getAdmitted() || !admission.getReason().isBlank(),
+        ValidationChecks.require(admission != null, "admission must not be null");
+        ValidationChecks.require(admission.getAdmitted() || !admission.getReason().isBlank(),
                 "admission.reason must say why when the worker is rejected");
-        bounded(admission.getReason(), 2_048, "admission.reason");
-        require(admission.getAdmitted()
+        ValidationChecks.bounded(admission.getReason(), 2_048, "admission.reason");
+        ValidationChecks.require(admission.getAdmitted()
                         == Formats.isUuid(admission.getSessionId()),
                 "admission.session_id must be a uuid exactly when the worker is"
                         + " admitted");
@@ -275,14 +267,14 @@ public final class DelegationValidation {
 
     /** Validates a task offer, including the embedded spec and lease. */
     public static void validate(TaskOffer offer) {
-        require(offer != null, "offer must not be null");
-        validateAttempt(offer.getAttempt(), "offer.attempt");
-        require(offer.hasSpec(), "offer.spec must be set");
+        ValidationChecks.require(offer != null, "offer must not be null");
+        ValidationChecks.validateAttempt(offer.getAttempt(), "offer.attempt");
+        ValidationChecks.require(offer.hasSpec(), "offer.spec must be set");
         validate(offer.getSpec());
         WorkflowValidation.validatePositiveDuration(offer.getLeaseDuration(),
                 "offer.lease_duration");
-        require(offer.hasExpiresAt(), "offer.expires_at must be set");
-        validateTimestamp(offer.getExpiresAt(), "offer.expires_at");
+        ValidationChecks.require(offer.hasExpiresAt(), "offer.expires_at must be set");
+        ValidationChecks.validateTimestamp(offer.getExpiresAt(), "offer.expires_at");
         if (offer.hasResumeFrom()) {
             validate(offer.getResumeFrom());
         }
@@ -290,30 +282,30 @@ public final class DelegationValidation {
 
     /** Validates a task spec: objective, scope, constraints, checks, and context. */
     public static void validate(TaskSpec spec) {
-        require(spec != null, "spec must not be null");
-        require(!spec.getObjective().isBlank(), "spec.objective must not be blank");
+        ValidationChecks.require(spec != null, "spec must not be null");
+        ValidationChecks.require(!spec.getObjective().isBlank(), "spec.objective must not be blank");
         WorkflowValidation.validateText(spec.getObjective(), "spec.objective");
-        require(spec.getAllowedScopeCount() <= MAX_SCOPE_ITEMS,
+        ValidationChecks.require(spec.getAllowedScopeCount() <= MAX_SCOPE_ITEMS,
                 "spec.allowed_scope exceeds the maximum of " + MAX_SCOPE_ITEMS);
         spec.getAllowedScopeList()
-                .forEach(scope -> bounded(scope, 512, "spec.allowed_scope"));
-        require(spec.getConstraintsCount() <= MAX_SCOPE_ITEMS,
+                .forEach(scope -> ValidationChecks.bounded(scope, 512, "spec.allowed_scope"));
+        ValidationChecks.require(spec.getConstraintsCount() <= MAX_SCOPE_ITEMS,
                 "spec.constraints exceeds the maximum of " + MAX_SCOPE_ITEMS);
         spec.getConstraintsList()
-                .forEach(constraint -> bounded(constraint, 2_048, "spec.constraints"));
-        require(spec.getRequiredChecksCount() >= 1,
+                .forEach(constraint -> ValidationChecks.bounded(constraint, 2_048, "spec.constraints"));
+        ValidationChecks.require(spec.getRequiredChecksCount() >= 1,
                 "spec.required_checks must declare at least one acceptance check; a"
                         + " worker saying done is never sufficient");
-        require(spec.getRequiredChecksCount() <= MAX_CHECKS,
+        ValidationChecks.require(spec.getRequiredChecksCount() <= MAX_CHECKS,
                 "spec.required_checks exceeds the maximum of " + MAX_CHECKS);
         Set<String> names = new HashSet<>();
         for (AcceptanceCheck check : spec.getRequiredChecksList()) {
-            validateName(check.getName(), "spec.required_checks.name");
-            require(names.add(check.getName()),
+            ValidationChecks.validateName(check.getName(), "spec.required_checks.name");
+            ValidationChecks.require(names.add(check.getName()),
                     "duplicate required check name: " + check.getName());
-            bounded(check.getDescription(), 2_048, "spec.required_checks.description");
+            ValidationChecks.bounded(check.getDescription(), 2_048, "spec.required_checks.description");
         }
-        require(spec.getContextCount() <= MAX_REFERENCES,
+        ValidationChecks.require(spec.getContextCount() <= MAX_REFERENCES,
                 "spec.context exceeds the maximum of " + MAX_REFERENCES);
         spec.getContextList().forEach(WorkflowValidation::validate);
         if (spec.hasDeadline()) {
@@ -332,195 +324,140 @@ public final class DelegationValidation {
      * contract is well-formed enough to carry.
      */
     public static void validate(DeliverableContract contract) {
-        require(contract != null, "contract must not be null");
-        require(!contract.getDescriptorSet().isEmpty(),
+        ValidationChecks.require(contract != null, "contract must not be null");
+        ValidationChecks.require(!contract.getDescriptorSet().isEmpty(),
                 "contract.descriptor_set must not be empty");
-        require(contract.getDescriptorSet().size() <= MAX_DESCRIPTOR_SET_BYTES,
+        ValidationChecks.require(contract.getDescriptorSet().size() <= MAX_DESCRIPTOR_SET_BYTES,
                 "contract.descriptor_set exceeds the maximum of "
                         + MAX_DESCRIPTOR_SET_BYTES + " bytes");
-        require(!contract.getTypeName().isBlank(),
+        ValidationChecks.require(!contract.getTypeName().isBlank(),
                 "contract.type_name must name the deliverable message");
-        bounded(contract.getTypeName(), 512, "contract.type_name");
-        require(PROTO_NAME.matcher(contract.getTypeName()).matches(),
+        ValidationChecks.bounded(contract.getTypeName(), 512, "contract.type_name");
+        ValidationChecks.require(Formats.isProtobufFqn(contract.getTypeName()),
                 "contract.type_name must be a full proto message name: "
                         + contract.getTypeName());
-        bounded(contract.getJsonSchema(), MAX_JSON_SCHEMA_LENGTH,
+        ValidationChecks.bounded(contract.getJsonSchema(), MAX_JSON_SCHEMA_LENGTH,
                 "contract.json_schema");
     }
 
     /** Validates a checkpoint resume pointer. */
     public static void validate(CheckpointReference reference) {
-        require(reference != null, "checkpoint reference must not be null");
-        validateAttempt(reference.getAttempt(), "resume_from.attempt");
-        require(reference.getCheckpointSeq() >= 1,
+        ValidationChecks.require(reference != null, "checkpoint reference must not be null");
+        ValidationChecks.validateAttempt(reference.getAttempt(), "resume_from.attempt");
+        ValidationChecks.require(reference.getCheckpointSeq() >= 1,
                 "resume_from.checkpoint_seq must be at least 1");
-        bounded(reference.getResumeToken(), 512, "resume_from.resume_token");
-        require(!reference.getResumeToken().isBlank(),
+        ValidationChecks.bounded(reference.getResumeToken(), 512, "resume_from.resume_token");
+        ValidationChecks.require(!reference.getResumeToken().isBlank(),
                 "resume_from.resume_token must not be blank");
     }
 
     /** Validates a worker reject report. */
     public static void validate(TaskReject reject) {
-        require(reject != null, "reject must not be null");
-        validateAttempt(reject.getAttempt(), "reject.attempt");
-        require(!reject.getReason().isBlank(), "reject.reason must not be blank");
-        bounded(reject.getReason(), 2_048, "reject.reason");
+        ValidationChecks.require(reject != null, "reject must not be null");
+        ValidationChecks.validateAttempt(reject.getAttempt(), "reject.attempt");
+        ValidationChecks.require(!reject.getReason().isBlank(), "reject.reason must not be blank");
+        ValidationChecks.bounded(reject.getReason(), 2_048, "reject.reason");
     }
 
     /** Validates a progress event. */
     public static void validate(ProgressEvent progress) {
-        require(progress != null, "progress must not be null");
-        validateAttempt(progress.getAttempt(), "progress.attempt");
-        require(progress.getProgressSeq() >= 1,
+        ValidationChecks.require(progress != null, "progress must not be null");
+        ValidationChecks.validateAttempt(progress.getAttempt(), "progress.attempt");
+        ValidationChecks.require(progress.getProgressSeq() >= 1,
                 "progress.progress_seq must be at least 1");
-        require(!progress.getMessage().isBlank(), "progress.message must not be blank");
-        bounded(progress.getMessage(), 4_096, "progress.message");
+        ValidationChecks.require(!progress.getMessage().isBlank(), "progress.message must not be blank");
+        ValidationChecks.bounded(progress.getMessage(), 4_096, "progress.message");
     }
 
     /** Validates a checkpoint. */
     public static void validate(Checkpoint checkpoint) {
-        require(checkpoint != null, "checkpoint must not be null");
-        validateAttempt(checkpoint.getAttempt(), "checkpoint.attempt");
-        require(checkpoint.getCheckpointSeq() >= 1,
+        ValidationChecks.require(checkpoint != null, "checkpoint must not be null");
+        ValidationChecks.validateAttempt(checkpoint.getAttempt(), "checkpoint.attempt");
+        ValidationChecks.require(checkpoint.getCheckpointSeq() >= 1,
                 "checkpoint.checkpoint_seq must be at least 1");
-        bounded(checkpoint.getResumeToken(), 512, "checkpoint.resume_token");
-        require(!checkpoint.getResumeToken().isBlank(),
+        ValidationChecks.bounded(checkpoint.getResumeToken(), 512, "checkpoint.resume_token");
+        ValidationChecks.require(!checkpoint.getResumeToken().isBlank(),
                 "checkpoint.resume_token must not be blank");
         if (checkpoint.hasState()) {
             WorkflowValidation.validate(checkpoint.getState());
         }
-        bounded(checkpoint.getNote(), 1_024, "checkpoint.note");
+        ValidationChecks.bounded(checkpoint.getNote(), 1_024, "checkpoint.note");
     }
 
     /** Validates a blocked report. */
     public static void validate(BlockedReport blocked) {
-        require(blocked != null, "blocked must not be null");
-        validateAttempt(blocked.getAttempt(), "blocked.attempt");
-        require(!blocked.getReason().isBlank(), "blocked.reason must not be blank");
-        bounded(blocked.getReason(), 4_096, "blocked.reason");
-        require(blocked.getNeedsCount() <= MAX_NEEDS,
+        ValidationChecks.require(blocked != null, "blocked must not be null");
+        ValidationChecks.validateAttempt(blocked.getAttempt(), "blocked.attempt");
+        ValidationChecks.require(!blocked.getReason().isBlank(), "blocked.reason must not be blank");
+        ValidationChecks.bounded(blocked.getReason(), 4_096, "blocked.reason");
+        ValidationChecks.require(blocked.getNeedsCount() <= MAX_NEEDS,
                 "blocked.needs exceeds the maximum of " + MAX_NEEDS);
         blocked.getNeedsList()
-                .forEach(need -> bounded(need, 1_024, "blocked.needs"));
+                .forEach(need -> ValidationChecks.bounded(need, 1_024, "blocked.needs"));
     }
 
     /** Validates a failure report. */
     public static void validate(FailureReport failed) {
-        require(failed != null, "failed must not be null");
-        validateAttempt(failed.getAttempt(), "failed.attempt");
-        require(!failed.getError().isBlank(), "failed.error must not be blank");
-        bounded(failed.getError(), 8_192, "failed.error");
+        ValidationChecks.require(failed != null, "failed must not be null");
+        ValidationChecks.validateAttempt(failed.getAttempt(), "failed.attempt");
+        ValidationChecks.require(!failed.getError().isBlank(), "failed.error must not be blank");
+        ValidationChecks.bounded(failed.getError(), 8_192, "failed.error");
     }
 
     /** Validates a coordinator cancellation. */
     public static void validate(Cancellation cancellation) {
-        require(cancellation != null, "cancellation must not be null");
-        validateAttempt(cancellation.getAttempt(), "cancellation.attempt");
-        require(!cancellation.getReason().isBlank(),
+        ValidationChecks.require(cancellation != null, "cancellation must not be null");
+        ValidationChecks.validateAttempt(cancellation.getAttempt(), "cancellation.attempt");
+        ValidationChecks.require(!cancellation.getReason().isBlank(),
                 "cancellation.reason must not be blank");
-        bounded(cancellation.getReason(), 2_048, "cancellation.reason");
+        ValidationChecks.bounded(cancellation.getReason(), 2_048, "cancellation.reason");
     }
 
     /** Validates a revision request. */
     public static void validate(RevisionRequested requested) {
-        require(requested != null, "revision_requested must not be null");
-        validateAttempt(requested.getAttempt(), "revision_requested.attempt");
-        validateRevision(requested.getRevision(), "revision_requested.revision");
-        require(!requested.getFeedback().isBlank(),
+        ValidationChecks.require(requested != null, "revision_requested must not be null");
+        ValidationChecks.validateAttempt(requested.getAttempt(), "revision_requested.attempt");
+        ValidationChecks.validateRevision(requested.getRevision(), "revision_requested.revision");
+        ValidationChecks.require(!requested.getFeedback().isBlank(),
                 "revision_requested.feedback must not be blank");
-        bounded(requested.getFeedback(), 8_192, "revision_requested.feedback");
-        require(requested.getFailedChecksCount() <= MAX_CHECKS,
+        ValidationChecks.bounded(requested.getFeedback(), 8_192, "revision_requested.feedback");
+        ValidationChecks.require(requested.getFailedChecksCount() <= MAX_CHECKS,
                 "revision_requested.failed_checks exceeds the maximum of " + MAX_CHECKS);
         requested.getFailedChecksList().forEach(
-                check -> validateName(check, "revision_requested.failed_checks"));
-        validateOptionalCanonicalUuid(requested.getReviewInvocationId(),
+                check -> ValidationChecks.validateName(check, "revision_requested.failed_checks"));
+        ValidationChecks.validateOptionalCanonicalUuid(requested.getReviewInvocationId(),
                 "revision_requested.review_invocation_id");
     }
 
     /** Validates a completion acceptance. */
     public static void validate(CompletionAccepted accepted) {
-        require(accepted != null, "accepted must not be null");
-        validateAttempt(accepted.getAttempt(), "accepted.attempt");
-        validateRevision(accepted.getRevision(), "accepted.revision");
-        require(!accepted.getVerdict().isBlank(), "accepted.verdict must not be blank");
-        bounded(accepted.getVerdict(), 2_048, "accepted.verdict");
-        validateOptionalCanonicalUuid(accepted.getReviewInvocationId(),
+        ValidationChecks.require(accepted != null, "accepted must not be null");
+        ValidationChecks.validateAttempt(accepted.getAttempt(), "accepted.attempt");
+        ValidationChecks.validateRevision(accepted.getRevision(), "accepted.revision");
+        ValidationChecks.require(!accepted.getVerdict().isBlank(), "accepted.verdict must not be blank");
+        ValidationChecks.bounded(accepted.getVerdict(), 2_048, "accepted.verdict");
+        ValidationChecks.validateOptionalCanonicalUuid(accepted.getReviewInvocationId(),
                 "accepted.review_invocation_id");
     }
 
+    /** Validates a candidate review identity: task, worker, attempt, revision, invocation, digests. */
     public static void validate(CandidateReviewIdentity identity) {
-        require(identity != null, "review.identity must not be null");
-        requireNoUnknown(identity, "review.identity");
-        require(Formats.isUuid(identity.getTaskId()), "review.identity.task_id must be a uuid");
-        validateName(identity.getWorkerId(), "review.identity.worker_id");
-        validateAttempt(identity.getAttempt(), "review.identity.attempt");
-        validateRevision(identity.getRevision(), "review.identity.revision");
-        validateCanonicalUuid(identity.getInvocationId(), "review.identity.invocation_id");
-        validateDigest(identity.getOfferEntrySha256(), "review.identity.offer_entry_sha256");
-        validateDigest(identity.getCandidateEntrySha256(), "review.identity.candidate_entry_sha256");
+        ReviewValidation.validate(identity);
     }
 
+    /** Validates a review start: identity, timestamps, window bound, and retry linkage. */
     public static void validate(ReviewStarted started) {
-        require(started != null, "review_started must not be null");
-        requireNoUnknown(started, "review_started");
-        require(started.hasIdentity(), "review_started.identity is required");
-        validate(started.getIdentity());
-        require(started.hasStartedAt() && started.hasDeadline(),
-                "review_started timestamps are required");
-        validateTimestamp(started.getStartedAt(), "review_started.started_at");
-        validateTimestamp(started.getDeadline(), "review_started.deadline");
-        long seconds = started.getDeadline().getSeconds() - started.getStartedAt().getSeconds();
-        int nanos = started.getDeadline().getNanos() - started.getStartedAt().getNanos();
-        require(seconds > 0 || (seconds == 0 && nanos > 0),
-                "review_started.deadline must follow started_at");
-        require(seconds < 3600 || (seconds == 3600 && nanos <= 0),
-                "review_started deadline window exceeds one hour");
-        require(started.getRetryId().isEmpty() == started.getPreviousInvocationId().isEmpty(),
-                "review_started retry fields must occur together");
-        validateOptionalCanonicalUuid(started.getRetryId(), "review_started.retry_id");
-        validateOptionalCanonicalUuid(started.getPreviousInvocationId(),
-                "review_started.previous_invocation_id");
-        require(!started.getPreviousInvocationId().equals(started.getIdentity().getInvocationId()),
-                "review_started must use a new invocation_id");
+        ReviewValidation.validate(started);
     }
 
+    /** Validates a review failure: identity plus a defined failure code. */
     public static void validate(ReviewFailed failed) {
-        require(failed != null && failed.hasIdentity(), "review_failed.identity is required");
-        requireNoUnknown(failed, "review_failed");
-        validate(failed.getIdentity());
-        require(failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_INFRASTRUCTURE
-                        || failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_DEADLINE
-                        || failed.getCode() == ReviewFailureCode.REVIEW_FAILURE_CODE_INTERRUPTED,
-                "review_failed.code must be a defined failure code");
+        ReviewValidation.validate(failed);
     }
 
+    /** Validates a review deferral: the identity of the invocation left open. */
     public static void validate(ReviewDeferred deferred) {
-        require(deferred != null && deferred.hasIdentity(), "review_deferred.identity is required");
-        requireNoUnknown(deferred, "review_deferred");
-        validate(deferred.getIdentity());
-    }
-
-    private static void validateDigest(String value, String field) {
-        require(value.matches("[0-9a-f]{64}"), field + " must be a lowercase SHA-256 digest");
-    }
-
-    private static void validateCanonicalUuid(String value, String field) {
-        require(Formats.isUuid(value) && value.matches("[0-9a-f-]{36}"),
-                field + " must be a canonical lowercase uuid");
-    }
-
-    private static void validateOptionalCanonicalUuid(String value, String field) {
-        if (!value.isEmpty()) validateCanonicalUuid(value, field);
-    }
-
-    private static void requireNoUnknown(Message value, String field) {
-        require(value.getUnknownFields().asMap().isEmpty(), field + " contains unknown fields");
-        for (var entry : value.getAllFields().entrySet()) {
-            if (entry.getKey().getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
-            if (entry.getKey().isRepeated()) {
-                for (Object child : (List<?>) entry.getValue()) requireNoUnknown((Message) child, field);
-            } else requireNoUnknown((Message) entry.getValue(), field);
-        }
+        ReviewValidation.validate(deferred);
     }
 
     /**
@@ -529,32 +466,32 @@ public final class DelegationValidation {
      * required checks is the delegation lifecycle reducer's job; it needs the transcript.
      */
     public static void validate(CompletionCandidate candidate) {
-        require(candidate != null, "completion must not be null");
-        validateAttempt(candidate.getAttempt(), "completion.attempt");
-        validateRevision(candidate.getRevision(), "completion.revision");
-        require(!candidate.getSummary().isBlank(), "completion.summary must not be blank");
-        bounded(candidate.getSummary(), 4_096, "completion.summary");
-        require(candidate.getEvidenceCount() >= 1,
+        ValidationChecks.require(candidate != null, "completion must not be null");
+        ValidationChecks.validateAttempt(candidate.getAttempt(), "completion.attempt");
+        ValidationChecks.validateRevision(candidate.getRevision(), "completion.revision");
+        ValidationChecks.require(!candidate.getSummary().isBlank(), "completion.summary must not be blank");
+        ValidationChecks.bounded(candidate.getSummary(), 4_096, "completion.summary");
+        ValidationChecks.require(candidate.getEvidenceCount() >= 1,
                 "completion.evidence must not be empty");
-        require(candidate.getEvidenceCount() <= MAX_CHECKS,
+        ValidationChecks.require(candidate.getEvidenceCount() <= MAX_CHECKS,
                 "completion.evidence exceeds the maximum of " + MAX_CHECKS);
         Set<String> names = new HashSet<>();
         for (CheckEvidence evidence : candidate.getEvidenceList()) {
             validate(evidence);
-            require(names.add(evidence.getCheckName()),
+            ValidationChecks.require(names.add(evidence.getCheckName()),
                     "duplicate evidence for check: " + evidence.getCheckName());
         }
-        require(candidate.getCommitsCount() + candidate.getArtifactsCount() > 0,
+        ValidationChecks.require(candidate.getCommitsCount() + candidate.getArtifactsCount() > 0,
                 "completion must reference at least one commit or artifact; saying done"
                         + " is not evidence");
-        require(candidate.getCommitsCount() <= MAX_REFERENCES,
+        ValidationChecks.require(candidate.getCommitsCount() <= MAX_REFERENCES,
                 "completion.commits exceeds the maximum of " + MAX_REFERENCES);
         candidate.getCommitsList().forEach(DelegationValidation::validate);
-        require(candidate.getArtifactsCount() <= MAX_REFERENCES,
+        ValidationChecks.require(candidate.getArtifactsCount() <= MAX_REFERENCES,
                 "completion.artifacts exceeds the maximum of " + MAX_REFERENCES);
         candidate.getArtifactsList().forEach(WorkflowValidation::validate);
         if (candidate.hasResult()) {
-            require(candidate.getResult().getTypeUrl().contains("/"),
+            ValidationChecks.require(candidate.getResult().getTypeUrl().contains("/"),
                     "completion.result.type_url must be a type URL: "
                             + candidate.getResult().getTypeUrl());
         }
@@ -566,100 +503,55 @@ public final class DelegationValidation {
      * kind, bounded text, and artifact references.
      */
     public static void validate(TaskMessage message, String envelopeTaskId) {
-        require(message != null, "task message must not be null");
-        require(Formats.isUuid(message.getMessageId()),
+        ValidationChecks.require(message != null, "task message must not be null");
+        ValidationChecks.require(Formats.isUuid(message.getMessageId()),
                 "task_message.message_id must be a uuid: " + message.getMessageId());
-        validateName(message.getSender(), "task_message.sender");
-        validateName(message.getRecipient(), "task_message.recipient");
-        require(!message.getSender().equals(message.getRecipient()),
+        ValidationChecks.validateName(message.getSender(), "task_message.sender");
+        ValidationChecks.validateName(message.getRecipient(), "task_message.recipient");
+        ValidationChecks.require(!message.getSender().equals(message.getRecipient()),
                 "task_message.recipient must differ from task_message.sender");
-        require(Formats.isUuid(message.getTaskId()),
+        ValidationChecks.require(Formats.isUuid(message.getTaskId()),
                 "task_message.task_id must be a uuid: " + message.getTaskId());
-        require(message.getTaskId().equals(envelopeTaskId),
+        ValidationChecks.require(message.getTaskId().equals(envelopeTaskId),
                 "task_message.task_id must equal the frame's task_id");
-        require(message.getKind() != TaskMessageKind.TASK_MESSAGE_KIND_UNSPECIFIED
+        ValidationChecks.require(message.getKind() != TaskMessageKind.TASK_MESSAGE_KIND_UNSPECIFIED
                         && message.getKind() != TaskMessageKind.UNRECOGNIZED,
                 "task_message.kind must be a defined kind");
-        require(message.getReplyTo().isEmpty()
+        ValidationChecks.require(message.getReplyTo().isEmpty()
                         || Formats.isUuid(message.getReplyTo()),
                 "task_message.reply_to must be a uuid or empty: " + message.getReplyTo());
-        require(!message.getText().isBlank(), "task_message.text must not be blank");
-        bounded(message.getText(), 8_192, "task_message.text");
-        require(message.getArtifactsCount() <= MAX_NEEDS,
+        ValidationChecks.require(!message.getText().isBlank(), "task_message.text must not be blank");
+        ValidationChecks.bounded(message.getText(), 8_192, "task_message.text");
+        ValidationChecks.require(message.getArtifactsCount() <= MAX_NEEDS,
                 "task_message.artifacts exceeds the maximum of " + MAX_NEEDS);
         message.getArtifactsList().forEach(WorkflowValidation::validate);
-        require(message.hasSentAt(), "task_message.sent_at must be set");
-        validateTimestamp(message.getSentAt(), "task_message.sent_at");
+        ValidationChecks.require(message.hasSentAt(), "task_message.sent_at must be set");
+        ValidationChecks.validateTimestamp(message.getSentAt(), "task_message.sent_at");
     }
 
     /** Validates one piece of per-check evidence. */
     public static void validate(CheckEvidence evidence) {
-        require(evidence != null, "evidence must not be null");
-        validateName(evidence.getCheckName(), "evidence.check_name");
-        require(evidence.getVerdict() == CheckVerdict.CHECK_VERDICT_PASSED
+        ValidationChecks.require(evidence != null, "evidence must not be null");
+        ValidationChecks.validateName(evidence.getCheckName(), "evidence.check_name");
+        ValidationChecks.require(evidence.getVerdict() == CheckVerdict.CHECK_VERDICT_PASSED
                         || evidence.getVerdict() == CheckVerdict.CHECK_VERDICT_FAILED,
                 "evidence.verdict must be PASSED or FAILED");
-        require(evidence.hasRanAt(), "evidence.ran_at must be set");
-        validateTimestamp(evidence.getRanAt(), "evidence.ran_at");
-        bounded(evidence.getDetail(), 4_096, "evidence.detail");
-        require(evidence.getArtifactsCount() <= MAX_NEEDS,
+        ValidationChecks.require(evidence.hasRanAt(), "evidence.ran_at must be set");
+        ValidationChecks.validateTimestamp(evidence.getRanAt(), "evidence.ran_at");
+        ValidationChecks.bounded(evidence.getDetail(), 4_096, "evidence.detail");
+        ValidationChecks.require(evidence.getArtifactsCount() <= MAX_NEEDS,
                 "evidence.artifacts exceeds the maximum of " + MAX_NEEDS);
         evidence.getArtifactsList().forEach(WorkflowValidation::validate);
     }
 
     /** Validates one commit reference. */
     public static void validate(CommitReference commit) {
-        require(commit != null, "commit reference must not be null");
-        require(!commit.getRepository().isBlank(),
+        ValidationChecks.require(commit != null, "commit reference must not be null");
+        ValidationChecks.require(!commit.getRepository().isBlank(),
                 "commit.repository must not be blank");
-        bounded(commit.getRepository(), 512, "commit.repository");
-        require(Formats.isSha1Hex(commit.getCommit()),
+        ValidationChecks.bounded(commit.getRepository(), 512, "commit.repository");
+        ValidationChecks.require(Formats.isSha1Hex(commit.getCommit()),
                 "commit.commit must be a full lowercase SHA-1: " + commit.getCommit());
-        bounded(commit.getSubject(), 256, "commit.subject");
-    }
-
-    private static void validateEnvelope(String frameId, String taskId, long seq,
-                                         boolean hasSentAt, Timestamp sentAt) {
-        require(Formats.isUuid(frameId),
-                "frame.frame_id must be a uuid: " + frameId);
-        require(taskId.isEmpty() || Formats.isUuid(taskId),
-                "frame.task_id must be a uuid or empty: " + taskId);
-        require(seq >= 1, "frame.seq must be at least 1");
-        require(hasSentAt, "frame.sent_at must be set");
-        validateTimestamp(sentAt, "frame.sent_at");
-    }
-
-    private static void requireTaskScoped(String taskId) {
-        require(!taskId.isEmpty(), "frame.task_id must name the task on task frames");
-    }
-
-    private static void validateAttempt(int attempt, String field) {
-        require(attempt >= 1 && attempt <= MAX_ATTEMPT,
-                field + " must be between 1 and " + MAX_ATTEMPT);
-    }
-
-    private static void validateRevision(int revision, String field) {
-        require(revision >= 1 && revision <= MAX_ATTEMPT,
-                field + " must be between 1 and " + MAX_ATTEMPT);
-    }
-
-    private static void validateName(String value, String field) {
-        require(value.length() <= MAX_NAME_LENGTH && Formats.isSlug(value),
-                field + " must be a lowercase slug name: " + value);
-    }
-
-    private static void validateTimestamp(Timestamp value, String field) {
-        require(Timestamps.isValid(value), field + " must be a valid timestamp");
-    }
-
-    private static void bounded(String value, int max, String field) {
-        require(value.length() <= max,
-                field + " exceeds the maximum of " + max + " characters");
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new IllegalArgumentException(message);
-        }
+        ValidationChecks.bounded(commit.getSubject(), 256, "commit.subject");
     }
 }
