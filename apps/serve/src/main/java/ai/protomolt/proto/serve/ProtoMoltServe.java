@@ -2,89 +2,43 @@ package ai.protomolt.proto.serve;
 
 import ai.protomolt.proto.actions.ActionCatalog;
 import ai.protomolt.proto.actions.ActionContext;
-import ai.protomolt.proto.actions.Caller;
-import ai.protomolt.proto.authz.AccessPolicies;
-import ai.protomolt.proto.authz.AccessPolicyCallers;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.ConsoleSessions;
 import ai.protomolt.proto.authz.OidcCallerResolver;
 import ai.protomolt.proto.authz.jdbc.CallerStoreConfig;
 import ai.protomolt.proto.authz.jdbc.JdbcCallerResolver;
-import ai.protomolt.proto.config.DistributedConfig;
-import ai.protomolt.proto.config.TrustSnapshotMounts;
-import ai.protomolt.proto.config.registry.RegistryConfigSource;
-import ai.protomolt.proto.delegation.DelegationActions;
 import ai.protomolt.proto.delegation.DelegationBridge;
 import ai.protomolt.proto.grpc.policy.OutboundChannelPolicy;
-import ai.protomolt.proto.grpc.profile.FileSystemServiceProfileRepository;
 import ai.protomolt.proto.grpc.profile.ServiceProfileRepository;
 import ai.protomolt.proto.grpc.service.ProtoMoltCatalog;
 import ai.protomolt.proto.grpc.service.ProtoMoltGrpcServer;
 import ai.protomolt.proto.grpc.workflow.ArtifactRepository;
-import ai.protomolt.proto.grpc.workflow.FileSystemArtifactRepository;
-import ai.protomolt.proto.grpc.workflow.FileSystemRunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.RunEvidenceRepository;
 import ai.protomolt.proto.grpc.workflow.WorkflowVersionRepository;
 import ai.protomolt.proto.http.openapi.ProtoOpenApiGenerator;
-import ai.protomolt.proto.http.rest.ApiTokenRequirement;
-import ai.protomolt.proto.http.rest.ProtoApiTokenValidator;
 import ai.protomolt.proto.http.rest.ProtoRestGateway;
-import ai.protomolt.proto.http.rest.ProtoRestMethodRegistry;
-import ai.protomolt.proto.inference.spi.CredentialResolutionException;
-import ai.protomolt.proto.inference.spi.CredentialResolver;
-import ai.protomolt.proto.inference.spi.InferenceCatalog;
 import ai.protomolt.proto.inference.spi.InferenceEngines;
 import ai.protomolt.proto.inference.structured.StructuredGenerator;
-import ai.protomolt.proto.inference.v1.ModelCapabilities;
-import ai.protomolt.proto.inference.v1.ModelEntry;
 import ai.protomolt.proto.jobs.service.WorkflowRunsConfig;
 import ai.protomolt.proto.jobs.service.events.WorkflowRunEventRelay;
-import ai.protomolt.proto.jobs.service.store.JdbcWorkflowRunStore;
 import ai.protomolt.proto.jobs.service.store.WorkflowRunDatabase;
-import ai.protomolt.proto.jobs.service.store.WorkflowRunStoreConfig;
 import ai.protomolt.proto.jobs.service.worker.WorkflowRunWorker;
-import ai.protomolt.proto.mcp.CompositeResources;
-import ai.protomolt.proto.mcp.DelegationResources;
-import ai.protomolt.proto.mcp.McpServer;
-import ai.protomolt.proto.mcp.RegistryResources;
-import ai.protomolt.proto.mcp.ServiceProfileResources;
 import ai.protomolt.proto.mesh.cluster.ClusterActions;
-import ai.protomolt.proto.mesh.cluster.v1.ClusterDirectoryServiceProto;
 import ai.protomolt.proto.receipt.TrustSnapshot;
 import ai.protomolt.proto.schema.registry.git.GitSchemaRegistryStore;
-import ai.protomolt.proto.schema.registry.git.RegistryWorkflowVersionRepository;
 import ai.protomolt.proto.registry.service.SchemaRegistryServer;
-import ai.protomolt.proto.registry.service.SchemaRegistryServerConfig;
 import ai.protomolt.proto.server.ProtoToolsServerConfig;
 import ai.protomolt.proto.server.jdk.JdkProtoRestServer;
-import ai.protomolt.proto.workflow.TrustPin;
-import ai.protomolt.proto.workflow.RecordSigning;
 import ai.protomolt.proto.workflow.WorkflowRepository;
-import ai.protomolt.proto.workflow.WorkflowRunner;
-import ai.protomolt.proto.workflow.authoring.WorkflowAuthoringActions;
-import ai.protomolt.proto.workflow.authoring.WorkflowAuthorTaskActions;
-import ai.protomolt.proto.workflow.authoring.WorkflowPreparationActions;
-import ai.protomolt.proto.workflow.authoring.v1.GetAcceptedWorkflowRequest;
-import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationServiceOuterClass;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
-import java.io.IOException;
-import java.lang.management.ManagementFactory;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -705,93 +659,6 @@ public final class ProtoMoltServe implements AutoCloseable {
     }
 
     /**
-     * Builds the inference facade from {@code --inference-model} specs
-     * ({@code id|provider|endpoint[|backend[|labels[|capabilities[|credential-ref]]]]}).
-     * Supported capability tokens are {@code streaming}, {@code thinking}, and
-     * {@code structured-output}. The credential reference is an opaque pointer
-     * (e.g. {@code env:OPENAI_TOKEN}) resolved host-side at request time, never
-     * credential material; a malformed reference fails startup. Empty specs mean
-     * inference is not configured (null; the verbs answer {@code unavailable}).
-     * A bad spec or an unknown provider fails startup loud. A model the server
-     * cannot execute must never sit in the catalog looking runnable.
-     */
-    static InferenceEngines inferenceEngines(java.util.List<String> specs) {
-        if (specs == null || specs.isEmpty()) {
-            return null;
-        }
-        InferenceCatalog catalog = new InferenceCatalog();
-        InferenceEngines engines = new InferenceEngines(catalog);
-        for (String spec : specs) {
-            String[] parts = spec.split("\\|", -1);
-            String displaySpec = redactCredentialReference(spec);
-            if (parts.length < 3 || parts.length > 7
-                    || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
-                throw new IllegalArgumentException("bad --inference-model spec '" + displaySpec
-                        + "' (want id|provider|endpoint[|backend[|labels[|capabilities"
-                        + "[|credential-ref]]]])");
-            }
-            ModelEntry.Builder entry = ModelEntry.newBuilder()
-                    .setId(parts[0].trim())
-                    .setProvider(parts[1].trim())
-                    .setEndpoint(parts[2].trim());
-            if (parts.length >= 4 && !parts[3].isBlank()) {
-                entry.setBackendModel(parts[3].trim());
-            }
-            if (parts.length >= 5 && !parts[4].isBlank()) {
-                for (String label : parts[4].split(",")) {
-                    String[] kv = label.split(":", 2);
-                    if (kv.length != 2 || kv[0].isBlank()) {
-                        throw new IllegalArgumentException("bad label '" + label
-                                + "' in --inference-model spec '" + displaySpec
-                                + "' (want k:v)");
-                    }
-                    entry.putLabels(kv[0].trim(), kv[1].trim());
-                }
-            }
-            if (parts.length >= 6 && !parts[5].isBlank()) {
-                ModelCapabilities.Builder capabilities = ModelCapabilities.newBuilder();
-                for (String capability : parts[5].split(",")) {
-                    switch (capability.trim()) {
-                        case "streaming" -> capabilities.setStreaming(true);
-                        case "thinking" -> capabilities.setThinking(true);
-                        case "structured-output" -> capabilities.setStructuredOutput(true);
-                        default -> throw new IllegalArgumentException("unknown capability '"
-                                + capability + "' in --inference-model spec '"
-                                + displaySpec + "'");
-                    }
-                }
-                entry.setCapabilities(capabilities);
-            }
-            if (parts.length == 7 && !parts[6].isBlank()) {
-                String credentialRef = parts[6].trim();
-                try {
-                    CredentialResolver.checkFormat(credentialRef);
-                } catch (CredentialResolutionException e) {
-                    throw new IllegalArgumentException("bad credential reference in "
-                            + "--inference-model spec '" + displaySpec + "': "
-                            + e.getMessage(), e);
-                }
-                entry.setCredentialRef(credentialRef);
-            }
-            engines.register(entry.build());
-        }
-        return engines;
-    }
-
-    /** Keeps a secret-sensitive credential reference out of launcher diagnostics. */
-    private static String redactCredentialReference(String spec) {
-        String[] parts = spec.split("\\|", -1);
-        if (parts.length < 7) {
-            return spec;
-        }
-        parts[6] = "<credential-ref>";
-        for (int i = 7; i < parts.length; i++) {
-            parts[i] = "<redacted>";
-        }
-        return String.join("|", parts);
-    }
-
-    /**
      * Workflow-runs launcher options. {@code kafkaBootstrap} is optional: without it the
      * worker fleet runs verb-submitted jobs with no event relay and no request topic,
      * useful for a single-box deployment; with it, lifecycle events publish to the
@@ -1018,109 +885,55 @@ public final class ProtoMoltServe implements AutoCloseable {
         RunEvidenceRepository runEvidence = null;
         OutboundChannelPolicy outboundPolicy = options.outboundPolicy();
         try {
-            InferenceEngines inference = inferenceEngines(options.inferenceModels());
+            InferenceEngines inference = InferenceMount.engines(options.inferenceModels());
             StructuredGenerator structured = inference == null
                     ? null : new StructuredGenerator(inference, context.registry());
-            Path registryGit = options.registryGit();
-            if (registryGit == null && options.demo()) {
-                // Demo mode always has a registry; an unnamed one lives in a temp directory.
-                try {
-                    registryGit = java.nio.file.Files.createTempDirectory("protomolt-demo-registry");
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to create the demo registry directory", e);
-                }
-            }
-            if (registryGit != null) {
-                store = GitSchemaRegistryStore.builder()
-                        .repositoryDir(registryGit)
-                        .build();
-            }
-            WorkflowRepository workflows = store == null ? null : workflowRepository(store);
+            store = RegistryStoreMount.openStore(options.registryGit(), options.demo());
+            WorkflowRepository workflows = store == null
+                    ? null : RegistryStoreMount.workflowRepository(store);
             WorkflowVersionRepository workflowVersions = store == null
-                    ? null : new RegistryWorkflowVersionRepository(store);
-            if (options.serviceWorkspace() != null) {
-                try {
-                    serviceProfiles = new FileSystemServiceProfileRepository(
-                            options.serviceWorkspace());
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to open service workspace at "
-                            + options.serviceWorkspace(), e);
-                }
-            }
-            Path workflowWorkspace = options.workflowWorkspace();
-            if (workflowWorkspace == null && options.demo()) {
-                try {
-                    workflowWorkspace = java.nio.file.Files
-                            .createTempDirectory("protomolt-demo-workflows");
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to create the demo workflow workspace", e);
-                }
-            }
-            if (workflowWorkspace != null) {
-                try {
-                    artifacts = new FileSystemArtifactRepository(
-                            workflowWorkspace.resolve("artifacts"));
-                    runEvidence = new FileSystemRunEvidenceRepository(
-                            workflowWorkspace.resolve("runs"));
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to open workflow workspace at "
-                            + workflowWorkspace, e);
-                }
-            }
+                    ? null : RegistryStoreMount.workflowVersions(store);
+            serviceProfiles = WorkspaceMount.serviceProfiles(options.serviceWorkspace());
+            WorkspaceMount.WorkflowRepositories workspace =
+                    WorkspaceMount.workflowRepositories(options.workflowWorkspace(), options.demo());
+            artifacts = workspace.artifacts();
+            runEvidence = workspace.runEvidence();
 
-            Supplier<TrustSnapshot> trust = trustSource(options);
+            Supplier<TrustSnapshot> trust = ConfigLaneMount.trustSource(options.configLane(),
+                    options.apiToken());
 
             // Workflow runs: the store boots (and Flyway-migrates) before the catalog so
             // the jobs verbs serve from the same truth the worker fleet executes from.
             if (options.jobs() != null) {
-                JobsOptions jobs = options.jobs();
-                jobsDatabase = new WorkflowRunDatabase(
-                        new WorkflowRunStoreConfig(jobs.jdbcUrl(), jobs.username(), jobs.password()));
-                JdbcWorkflowRunStore jobStore = new JdbcWorkflowRunStore(jobsDatabase);
-                String requestTopic = jobs.kafkaBootstrap() == null
-                        ? null
-                        : jobs.requestTopic() != null ? jobs.requestTopic() : "workflow-run-requests";
-                WorkflowRunsConfig jobsConfig = new WorkflowRunsConfig(
-                        "serve-" + ManagementFactory.getRuntimeMXBean().getName(),
-                        jobs.workers(), WorkflowRunsConfig.DEFAULT_LEASE_DURATION,
-                        WorkflowRunsConfig.DEFAULT_POLL_INTERVAL, WorkflowRunsConfig.DEFAULT_BACKOFF_BASE_SECONDS,
-                        WorkflowRunsConfig.DEFAULT_MAX_ATTEMPTS, jobs.targetConcurrency(),
-                        requestTopic, WorkflowRunsConfig.DEFAULT_EVENTS_TOPIC, jobs.kafkaBootstrap(), null);
-                WorkflowRunner runner = new WorkflowRunner(outboundPolicy, structured);
-                jobsWorker = new WorkflowRunWorker(jobStore, context, workflows,
-                        runner,
-                        jobsConfig);
-                if (jobs.kafkaBootstrap() != null) {
-                    jobsRelay = new WorkflowRunEventRelay(jobStore,
-                            WorkflowRunEventRelay.newProducer(jobs.kafkaBootstrap(), null),
-                            jobsConfig.eventsTopic(), jobsConfig.pollInterval(), 100);
-                }
-
+                JobsFleetMount.Prepared jobs = JobsFleetMount.prepare(options.jobs(), context,
+                        workflows, structured, outboundPolicy);
+                jobsDatabase = jobs.database();
+                jobsWorker = jobs.worker();
+                jobsRelay = jobs.relay();
                 WorkflowAuthoringMount.Prepared authoring = options.workflowAuthoring() == null
                         ? null : WorkflowAuthoringMount.prepare(options.workflowAuthoring(),
-                                artifacts, runEvidence, workflowVersions, jobStore, context,
-                                runner, jobsConfig.maxAttemptsDefault(), trust);
+                                artifacts, runEvidence, workflowVersions, jobs.store(), context,
+                                jobs.runner(), jobs.config().maxAttemptsDefault(), trust);
                 WorkflowPreparationMount.Prepared preparation = options.workflowPreparation() == null
                         ? null : WorkflowPreparationMount.prepare(options.workflowPreparation(), authoring);
 
                 // The catalog sees the store so run-workflow resolves stored workflow names and
                 // the jobs verbs serve the live job rows.
                 ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
-                        workflows, jobStore, jobsConfig.maxAttemptsDefault(),
+                        workflows, jobs.store(), jobs.config().maxAttemptsDefault(),
                         inference, serviceProfiles,
                         outboundPolicy, artifacts, runEvidence, workflowVersions, store,
                         trust, starter == null ? null : starter.credentials());
-                return startWithJobsCatalog(options, context, catalog, store, workflows,
-                        serviceProfiles, jobsDatabase, jobsWorker, jobsRelay, starter, authoring,
-                        preparation);
+                return startWithJobsCatalog(options, context, catalog, store,
+                        serviceProfiles, jobs, starter, authoring, preparation);
             }
             // The catalog sees the store so run-workflow resolves stored workflow names.
             ActionCatalog catalog = ProtoMoltCatalog.full(context, options.gatherCache(),
                     workflows, null, 0, inference, serviceProfiles,
                     outboundPolicy, artifacts, runEvidence, workflowVersions, store,
                     trust, starter == null ? null : starter.credentials());
-            return startWithJobsCatalog(options, context, catalog, store, workflows,
-                    serviceProfiles, null, null, null, starter, null, null);
+            return startWithJobsCatalog(options, context, catalog, store,
+                    serviceProfiles, null, starter, null, null);
         } catch (RuntimeException e) {
             if (registry != null) {
                 registry.close();
@@ -1143,11 +956,8 @@ public final class ProtoMoltServe implements AutoCloseable {
     private static ProtoMoltServe startWithJobsCatalog(Options options, ActionContext context,
                                                        ActionCatalog catalog,
                                                        GitSchemaRegistryStore store,
-                                                       WorkflowRepository workflows,
                                                        ServiceProfileRepository serviceProfiles,
-                                                       WorkflowRunDatabase jobsDatabase,
-                                                       WorkflowRunWorker jobsWorker,
-                                                       WorkflowRunEventRelay jobsRelay,
+                                                       JobsFleetMount.Prepared jobs,
                                                        CorrectionStarter starter,
                                                        WorkflowAuthoringMount.Prepared authoring,
                                                        WorkflowPreparationMount.Prepared preparation) {
@@ -1167,29 +977,11 @@ public final class ProtoMoltServe implements AutoCloseable {
             // The live delegation surface: one coordinator per server, adapted to
             // catalog verbs and MCP resources through the bridge. Durable when a
             // delegation repository endpoint is configured, in-memory otherwise.
-            delegation = authoring == null
-                    ? DelegationRuntime.open(options.delegation())
-                    : DelegationRuntime.open(options.delegation(), authoring.selectingReviewer());
+            delegation = DelegationMount.open(options.delegation(), authoring);
             DelegationBridge bridge = delegation.bridge();
-            DelegationActions.register(catalog, bridge);
-            if (authoring != null) {
-                WorkflowAuthoringActions.register(catalog,
-                        authoring.operations(delegation.transcripts()));
-                ai.protomolt.proto.workflow.authoring.WorkflowLaunchInputActions.register(catalog,
-                        authoring.inputOperations(delegation.transcripts()));
-                ai.protomolt.proto.workflow.authoring.WorkflowLaunchStatusActions.register(catalog,
-                        authoring.statusOperations(delegation.transcripts()));
-                ai.protomolt.proto.workflow.authoring.WorkflowAuthoringEntryActions.register(catalog,
-                        authoring.entryOperations(bridge));
-            }
-            if (preparation != null) {
-                WorkflowPreparationActions.register(catalog,
-                        preparation.operations(delegation.transcripts()));
-                WorkflowAuthorTaskActions.register(catalog, WorkflowAuthorTaskMount.operations(
-                        bridge, delegation.transcripts(), authoring, Clock.systemUTC()));
-            }
-            var authorTaskBindings = preparation == null ? Map.<String, Map<String, String>>of()
-                    : WorkflowAuthorTaskMount.bindings();
+            Map<String, Map<String, String>> authorTaskBindings =
+                    DelegationMount.registerAll(catalog, delegation, authoring, preparation);
+
             meshCluster = MeshClusterRuntime.open(options.meshCluster(), options.delegation());
             if (meshCluster != null) {
                 ClusterActions.register(catalog, meshCluster.directory());
@@ -1198,38 +990,15 @@ public final class ProtoMoltServe implements AutoCloseable {
             // The access policy narrows named principals; the operator token keeps every
             // scope. A policy that fails to load or verify refuses startup loudly. The
             // external stores compose behind the policy, first match wins.
-            java.util.List<CallerResolver> resolvers = new java.util.ArrayList<>();
-            if (options.accessPolicy() != null) {
-                try {
-                    resolvers.add(new AccessPolicyCallers(
-                            AccessPolicies.load(options.accessPolicy())));
-                } catch (IOException e) {
-                    throw new IllegalStateException("failed to read the access policy at "
-                            + options.accessPolicy() + ": " + e.getMessage(), e);
-                }
-            }
-            if (options.identityStores() != null) {
-                IdentityStoreOptions stores = options.identityStores();
-                if (stores.oidcIntrospection() != null) {
-                    resolvers.add(new OidcCallerResolver(stores.oidcIntrospection(),
-                            stores.oidcClientId(), stores.oidcClientSecret()));
-                }
-                if (stores.callerStore() != null) {
-                    jdbcCallers = new JdbcCallerResolver(stores.callerStore());
-                    resolvers.add(jdbcCallers);
-                }
-            }
-            CallerResolver callers = resolvers.isEmpty() ? null
-                    : resolvers.size() == 1 ? resolvers.getFirst()
-                            : CallerResolver.chain(resolvers);
+            AccessPolicyMount.Callers resolved =
+                    AccessPolicyMount.resolve(options.accessPolicy(), options.identityStores());
+            CallerResolver callers = resolved.callers();
+            jdbcCallers = resolved.jdbcCallers();
 
-            grpc = ProtoMoltGrpcServer.start(options.host(), options.grpcPort(), catalog,
-                    options.apiToken(), callers,
-                    contributedServices(meshCluster != null, authoring != null,
-                            preparation != null), authorTaskBindings,
-                    // Launch input permits 4 MiB of JSON plus acceptance metadata.
-                    // Native contract validation enforces the individual field bounds.
-                    (authoring != null ? 8 : 4) * 1024 * 1024);
+            java.util.List<ServiceDescriptor> contributed = GrpcMount.contributedServices(
+                    meshCluster != null, authoring != null, preparation != null);
+            grpc = GrpcMount.start(options, catalog, callers, contributed, authorTaskBindings,
+                    authoring != null);
             if (options.demo() && store != null) {
                 // The demo workflow composes this server's own verbs, so it needs the bound
                 // gRPC port - seeded here rather than with the schemas.
@@ -1238,121 +1007,45 @@ public final class ProtoMoltServe implements AutoCloseable {
 
             // The jobs fleet starts once the catalog is bound: workers execute and the
             // relay drains. Broker-less deployments run the worker only.
-            if (jobsWorker != null) {
-                jobsWorker.start();
-            }
-            if (jobsRelay != null) {
-                jobsRelay.start();
+            if (jobs != null) {
+                jobs.worker().start();
+                if (jobs.relay() != null) {
+                    jobs.relay().start();
+                }
             }
 
             // The registry starts before HTTP so the console's same-origin proxy
             // (/api/protomolt) knows the port it bridges to.
             int registryPort = -1;
             if (store != null) {
-                // The registry listener honors the same bind address and shared secret as
-                // every other surface - one process, one security boundary.
-                registry = new SchemaRegistryServer(
-                        SchemaRegistryServerConfig.defaults()
-                                .withHost(options.host())
-                                .withPort(options.registryPort())
-                                .withApiToken(options.apiToken()),
-                        store, catalog, callers);
+                registry = RegistryStoreMount.server(options.host(), options.registryPort(),
+                        options.apiToken(), store, catalog, callers);
                 registryPort = registry.start();
             }
 
-            ProtoRestMethodRegistry methods = new ProtoRestMethodRegistry();
-            Function<Map<String, String>, Caller> restCallers = callers == null
-                    ? null : restCallers(options.apiToken(), callers);
-            // The families that contribute verbs declare them on services of their own, so
-            // those are mounted alongside ProtoMolt's; without them the same verb is on gRPC
-            // and MCP but missing from REST and from the OpenAPI document.
-            ProtoMoltRestMount.register(methods, catalog, options.apiToken() == null
-                    ? null
-                    : ApiTokenRequirement.apiKeyHeader("api_token"), restCallers,
-                    contributedServices(meshCluster != null, authoring != null,
-                            preparation != null), authorTaskBindings);
+            ProtoRestGateway gateway = RestGatewayMount.mount(context, catalog,
+                    options.apiToken(), callers, contributed, authorTaskBindings);
+            String version = serveVersion();
+            mcpHandler = McpMount.mount(catalog, store, serviceProfiles, bridge,
+                    options.apiToken(), callers, version);
             ProtoToolsServerConfig config = ProtoToolsServerConfig.defaults()
                     .withHost(options.host())
                     .withPort(options.httpPort());
-            ProtoRestGateway gateway;
-            if (options.apiToken() == null) {
-                gateway = new ProtoRestGateway(methods, context.transcoder());
-            } else if (restCallers == null) {
-                gateway = new ProtoRestGateway(methods, context.transcoder(),
-                        ProtoApiTokenValidator.sharedSecret(options.apiToken()));
-            } else {
-                Function<Map<String, String>, Caller> resolved = restCallers;
-                gateway = new ProtoRestGateway(methods, context.transcoder(),
-                        (tokenConfig, headers, query) -> {
-                            String presented = presentedCredential(headers);
-                            if (presented == null || presented.isBlank()) {
-                                return Optional.of(
-                                        "Missing API token '" + tokenConfig.name() + "'");
-                            }
-                            return resolved.apply(headers) != null
-                                    ? Optional.empty()
-                                    : Optional.of("Invalid API token");
-                        });
-            }
-            String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
-            McpServer mcp = new McpServer(catalog,
-                    CompositeResources.of(
-                            store != null ? new RegistryResources(store) : null,
-                            serviceProfiles != null
-                                    ? new ServiceProfileResources(serviceProfiles, store) : null,
-                            new DelegationResources(bridge)),
-                    "protomolt", version != null ? version : "dev");
-            int boundRegistryPort = registryPort;
-            int[] selfPort = {-1};
-            mcpHandler = new McpHttpHandler(mcp, options.apiToken(), callers);
             http = new JdkProtoRestServer(config, gateway,
-                    new ProtoOpenApiGenerator("ProtoMolt", version != null ? version : "dev",
-                            "/", config.restPathPrefix()))
+                    new ProtoOpenApiGenerator("ProtoMolt", version, "/", config.restPathPrefix()))
                     .withContext("/docs", new SwaggerUiHandler("/docs", config.openApiPath()))
                     .withContext("/mcp", mcpHandler);
-            ConsoleSessions taskSessions = options.taskConsole() == null
-                    ? TaskConsoleSessions.open()
-                    : TaskConsoleSessions.secured(options.taskConsole().loginToken(),
-                            options.taskConsole().sessionTtl(), callers);
-            if (options.apiToken() == null || options.taskConsole() != null) {
-                http.withContext("/console", new ConsoleHandler())
-                        .withContext("/api/task-session",
-                                new TaskConsoleSessionHandler(taskSessions))
-                        .withContext("/api/tasks",
-                                new TaskConsoleApiHandler(bridge, taskSessions,
-                                        RecordSigning.fromEnvironment()));
-                if (starter != null) {
-                    http.withContext("/api/correction", new CorrectionConsoleApiHandler(catalog, taskSessions));
-                }
-                if (authoring != null && taskSessions.requiresLogin()) {
-                    http.withContext("/api/workflow-launch",
-                            new WorkflowLaunchConsoleApiHandler(catalog, taskSessions));
-                    http.withContext("/api/workflow-authoring",
-                            WorkflowLaunchConsoleApiHandler.authoringEntry(catalog, taskSessions));
-                }
-            }
-            if (options.apiToken() == null) {
-                http.withContext("/api/protomolt", new ApiProxyHandler("/api/protomolt",
-                            () -> boundRegistryPort,
-                            "no registry is running; start with --registry-git or --demo"))
-                    .withContext("/api/serve", new ApiProxyHandler("/api/serve",
-                            () -> selfPort[0], "server is still starting"));
-            } else {
-                DisabledSurfaceHandler disabled = new DisabledSurfaceHandler(
-                        "this browser surface is disabled when --api-token is set; "
-                                + "use the task console or an authenticated protocol client");
-                if (options.taskConsole() == null) {
-                    http.withContext("/console", disabled)
-                            .withContext("/api/task-session", disabled)
-                            .withContext("/api/tasks", disabled);
-                }
-                http.withContext("/api/protomolt", disabled)
-                        .withContext("/api/serve", disabled);
-            }
+            int boundRegistryPort = registryPort;
+            int[] selfPort = {-1};
+            ConsoleMount.mount(http, options.apiToken(), options.taskConsole(), callers, bridge,
+                    starter, catalog, authoring, () -> boundRegistryPort, () -> selfPort[0]);
             int httpPort = http.start();
             selfPort[0] = httpPort;
             return new ProtoMoltServe(grpc, http, mcpHandler, httpPort, store, registry, registryPort,
-                    jobsDatabase, jobsWorker, jobsRelay, delegation, meshCluster, jdbcCallers);
+                    jobs == null ? null : jobs.database(),
+                    jobs == null ? null : jobs.worker(),
+                    jobs == null ? null : jobs.relay(),
+                    delegation, meshCluster, jdbcCallers);
         } catch (RuntimeException e) {
             closeQuietly(jdbcCallers);
             closeQuietly(meshCluster);
@@ -1371,138 +1064,10 @@ public final class ProtoMoltServe implements AutoCloseable {
         }
     }
 
-    private static ai.protomolt.proto.workflow.WorkflowRepository workflowRepository(
-            GitSchemaRegistryStore store) {
-        return workflowRepository(store::workflow);
-    }
-
-    static ai.protomolt.proto.workflow.WorkflowRepository workflowRepository(
-            java.util.function.Function<String, java.util.Optional<String>> lookup) {
-        com.fasterxml.jackson.databind.ObjectMapper json =
-                new com.fasterxml.jackson.databind.ObjectMapper();
-        return name -> lookup.apply(name).map(text -> {
-            com.fasterxml.jackson.databind.JsonNode node;
-            try {
-                node = json.readTree(text);
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                throw new IllegalStateException(
-                        "Stored workflow '" + name + "' is not valid JSON", e);
-            }
-            if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode workflow)) {
-                throw new IllegalStateException(
-                        "Stored workflow '" + name + "' is not a JSON object");
-            }
-            return workflow;
-        });
-    }
-
-    /** The credential a REST request presents: {@code api_token} or a bearer authorization. */
-    private static String presentedCredential(Map<String, String> headers) {
-        String presented = headers.get("api_token");
-        if (presented == null) {
-            String authorization = headers.get("authorization");
-            if (authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
-                presented = authorization.substring(7).trim();
-            }
-        }
-        return presented;
-    }
-
-    /** Header-to-caller resolution for the REST mount: operator token, else the policy. */
-    /**
-     * The services whose verbs this server wired, beside ProtoMolt's own.
-     *
-     * <p>Listed by what was actually started rather than by what is on the classpath: the
-     * mount publishes only methods the catalog can serve, and naming a service it did not
-     * wire would rely on that filter rather than saying so here.
-     */
-    private static java.util.List<ServiceDescriptor> contributedServices(boolean meshCluster,
-            boolean workflowAuthoring, boolean workflowPreparation) {
-        java.util.List<ServiceDescriptor> services = new java.util.ArrayList<>();
-        // Fully qualified: the generated holder and the registrar share a simple name.
-        services.add(ai.protomolt.proto.delegation.v1.DelegationActions.getDescriptor()
-                .findServiceByName("DelegationService"));
-        if (meshCluster) {
-            services.add(ClusterDirectoryServiceProto.getDescriptor()
-                    .findServiceByName("ClusterDirectoryService"));
-        }
-        if (workflowAuthoring) {
-            services.add(GetAcceptedWorkflowRequest.getDescriptor().getFile()
-                    .findServiceByName("WorkflowAuthoringService"));
-            services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchInputServiceOuterClass
-                    .getDescriptor().findServiceByName("WorkflowLaunchInputService"));
-            services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowLaunchStatusServiceOuterClass
-                    .getDescriptor().findServiceByName("WorkflowLaunchStatusService"));
-            services.add(ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthoringEntryServiceOuterClass
-                    .getDescriptor().findServiceByName("WorkflowAuthoringEntryService"));
-        }
-        if (workflowPreparation) {
-            services.add(WorkflowPreparationServiceOuterClass.getDescriptor()
-                    .findServiceByName("WorkflowPreparationService"));
-            services.add(WorkflowAuthorTaskMount.service());
-        }
-        return services;
-    }
-
-    private static Function<Map<String, String>, Caller> restCallers(
-            String apiToken, CallerResolver resolver) {
-        byte[] operator = apiToken.getBytes(StandardCharsets.UTF_8);
-        return headers -> {
-            String presented = presentedCredential(headers);
-            if (presented == null || presented.isBlank()) {
-                return null;
-            }
-            if (MessageDigest.isEqual(operator,
-                    presented.getBytes(StandardCharsets.UTF_8))) {
-                return Caller.operator();
-            }
-            return resolver.resolve(presented).orElse(null);
-        };
-    }
-
-    /**
-     * The trust snapshot the verifying verbs fall back to. Without a config lane this is
-     * the operator's pinned file, resolved once, exactly as before. With one, the lane's
-     * snapshot takes precedence when a document has applied and the file remains the
-     * floor, so a node keeps verifying across a lane outage instead of losing custody.
-     * Either way a request's own {@code trust} still wins.
-     */
-    private static Supplier<TrustSnapshot> trustSource(Options options) {
-        TrustPin pinned = TrustPin.fromEnvironment();
-        TrustSnapshot file = pinned == null ? null : pinned.snapshot();
-        if (options.configLane() == null) {
-            return () -> file;
-        }
-        ConfigLaneOptions lane = options.configLane();
-        DistributedConfig config = DistributedConfig.over(
-                new RegistryConfigSource(lane.registryUrl(), options.apiToken()));
-        TrustSnapshotMounts mounts = TrustSnapshotMounts.follow(config);
-        refreshQuietly(config, "the boot pull");
-        if (lane.refreshSeconds() > 0) {
-            // Stays a single platform thread: the delay schedule is the backpressure, and
-            // serialising refreshes is what keeps two config pulls from overlapping.
-            ScheduledExecutorService refresher = Executors.newSingleThreadScheduledExecutor(
-                    Thread.ofPlatform().name("serve-config-refresh").daemon().factory());
-            refresher.scheduleWithFixedDelay(
-                    () -> refreshQuietly(config, "a config refresh"),
-                    lane.refreshSeconds(), lane.refreshSeconds(), TimeUnit.SECONDS);
-        }
-        return () -> mounts.current()
-                .map(TrustSnapshotMounts.Mounted::snapshot)
-                .orElse(file);
-    }
-
-    /**
-     * A lane that cannot be reached must not take the server down or drop the custody it
-     * already has: the refresh logs and the previous snapshot stays live.
-     */
-    private static void refreshQuietly(DistributedConfig config, String what) {
-        try {
-            config.refresh();
-        } catch (RuntimeException e) {
-            LOG.warn("{} of the config lane failed; the previous trust snapshot stays"
-                    + " live", what, e);
-        }
+    /** The implementation version stamped on the OpenAPI document and the MCP server. */
+    private static String serveVersion() {
+        String version = ProtoMoltServe.class.getPackage().getImplementationVersion();
+        return version != null ? version : "dev";
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

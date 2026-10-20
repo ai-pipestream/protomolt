@@ -19,7 +19,7 @@ class WorkflowRepositoryFailureTest {
 
     @Test
     void storeFailurePropagates() {
-        WorkflowRepository repo = ProtoMoltServe.workflowRepository(name -> {
+        WorkflowRepository repo = RegistryStoreMount.workflowRepository(name -> {
             throw new RegistryStoreException("Failed to read workflow " + name);
         });
         assertThatThrownBy(() -> repo.workflow("broken-store"))
@@ -29,7 +29,7 @@ class WorkflowRepositoryFailureTest {
 
     @Test
     void malformedStoredJsonThrows() {
-        WorkflowRepository repo = ProtoMoltServe.workflowRepository(
+        WorkflowRepository repo = RegistryStoreMount.workflowRepository(
                 name -> Optional.of("{not json"));
         assertThatThrownBy(() -> repo.workflow("garbled"))
                 .isInstanceOf(IllegalStateException.class)
@@ -39,7 +39,7 @@ class WorkflowRepositoryFailureTest {
 
     @Test
     void nonObjectStoredJsonThrows() {
-        WorkflowRepository repo = ProtoMoltServe.workflowRepository(
+        WorkflowRepository repo = RegistryStoreMount.workflowRepository(
                 name -> Optional.of("[1, 2, 3]"));
         assertThatThrownBy(() -> repo.workflow("array-workflow"))
                 .isInstanceOf(IllegalStateException.class)
@@ -48,13 +48,13 @@ class WorkflowRepositoryFailureTest {
 
     @Test
     void missingWorkflowAnswersEmpty() {
-        WorkflowRepository repo = ProtoMoltServe.workflowRepository(name -> Optional.empty());
+        WorkflowRepository repo = RegistryStoreMount.workflowRepository(name -> Optional.empty());
         assertThat(repo.workflow("nope")).isEmpty();
     }
 
     @Test
     void storedObjectParses() {
-        WorkflowRepository repo = ProtoMoltServe.workflowRepository(
+        WorkflowRepository repo = RegistryStoreMount.workflowRepository(
                 name -> Optional.of("{\"name\": \"ok\"}"));
         assertThat(repo.workflow("ok"))
                 .hasValueSatisfying(node -> assertThat(node.path("name").asText()).isEqualTo("ok"));
