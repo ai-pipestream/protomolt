@@ -204,7 +204,8 @@ class WorkflowRunWorkerTest {
 
         // The backoff gate: not claimable until run_after passes.
         assertThat(worker.workOnce()).isFalse();
-        Thread.sleep(1100);
+        // Elapse the backoff on the stored record instead of waiting it out.
+        requeued.runAfter = java.time.Instant.now();
 
         // Attempt 2: retryable but exhausted → DEAD with the error verbatim.
         assertThat(worker.workOnce()).isTrue();
@@ -269,7 +270,7 @@ class WorkflowRunWorkerTest {
         assertThat(requeued.attempt).isEqualTo(1);
         assertThat(eventTypes(store)).containsExactly(WorkflowRunEventRecord.TYPE_ACCEPTED);
 
-        Thread.sleep(1100);
+        requeued.runAfter = java.time.Instant.now();
         // The next attempt re-executes the un-checkpointed step and completes.
         assertThat(worker.workOnce()).isTrue();
         WorkflowRunRecord done = store.get(jobId).orElseThrow();
