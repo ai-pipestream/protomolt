@@ -314,6 +314,87 @@ public class MappingHelperTest {
         // mapper.map(doc, openSearchDocBuilder, List.of(rule));
     }
 
+    @Test
+    void testRepeatedMapPathsInvalidMappingsAndNumericLiterals() throws Exception {
+        DescriptorProto itemProto = DescriptorProto.newBuilder()
+                .setName("Item")
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("code").setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .build();
+        DescriptorProto attrEntryProto = DescriptorProto.newBuilder()
+                .setName("AttrEntry")
+                .setOptions(com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder()
+                        .setMapEntry(true))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("key").setNumber(1)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("value").setNumber(2)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING))
+                .build();
+        DescriptorProto richDocProto = DescriptorProto.newBuilder()
+                .setName("RichDoc")
+                .addNestedType(attrEntryProto)
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("items").setNumber(1)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)
+                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".ai.protomolt.test.rich.Item"))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("attrs").setNumber(2)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_REPEATED)
+                        .setType(FieldDescriptorProto.Type.TYPE_MESSAGE)
+                        .setTypeName(".ai.protomolt.test.rich.RichDoc.AttrEntry"))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("count").setNumber(3)
+                        .setType(FieldDescriptorProto.Type.TYPE_INT32))
+                .addField(FieldDescriptorProto.newBuilder()
+                        .setName("active").setNumber(4)
+                        .setType(FieldDescriptorProto.Type.TYPE_BOOL))
+                .build();
+        FileDescriptor richFd = FileDescriptor.buildFrom(
+                com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+                        .setName("rich_mapping.proto")
+                        .setPackage("ai.protomolt.test.rich")
+                        .addMessageType(itemProto)
+                        .addMessageType(richDocProto)
+                        .build(),
+                new FileDescriptor[0]);
+        Descriptor richDoc = richFd.findMessageTypeByName("RichDoc");
+
+        // Repeated and map fields appear as leaves without traversing into repeated children
+        List<String> paths = helper.getAllFieldPaths(richDoc, 3);
+        assertEquals(List.of("active", "attrs", "count", "items"), paths);
+
+        // Traversing through a repeated message or scalar field is rejected
+        MappingHelper.ValidationResult throughRepeated =
+                helper.validateRule("title = items.code", richDoc, openSearchDocDescriptor);
+        assertFalse(throughRepeated.isValid);
+        assertTrue(throughRepeated.message.contains("Cannot traverse through repeated field 'items'"));
+
+        MappingHelper.ValidationResult throughScalar =
+                helper.validateRule("title = count.sub", richDoc, openSearchDocDescriptor);
+        assertFalse(throughScalar.isValid);
+        assertTrue(throughScalar.message.contains("Field 'count' is not a message type"));
+
+        // Numeric literals (positive, negative, decimal) and append rules validate
+        assertTrue(helper.validateRule("count = -42", documentDescriptor, richDoc).isValid);
+        assertTrue(helper.validateRule("count = 3.14", documentDescriptor, richDoc).isValid);
+        assertTrue(helper.validateRule("tags += doc_id", documentDescriptor, openSearchDocDescriptor).isValid);
+
+        // Malformed numeric token is treated as a source path and rejected
+        MappingHelper.ValidationResult badNumber =
+                helper.validateRule("count = 12.34.56", documentDescriptor, richDoc);
+        assertFalse(badNumber.isValid);
+
+        // Incompatible non-string types produce a WARNING
+        MappingHelper.ValidationResult warning =
+                helper.validateRule("count = active", richDoc, richDoc);
+        assertTrue(warning.isValid);
+        assertEquals(MappingHelper.ValidationResult.ValidationLevel.WARNING, warning.level);
+    }
+
     /**
      * Creates test file descriptor with Document and OpenSearchDocument types.
      */
