@@ -7,7 +7,6 @@ import ai.protomolt.proto.acquire.confluence.v1.BlogPost;
 import ai.protomolt.proto.acquire.confluence.v1.BlogPostContentStatus;
 import ai.protomolt.proto.acquire.confluence.v1.Body;
 import ai.protomolt.proto.acquire.confluence.v1.BodyFormat;
-import ai.protomolt.proto.acquire.confluence.v1.BodyType;
 import ai.protomolt.proto.acquire.confluence.v1.ClassificationLevel;
 import ai.protomolt.proto.acquire.confluence.v1.ClassificationLevelColor;
 import ai.protomolt.proto.acquire.confluence.v1.ClassificationLevelStatus;
@@ -26,7 +25,6 @@ import ai.protomolt.proto.acquire.confluence.v1.ParentContentType;
 import ai.protomolt.proto.acquire.confluence.v1.PropertyKey;
 import ai.protomolt.proto.acquire.confluence.v1.PropertyValue;
 import ai.protomolt.proto.acquire.confluence.v1.Space;
-import ai.protomolt.proto.acquire.confluence.v1.SpaceDescription;
 import ai.protomolt.proto.acquire.confluence.v1.SpaceIcon;
 import ai.protomolt.proto.acquire.confluence.v1.SpaceProperty;
 import ai.protomolt.proto.acquire.confluence.v1.SpacePropertyVersion;
@@ -42,13 +40,15 @@ import com.google.protobuf.Struct;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.Value;
 
-import java.net.URI;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
+
+import static ai.protomolt.proto.acquire.confluence.ConfluenceJsonFields.hasText;
+import static ai.protomolt.proto.acquire.confluence.ConfluenceJsonFields.text;
+import static ai.protomolt.proto.acquire.confluence.ConfluenceLinks.webui;
 
 /**
  * Jackson {@link JsonNode} to domain proto translation for the Confluence
@@ -66,9 +66,7 @@ import java.util.Objects;
  */
 public final class ConfluenceMapper {
 
-    private final String baseUrl;
-    private final String basePath;
-    private final String origin;
+    private final ConfluenceLinks links;
 
     /**
      * @param baseUrl the tenant base URL including {@code /wiki} (e.g.
@@ -76,10 +74,7 @@ public final class ConfluenceMapper {
      *        absolute {@code web_url} / {@code download_url} values
      */
     public ConfluenceMapper(String baseUrl) {
-        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl").replaceAll("/+$", "");
-        URI uri = URI.create(this.baseUrl);
-        this.basePath = uri.getPath() == null ? "" : uri.getPath();
-        this.origin = uri.getScheme() + "://" + uri.getAuthority();
+        this.links = new ConfluenceLinks(baseUrl);
     }
 
     // ======================================================================
@@ -103,7 +98,7 @@ public final class ConfluenceMapper {
         setTimestamp(node, "createdAt", b::setCreatedAt);
         JsonNode description = node.path("description");
         if (description.isObject()) {
-            b.setDescription(toSpaceDescription(description));
+            b.setDescription(ConfluenceBodies.spaceDescription(description));
         }
         JsonNode icon = node.path("icon");
         if (icon.isObject()) {
@@ -113,19 +108,6 @@ public final class ConfluenceMapper {
                     .build());
         }
         b.setWebUrl(absolute(webui(node)));
-        return b.build();
-    }
-
-    private SpaceDescription toSpaceDescription(JsonNode node) {
-        SpaceDescription.Builder b = SpaceDescription.newBuilder();
-        JsonNode plain = node.path("plain");
-        if (plain.isObject()) {
-            b.setPlain(toBodyType(plain, BodyFormat.BODY_FORMAT_PLAIN_TEXT));
-        }
-        JsonNode view = node.path("view");
-        if (view.isObject()) {
-            b.setView(toBodyType(view, BodyFormat.BODY_FORMAT_RENDERED_XHTML));
-        }
         return b.build();
     }
 
@@ -293,20 +275,7 @@ public final class ConfluenceMapper {
                 .setCompletedBy(text(node, "completedBy"));
         JsonNode body = node.path("body");
         if (body.isObject()) {
-            Body.Builder bb = Body.newBuilder();
-            JsonNode view = body.path("view");
-            if (view.isObject()) {
-                bb.setView(toBodyType(view, BodyFormat.BODY_FORMAT_RENDERED_XHTML));
-            }
-            JsonNode storage = body.path("storage");
-            if (storage.isObject()) {
-                bb.setStorage(toBodyType(storage, BodyFormat.BODY_FORMAT_STORAGE_XHTML));
-            }
-            JsonNode adf = body.path("atlas_doc_format");
-            if (adf.isObject()) {
-                bb.setAtlasDocFormat(toBodyType(adf, BodyFormat.BODY_FORMAT_ATLAS_DOC_FORMAT));
-            }
-            b.setBody(bb.build());
+            b.setBody(ConfluenceBodies.taskBody(body));
         }
         setTimestamp(node, "createdAt", b::setCreatedAt);
         setTimestamp(node, "updatedAt", b::setUpdatedAt);
@@ -549,51 +518,12 @@ public final class ConfluenceMapper {
         if (!body.isObject()) {
             return;
         }
-        Body.Builder b = Body.newBuilder();
-        JsonNode storage = body.path("storage");
-        if (storage.isObject()) {
-            b.setStorage(toBodyType(storage, BodyFormat.BODY_FORMAT_STORAGE_XHTML));
-        }
-        JsonNode adf = body.path("atlas_doc_format");
-        if (adf.isObject()) {
-            b.setAtlasDocFormat(toBodyType(adf, BodyFormat.BODY_FORMAT_ATLAS_DOC_FORMAT));
-        }
-        JsonNode view = body.path("view");
-        if (view.isObject()) {
-            b.setView(toBodyType(view, BodyFormat.BODY_FORMAT_RENDERED_XHTML));
-        }
-        JsonNode raw = body.path("raw");
-        if (raw.isObject()) {
-            b.setRaw(toBodyType(raw, BodyFormat.BODY_FORMAT_RAW));
-        }
-        bodySetter.accept(b.build());
-    }
-
-    private BodyType toBodyType(JsonNode node, BodyFormat slotDefault) {
-        String representation = text(node, "representation");
-        BodyFormat format = representation.isEmpty() ? slotDefault : bodyFormat(representation);
-        return BodyType.newBuilder()
-                .setFormat(format)
-                .setValue(text(node, "value"))
-                .build();
+        bodySetter.accept(ConfluenceBodies.contentBody(body));
     }
 
     /** The API's representation strings to the BodyFormat enum; unknown maps to UNSPECIFIED. */
     public static BodyFormat bodyFormat(String representation) {
-        return switch (representation == null ? ""
-                : representation.trim().toLowerCase(Locale.ROOT)) {
-            case "storage" -> BodyFormat.BODY_FORMAT_STORAGE_XHTML;
-            case "atlas_doc_format" -> BodyFormat.BODY_FORMAT_ATLAS_DOC_FORMAT;
-            case "view" -> BodyFormat.BODY_FORMAT_RENDERED_XHTML;
-            case "export_view" -> BodyFormat.BODY_FORMAT_EXPORT_XHTML;
-            case "anonymous_export_view" -> BodyFormat.BODY_FORMAT_ANONYMOUS_EXPORT_XHTML;
-            case "styled_view" -> BodyFormat.BODY_FORMAT_STYLED_XHTML;
-            case "editor" -> BodyFormat.BODY_FORMAT_EDITOR;
-            case "wiki" -> BodyFormat.BODY_FORMAT_WIKI;
-            case "raw" -> BodyFormat.BODY_FORMAT_RAW;
-            case "plain" -> BodyFormat.BODY_FORMAT_PLAIN_TEXT;
-            default -> BodyFormat.BODY_FORMAT_UNSPECIFIED;
-        };
+        return ConfluenceBodies.format(representation);
     }
 
     private void setVersion(JsonNode node, java.util.function.Consumer<Version> versionSetter) {
@@ -645,21 +575,7 @@ public final class ConfluenceMapper {
      * the full base URL.
      */
     public String absolute(String url) {
-        if (url == null || url.isBlank()) {
-            return "";
-        }
-        if (url.startsWith("http")) {
-            return url;
-        }
-        String path = url.startsWith("/") ? url : "/" + url;
-        if (!basePath.isEmpty() && path.startsWith(basePath + "/")) {
-            return origin + path;
-        }
-        return baseUrl + path;
-    }
-
-    private static String webui(JsonNode node) {
-        return text(node.path("_links"), "webui");
+        return links.absolute(url);
     }
 
     /** Generic enum mapping: wire value uppercased, '-' to '_', prefixed; unknown yields the fallback. */
@@ -707,15 +623,5 @@ public final class ConfluenceMapper {
             return b.setStructValue(toStruct(node)).build();
         }
         return b.setStringValue(node.asText()).build();
-    }
-
-    private static boolean hasText(JsonNode node, String field) {
-        JsonNode value = node.path(field);
-        return value.isTextual() && !value.asText().isEmpty();
-    }
-
-    private static String text(JsonNode node, String field) {
-        JsonNode value = node.path(field);
-        return value.isTextual() ? value.asText() : "";
     }
 }
