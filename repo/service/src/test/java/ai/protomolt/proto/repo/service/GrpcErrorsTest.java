@@ -8,12 +8,10 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,25 +52,27 @@ class GrpcErrorsTest {
         assertThat(status.getDescription()).isEqualTo("no object at bucket/k");
     }
 
+    /**
+     * Runs over every {@link RepositoryException.Code} constant, so a code added
+     * in the future is exercised automatically; {@link #expectedStatus} is an
+     * exhaustive switch, so the new code also fails compilation here until its
+     * expected gRPC status is spelled out.
+     */
     @ParameterizedTest
-    @MethodSource("repositoryCodes")
-    void repositoryExceptionMapsItsCodeKeepingOnlyTheMessage(RepositoryException.Code code, Status.Code expected) {
+    @EnumSource(RepositoryException.Code.class)
+    void repositoryExceptionMapsItsCodeKeepingOnlyTheMessage(RepositoryException.Code code) {
         Throwable mapped = GrpcErrors.map(new RepositoryException(code, "repository said " + code,
                 new IllegalStateException("provider detail")));
         assertThat(mapped).isInstanceOf(StatusRuntimeException.class);
         Status status = Status.fromThrowable(mapped);
-        assertThat(status.getCode()).isEqualTo(expected);
+        assertThat(status.getCode()).isEqualTo(expectedStatus(code));
         assertThat(status.getDescription()).isEqualTo("repository said " + code);
         assertThat(mapped.getCause()).isNull();
     }
 
-    @Test
-    void everyRepositoryCodeHasAnExpectedStatus() {
-        assertThat(repositoryCodes()).hasSize(RepositoryException.Code.values().length);
-    }
-
-    static Stream<Arguments> repositoryCodes() {
-        return Stream.of(RepositoryException.Code.values()).map(code -> Arguments.of(code, switch (code) {
+    /** The wire contract: the exact gRPC status for each repository code. */
+    private static Status.Code expectedStatus(RepositoryException.Code code) {
+        return switch (code) {
             case INVALID_ARGUMENT -> Status.Code.INVALID_ARGUMENT;
             case NOT_FOUND -> Status.Code.NOT_FOUND;
             case FAILED_PRECONDITION -> Status.Code.FAILED_PRECONDITION;
@@ -89,7 +89,7 @@ class GrpcErrorsTest {
             case OUT_OF_RANGE -> Status.Code.OUT_OF_RANGE;
             case DATA_LOSS -> Status.Code.DATA_LOSS;
             case UNAUTHENTICATED -> Status.Code.UNAUTHENTICATED;
-        }));
+        };
     }
 
     @Test
@@ -107,6 +107,15 @@ class GrpcErrorsTest {
         assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
         // Only the message crosses the wire — never a stack trace.
         assertThat(status.getDescription()).isEqualTo("connection reset by peer");
+        assertThat(mapped.getCause()).isNull();
+    }
+
+    @Test
+    void unmappedErrorMapsToInternalWithOnlyTheMessage() {
+        Throwable mapped = GrpcErrors.map(new AssertionError("invariant broken"));
+        Status status = Status.fromThrowable(mapped);
+        assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
+        assertThat(status.getDescription()).isEqualTo("invariant broken");
         assertThat(mapped.getCause()).isNull();
     }
 
