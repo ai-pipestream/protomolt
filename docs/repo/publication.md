@@ -11,8 +11,8 @@ An omitted untouched part is not an instruction to delete it.
 
 Use `GetDocument` or `GetDocumentByReference` with `parts` and `chunk_sets` to
 request selected content. Empty selection requests full assembly. Consult the
-[protobuf contract](../../repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/document_service.proto)
-for required fields and the [repository guide](../../repo/README.md#grpc-documentservice-repoproto)
+[protobuf contract](../../repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto)
+for required fields and the [repository guide](../../repo/README.md)
 for host and storage configuration.
 
 Large original source files use the existing streaming HTTP upload route and

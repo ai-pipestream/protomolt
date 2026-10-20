@@ -369,9 +369,11 @@ message SingularFromRepeatedDoc {
 
 // Runtime descriptor evolution fixture: the same source name changes field type.
 message EvolvingSource {
+  // Evolving source payload value.
   string value = 1;
 }
 
+// Target projection over EvolvingSource for descriptor evolution tests.
 message EvolvingProjection {
   option (ai.protomolt.proto.projection.v1.sources) = {
     source: "ai.protomolt.proto.projection.test.v1.EvolvingSource"
