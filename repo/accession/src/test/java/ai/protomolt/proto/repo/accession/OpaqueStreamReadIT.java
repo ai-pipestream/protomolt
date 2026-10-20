@@ -19,10 +19,12 @@ import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.StoredPartEntry;
 import ai.protomolt.proto.repo.v2.ValidationMode;
+import ai.protomolt.proto.repo.v1.ParserResult;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
@@ -240,6 +242,168 @@ class OpaqueStreamReadIT {
                 .as("the corrupt length never reaches an open stream or a buffer")
                 .isZero();
         assertThat(frames).noneMatch(ReadDocumentResponse::hasPartData);
+    }
+
+    @Test void smallOpaquePartReservesAllocatedChunkBuffersAndReleasesAfterFinalCallback() {
+        var address = address(account, "review-small-opaque");
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        f.opaqueSaves.save(caller, opaqueCreate("op-review", address, "review-small-opaque", opaquePayload(1)));
+
+        var held = new AtomicLong();
+        var duringCallback = new AtomicLong(-1);
+        var atComplete = new AtomicLong(-1);
+        var error = new AtomicReference<Throwable>();
+        var reads = new DocumentReads(f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", f.stack)),
+                limits(),
+                bytes -> {
+                    held.addAndGet(bytes);
+                    return () -> held.addAndGet(-bytes);
+                },
+                Clock.systemUTC());
+        reads.readDocument(caller, coreRead(address), new StreamObserver<>() {
+            @Override public void onNext(ReadDocumentResponse value) {
+                if (value.hasPartData()) duringCallback.set(held.get());
+                if (value.hasComplete()) atComplete.set(held.get());
+            }
+            @Override public void onError(Throwable failure) { error.set(failure); }
+            @Override public void onCompleted() {}
+        });
+
+        assertThat(error.get()).isNull();
+        assertThat(duringCallback.get())
+                .as("two allocated 64 KiB arrays must be covered during callback")
+                .isEqualTo(2L * CHUNK);
+        assertThat(atComplete.get()).isZero();
+        assertThat(held.get()).isZero();
+    }
+
+    @Test void opaqueStreamReleasesReservationAndClosesStreamOnPauseCancelAndCallbackThrow() {
+        var address = address(account, "doc-opaque-lifecycle");
+        f.opaqueStepGrant(account, credential, "chunker", true, "grant-producer", OPAQUE_URL);
+        var docWithParsed = Document.newBuilder()
+                .setDocId("doc-opaque-lifecycle")
+                .setOwnership(ownership(account, "chunker"))
+                .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder().setTitle("opaque"))
+                .setStructuredData(Any.newBuilder().setTypeUrl(OPAQUE_URL).setValue(opaquePayload(3 * CHUNK)))
+                .putParserResults("docling", ParserResult.newBuilder()
+                        .setParserName("docling")
+                        .setParserVersion("1")
+                        .setStatus(ai.protomolt.proto.repo.v1.ParseStatus.PARSE_STATUS_OK)
+                        .build())
+                .build();
+        f.opaqueSaves.save(caller, SaveDocumentRequest.newBuilder()
+                .setOperationId("op-lifecycle")
+                .setTarget(ai.protomolt.proto.repo.v2.DocumentTarget.newBuilder().setAddress(address))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .setDocument(docWithParsed)
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED))
+                .setOwner(stepOwner("chunker"))
+                .setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+                .addOpaqueAttestations(OpaqueAttestation.newBuilder()
+                        .setOccurrence(OccurrenceLocator.newBuilder()
+                                .setPart(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                .addSteps(RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(4)))
+                        .setTypeUrl(OPAQUE_URL))
+                .build());
+
+        var opens = new AtomicInteger();
+        var closes = new AtomicInteger();
+        var held = new AtomicLong();
+        var tracking = new CountingReadStack(f.stack, new AtomicLong(), opens, closes);
+        var reads = new DocumentReads(f.catalog,
+                new DocumentSaves.Drives("default", java.util.Map.of("default", tracking)),
+                limits(),
+                bytes -> {
+                    held.addAndGet(bytes);
+                    return () -> held.addAndGet(-bytes);
+                },
+                Clock.systemUTC());
+
+        // 1. Backpressure pause immediately after the opaque CORE part's final frame, before PARSED loads:
+        //    the opaque reservation is 0 while paused, and PARSED reserves only its own length when resumed.
+        var ready = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var onReady = new AtomicReference<Runnable>();
+        var heldWhilePausedBetweenParts = new AtomicLong(-1);
+        var heldDuringParsed = new AtomicLong(-1);
+        var allPartsRequest = ReadDocumentRequest.newBuilder().setAddress(address).setAllowOpaque(true).build();
+        reads.readDocument(caller, allPartsRequest, new ServerCallStreamObserver<>() {
+            @Override public boolean isCancelled() { return false; }
+            @Override public void setOnCancelHandler(Runnable onCancelHandler) {}
+            @Override public void setCompression(String compression) {}
+            @Override public boolean isReady() { return ready.get(); }
+            @Override public void setOnReadyHandler(Runnable handler) { onReady.set(handler); }
+            @Override public void request(int count) {}
+            @Override public void setMessageCompression(boolean enable) {}
+            @Override public void disableAutoInboundFlowControl() {}
+            @Override public void onNext(ReadDocumentResponse value) {
+                if (value.hasPartData()) {
+                    var pd = value.getPartData();
+                    if (pd.getSelector().getPart() == DocumentPart.DOCUMENT_PART_CORE && pd.getLast()) {
+                        ready.set(false);
+                    } else if (pd.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED) {
+                        heldDuringParsed.set(held.get());
+                    }
+                }
+            }
+            @Override public void onError(Throwable t) { throw new AssertionError("unexpected onError", t); }
+            @Override public void onCompleted() {}
+        });
+        heldWhilePausedBetweenParts.set(held.get());
+        assertThat(heldWhilePausedBetweenParts.get())
+                .as("opaque reservation is released before pausing between parts")
+                .isZero();
+        ready.set(true);
+        onReady.get().run();
+        assertThat(heldDuringParsed.get())
+                .as("subsequent typed part holds only its own reservation, not the earlier opaque buffers")
+                .isGreaterThan(0L)
+                .isLessThan(CHUNK);
+        assertThat(held.get()).isZero();
+        assertThat(closes.get()).isEqualTo(opens.get());
+
+        // 2. Reentrant mid-stream cancellation during the first opaque PartData callback:
+        var cancelHandler = new AtomicReference<Runnable>();
+        var cancelledFlag = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var heldDuringCancelledCallback = new AtomicLong(-1);
+        reads.readDocument(caller, coreRead(address), new ServerCallStreamObserver<>() {
+            @Override public boolean isCancelled() { return cancelledFlag.get(); }
+            @Override public void setOnCancelHandler(Runnable handler) { cancelHandler.set(handler); }
+            @Override public void setCompression(String compression) {}
+            @Override public boolean isReady() { return true; }
+            @Override public void setOnReadyHandler(Runnable handler) {}
+            @Override public void request(int count) {}
+            @Override public void setMessageCompression(boolean enable) {}
+            @Override public void disableAutoInboundFlowControl() {}
+            @Override public void onNext(ReadDocumentResponse value) {
+                if (value.hasPartData()) {
+                    cancelledFlag.set(true);
+                    cancelHandler.get().run();
+                    heldDuringCancelledCallback.set(held.get());
+                }
+            }
+            @Override public void onError(Throwable t) {}
+            @Override public void onCompleted() {}
+        });
+        assertThat(heldDuringCancelledCallback.get()).isEqualTo(2L * CHUNK);
+        assertThat(held.get()).isZero();
+        assertThat(closes.get()).isEqualTo(opens.get());
+
+        // 3. Throwing onNext callback on an opaque PartData frame:
+        var throwError = new AtomicReference<Throwable>();
+        reads.readDocument(caller, coreRead(address), new StreamObserver<>() {
+            @Override public void onNext(ReadDocumentResponse value) {
+                if (value.hasPartData()) {
+                    throw new IllegalStateException("boom");
+                }
+            }
+            @Override public void onError(Throwable t) { throwError.set(t); }
+            @Override public void onCompleted() {}
+        });
+        assertThat(throwError.get()).isNotNull();
+        assertThat(held.get()).isZero();
+        assertThat(closes.get()).isEqualTo(opens.get());
     }
 
     // ------------------------------------------------------------------ helpers

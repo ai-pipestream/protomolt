@@ -292,7 +292,8 @@ public final class DocumentStreams {
         // Streaming state of an opaque part: the open stack stream, the chunk waiting to
         // be emitted, and the one-chunk lookahead that detects end of stream (where the
         // stack verifies length and digest) before the final chunk goes out. The two
-        // buffers are allocated once per session and swapped, never reallocated.
+        // buffers are allocated for the part under its two-chunk reservation and discarded
+        // before that reservation is released.
         private InputStream opaqueStream;
         private byte[] pendingChunk;
         private byte[] lookaheadChunk;
@@ -330,6 +331,11 @@ public final class DocumentStreams {
                 if (!inPump) {
                     currentSelector = null;
                     currentBytes = null;
+                    opaqueStream = null;
+                    pendingChunk = null;
+                    lookaheadChunk = null;
+                    pendingLength = -1;
+                    opaqueEof = false;
                     leaseToRelease = currentLease;
                     currentLease = null;
                 }
@@ -414,6 +420,8 @@ public final class DocumentStreams {
                         currentSelector = null;
                         currentBytes = null;
                         opaqueStream = null;
+                        pendingChunk = null;
+                        lookaheadChunk = null;
                         pendingLength = -1;
                         opaqueEof = false;
                         leaseToRelease = currentLease;
@@ -435,17 +443,15 @@ public final class DocumentStreams {
          * length before anything is allocated and held until the part's final frame
          * callback returns; a refused reservation fails the read before any buffering.
          * An opaque part has no retained-schema check, so it streams chunk by chunk
-         * under a fixed two-chunk reservation; the stack stream verifies length and
-         * digest at end of stream, which the one-chunk lookahead reaches before the
-         * part's final chunk is emitted.
+         * under a fixed two-chunk reservation covering its pending and lookahead chunk
+         * buffers; the stack stream verifies length and digest at end of stream, which
+         * the one-chunk lookahead reaches before the part's final chunk is emitted.
          */
         private void loadPart(StoredPartEntry part) {
             var entry = part.getEntry();
             var ref = part.getRef();
             boolean opaque = entry.getOpaque();
-            long reserved = opaque
-                    ? Math.min(Math.max(ref.getLength(), 0L), 2L * CHUNK_SIZE)
-                    : ref.getLength();
+            long reserved = opaque ? 2L * CHUNK_SIZE : ref.getLength();
             var lease = Objects.requireNonNull(
                     reads.reservations().reserve(reserved), "reservation lease");
             synchronized (stateLock) {
@@ -497,10 +503,8 @@ public final class DocumentStreams {
 
         /** Opens an opaque part's stack stream and reads its first chunk, without buffering the part. */
         private void openOpaquePart(PartSelector selector, StackRef ref) {
-            if (pendingChunk == null) {
-                pendingChunk = new byte[CHUNK_SIZE];
-                lookaheadChunk = new byte[CHUNK_SIZE];
-            }
+            pendingChunk = new byte[CHUNK_SIZE];
+            lookaheadChunk = new byte[CHUNK_SIZE];
             InputStream stream = null;
             final int first;
             try {
@@ -648,6 +652,11 @@ public final class DocumentStreams {
             synchronized (stateLock) {
                 currentSelector = null;
                 currentBytes = null;
+                opaqueStream = null;
+                pendingChunk = null;
+                lookaheadChunk = null;
+                pendingLength = -1;
+                opaqueEof = false;
                 lease = currentLease;
                 currentLease = null;
             }
