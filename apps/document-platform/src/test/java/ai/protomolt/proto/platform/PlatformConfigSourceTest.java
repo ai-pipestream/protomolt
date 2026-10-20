@@ -18,12 +18,12 @@ class PlatformConfigSourceTest {
 
     @Test
     void anAbsentFamilyMeansTheRegistrySource() {
-        assertThat(DocumentPlatform.kafkaConfigFamily(Map.of())).isNull();
+        assertThat(PlatformEnvironment.kafkaConfigFamily(Map.of())).isNull();
     }
 
     @Test
     void aCompleteFamilySelectsKafkaWithTheTopicDefaulted() {
-        KafkaConfigSource.Config config = DocumentPlatform.kafkaConfigFamily(Map.of(
+        KafkaConfigSource.Config config = PlatformEnvironment.kafkaConfigFamily(Map.of(
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "kafka:9092",
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL,
                 "http://registry:8081"));
@@ -32,7 +32,7 @@ class PlatformConfigSourceTest {
                 .isEqualTo(DocumentPlatformConfig.DEFAULT_CONFIG_KAFKA_TOPIC);
         assertThat(config.schemaRegistryUrl()).isEqualTo("http://registry:8081");
 
-        assertThat(DocumentPlatform.kafkaConfigFamily(Map.of(
+        assertThat(PlatformEnvironment.kafkaConfigFamily(Map.of(
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "kafka:9092",
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL,
                 "http://registry:8081",
@@ -42,7 +42,7 @@ class PlatformConfigSourceTest {
 
     @Test
     void aMissingSchemaRegistryUrlRefusesByName() {
-        assertThatThrownBy(() -> DocumentPlatform.kafkaConfigFamily(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.kafkaConfigFamily(Map.of(
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "kafka:9092")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(
@@ -52,7 +52,7 @@ class PlatformConfigSourceTest {
 
     @Test
     void namingBothSourcesIsAContradiction() {
-        assertThatThrownBy(() -> DocumentPlatform.kafkaConfigFamily(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.kafkaConfigFamily(Map.of(
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_BOOTSTRAP_SERVERS, "kafka:9092",
                 DocumentPlatformConfig.ENV_CONFIG_KAFKA_SCHEMA_REGISTRY_URL,
                 "http://registry:8081",

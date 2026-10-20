@@ -43,10 +43,10 @@ class ScreeningMountTest {
 
     @Test
     void theEnvReadIsAbsentOrOneTrimmedName() {
-        assertThat(DocumentPlatform.screeningFromEnvironment(Map.of())).isNull();
-        assertThat(DocumentPlatform.screeningFromEnvironment(
+        assertThat(PlatformEnvironment.screeningFromEnvironment(Map.of())).isNull();
+        assertThat(PlatformEnvironment.screeningFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_SCREENING, "  "))).isNull();
-        assertThat(DocumentPlatform.screeningFromEnvironment(
+        assertThat(PlatformEnvironment.screeningFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_SCREENING, " pii-mount ")))
                 .isEqualTo("pii-mount");
     }

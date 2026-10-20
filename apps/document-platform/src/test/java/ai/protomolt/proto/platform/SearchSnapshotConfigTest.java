@@ -51,12 +51,12 @@ class SearchSnapshotConfigTest {
 
     @Test
     void theReadOnlyFlagParsesStrictly() {
-        assertThat(DocumentPlatform.searchReadOnly(Map.of())).isFalse();
-        assertThat(DocumentPlatform.searchReadOnly(Map.of(
+        assertThat(PlatformEnvironment.searchReadOnly(Map.of())).isFalse();
+        assertThat(PlatformEnvironment.searchReadOnly(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "true"))).isTrue();
-        assertThat(DocumentPlatform.searchReadOnly(Map.of(
+        assertThat(PlatformEnvironment.searchReadOnly(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "false"))).isFalse();
-        assertThatThrownBy(() -> DocumentPlatform.searchReadOnly(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.searchReadOnly(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_READ_ONLY, "yes")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_SEARCH_READ_ONLY);
@@ -64,14 +64,14 @@ class SearchSnapshotConfigTest {
 
     @Test
     void theRefreshIntervalParsesStrictly() {
-        assertThat(DocumentPlatform.searchRefreshSeconds(Map.of())).isZero();
-        assertThat(DocumentPlatform.searchRefreshSeconds(Map.of(
+        assertThat(PlatformEnvironment.searchRefreshSeconds(Map.of())).isZero();
+        assertThat(PlatformEnvironment.searchRefreshSeconds(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "30"))).isEqualTo(30L);
-        assertThatThrownBy(() -> DocumentPlatform.searchRefreshSeconds(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.searchRefreshSeconds(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "soon")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS);
-        assertThatThrownBy(() -> DocumentPlatform.searchRefreshSeconds(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.searchRefreshSeconds(Map.of(
                 DocumentPlatformConfig.ENV_SEARCH_REFRESH_SECONDS, "0")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unset it for restart-only");

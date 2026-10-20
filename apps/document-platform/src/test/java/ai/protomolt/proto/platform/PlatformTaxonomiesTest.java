@@ -15,14 +15,14 @@ class PlatformTaxonomiesTest {
 
     @Test
     void absentMeansNoFollow() {
-        assertThat(DocumentPlatform.taxonomiesFromEnvironment(Map.of())).isEmpty();
-        assertThat(DocumentPlatform.taxonomiesFromEnvironment(
+        assertThat(PlatformEnvironment.taxonomiesFromEnvironment(Map.of())).isEmpty();
+        assertThat(PlatformEnvironment.taxonomiesFromEnvironment(
                 Map.of(DocumentPlatformConfig.ENV_TAXONOMIES, ""))).isEmpty();
     }
 
     @Test
     void namesParseTrimmedAndDeduplicatedInOrder() {
-        assertThat(DocumentPlatform.taxonomiesFromEnvironment(Map.of(
+        assertThat(PlatformEnvironment.taxonomiesFromEnvironment(Map.of(
                 DocumentPlatformConfig.ENV_TAXONOMIES,
                 " products, regions ,products,, topics ")))
                 .containsExactly("products", "regions", "topics");
@@ -30,7 +30,7 @@ class PlatformTaxonomiesTest {
 
     @Test
     void setButNamingNothingRefusesByName() {
-        assertThatThrownBy(() -> DocumentPlatform.taxonomiesFromEnvironment(Map.of(
+        assertThatThrownBy(() -> PlatformEnvironment.taxonomiesFromEnvironment(Map.of(
                 DocumentPlatformConfig.ENV_TAXONOMIES, " , ,")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(DocumentPlatformConfig.ENV_TAXONOMIES);
