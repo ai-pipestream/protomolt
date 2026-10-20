@@ -612,7 +612,6 @@ public final class RepoServices implements AutoCloseable {
     public synchronized Server startInProcess(String name, String apiToken, CallerResolver resolver) {
         requireOpen();
         requireTransportAuthentication(apiToken, resolver);
-        RemoteRouting.rejectInProcess(config, name);
         try {
             var builder = InProcessServerBuilder.forName(name).maxInboundMessageSize(10 * 1024 * 1024);
             if (apiToken != null) builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
@@ -648,7 +647,7 @@ public final class RepoServices implements AutoCloseable {
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionService.newInstance());
             builder.intercept(new ApiTokenServerInterceptor(apiToken, resolver));
-            Server server = registerAndStart(builder, started -> RemoteRouting.rejectTcp(config, started.getPort()));
+            Server server = registerAndStart(builder);
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
             LOG.info("repo-service listening on port {}", server.getPort());
             return server;
@@ -684,22 +683,16 @@ public final class RepoServices implements AutoCloseable {
         }
     }
 
-    private Server registerAndStart(io.grpc.ServerBuilder<?> builder) throws IOException {
-        return registerAndStart(builder, server -> {});
-    }
-
     private void requireTransportAuthentication(String apiToken, CallerResolver resolver) {
         if (apiToken == null && resolver != null)
             throw new IllegalArgumentException("an access-policy resolver requires the operator api token");
     }
 
-    private Server registerAndStart(io.grpc.ServerBuilder<?> builder,
-                                    java.util.function.Consumer<Server> routingCheck) throws IOException {
+    private Server registerAndStart(io.grpc.ServerBuilder<?> builder) throws IOException {
         GrpcServerLifetime transport = null;
         try {
             services().forEach(builder::addService);
             transport = GrpcServerLifetime.start(builder, servers::add);
-            routingCheck.accept(transport.server());
             return transport.server();
         } catch (IOException | RuntimeException | Error failure) {
             // services() may have started durable recovery before binding.
