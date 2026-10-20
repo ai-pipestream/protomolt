@@ -15,16 +15,12 @@ import ai.protomolt.proto.grpc.workflow.WorkflowValidation;
 import ai.protomolt.proto.grpc.workflow.v1.VersionedWorkflow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.ObjectId;
 
 import java.io.IOException;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
@@ -44,8 +40,6 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -77,17 +71,9 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     private static final ConcurrentMap<Path, ReentrantLock> JVM_LOCKS = new ConcurrentHashMap<>();
 
-    private static final String SUBJECTS_DIR = "subjects";
-    private static final String WORKFLOWS_DIR = "workflows";
-    private static final String CONFIGS_DIR = "configs";
-    private static final String WORKFLOW_VERSIONS_DIR = "workflow-versions";
-    private static final String DESCRIPTORS_DIR = "descriptors/sha256";
-    private static final String REGISTRY_FILE = "registry.json";
-    private static final String LOCK_FILE = "registry.lock";
-    private static final String CONFIG_FILE = "config.json";
-    private static final Pattern VERSION_FILE = Pattern.compile("v(\\d+)\\.proto");
 
     private final Path repoDir;
+    private final RegistryLayout layout;
     private final Path lockFile;
     private final ReentrantLock jvmLock;
     private final Git git;
@@ -108,7 +94,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     private GitSchemaRegistryStore(Builder builder) {
         this.repoDir = builder.repositoryDir.toAbsolutePath().normalize();
-        this.lockFile = repoDir.resolve(LOCK_FILE);
+        this.layout = new RegistryLayout(repoDir);
+        this.lockFile = repoDir.resolve(RegistryLayout.LOCK_FILE);
         this.jvmLock = JVM_LOCKS.computeIfAbsent(lockFile, path -> new ReentrantLock());
         this.writeGate = builder.writeGate;
         this.author = new PersonIdent(builder.authorName, builder.authorEmail);
@@ -178,12 +165,12 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     @Override
     public Optional<ByteString> descriptorSet(String fingerprint) {
         DescriptorSetArtifacts.requireFingerprint(fingerprint);
-        Path path = descriptorPath(fingerprint);
+        Path path = layout.descriptorPath(fingerprint);
         try {
-            requireDescriptorRepository();
-            if (!descriptorDirectoryExists(repoDir.resolve("descriptors"))
-                    || !descriptorDirectoryExists(path.getParent())) {
-                requireDescriptorRepository();
+            layout.requireDescriptorRepository();
+            if (!RegistryLayout.descriptorDirectoryExists(repoDir.resolve("descriptors"))
+                    || !RegistryLayout.descriptorDirectoryExists(path.getParent())) {
+                layout.requireDescriptorRepository();
                 return Optional.empty();
             }
             var attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
@@ -191,7 +178,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
             return Optional.of(DescriptorSetArtifacts.read(path, fingerprint));
         } catch (NoSuchFileException missing) {
             // An absent artifact is meaningful only while the backing repository is available.
-            try { requireDescriptorRepository(); }
+            try { layout.requireDescriptorRepository(); }
             catch (IOException unavailable) {
                 throw new RegistryStoreException("Descriptor repository is unavailable", unavailable);
             }
@@ -201,35 +188,18 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         }
     }
 
-    private void requireDescriptorRepository() throws IOException {
-        if (!Files.readAttributes(repoDir, BasicFileAttributes.class).isDirectory()
-                || !Files.readAttributes(repoDir.resolve(".git"), BasicFileAttributes.class,
-                        LinkOption.NOFOLLOW_LINKS).isDirectory())
-            throw new IOException("Descriptor repository is not a Git working directory");
-    }
-
-    private static boolean descriptorDirectoryExists(Path path) throws IOException {
-        try {
-            if (!Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isDirectory())
-                throw new IOException("Descriptor parent is not a directory: " + path);
-            return true;
-        } catch (NoSuchFileException missing) {
-            return false;
-        }
-    }
-
     @Override
     public void putDescriptorSet(String fingerprint, ByteString descriptorSet) {
         DescriptorSetArtifacts.validate(fingerprint, descriptorSet);
         locked(() -> {
-            Path target = descriptorPath(fingerprint);
+            Path target = layout.descriptorPath(fingerprint);
             if (Files.isRegularFile(target)) {
                 DescriptorSetArtifacts.read(target, fingerprint);
                 return null;
             }
             Files.createDirectories(target.getParent());
             Files.write(target, descriptorSet.toByteArray());
-            String relative = DESCRIPTORS_DIR + "/" + fingerprint + ".pb";
+            String relative = RegistryLayout.DESCRIPTORS_DIR + "/" + fingerprint + ".pb";
             commit(List.of(relative), "Store descriptor " + fingerprint);
             return null;
         });
@@ -290,15 +260,15 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
             StoredSchema stored = new StoredSchema(subject, version, fresh.nextGlobalId(),
                     schemaText, refs, SchemaContents.contentHash(schemaText, refs));
 
-            String subjectDir = subjectDir(subject);
+            String subjectDir = layout.subjectDir(subject);
             String protoPath = subjectDir + "/v" + version + ".proto";
             String metaPath = subjectDir + "/v" + version + ".json";
             Files.createDirectories(repoDir.resolve(subjectDir));
             Files.writeString(repoDir.resolve(protoPath), schemaText);
-            Files.writeString(repoDir.resolve(metaPath), metadataJson(stored));
+            Files.writeString(repoDir.resolve(metaPath), RegistryMetadata.metadataJson(json, stored));
             writeRegistryFile(fresh.globalMode(), fresh.nextGlobalId() + 1);
 
-            commit(List.of(protoPath, metaPath, REGISTRY_FILE),
+            commit(List.of(protoPath, metaPath, RegistryLayout.REGISTRY_FILE),
                     "Register " + subject + " v" + version);
             index = null;
             return stored;
@@ -311,11 +281,11 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
      * {@code check-workflow}; the store only persists and versions via Git history.
      */
     public void putWorkflow(String name, String workflowJson) throws RegistryStoreException {
-        requireWorkflowName(name);
+        RegistryLayout.requireWorkflowName(name);
         Objects.requireNonNull(workflowJson, "workflowJson");
         locked(() -> {
-            String path = WORKFLOWS_DIR + "/" + encode(name) + ".json";
-            Files.createDirectories(repoDir.resolve(WORKFLOWS_DIR));
+            String path = RegistryLayout.WORKFLOWS_DIR + "/" + RegistryLayout.encode(name) + ".json";
+            Files.createDirectories(repoDir.resolve(RegistryLayout.WORKFLOWS_DIR));
             Files.writeString(repoDir.resolve(path), workflowJson);
             commit(List.of(path), "Put workflow " + name);
             return null;
@@ -324,8 +294,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** The named workflow's JSON document, when present. */
     public Optional<String> workflow(String name) throws RegistryStoreException {
-        requireWorkflowName(name);
-        Path path = repoDir.resolve(WORKFLOWS_DIR).resolve(encode(name) + ".json");
+        RegistryLayout.requireWorkflowName(name);
+        Path path = repoDir.resolve(RegistryLayout.WORKFLOWS_DIR).resolve(RegistryLayout.encode(name) + ".json");
         try {
             return Files.isRegularFile(path)
                     ? Optional.of(Files.readString(path))
@@ -337,14 +307,14 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** Every stored workflow name, sorted. */
     public List<String> workflows() throws RegistryStoreException {
-        Path dir = repoDir.resolve(WORKFLOWS_DIR);
+        Path dir = repoDir.resolve(RegistryLayout.WORKFLOWS_DIR);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         try (var files = Files.list(dir)) {
             return files.map(path -> path.getFileName().toString())
                     .filter(fileName -> fileName.endsWith(".json"))
-                    .map(fileName -> decode(fileName.substring(0, fileName.length() - 5)))
+                    .map(fileName -> RegistryLayout.decode(fileName.substring(0, fileName.length() - 5)))
                     .sorted()
                     .toList();
         } catch (IOException e) {
@@ -371,7 +341,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         Objects.requireNonNull(workflow, "workflow");
         WorkflowValidation.validate(workflow);
         locked(() -> {
-            String path = workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
+            String path = layout.workflowPath(workflow.getWorkflow().getName(), workflow.getVersion());
             Path target = repoDir.resolve(path);
             byte[] bytes = workflow.toByteArray();
             byte[] committed = committedWorkflowBytes(path);
@@ -404,8 +374,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
             throws RegistryStoreException {
         WorkflowValidation.validateName(name, "workflow.name");
         WorkflowValidation.validateName(version, "versioned_workflow.version");
-        Path path = repoDir.resolve(workflowPath(name, version));
-        String relative = workflowPath(name, version);
+        Path path = repoDir.resolve(layout.workflowPath(name, version));
+        String relative = layout.workflowPath(name, version);
         byte[] committed = committedWorkflowBytes(relative);
         if (committed == null) {
             return Optional.empty();
@@ -424,7 +394,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     /** All promoted versions of one workflow, ascending by version name. */
     public List<VersionedWorkflow> workflowVersions(String name) throws RegistryStoreException {
         WorkflowValidation.validateName(name, "workflow.name");
-        Path dir = repoDir.resolve(WORKFLOW_VERSIONS_DIR).resolve(encode(name));
+        Path dir = repoDir.resolve(RegistryLayout.WORKFLOW_VERSIONS_DIR).resolve(RegistryLayout.encode(name));
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
@@ -449,13 +419,13 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** Every workflow holding at least one promoted version, sorted. */
     public List<String> workflowNames() throws RegistryStoreException {
-        Path dir = repoDir.resolve(WORKFLOW_VERSIONS_DIR);
+        Path dir = repoDir.resolve(RegistryLayout.WORKFLOW_VERSIONS_DIR);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         try (Stream<Path> files = Files.list(dir)) {
             return files.filter(Files::isDirectory)
-                    .map(path -> decode(path.getFileName().toString()))
+                    .map(path -> RegistryLayout.decode(path.getFileName().toString()))
                     .filter(name -> !workflowVersions(name).isEmpty())
                     .sorted()
                     .toList();
@@ -488,30 +458,6 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     }
 
     /**
-     * The repo-relative {@code workflows/<encoded>/<encoded>.pb} path, checked to stay inside
-     * {@link #WORKFLOW_VERSIONS_DIR} — the same second line of defense as {@link #subjectDir}.
-     */
-    private String workflowPath(String name, String version) {
-        String relative = WORKFLOW_VERSIONS_DIR + "/" + encode(name) + "/" + encode(version) + ".pb";
-        Path resolved = repoDir.resolve(relative).normalize();
-        if (!resolved.startsWith(repoDir.resolve(WORKFLOW_VERSIONS_DIR).normalize())) {
-            throw new IllegalArgumentException(
-                    "workflow identity does not name a file under " + WORKFLOW_VERSIONS_DIR);
-        }
-        return relative;
-    }
-
-    private Path descriptorPath(String fingerprint) {
-        DescriptorSetArtifacts.requireFingerprint(fingerprint);
-        Path directory = repoDir.resolve(DESCRIPTORS_DIR).normalize();
-        Path resolved = directory.resolve(fingerprint + ".pb").normalize();
-        if (!resolved.startsWith(directory)) {
-            throw new IllegalArgumentException("descriptor fingerprint escapes registry storage");
-        }
-        return resolved;
-    }
-
-    /**
      * Stores one config document envelope per put under
      * {@code configs/<name>.json}. The registry server gates writes (type
      * resolution against the registered schemas, strict parse, and the
@@ -523,11 +469,11 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
      * @return the commit id: the document's version
      */
     public String putConfig(String name, String envelopeJson) throws RegistryStoreException {
-        requireDocumentName(name, "Config");
+        RegistryLayout.requireDocumentName(name, "Config");
         Objects.requireNonNull(envelopeJson, "envelopeJson");
         return locked(() -> {
-            String path = CONFIGS_DIR + "/" + encode(name) + ".json";
-            Files.createDirectories(repoDir.resolve(CONFIGS_DIR));
+            String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
+            Files.createDirectories(repoDir.resolve(RegistryLayout.CONFIGS_DIR));
             Files.writeString(repoDir.resolve(path), envelopeJson);
             commit(List.of(path), "Put config " + name);
             return git.getRepository().resolve("HEAD").getName();
@@ -536,8 +482,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** The named config document's envelope JSON, when present. */
     public Optional<String> config(String name) throws RegistryStoreException {
-        requireDocumentName(name, "Config");
-        Path path = repoDir.resolve(CONFIGS_DIR).resolve(encode(name) + ".json");
+        RegistryLayout.requireDocumentName(name, "Config");
+        Path path = repoDir.resolve(RegistryLayout.CONFIGS_DIR).resolve(RegistryLayout.encode(name) + ".json");
         try {
             return Files.isRegularFile(path)
                     ? Optional.of(Files.readString(path))
@@ -552,8 +498,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
      * it, or empty when the document does not exist.
      */
     public Optional<String> configVersion(String name) throws RegistryStoreException {
-        requireDocumentName(name, "Config");
-        String path = CONFIGS_DIR + "/" + encode(name) + ".json";
+        RegistryLayout.requireDocumentName(name, "Config");
+        String path = RegistryLayout.CONFIGS_DIR + "/" + RegistryLayout.encode(name) + ".json";
         if (!Files.isRegularFile(repoDir.resolve(path))) {
             return Optional.empty();
         }
@@ -569,32 +515,18 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
     /** Every stored config subject, sorted. */
     public List<String> configs() throws RegistryStoreException {
-        Path dir = repoDir.resolve(CONFIGS_DIR);
+        Path dir = repoDir.resolve(RegistryLayout.CONFIGS_DIR);
         if (!Files.isDirectory(dir)) {
             return List.of();
         }
         try (var files = Files.list(dir)) {
             return files.map(path -> path.getFileName().toString())
                     .filter(fileName -> fileName.endsWith(".json"))
-                    .map(fileName -> decode(fileName.substring(0, fileName.length() - 5)))
+                    .map(fileName -> RegistryLayout.decode(fileName.substring(0, fileName.length() - 5)))
                     .sorted()
                     .toList();
         } catch (IOException e) {
             throw new RegistryStoreException("Failed to list configs", e);
-        }
-    }
-
-    private static void requireDocumentName(String name, String kind) {
-        if (name == null || name.isBlank() || !name.matches("[A-Za-z0-9._-]+")) {
-            throw new IllegalArgumentException(
-                    kind + " names use [A-Za-z0-9._-]; got '" + name + "'");
-        }
-    }
-
-    private static void requireWorkflowName(String name) {
-        if (name == null || name.isBlank() || !name.matches("[A-Za-z0-9._-]+")) {
-            throw new IllegalArgumentException(
-                    "Workflow names use [A-Za-z0-9._-]; got '" + name + "'");
         }
     }
 
@@ -604,8 +536,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         CompatibilityModes.requireValid(mode);
         locked(() -> {
             index = loadIndex();
-            String subjectDir = subjectDir(subject);
-            String configPath = subjectDir + "/" + CONFIG_FILE;
+            String subjectDir = layout.subjectDir(subject);
+            String configPath = subjectDir + "/" + RegistryLayout.CONFIG_FILE;
             Files.createDirectories(repoDir.resolve(subjectDir));
             Files.writeString(repoDir.resolve(configPath),
                     json.createObjectNode().put("compatibility", mode).toPrettyString());
@@ -621,7 +553,7 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
         locked(() -> {
             Index fresh = loadIndex();
             writeRegistryFile(mode, fresh.nextGlobalId());
-            commit(List.of(REGISTRY_FILE), "Set global compatibility " + mode);
+            commit(List.of(RegistryLayout.REGISTRY_FILE), "Set global compatibility " + mode);
             index = null;
             return null;
         });
@@ -680,24 +612,8 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     // ---------------------------------------------------------------- files <-> model
 
     private void writeRegistryFile(String globalMode, int nextGlobalId) throws IOException {
-        ObjectNode node = json.createObjectNode()
-                .put("compatibility", globalMode)
-                .put("nextGlobalId", nextGlobalId);
-        Files.writeString(repoDir.resolve(REGISTRY_FILE), node.toPrettyString());
-    }
-
-    private String metadataJson(StoredSchema stored) {
-        ObjectNode node = json.createObjectNode()
-                .put("globalId", stored.globalId())
-                .put("contentHash", stored.contentHash());
-        ArrayNode array = node.putArray("references");
-        for (SchemaReference reference : stored.references()) {
-            array.addObject()
-                    .put("name", reference.name())
-                    .put("subject", reference.subject())
-                    .put("version", reference.version());
-        }
-        return node.toPrettyString();
+        Files.writeString(repoDir.resolve(RegistryLayout.REGISTRY_FILE),
+                RegistryMetadata.registryJson(json, globalMode, nextGlobalId));
     }
 
     private Index index() {
@@ -713,10 +629,10 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     private Index loadIndex() throws IOException {
         String globalMode = CompatibilityModes.DEFAULT_GLOBAL;
         int nextGlobalId = 1;
-        Path registryFile = repoDir.resolve(REGISTRY_FILE);
+        Path registryFile = repoDir.resolve(RegistryLayout.REGISTRY_FILE);
         if (Files.exists(registryFile)) {
-            JsonNode node = readMetadata(registryFile);
-            globalMode = readCompatibility(node, registryFile);
+            JsonNode node = RegistryMetadata.readMetadata(json, registryFile);
+            globalMode = RegistryMetadata.readCompatibility(node, registryFile);
             JsonNode counter = node.path("nextGlobalId");
             if (!counter.isIntegralNumber() || !counter.canConvertToInt() || counter.intValue() < 1) {
                 throw new RegistryStoreException("Invalid nextGlobalId in " + registryFile);
@@ -726,11 +642,11 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
 
         Map<String, SubjectEntry> subjects = new TreeMap<>();
         Map<Integer, StoredSchema> byGlobalId = new TreeMap<>();
-        Path subjectsDir = repoDir.resolve(SUBJECTS_DIR);
+        Path subjectsDir = repoDir.resolve(RegistryLayout.SUBJECTS_DIR);
         if (Files.isDirectory(subjectsDir)) {
             try (Stream<Path> dirs = Files.list(subjectsDir)) {
                 for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
-                    String subject = URLDecoder.decode(dir.getFileName().toString(), StandardCharsets.UTF_8);
+                    String subject = RegistryLayout.decode(dir.getFileName().toString());
                     SubjectEntry entry = loadSubject(subject, dir);
                     subjects.put(subject, entry);
                     entry.versions().values().forEach(s -> byGlobalId.put(s.globalId(), s));
@@ -747,80 +663,24 @@ public final class GitSchemaRegistryStore implements ConfigDocumentStore, Workfl
     private SubjectEntry loadSubject(String subject, Path dir) throws IOException {
         TreeMap<Integer, StoredSchema> versions = new TreeMap<>();
         String mode = null;
-        Path configFile = dir.resolve(CONFIG_FILE);
+        Path configFile = dir.resolve(RegistryLayout.CONFIG_FILE);
         if (Files.exists(configFile)) {
-            mode = readCompatibility(readMetadata(configFile), configFile);
+            mode = RegistryMetadata.readCompatibility(RegistryMetadata.readMetadata(json, configFile), configFile);
         }
         try (Stream<Path> files = Files.list(dir)) {
             for (Path file : files.toList()) {
-                Matcher matcher = VERSION_FILE.matcher(file.getFileName().toString());
-                if (!matcher.matches()) {
+                int version = RegistryLayout.versionNumber(file.getFileName().toString());
+                if (version < 0) {
                     continue;
                 }
-                int version = Integer.parseInt(matcher.group(1));
                 String schemaText = Files.readString(file);
                 JsonNode meta = json.readTree(
                         Files.readString(dir.resolve("v" + version + ".json")));
-                List<SchemaReference> references = new ArrayList<>();
-                for (JsonNode reference : meta.path("references")) {
-                    references.add(new SchemaReference(
-                            reference.path("name").asText(),
-                            reference.path("subject").asText(),
-                            reference.path("version").asInt()));
-                }
-                versions.put(version, new StoredSchema(subject, version,
-                        meta.path("globalId").asInt(), schemaText, references,
-                        meta.path("contentHash").asText()));
+                versions.put(version,
+                        RegistryMetadata.storedSchema(subject, version, schemaText, meta));
             }
         }
         return new SubjectEntry(versions, mode);
-    }
-
-    private JsonNode readMetadata(Path file) {
-        try {
-            JsonNode node = json.readTree(Files.readString(file));
-            if (node == null || !node.isObject()) {
-                throw new RegistryStoreException("Expected a metadata object in " + file);
-            }
-            return node;
-        } catch (IOException e) {
-            throw new RegistryStoreException("Cannot read registry metadata " + file, e);
-        }
-    }
-
-    private static String readCompatibility(JsonNode node, Path file) {
-        JsonNode value = node.path("compatibility");
-        if (!value.isTextual() || !CompatibilityModes.isValid(value.textValue())) {
-            throw new RegistryStoreException("Invalid compatibility policy in " + file);
-        }
-        return value.textValue();
-    }
-
-    private static String encode(String subject) {
-        return URLEncoder.encode(subject, StandardCharsets.UTF_8);
-    }
-
-    /**
-     * The repo-relative {@code subjects/<encoded>} path for a subject, checked to stay inside
-     * {@link #SUBJECTS_DIR}.
-     *
-     * <p>{@link RegistrationSupport#requireSubject} already refuses the names that can escape,
-     * so this is a second line rather than the only one: it keeps a future change to
-     * {@link #encode} from silently turning a subject name into a path traversal.
-     */
-    private String subjectDir(String subject) {
-        String relative = SUBJECTS_DIR + "/" + encode(subject);
-        Path resolved = repoDir.resolve(relative).normalize();
-        if (!resolved.startsWith(repoDir.resolve(SUBJECTS_DIR).normalize())
-                || resolved.equals(repoDir.resolve(SUBJECTS_DIR).normalize())) {
-            throw new IllegalArgumentException(
-                    "subject '" + subject + "' does not name a directory under " + SUBJECTS_DIR);
-        }
-        return relative;
-    }
-
-    private static String decode(String encoded) {
-        return java.net.URLDecoder.decode(encoded, StandardCharsets.UTF_8);
     }
 
     // ---------------------------------------------------------------- builder
