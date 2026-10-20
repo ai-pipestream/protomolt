@@ -103,11 +103,15 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  * @param s3ConditionalWrites explicitly enable conditional S3 writes only for a
  *        qualified backing endpoint ({@code DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES},
  *        default false)
- * @param readBudgetBytes the host byte budget shared by concurrent verified reads
- *        ({@code DOCUMENT_PLATFORM_READ_BUDGET_BYTES}, default 268435456 = 256 MiB).
- *        Each read reserves a part's catalog length before buffering it; a read
- *        that would exceed the remaining budget fails fast with
- *        {@code RESOURCE_EXHAUSTED} instead of allocating
+ * @param readBudgetBytes the host byte budget shared by every concurrent read that
+ *        buffers part bytes ({@code DOCUMENT_PLATFORM_READ_BUDGET_BYTES}, default
+ *        268435456 = 256 MiB). Unary {@code GetDocument}, bulk {@code ReadDocuments}
+ *        and streamed {@code ReadDocument} reserve each part's catalog length before
+ *        buffering it (a streamed opaque part reserves a fixed two-chunk window
+ *        instead), and {@code ReadBlob} reserves the blobs fragment's length while
+ *        resolving blob metadata before streaming the raw blob unbuffered. A
+ *        reservation the remaining budget does not cover fails fast with
+ *        {@code RESOURCE_EXHAUSTED}, never allocating from the recorded length
  */
 public record RepoServiceConfig(
         int grpcPort,
