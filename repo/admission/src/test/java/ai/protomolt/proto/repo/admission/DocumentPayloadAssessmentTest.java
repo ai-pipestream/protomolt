@@ -109,6 +109,32 @@ class DocumentPayloadAssessmentTest {
                 .isInstanceOf(ai.protomolt.proto.validate.ValidationResult.ValidationException.class);
     }
 
+    @Test void attestedNestedTerminalIsInventoriedWithoutResolutionOrDecoding() throws Exception {
+        var outer = wrapper();
+        var inner = binding(choice("true"));
+        var typed = candidate(inner, "left", "");
+        // Bytes that would not decode as the claimed type: an opaque terminal never tries.
+        var opaque = Any.newBuilder().setTypeUrl(URL).setValue(ByteString.copyFrom(new byte[]{10, 4, 1})).build();
+        var payload = wrapped(outer, typed, opaque);
+        var calls = new AtomicInteger();
+        var result = DocumentPayloadCheck.assessContextualAssets(asset(outer, payload.getTypeUrl()), payload,
+                payload.getTypeUrl(), validator(), LIMITS, () -> {},
+                request -> { calls.incrementAndGet(); return asset(inner, URL); },
+                DocumentSchemaOccurrences.Limits.DEFAULT, AT,
+                request -> request.prefix().contains(new DocumentSchemaOccurrences.Index(1)));
+        assertThat(result).isInstanceOf(DocumentPayloadAssessment.Accepted.class);
+        var checked = ((DocumentPayloadAssessment.Accepted) result).checked().payload();
+        assertThat(calls.get()).as("only the typed sibling is resolved").isEqualTo(1);
+        assertThat(checked.opaqueTerminals()).singleElement().satisfies(terminal -> {
+            assertThat(terminal.typeUrl()).isEqualTo(URL);
+            assertThat(terminal.valueSizeBytes()).isEqualTo(3);
+            assertThat(terminal.valueSha256())
+                    .isEqualTo(DocumentSchemaOccurrences.sha256(opaque.getValue(), () -> {}));
+            assertThat(terminal.prefix()).contains(new DocumentSchemaOccurrences.Index(1));
+        });
+        assertThat(checked.occurrences()).hasSize(2);
+    }
+
     private static DocumentPayloadAssessment assess(DocumentSchemaAssetBinding root, Any payload,
             Function<DocumentPayloadCheck.ResolutionRequest, DocumentSchemaAssetBinding> resolver) throws Exception {
         return DocumentPayloadCheck.assessContextualAssets(root, payload, payload.getTypeUrl(), validator(), LIMITS,

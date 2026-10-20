@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.admission;
 
 import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.codec.DocumentRevisionAssembly;
 import ai.protomolt.proto.repo.v1.*;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -42,18 +43,30 @@ public final class DocumentSchemaAdmission {
     /**
      * Member-wide serialized byte/count budgets, not a heap reservation. V1 additionally
      * limits descriptor artifacts to 16 MiB/256 files/4096 edges/depth 64, structural
-     * depth to 64, wire values to 1 million per fragment/root, and schema traversal to
-     * 4096 types/65536 fields per root. Raw fragments and decoded payloads each
+     * depth to 64, and schema traversal to 4096 types/65536 fields per root. Wire values
+     * per fragment or root, wire depth and parser entries are host budgets defaulting to
+     * 1 million, 64 and 10 thousand. Raw fragments and decoded payloads each
      * have a 256 MiB ceiling. Hosts reserve memory for decoded forms and I/O.
      */
     public record Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
-                         int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
+                         int maxBindings, long maxRetainedBytes, int maxDecodedBytes,
+                         long maxWireValues, int maxWireDepth, int maxParserEntries) {
         public Limits {
             if (maxFragments < 1 || maxFragments > 10000 || maxFragmentBytes < 1 || maxFragmentBytes > 256L * MIB
                     || maxRoots < 1 || maxRoots > 1024 || maxEvidenceBytes < 1 || maxEvidenceBytes > 16L * MIB
                     || maxBindings < 1 || maxBindings > 64 || maxRetainedBytes < 1 || maxRetainedBytes > 64L * MIB
-                    || maxDecodedBytes < 1 || maxDecodedBytes > 256 * MIB)
+                    || maxDecodedBytes < 1 || maxDecodedBytes > 256 * MIB
+                    || maxWireValues < 1 || maxWireValues > 1_000_000_000L
+                    || maxWireDepth < 1 || maxWireDepth > 100
+                    || maxParserEntries < 1 || maxParserEntries > 1_000_000)
                 throw new IllegalArgumentException("invalid member admission limits");
+        }
+
+        /** The v1 wire budgets: one million wire values, wire depth 64, ten thousand parser entries. */
+        public Limits(int maxFragments, long maxFragmentBytes, int maxRoots, long maxEvidenceBytes,
+                      int maxBindings, long maxRetainedBytes, int maxDecodedBytes) {
+            this(maxFragments, maxFragmentBytes, maxRoots, maxEvidenceBytes, maxBindings, maxRetainedBytes,
+                    maxDecodedBytes, 1_000_000, 64, 10_000);
         }
     }
 
@@ -305,7 +318,7 @@ public final class DocumentSchemaAdmission {
         Objects.requireNonNull(evaluatedAt);
         Objects.requireNonNull(request); Objects.requireNonNull(reader); Objects.requireNonNull(limits);
         Objects.requireNonNull(control); active(control);
-        if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
+        if (request.commandSha256().size() != 32 || !DocumentPartCodec.isSha256Hex(request.policySha256()))
             throw new IllegalArgumentException("exact command and policy digests required");
         var member = request.member();
         if (member.getPartsCount() > limits.maxFragments() || request.fragments().size() > limits.maxFragments()
@@ -487,16 +500,27 @@ public final class DocumentSchemaAdmission {
     }
 
     /** Fail on newly introduced or unknown Any locations instead of silently omitting them. */
-    private static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
+    /** The refusal message for content outside the compiled Document schema; callers match on it. */
+    public static final String UNKNOWN_DOCUMENT_FIELDS = "unknown document fields cannot receive typed admission";
+
+    static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
                                              int[] visited, Runnable control) {
+        requireKnownDocument(message, path, depth, visited, control, false);
+    }
+
+    /** As above; with {@code unknownAllowed}, unknown fields are left for a later schema decision. */
+    static void requireKnownDocument(com.google.protobuf.Message message, String path, int depth,
+                                             int[] visited, Runnable control, boolean unknownAllowed) {
         active(control);
-        if (depth > 64 || ++visited[0] > 1_000_000)
-            throw new IllegalArgumentException("document root discovery exceeds structural limits");
-        if (!message.getUnknownFields().asMap().isEmpty())
-            throw new IllegalArgumentException("unknown document fields cannot receive typed admission");
+        if (depth > 64)
+            throw new IllegalArgumentException("Document nesting exceeds 64 levels at " + path);
+        if (++visited[0] > 1_000_000)
+            throw new IllegalArgumentException("Document exceeds 1,000,000 nodes");
+        if (!unknownAllowed && !message.getUnknownFields().asMap().isEmpty())
+            throw new IllegalArgumentException(UNKNOWN_DOCUMENT_FIELDS);
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) {
             if (!path.equals("structured_data") && !path.equals("parser_results.value.document.shape"))
-                throw new IllegalArgumentException("unsupported document Any location: " + path);
+                throw new IllegalArgumentException("An Any at " + path + " is not allowed; Any is accepted only at structured_data or parser_results.value.document.shape");
             return;
         }
         for (var entry : message.getAllFields().entrySet()) {
@@ -505,8 +529,10 @@ public final class DocumentSchemaAdmission {
             String childPath = path.isEmpty() ? field.getName() : path + "." + field.getName();
             if (field.isRepeated()) {
                 for (var child : (List<?>) entry.getValue())
-                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control);
-            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control);
+                    requireKnownDocument((com.google.protobuf.Message) child, childPath, depth + 1, visited, control,
+                            unknownAllowed);
+            } else requireKnownDocument((com.google.protobuf.Message) entry.getValue(), childPath, depth + 1, visited, control,
+                    unknownAllowed);
         }
     }
     private static void active(Runnable control) {

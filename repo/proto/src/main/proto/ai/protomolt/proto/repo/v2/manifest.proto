@@ -1,0 +1,462 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
+import "ai/protomolt/proto/repo/v1/schema_asset_reference.proto";
+import "ai/protomolt/proto/repo/v1/schema_occurrence.proto";
+import "ai/protomolt/proto/repo/semantic/v1/semantic.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "ManifestProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// SELECTORS, MANIFEST AND ACCESSION (requirements §5, §8, §9).
+//
+// The public view of one accession: which parts it has, their states and
+// digests, who wrote them, and the validation record. Stack references are
+// catalog-internal (catalog_internal.proto) and never appear here.
+//
+// Imported v1 NodeAddress fields carry no validation rules. Every handler
+// checks the four address components, the authenticated account and access.
+// ============================================================================
+
+// The independently stored parts of a document.
+enum DocumentPart {
+  // Never a selector.
+  DOCUMENT_PART_UNSPECIFIED = 0;
+  // Everything not assigned to another part.
+  DOCUMENT_PART_CORE = 1;
+  // The blob bag: claim checks for raw files.
+  DOCUMENT_PART_BLOBS = 2;
+  // One object per segmentation; selected by segmentation_id, never by part.
+  DOCUMENT_PART_CHUNKS = 3;
+  // Parser results.
+  DOCUMENT_PART_PARSED = 4;
+  // One object per embedding set; selected by EmbeddingSetKey, never by part.
+  DOCUMENT_PART_EMBEDDINGS = 5;
+}
+
+// Names exactly one stored object of a document. A request that names the same
+// selector twice, or one selector in two contradicting ways, is rejected.
+message PartSelector {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "part-selector-required"
+    message: "a selector names a part, a segmentation or an embedding set"
+    expression: "has(this.part) || has(this.segmentation_id) || has(this.embedding_set)"
+  };
+  // Exactly one selector.
+  oneof selector {
+    // CORE, BLOBS or PARSED.
+    DocumentPart part = 1 [(ai.protomolt.proto.validate.v1.field).enum = {
+      defined_only: true
+      in: [1, 2, 4]
+    }];
+    // One segmentation's CHUNKS object.
+    string segmentation_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 512
+      pattern: ".*\\S.*"
+    }];
+    // One EMBEDDINGS object.
+    ai.protomolt.proto.repo.semantic.v1.EmbeddingSetKey embedding_set = 3;
+  }
+}
+
+// Read selection. Empty means every part.
+message PartSelection {
+  // Explicit selectors; duplicates are rejected.
+  repeated PartSelector selectors = 1;
+  // Every segmentation, without naming IDs the caller does not know yet.
+  bool all_segmentations = 2;
+  // Every embedding set, without naming keys the caller does not know yet.
+  bool all_embedding_sets = 3;
+}
+
+// Which revision a read resolves. Unset means current, resolved once per call.
+message RevisionSelector {
+  // At most one selector.
+  oneof selector {
+    // The current revision, resolved once.
+    bool current = 1 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // An exact revision; never substituted by another.
+    int64 revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  }
+}
+
+// The caller's view of the document's current revision (§7 step 2). There is
+// no unconditional option.
+message ExpectedRevision {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "expected-revision-required"
+    message: "an expected revision or none is required"
+    expression: "has(this.none) || has(this.revision)"
+  };
+  // Exactly one expectation.
+  oneof expected {
+    // The document must not exist yet.
+    bool none = 1 [(ai.protomolt.proto.validate.v1.field).bool.const = true];
+    // The current revision must equal this.
+    int64 revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+  }
+}
+
+// Lifecycle state of one part in one accession.
+enum PartState {
+  // Never stored.
+  PART_STATE_UNSPECIFIED = 0;
+  // Bytes exist and are readable.
+  PART_STATE_PRESENT = 1;
+  // Present and intentionally empty; no object.
+  PART_STATE_EMPTY = 2;
+  // Marked deleted from this revision on; no object.
+  PART_STATE_DELETED = 3;
+}
+
+// An intake writer: the datasource and optional connector that produced the save.
+message IntakeOrigin {
+  // Must match the document's ownership and the caller's authority.
+  string datasource_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  }];
+  // Absent covers the datasource; present must match the resolved connector.
+  optional string connector_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {
+    min_len: 1
+    max_len: 200
+    pattern: ".*\\S.*"
+  }];
+}
+
+// Who wrote a save: an intake origin or a producing step. Identifies the writer,
+// not a transfer of tenancy; document ownership stays the OwnershipContext.
+message SaveOwner {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-owner-required"
+    message: "an owner names an intake origin or a step"
+    expression: "has(this.intake) || has(this.step)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "step-module-required"
+    message: "a step owner requires a module ID"
+    expression: "!has(this.step) || this.step.module_id.matches('\\\\S')"
+  };
+  // Exactly one owner kind.
+  oneof owner {
+    // An intake datasource.
+    IntakeOrigin intake = 1;
+    // A producing step. Node, graph and graph version are recorded, not verified.
+    ai.protomolt.proto.repo.v1.WriteProvenance step = 2;
+  }
+}
+
+// One exact revision of one document.
+message SourceRevision {
+  // The document's call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The exact revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+}
+
+// One Any occurrence, relative to the part's retained codec fragment. Steps
+// select the Any envelope; intermediate Any boundaries are resolved; a terminal
+// opaque value is not entered.
+message OccurrenceLocator {
+  // The part holding the occurrence.
+  PartSelector part = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Typed field, index and map-key steps; never a JSON path.
+  repeated ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep steps = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    min_items: 1
+    max_items: 301
+  }];
+}
+
+// A previously committed opaque occurrence a save carries forward.
+message OpaqueSource {
+  // The revision that holds it.
+  SourceRevision source = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Where it sits in that revision.
+  OccurrenceLocator occurrence = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One part of one accession. Every part the revision has is listed in codec
+// order, requested or not. A part never written is absent from the list.
+message PartManifestEntry {
+  // Which part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Its state.
+  PartState state = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Stored size in bytes; zero for EMPTY and DELETED.
+  int64 size_bytes = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // SHA-256 of the stored bytes; empty for EMPTY and DELETED.
+  string sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // The accession that wrote these bytes.
+  int64 written_in_revision = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // The writer of these bytes; carried parts keep their original writer.
+  SaveOwner owner = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Set only for DELETED.
+  string deleted_reason = 7;
+  // CHUNKS: the segmentation's digest. EMBEDDINGS: the digest it is bound to.
+  string segmentation_digest = 8 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // The part holds opaque Any occurrences.
+  bool opaque = 9;
+  // False when the content was not requested, independent of state.
+  bool content_included = 10;
+}
+
+// The public map of one accession.
+message DocumentManifest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-no-parts"
+    message: "tombstones contain no part entries"
+    expression: "!this.tombstone || size(this.parts) == 0"
+  };
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The accession's revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // The accession is a tombstone.
+  bool tombstone = 3;
+  // Every part of the revision, in codec order.
+  repeated PartManifestEntry parts = 4;
+}
+
+// The overall verdict recorded on a revision.
+enum ValidationStatus {
+  // Never recorded.
+  VALIDATION_STATUS_UNSPECIFIED = 0;
+  // Every rule evaluated and passed; no opaque content.
+  VALIDATION_STATUS_TYPED_VALID = 1;
+  // Accepted with opaque occurrences; never reported as typed-valid.
+  VALIDATION_STATUS_OPAQUE_ACCEPTED = 2;
+  // Tombstones authorize a delete and make no content-validation claim.
+  VALIDATION_STATUS_NOT_APPLICABLE = 3;
+}
+
+// One Any occurrence decoded at save time, with the exact schema used.
+message ResolvedOccurrence {
+  // Where the occurrence sits.
+  OccurrenceLocator occurrence = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The retained schema it was decoded with.
+  ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference schema = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // SHA-256 of the Any value bytes.
+  string payload_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Length of the Any value bytes.
+  int64 payload_length = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// The retained container schema a part's codec fragment decodes with.
+message PartSchemaBinding {
+  // The part.
+  PartSelector part = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Its retained fragment schema.
+  ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference fragment_schema = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// The writer grant a save was authorized under, retained as evaluated.
+message WriterGrantEvidence {
+  // The grant's ID.
+  string writer_grant_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // SHA-256 of grant_snapshot.
+  string writer_grant_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Exact serialized WriterGrant bytes, preserved without re-encoding.
+  bytes grant_snapshot = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    bytes: {min_len: 1}
+  }];
+  // Retained schema of the snapshot, for archival decoding.
+  ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference snapshot_schema = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The credential generation the caller presented, checked live at commit.
+  int64 credential_generation = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+}
+
+// Recorded in place of grant evidence for a process-authority intake save.
+message ProcessAuthorityEvidence {
+  // The process-authority principal.
+  string principal = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+}
+
+// One opaque occurrence a revision accepted without decoding.
+message OpaqueOccurrence {
+  // No ambiguous text path as authoritative identity.
+  reserved 2;
+  // Where it sits.
+  OccurrenceLocator occurrence = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The exact Any type URL.
+  string type_url = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 4096}
+  }];
+  // SHA-256 of the Any value bytes.
+  string sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Length of the Any value bytes.
+  int64 length = 5 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The producing step.
+  ai.protomolt.proto.repo.v1.WriteProvenance owner = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The server-verified source of a carried occurrence.
+  OpaqueSource carried_from = 7;
+  // The producer's grant, as evaluated when the bytes were first accepted.
+  WriterGrantEvidence writer_grant = 8 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// The state of a rule that did not pass outright.
+enum RuleResultState {
+  // Never recorded.
+  RULE_RESULT_STATE_UNSPECIFIED = 0;
+  // The rule needed opaque contents and was not evaluated.
+  RULE_RESULT_STATE_NOT_EVALUATED = 1;
+}
+
+// One rule that did not pass outright. A failed rule means no accession.
+message RuleResult {
+  // The rule's ID.
+  string rule_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512}
+  }];
+  // The field the rule is attached to.
+  string field_path = 2;
+  // Why it did not pass.
+  RuleResultState state = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+}
+
+// The validation record of one revision. Validation runs on every save; the
+// entries for carried parts are copied from the expected revision's record,
+// because the bytes are identical by SHA-256. That carries retained schema
+// identity, not a verdict.
+message RevisionValidation {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "validation-content-status"
+    message: "tombstones have no content validation; other revisions require candidate and validator identity"
+    expression: "this.status == 3 ? (size(this.resolved_occurrences) == 0 && size(this.opaque_occurrences) == 0 && size(this.rule_results) == 0 && size(this.part_schemas) == 0 && this.candidate_sha256 == '' && this.validator_profile == '') : (this.candidate_sha256 != '' && this.validator_profile != '')"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "typed-validation-complete"
+    message: "typed-valid must not contain opaque values or unevaluated rules"
+    expression: "this.status != 1 || (size(this.opaque_occurrences) == 0 && size(this.rule_results) == 0)"
+  };
+  // Account schema policies are not part of v2 (change map gap 10). The host's
+  // opaque policy is identified by validator_profile.
+  reserved 7;
+  reserved "policy_sha256";
+  // The verdict.
+  ValidationStatus status = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Any occurrences decoded at save time, with their retained schemas.
+  repeated ResolvedOccurrence resolved_occurrences = 2;
+  // Opaque occurrences accepted without decoding.
+  repeated OpaqueOccurrence opaque_occurrences = 3;
+  // Only non-passing results are listed.
+  repeated RuleResult rule_results = 4;
+  // The retained fragment schema of every part.
+  repeated PartSchemaBinding part_schemas = 5;
+  // SHA-256 of the candidate's CandidateDigestInput.
+  string candidate_sha256 = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // The validator and host policy that produced the verdict.
+  string validator_profile = 8 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // Every save and tombstone records its write authority.
+  oneof write_authority {
+    // The grant selected for the save.
+    WriterGrantEvidence writer_grant = 9;
+    // A process-authority intake save. It never matches a grant and may carry
+    // no opaque attestations.
+    ProcessAuthorityEvidence process_authority = 10;
+  }
+}
+
+// One committed revision of a document.
+message Accession {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "accession-manifest-tombstone"
+    message: "accession and manifest agree on tombstone state"
+    expression: "this.tombstone == this.manifest.tombstone"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-validation-status"
+    message: "only tombstones have NOT_APPLICABLE validation"
+    expression: "this.tombstone == (this.validation.status == 3)"
+  };
+
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-owner-present"
+    message: "save accessions require an owner"
+    expression: "this.tombstone || has(this.owner)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-authority-present"
+    message: "save accessions require grant or process-authority evidence"
+    expression: "has(this.validation.writer_grant) || has(this.validation.process_authority)"
+  };
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // This revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // The revision it replaced; 0 for a new document.
+  int64 previous_revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // When the commit transaction ran.
+  google.protobuf.Timestamp committed_at = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The revision's manifest.
+  DocumentManifest manifest = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The revision's validation record.
+  RevisionValidation validation = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The accession is a tombstone.
+  bool tombstone = 7;
+  // The save owner; required for saves.
+  SaveOwner owner = 8;
+  // Exact source revisions a derived document was created from.
+  repeated SourceRevision derived_from = 9;
+}

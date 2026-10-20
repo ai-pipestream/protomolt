@@ -1,0 +1,2 @@
+# Frozen digest fixtures: exact bytes, never line-ending conversion.
+*.pb binary

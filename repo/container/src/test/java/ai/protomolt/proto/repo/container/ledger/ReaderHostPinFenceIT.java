@@ -14,23 +14,17 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.*;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.context;
 import static org.assertj.core.api.Assertions.*;
 
-/** Real PostgreSQL host-fence ordering for native reader inserts; fixture bytes are synthetic SQL evidence. */
+/** Real PostgreSQL host-fence ordering for archive reader pin inserts; fixture bytes are synthetic SQL evidence. */
 @Testcontainers
 class ReaderHostPinFenceIT {
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
 
-    @Test void hostFenceWaitsForAndRejectsEveryNativeReadInsertWithoutReleasingAdmittedRows() throws Exception {
+    @Test void hostFenceWaitsForAndRejectsArchiveReadPinInsertsWithoutReleasingAdmittedRows() throws Exception {
         try (var c = context(POSTGRES); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var readerTx = c.tx();
-            var publication = prepare(c, 1);
-            var published = publish(c, publication, Fault.NONE, em -> {}).getMembers(0);
-            UUID documentRevision = UUID.fromString(published.getRevisionId());
-            UUID documentObject = UUID.fromString(publication.sources().getFirst().identities().getFirst().getObjectId());
-            UUID documentNode = publication.sources().getFirst().row().nodeId;
-
             UUID entry = UUID.randomUUID();
             var backend = "host-pin-" + UUID.randomUUID();
             new ManagedBackendLedger(readerTx).bind(backend, new ManagedBackendLedger.Profile(
@@ -38,19 +32,6 @@ class ReaderHostPinFenceIT {
             var archiveBinding = new ArchiveObjectLedger(readerTx).register(new ArchiveObjectLedger.Location(
                     entry, "account", "host-fence", backend, "bucket", "key-" + UUID.randomUUID()));
             stageArchiveVersion(readerTx, entry, archiveBinding.objectId());
-
-            var assessmentFixture = new DocumentAssessmentRetentionFixture(readerTx);
-            var assessment = assessmentFixture.candidate(120);
-            readerTx.inTransaction(em -> {
-                RepositoryOperationLedger.fenceLiveOwner(em, assessment.owner());
-                assessmentFixture.insertOwner(em, assessment, 120, 2);
-                assessmentFixture.insertSlots(em, assessment, "revision_ordinal", 1);
-                assessmentFixture.seal(em, assessment);
-                em.createNativeQuery("""
-                        INSERT INTO document_assessment_slot_snapshots(assessment_id,snapshot_codec,snapshot_version,snapshot_bytes,snapshot_sha256)
-                        VALUES(:id,'document-assessment-slots',1,:bytes,sha256(:bytes))
-                        """).setParameter("id", assessment.assessment()).setParameter("bytes", new byte[] {1}).executeUpdate();
-            });
 
             var archiveCase = new InsertCase("archive_read_pins", (em, pin, reader) -> em.createNativeQuery("""
                     INSERT INTO archive_read_pins(pin_id,reader_incarnation,object_id,entry_uuid,version)
@@ -61,36 +42,12 @@ class ReaderHostPinFenceIT {
                     "SELECT count(*) FROM archive_read_pins WHERE pin_id=:pin", """
                     SELECT count(*) FROM repository_object_references WHERE owner_kind='ARCHIVE_READER' AND owner_id=:pin
                     """);
-            var currentCase = documentCase("CURRENT", documentRevision, documentNode, documentObject);
-            var historicalCase = documentCase("HISTORICAL", documentRevision, documentNode, documentObject);
-            var assessmentCase = new InsertCase("document_assessment_read_sessions", (em, pin, reader) -> { RepositoryOperationLedger.fenceLiveOwner(em, assessment.owner()); em.createNativeQuery("""
-                    INSERT INTO document_assessment_read_sessions(session_id,reader_incarnation,assessment_id)
-                    VALUES(:pin,:reader,:assessment)
-                    """).setParameter("pin", pin)
-                    .setParameter("reader", reader)
-                    .setParameter("assessment", assessment.assessment()).executeUpdate(); },
-                    "SELECT count(*) FROM document_assessment_read_sessions WHERE session_id=:pin", null);
 
             runPositiveThenFenceRace(c, workers, archiveCase);
-            runPositiveThenFenceRace(c, workers, currentCase);
-            runPositiveThenFenceRace(c, workers, historicalCase);
-            runPositiveThenFenceRace(c, workers, assessmentCase);
         }
     }
 
-    private static InsertCase documentCase(String scope, UUID revision, UUID node, UUID object) {
-        return new InsertCase("document_read_pins " + scope, (em, pin, reader) -> em.createNativeQuery("""
-                INSERT INTO document_read_pins(pin_id,reader_incarnation,object_id,source_node,source_revision,publication_revision,read_scope)
-                SELECT :pin,:reader,:object,r.node_id,r.revision_id,r.publication_revision,:scope
-                FROM document_revision_publications r WHERE r.revision_id=:revision
-                """).setParameter("pin", pin)
-                .setParameter("reader", reader)
-                .setParameter("object", object).setParameter("scope", scope).setParameter("revision", revision)
-                .executeUpdate(), "SELECT count(*) FROM document_read_pins WHERE pin_id=:pin",
-                "SELECT count(*) FROM repository_object_references WHERE owner_kind='DOCUMENT_READER' AND owner_id=:pin");
-    }
-
-    private static void runPositiveThenFenceRace(Context c, java.util.concurrent.ExecutorService workers, InsertCase insert)
+    private static void runPositiveThenFenceRace(LedgerSqlFixture.Context c, java.util.concurrent.ExecutorService workers, InsertCase insert)
             throws Exception {
         UUID host = UUID.randomUUID(), reader = UUID.randomUUID();
         register(c.tx(), host, reader);

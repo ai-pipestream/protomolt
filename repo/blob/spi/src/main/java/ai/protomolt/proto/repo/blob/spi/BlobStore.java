@@ -196,6 +196,23 @@ public interface BlobStore {
     GetResult get(String bucket, String key, String versionId);
 
     /**
+     * Opens a streamed read of one object: the whole object when {@code length} is
+     * negative, otherwise {@code length} bytes from {@code offset}. Nothing is buffered
+     * beyond the transport's own window. The caller closes the stream; closing it
+     * before the end abandons the transfer instead of draining it.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @param offset first byte to read; zero for the start
+     * @param length bytes to read, or negative for the rest of the object
+     * @return the object's bytes
+     * @throws BlobNotFoundException when the object does not exist
+     */
+    default InputStream openStream(String bucket, String key, long offset, long length) {
+        throw new UnsupportedOperationException("streamed object read is unsupported");
+    }
+
+    /**
      * Server-side copy of one object within this store (the four-part partial
      * save's copy-forward: unwritten parts move between addresses without
      * their bytes ever transiting the service).
@@ -270,6 +287,37 @@ public interface BlobStore {
      * @return every object under the prefix
      */
     java.util.List<ListedObject> list(String bucket, String prefix);
+
+    /**
+     * Reports an object's stored length without fetching its bytes.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @return the stored length in bytes
+     * @throws BlobNotFoundException when the key does not exist
+     */
+    default long objectLength(String bucket, String key) {
+        throw new UnsupportedOperationException("object length lookup is unsupported");
+    }
+
+    /**
+     * Writes a streamed body of unknown or large length as a multipart upload with
+     * bounded memory: the body is read into one {@code partSize} buffer at a time,
+     * and each part is sent from that buffer, so a provider retry resends a part
+     * and never rewinds the caller's stream. The body is read to its end and is
+     * not closed. On any failure, including an {@link java.io.IOException} from the
+     * body, the upload is aborted before the failure is rethrown, and no object
+     * becomes visible under the key.
+     *
+     * @param spec what and where to write; {@code sha256Hex} must be null
+     * @param body the object bytes
+     * @param partSize bytes per part; the provider's minimum part size or more
+     * @return the written object's coordinates
+     * @throws java.io.UncheckedIOException when reading the body fails
+     */
+    default PutResult putMultipart(PutSpec spec, InputStream body, int partSize) {
+        throw new UnsupportedOperationException("multipart streamed write is unsupported");
+    }
 
     /**
      * Probes bucket reachability (drive-status checks).

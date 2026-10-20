@@ -63,6 +63,39 @@ public final class S3BlobStore implements BlobStore {
     }
 
     @Override
+    public InputStream openStream(String bucket, String key, long offset, long length) {
+        if (offset < 0) throw new IllegalArgumentException("Read offset must not be negative");
+        var request = GetObjectRequest.builder().bucket(bucket).key(key);
+        if (length == 0) return InputStream.nullInputStream();
+        if (length > 0) request.range("bytes=" + offset + "-" + Math.addExact(offset, length - 1));
+        else if (offset > 0) request.range("bytes=" + offset + "-");
+        final ResponseInputStream<GetObjectResponse> stream;
+        try {
+            stream = client.getObject(request.build());
+        } catch (NoSuchKeyException nsk) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
+        }
+        return new java.io.FilterInputStream(stream) {
+            private boolean ended;
+            @Override public int read() throws IOException {
+                int value = super.read();
+                if (value < 0) ended = true;
+                return value;
+            }
+            @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+                int count = super.read(buffer, offset, length);
+                if (count < 0) ended = true;
+                return count;
+            }
+            @Override public void close() throws IOException {
+                // Closing an unfinished SDK stream drains the rest of the body; abandon it instead.
+                if (!ended) stream.abort();
+                super.close();
+            }
+        };
+    }
+
+    @Override
     public GetResult getForUpdate(String bucket, String key) {
         requireConditionalSupport();
         // Keep bytes and the ETag from one authoritative GET. Do not use getObjectAsBytes:
@@ -250,6 +283,74 @@ public final class S3BlobStore implements BlobStore {
     @Override
     public void headBucket(String bucket) {
         client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
+    }
+
+    @Override
+    public long objectLength(String bucket, String key) {
+        try {
+            var response = client.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                    .bucket(bucket).key(key).build());
+            var length = response.contentLength();
+            if (length == null || length < 0) throw new IllegalStateException("S3 reported no object length");
+            return length;
+        } catch (NoSuchKeyException nsk) {
+            throw new BlobNotFoundException("blob not found: s3://" + bucket + "/" + key, nsk);
+        }
+    }
+
+    /** S3 multipart parts are at least 5 MiB, except the last. */
+    static final int MIN_PART_SIZE = 5 * 1024 * 1024;
+
+    @Override
+    public PutResult putMultipart(PutSpec spec, InputStream body, int partSize) {
+        if (partSize < MIN_PART_SIZE) throw new IllegalArgumentException("S3 multipart parts are at least 5 MiB");
+        if (spec.sha256Hex() != null) throw new IllegalArgumentException("A multipart write takes no whole-object checksum");
+        var create = software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest.builder()
+                .bucket(spec.bucket()).key(spec.key()).contentType(spec.contentType())
+                // Each part carries its own SHA-256, which the store checks on arrival.
+                .checksumAlgorithm(software.amazon.awssdk.services.s3.model.ChecksumAlgorithm.SHA256);
+        if (spec.metadata() != null && !spec.metadata().isEmpty()) create.metadata(spec.metadata());
+        String uploadId = client.createMultipartUpload(create.build()).uploadId();
+        try {
+            var parts = new java.util.ArrayList<software.amazon.awssdk.services.s3.model.CompletedPart>();
+            byte[] buffer = new byte[partSize];
+            int number = 1;
+            while (true) {
+                int filled = body.readNBytes(buffer, 0, partSize);
+                // An empty object still needs one (empty) part; otherwise stop at the end.
+                if (filled == 0 && number > 1) break;
+                if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("multipart write interrupted");
+                var part = client.uploadPart(software.amazon.awssdk.services.s3.model.UploadPartRequest.builder()
+                        .bucket(spec.bucket()).key(spec.key()).uploadId(uploadId).partNumber(number)
+                        .contentLength((long) filled)
+                        .checksumAlgorithm(software.amazon.awssdk.services.s3.model.ChecksumAlgorithm.SHA256).build(),
+                        RequestBody.fromBytes(java.util.Arrays.copyOf(buffer, filled)));
+                parts.add(software.amazon.awssdk.services.s3.model.CompletedPart.builder().partNumber(number)
+                        .eTag(part.eTag()).checksumSHA256(part.checksumSHA256()).build());
+                number++;
+                if (filled < partSize) break;
+            }
+            var done = client.completeMultipartUpload(software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest
+                    .builder().bucket(spec.bucket()).key(spec.key()).uploadId(uploadId)
+                    .multipartUpload(software.amazon.awssdk.services.s3.model.CompletedMultipartUpload.builder()
+                            .parts(parts).build()).build());
+            return new PutResult(done.eTag(), done.versionId());
+        } catch (IOException failure) {
+            abortMultipart(spec, uploadId, failure);
+            throw new UncheckedIOException("multipart write body failed", failure);
+        } catch (RuntimeException | Error failure) {
+            abortMultipart(spec, uploadId, failure);
+            throw failure;
+        }
+    }
+
+    private void abortMultipart(PutSpec spec, String uploadId, Throwable failure) {
+        try {
+            client.abortMultipartUpload(software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest.builder()
+                    .bucket(spec.bucket()).key(spec.key()).uploadId(uploadId).build());
+        } catch (RuntimeException abort) {
+            failure.addSuppressed(abort);
+        }
     }
 
     @Override

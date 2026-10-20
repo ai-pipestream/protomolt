@@ -190,10 +190,10 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
     public Set<DocumentSchemaAdmission.Reference> selectedReferences() { active(); return Set.copyOf(selectedReferences); }
 
     /** Borrowed source bytes; keep the source artifact owner and this scope alive while comparing. */
-    public Map<String, ByteString> selectedArtifacts() { active(); return Map.copyOf(selectedArtifacts); }
+    Map<String, ByteString> selectedArtifacts() { active(); return Map.copyOf(selectedArtifacts); }
 
     /** All selected destination ordinals, including parts with no Any occurrences. */
-    public Set<Integer> targetOrdinals() { active(); return Set.copyOf(targetOrdinals); }
+    Set<Integer> targetOrdinals() { active(); return Set.copyOf(targetOrdinals); }
 
     @Override public DocumentSchemaAdmission.Definition select(DocumentSchemaAdmission.Selection occurrence) {
         active();
@@ -220,7 +220,7 @@ public final class DocumentRetainedSchemaResolution implements DocumentSchemaAdm
      * Other sources' ordinals/assets are not checked here: the caller must separately
      * prove disjoint complete routing, exact container agreement and global asset union.
      */
-    public void requireSelectedComplete(DocumentSchemaAssessment.View assessment) {
+    void requireSelectedComplete(DocumentSchemaAssessment.View assessment) {
         active();
         var actual = new HashMap<Root, DocumentSchemaAdmission.EncodedEvidence>();
         for (var root : assessment.roots()) {

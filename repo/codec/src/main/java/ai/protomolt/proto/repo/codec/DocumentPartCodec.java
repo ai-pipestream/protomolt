@@ -13,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -26,14 +25,19 @@ import java.util.List;
  * <p>With the default {@link PartLayouts#document()} layout a stored
  * {@code Document} is split into:
  * <ul>
- *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parser_results}
- *       and {@code search_metadata.semantic_results};</li>
+ *   <li><b>CORE</b> — everything except {@code blob_bag}, {@code parser_results},
+ *       {@code search_metadata.semantic_results}, {@code search_metadata.segmentations}
+ *       and {@code search_metadata.embedding_sets};</li>
  *   <li><b>BLOBS</b> — {@code doc_id} + {@code blob_bag};</li>
  *   <li><b>CHUNKS</b> — one fragment per <i>chunk set</i>: a consecutive run of
  *       {@code semantic_results} entries sharing a {@code result_id}.
  *       Consecutive-run grouping (not global grouping) preserves the exact
- *       original ordering on reassembly — a byte-fidelity requirement;</li>
- *   <li><b>PARSED</b> — {@code doc_id} + {@code parser_results}.</li>
+ *       original ordering on reassembly — a byte-fidelity requirement; and one
+ *       fragment per {@code segmentations} entry, keyed by its
+ *       {@code segmentation_id};</li>
+ *   <li><b>PARSED</b> — {@code doc_id} + {@code parser_results};</li>
+ *   <li><b>EMBEDDINGS</b> — one fragment per {@code embedding_sets} entry, keyed
+ *       by its {@code segmentation_id} and {@code embedding_set_id}.</li>
  * </ul>
  *
  * <p>Each fragment is itself a valid serialized message of the SAME type
@@ -57,19 +61,41 @@ public final class DocumentPartCodec {
     public static final String PARSED_FILE = "parsed.pb";
     /** Directory of CHUNKS sub-objects under the document's prefix. */
     public static final String CHUNKS_DIR = "chunks";
+    /** Directory of EMBEDDINGS sub-objects under the document's prefix. */
+    public static final String EMBEDDINGS_DIR = "embeddings";
 
     /**
      * Splits a document into its part fragments, in canonical manifest order:
      * CORE first, then the remaining parts in {@link DocumentPart} number
      * order (BLOBS, CHUNKS sub-objects in original repeated-field order,
-     * PARSED). Parts with no content are simply absent from the returned
-     * list — the caller records them as {@code PART_STATE_EMPTY}.
+     * PARSED, EMBEDDINGS in original repeated-field order). Parts with no
+     * content are simply absent from the returned list — the caller records
+     * them as {@code PART_STATE_EMPTY}.
      *
      * @param doc the document to split
      * @param layout the part mapping over the document's message type
      * @return the non-empty part fragments in assembly order
+     * @throws IllegalArgumentException when two elements of a keyed part share a key
      */
     public static List<PartObject> split(Message doc, PartLayout layout) {
+        return split(doc, layout, false);
+    }
+
+    /**
+     * Splits a document into its part fragments in canonical manifest order and
+     * encodes each fragment deterministically in a single pass (map entries sorted
+     * by key, serialized with {@code CodedOutputStream.useDeterministicSerialization()}).
+     *
+     * @param doc the document to split
+     * @param layout the part mapping over the document's message type
+     * @return the deterministically encoded non-empty part fragments in assembly order
+     * @throws IllegalArgumentException when two elements of a keyed part share a key
+     */
+    public static List<PartObject> splitDeterministic(Message doc, PartLayout layout) {
+        return split(doc, layout, true);
+    }
+
+    private static List<PartObject> split(Message doc, PartLayout layout, boolean deterministic) {
         if (!doc.getDescriptorForType().equals(layout.messageType())) {
             throw new IllegalArgumentException("Layout is over " + layout.messageType().getFullName()
                     + " but document is " + doc.getDescriptorForType().getFullName());
@@ -84,33 +110,35 @@ public final class DocumentPartCodec {
             core.clearField(pf.field());
         }
         for (PartLayout.ChunkedField cf : layout.chunkedFields()) {
-            if (doc.hasField(cf.parent())) {
-                // Keep the parent set (even if clearing leaves a default
-                // instance) — the parent was set in the original, so CORE
-                // keeps it set.
-                Message parentStripped = ((Message) doc.getField(cf.parent()))
-                        .toBuilder().clearField(cf.repeatedField()).build();
-                core.setField(cf.parent(), parentStripped);
-            }
+            stripNested(doc, core, cf.parent(), cf.repeatedField());
         }
-        parts.add(toPartObject(DocumentPart.DOCUMENT_PART_CORE, "", core.build()));
+        for (PartLayout.KeyedField kf : layout.keyedFields()) {
+            stripNested(doc, core, kf.parent(), kf.repeatedField());
+        }
+        parts.add(toPartObject(DocumentPart.DOCUMENT_PART_CORE, "", core.build(), deterministic));
 
-        // Remaining parts in DocumentPart number order (BLOBS < CHUNKS < PARSED).
-        List<PartLayout.PartField> partFields = new ArrayList<>(layout.partFields());
-        partFields.sort(Comparator.comparingInt(pf -> pf.part().getNumber()));
-        List<PartLayout.ChunkedField> chunkedFields = new ArrayList<>(layout.chunkedFields());
-        chunkedFields.sort(Comparator.comparingInt(cf -> cf.part().getNumber()));
+        // Remaining parts in DocumentPart number order (BLOBS < CHUNKS < PARSED < EMBEDDINGS),
+        // precomputed on the immutable PartLayout.
+        List<PartLayout.PartField> partFields = layout.sortedPartFields();
+        List<PartLayout.ChunkedField> chunkedFields = layout.sortedChunkedFields();
+        List<PartLayout.KeyedField> keyedFields = layout.sortedKeyedFields();
 
-        for (DocumentPart part : orderedNonCoreParts(partFields, chunkedFields)) {
+        for (DocumentPart part : layout.orderedNonCoreParts()) {
             for (PartLayout.PartField pf : partFields) {
                 if (pf.part() == part && isPresent(doc, pf.field())) {
-                    parts.add(toPartObject(part, "", singleFieldFragment(doc, layout, pf.field())));
+                    parts.add(toPartObject(part, "", singleFieldFragment(doc, layout, pf.field()), deterministic));
                 }
             }
             for (PartLayout.ChunkedField cf : chunkedFields) {
                 if (cf.part() == part && doc.hasField(cf.parent())
-                        && !elements(doc, cf).isEmpty()) {
-                    parts.addAll(splitChunkSets(doc, layout, cf));
+                        && !elements(doc, cf.parent(), cf.repeatedField()).isEmpty()) {
+                    parts.addAll(splitChunkSets(doc, layout, cf, deterministic));
+                }
+            }
+            for (PartLayout.KeyedField kf : keyedFields) {
+                if (kf.part() == part && doc.hasField(kf.parent())
+                        && !elements(doc, kf.parent(), kf.repeatedField()).isEmpty()) {
+                    parts.addAll(splitKeyed(doc, layout, kf, deterministic));
                 }
             }
         }
@@ -118,21 +146,16 @@ public final class DocumentPartCodec {
         return parts;
     }
 
-    private static List<DocumentPart> orderedNonCoreParts(List<PartLayout.PartField> partFields,
-                                                          List<PartLayout.ChunkedField> chunkedFields) {
-        List<DocumentPart> order = new ArrayList<>();
-        for (PartLayout.PartField pf : partFields) {
-            if (!order.contains(pf.part())) {
-                order.add(pf.part());
-            }
-        }
-        for (PartLayout.ChunkedField cf : chunkedFields) {
-            if (!order.contains(cf.part())) {
-                order.add(cf.part());
-            }
-        }
-        order.sort(Comparator.comparingInt(DocumentPart::getNumber));
-        return order;
+    /**
+     * Removes a nested repeated field from CORE while keeping its parent set:
+     * touching an absent parent would materialize an empty message and change
+     * bytes, and a present parent was set in the original, so CORE keeps it set.
+     */
+    private static void stripNested(Message doc, Message.Builder core, Descriptors.FieldDescriptor parent,
+                                    Descriptors.FieldDescriptor repeatedField) {
+        if (!doc.hasField(parent)) return;
+        Message current = (Message) core.getField(parent);
+        core.setField(parent, current.toBuilder().clearField(repeatedField).build());
     }
 
     /** Presence: non-empty for repeated/map fields, {@code hasField} otherwise. */
@@ -155,8 +178,38 @@ public final class DocumentPartCodec {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Message> elements(Message doc, PartLayout.ChunkedField cf) {
-        return (List<Message>) ((Message) doc.getField(cf.parent())).getField(cf.repeatedField());
+    private static List<Message> elements(Message doc, Descriptors.FieldDescriptor parent,
+                                          Descriptors.FieldDescriptor repeatedField) {
+        return (List<Message>) ((Message) doc.getField(parent)).getField(repeatedField);
+    }
+
+    /**
+     * One fragment per element of a keyed part, in original element order,
+     * carrying the identity field and the parent with that single element.
+     * Two elements with the same key are refused: a key names one object.
+     */
+    private static List<PartObject> splitKeyed(Message doc, PartLayout layout, PartLayout.KeyedField kf,
+                                               boolean deterministic) {
+        List<PartObject> out = new ArrayList<>();
+        var seen = new java.util.HashSet<List<String>>();
+        for (Message element : elements(doc, kf.parent(), kf.repeatedField())) {
+            List<String> key = kf.keyOf(element);
+            if (!seen.add(key)) {
+                throw new IllegalArgumentException("Duplicate " + kf.repeatedField().getFullName()
+                        + " key " + key);
+            }
+            Message.Builder frag = doc.newBuilderForType();
+            if (layout.identityField() != null) {
+                frag.setField(layout.identityField(), doc.getField(layout.identityField()));
+            }
+            Message.Builder parentFrag = frag.newBuilderForField(kf.parent());
+            parentFrag.setField(kf.repeatedField(), List.of(element));
+            frag.setField(kf.parent(), parentFrag.build());
+            Message built = frag.build();
+            byte[] bytes = deterministic ? encodeDeterministic(built) : built.toByteArray();
+            out.add(PartObject.keyed(kf.part(), key, bytes, sha256Hex(bytes)));
+        }
+        return out;
     }
 
     /**
@@ -168,9 +221,9 @@ public final class DocumentPartCodec {
      * original element order exactly.
      */
     private static List<PartObject> splitChunkSets(Message doc, PartLayout layout,
-                                                   PartLayout.ChunkedField cf) {
+                                                   PartLayout.ChunkedField cf, boolean deterministic) {
         List<PartObject> out = new ArrayList<>();
-        List<Message> elements = elements(doc, cf);
+        List<Message> elements = elements(doc, cf.parent(), cf.repeatedField());
 
         var names = new ChunkRunNames();
         int i = 0;
@@ -189,7 +242,7 @@ public final class DocumentPartCodec {
             Message.Builder parentFrag = frag.newBuilderForField(cf.parent());
             parentFrag.setField(cf.repeatedField(), new ArrayList<>(elements.subList(i, j)));
             frag.setField(cf.parent(), parentFrag.build());
-            out.add(toPartObject(cf.part(), subKey, frag.build()));
+            out.add(toPartObject(cf.part(), subKey, frag.build(), deterministic));
             i = j;
         }
         return out;
@@ -200,9 +253,94 @@ public final class DocumentPartCodec {
         return ChunkRunNames.key(raw, index);
     }
 
-    private static PartObject toPartObject(DocumentPart part, String subKey, Message fragment) {
-        byte[] bytes = fragment.toByteArray();
+    private static PartObject toPartObject(DocumentPart part, String subKey, Message fragment, boolean deterministic) {
+        byte[] bytes = deterministic ? encodeDeterministic(fragment) : fragment.toByteArray();
         return new PartObject(part, subKey, bytes, sha256Hex(bytes));
+    }
+
+    /**
+     * Re-encodes a split fragment with deterministic serialization: map entries
+     * sorted by key, so equal content gives equal bytes and one SHA-256 whatever
+     * order a client sent its map entries in. Field presence, unknown fields and
+     * exact scalar values are unchanged.
+     *
+     * @param part the fragment to re-encode
+     * @param prototype a prototype of the fragment's message type
+     * @return the fragment with deterministic bytes and their SHA-256
+     * @throws InvalidProtocolBufferException when the fragment fails to parse
+     */
+    public static PartObject deterministic(PartObject part, Message prototype) throws InvalidProtocolBufferException {
+        byte[] bytes = encodeDeterministic(prototype.newBuilderForType().mergeFrom(part.bytes()).build());
+        return new PartObject(part.part(), part.subKey(), part.keyValues(), bytes, sha256Hex(bytes));
+    }
+
+    private static byte[] encodeDeterministic(Message message) {
+        // Generated maps sort under deterministic serialization; a DynamicMessage keeps its
+        // entries in wire order, so maps are put in the same key order first.
+        Message parsed = sortedMaps(message, 0);
+        byte[] bytes = new byte[parsed.getSerializedSize()];
+        var coded = com.google.protobuf.CodedOutputStream.newInstance(bytes);
+        coded.useDeterministicSerialization();
+        try {
+            parsed.writeTo(coded);
+            coded.checkNoSpaceLeft();
+        } catch (java.io.IOException impossible) {
+            throw new IllegalStateException("in-memory encoding failed", impossible);
+        }
+        return bytes;
+    }
+
+    /**
+     * The message with every map's entries in ascending key order, nested maps
+     * included, keeping the last entry for a repeated key as a parse does. The key
+     * order is the natural order of protobuf-java's boxed key type, the order its
+     * generated messages serialize in deterministically.
+     */
+    static Message sortedMaps(Message message, int depth) {
+        if (depth > 100) throw new IllegalArgumentException("message nesting exceeds 100 levels");
+        Message.Builder changed = null;
+        for (var entry : message.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            Object value = entry.getValue();
+            Object canonical;
+            if (field.isMapField()) {
+                var byKey = new java.util.LinkedHashMap<Object, Message>();
+                var keyField = field.getMessageType().findFieldByNumber(1);
+                for (Object element : (List<?>) value) {
+                    var mapEntry = sortedMaps((Message) element, depth + 1);
+                    byKey.remove(mapEntry.getField(keyField));
+                    byKey.put(mapEntry.getField(keyField), mapEntry);
+                }
+                var sorted = new ArrayList<>(byKey.entrySet());
+                sorted.sort((left, right) -> compareKeys(left.getKey(), right.getKey()));
+                canonical = sorted.stream().map(java.util.Map.Entry::getValue).toList();
+            } else if (field.isRepeated()) {
+                var elements = new ArrayList<Message>();
+                for (Object element : (List<?>) value) elements.add(sortedMaps((Message) element, depth + 1));
+                canonical = elements;
+            } else {
+                canonical = sortedMaps((Message) value, depth + 1);
+            }
+            // Identity, not equals: message equality ignores map entry order.
+            if (!same(canonical, value)) {
+                if (changed == null) changed = message.toBuilder();
+                changed.setField(field, canonical);
+            }
+        }
+        return changed == null ? message : changed.build();
+    }
+
+    private static boolean same(Object canonical, Object value) {
+        if (canonical == value) return true;
+        if (!(canonical instanceof List<?> left) || !(value instanceof List<?> right) || left.size() != right.size()) return false;
+        for (int i = 0; i < left.size(); i++) if (left.get(i) != right.get(i)) return false;
+        return true;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static int compareKeys(Object left, Object right) {
+        return ((Comparable) left).compareTo(right);
     }
 
     /**
@@ -231,7 +369,7 @@ public final class DocumentPartCodec {
      *
      * @param basePrefix the address prefix ({@code {keyPrefix}/{accountId}/…/{nodeId}})
      * @param part the part
-     * @param subKey the chunk-set sub key (CHUNKS only; ignored otherwise)
+     * @param subKey the chunk-set or keyed sub key (CHUNKS and EMBEDDINGS only; ignored otherwise)
      * @return the full object key
      */
     public static String objectKey(String basePrefix, DocumentPart part, String subKey) {
@@ -240,6 +378,7 @@ public final class DocumentPartCodec {
             case DOCUMENT_PART_BLOBS -> basePrefix + "/" + BLOBS_FILE;
             case DOCUMENT_PART_PARSED -> basePrefix + "/" + PARSED_FILE;
             case DOCUMENT_PART_CHUNKS -> basePrefix + "/" + CHUNKS_DIR + "/" + chunkFileName(subKey) + ".pb";
+            case DOCUMENT_PART_EMBEDDINGS -> basePrefix + "/" + EMBEDDINGS_DIR + "/" + chunkFileName(subKey) + ".pb";
             default -> throw new IllegalArgumentException("No object key for part " + part);
         };
     }
@@ -250,11 +389,25 @@ public final class DocumentPartCodec {
      * distinct raw keys that sanitize identically stay distinct).
      */
     static String chunkFileName(String subKey) {
-        String safe = subKey.trim().replaceAll("[^A-Za-z0-9._-]", "_");
-        if (safe.length() > 96) {
-            safe = safe.substring(0, 96);
+        String trimmed = subKey.trim();
+        int len = trimmed.length();
+        StringBuilder safe = new StringBuilder(Math.min(len, 96));
+        for (int i = 0; i < len && safe.length() < 96; ) {
+            int cp = trimmed.codePointAt(i);
+            safe.append(isSafeChunkChar(cp) ? (char) cp : '_');
+            i += Character.charCount(cp);
         }
-        return (safe.isEmpty() ? "set" : safe) + "-" + sha256Hex(subKey.getBytes(StandardCharsets.UTF_8)).substring(0, 8);
+        return (safe.isEmpty() ? "set" : safe.toString()) + "-"
+                + sha256Hex(subKey.getBytes(StandardCharsets.UTF_8)).substring(0, 8);
+    }
+
+    private static boolean isSafeChunkChar(int cp) {
+        return (cp >= 'A' && cp <= 'Z')
+                || (cp >= 'a' && cp <= 'z')
+                || (cp >= '0' && cp <= '9')
+                || cp == '.'
+                || cp == '_'
+                || cp == '-';
     }
 
     /**
@@ -335,5 +488,42 @@ public final class DocumentPartCodec {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /**
+     * Lowercase hex SHA-256 over a {@link com.google.protobuf.ByteString} without copying its backing buffers.
+     *
+     * @param data the bytes to hash
+     * @return the digest as lowercase hex
+     */
+    public static String sha256Hex(com.google.protobuf.ByteString data) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            for (var buffer : data.asReadOnlyByteBufferList()) {
+                digest.update(buffer);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Tests whether {@code value} is a 64-character lowercase hexadecimal SHA-256 digest.
+     *
+     * @param value the string to test; may be {@code null}
+     * @return {@code true} if {@code value} consists of exactly 64 characters in {@code [0-9a-f]}
+     */
+    public static boolean isSha256Hex(String value) {
+        if (value == null || value.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < 64; i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

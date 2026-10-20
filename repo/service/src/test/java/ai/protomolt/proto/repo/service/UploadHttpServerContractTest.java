@@ -15,9 +15,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Real HTTP boundary checks with ingestion deliberately disabled. These requests
- * stop at credential, route, or parameter validation. Successful ingestion is
- * covered against real storage in {@code UploadHttpServerIT}.
+ * Real HTTP boundary checks on the archive route, the surface this server still
+ * owns. The parts-based document route's boundary checks belong to the accession
+ * upload handler and are covered there; a committed upload runs against real
+ * storage in {@code UploadHttpServerV2DelegationIT}.
  */
 class UploadHttpServerContractTest {
 
@@ -27,8 +28,9 @@ class UploadHttpServerContractTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(null, "synthetic-http-operator-key", null);
-        url = "http://127.0.0.1:" + server.start(0) + UploadHttpServer.UPLOAD_PATH;
+        server = new UploadHttpServer(null, null, "synthetic-http-operator-key",
+                UploadHttpServerCredentialTest.unimplementedArchive());
+        url = "http://127.0.0.1:" + server.start(0) + UploadHttpServer.ARCHIVE_UPLOAD_PATH;
         client = HttpClient.newHttpClient();
     }
 
@@ -42,7 +44,7 @@ class UploadHttpServerContractTest {
 
     @Test
     void portBeforeStartAndDoubleStartAreIllegalState() {
-        UploadHttpServer fresh = new UploadHttpServer(null, "synthetic-http-operator-key", null);
+        UploadHttpServer fresh = new UploadHttpServer(null, null, "synthetic-http-operator-key", null);
         assertThatThrownBy(fresh::port)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not started");
@@ -85,23 +87,21 @@ class UploadHttpServerContractTest {
     @Test
     void eachMissingIdentityParameterIs400NamingIt() throws Exception {
         assertThat(post("").body()).contains("account_id is required");
-        assertThat(post("account_id=a").body()).contains("datasource_id is required");
-        assertThat(post("account_id=a&datasource_id=d").body()).contains("drive is required");
-        assertThat(post("account_id=a&datasource_id=d&drive=x").body())
-                .contains("filename is required");
+        assertThat(post("account_id=a").body()).contains("archive is required");
+        assertThat(post("account_id=a&archive=ar").body()).contains("entry_id is required");
     }
 
     @Test
     void identityValuesMayArriveAsHeaders() throws Exception {
         // account_id via header, the rest absent: the failure names
-        // datasource_id, proving the header satisfied the account_id check.
+        // archive, proving the header satisfied the account_id check.
         HttpResponse<String> response = send(HttpRequest.newBuilder(
-                        URI.create(url + "?filename=f"))
+                        URI.create(url + "?entry_id=e"))
                 .header("x-account-id", "a")
                 .POST(HttpRequest.BodyPublishers.ofString(""))
                 .build());
         assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.body()).contains("datasource_id is required");
+        assertThat(response.body()).contains("archive is required");
     }
 
     @Test
@@ -119,7 +119,7 @@ class UploadHttpServerContractTest {
         // ofInputStream has an unknown length → the client sends chunked,
         // which the route rejects before a single byte is read.
         HttpResponse<String> response = send(HttpRequest.newBuilder(
-                        URI.create(url + "?account_id=a&datasource_id=d&drive=x&filename=f"))
+                        URI.create(url + "?account_id=a&archive=ar&entry_id=e"))
                 .POST(HttpRequest.BodyPublishers.ofInputStream(
                         () -> new ByteArrayInputStream("data".getBytes(StandardCharsets.UTF_8))))
                 .build());

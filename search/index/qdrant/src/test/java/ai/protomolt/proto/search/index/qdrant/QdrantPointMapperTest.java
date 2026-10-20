@@ -6,11 +6,17 @@ import ai.protomolt.proto.search.index.spi.IndexMapping;
 import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
-import ai.protomolt.proto.repo.v1.ChunkEmbedding;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
+import ai.protomolt.proto.repo.semantic.v1.OffsetUnit;
+import ai.protomolt.proto.repo.semantic.v1.Segment;
+import ai.protomolt.proto.repo.semantic.v1.SegmentVector;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
+import ai.protomolt.proto.repo.semantic.v1.Similarity;
+import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
+import ai.protomolt.proto.repo.semantic.v1.TextSource;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
@@ -32,6 +38,8 @@ class QdrantPointMapperTest {
 
     private static final String MINILM = "sentence-transformers/all-MiniLM-L6-v2";
     private static final String MINILM_VECTOR = "sentence-transformers_all-MiniLM-L6-v2";
+    private static final String DIGEST =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
@@ -45,49 +53,89 @@ class QdrantPointMapperTest {
                 // Unset on every fixture: proves missing values are skipped, not nulls.
                 new IndexMapping.IndexedField("search_metadata.body", "body",
                         ResolvedFieldHint.of(IndexFieldKind.TEXT)),
-                // Chunk-level data must not be flattened onto every point's payload.
-                new IndexMapping.IndexedField("search_metadata.semantic_results.chunks.text",
+                // Segment-level data must not be flattened onto every point's payload.
+                new IndexMapping.IndexedField("search_metadata.segmentations.segments.text",
                         "flattened_chunk_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
+                new IndexMapping.IndexedField("search_metadata.embedding_sets.model",
+                        "flattened_model", ResolvedFieldHint.of(IndexFieldKind.KEYWORD)),
+                new IndexMapping.IndexedField("search_metadata.segmentations.segments.text",
+                        "selected_segment_text", ResolvedFieldHint.of(IndexFieldKind.TEXT)),
                 // Vector hints are excluded: vectors come from the embeddings.
                 new IndexMapping.IndexedField("embedding", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR).vectorDims(2).build())));
     }
 
-    private static ChunkEmbedding embedding(String model, float... vector) {
-        ChunkEmbedding.Builder builder = ChunkEmbedding.newBuilder()
-                .setEmbeddingId(UUID.randomUUID().toString())
-                .setModel(model)
-                .setDimensions(vector.length);
+    private static SegmentVector segmentVector(String segmentId, float... vector) {
+        SegmentVector.Builder builder = SegmentVector.newBuilder()
+                .setSegmentId(segmentId);
         for (float component : vector) {
-            builder.addVector(component);
+            builder.addValues(component);
         }
         return builder.build();
     }
 
     private static Document document() {
+        return document(Similarity.SIMILARITY_COSINE);
+    }
+
+    private static Document document(Similarity similarity) {
+        Segmentation segmentation = Segmentation.newBuilder()
+                .setSegmentationId("rs-1")
+                .setContentDigest(DIGEST)
+                .setKind(SegmentationKind.SEGMENTATION_KIND_PARAGRAPH)
+                .setOffsetUnit(OffsetUnit.OFFSET_UNIT_UTF8_BYTE)
+                .setSource(TextSource.newBuilder()
+                        .setFieldPath("search_metadata.body")
+                        .setBinding(SourceTextBinding.newBuilder()
+                                .setResolvedTextSha256(DIGEST)
+                                .setUtf8Length(53)))
+                .addSegments(Segment.newBuilder()
+                        .setSegmentId("c-1")
+                        .setOrdinal(0)
+                        .setText("the first chunk")
+                        .setStart(0)
+                        .setEnd(15))
+                .addSegments(Segment.newBuilder()
+                        .setSegmentId("c-2")
+                        .setOrdinal(1)
+                        .setText("the second chunk")
+                        .setStart(16)
+                        .setEnd(32))
+                // No embeddings: the segment must not produce a point.
+                .addSegments(Segment.newBuilder()
+                        .setSegmentId("c-3")
+                        .setOrdinal(2)
+                        .setText("the unembedded chunk")
+                        .setStart(33)
+                        .setEnd(53))
+                .build();
+        EmbeddingSet minilmSet = EmbeddingSet.newBuilder()
+                .setEmbeddingSetId("es-minilm")
+                .setSegmentationId("rs-1")
+                .setSegmentationDigest(DIGEST)
+                .setModel(MINILM)
+                .setDimensions(2)
+                .setSimilarity(similarity)
+                .addVectors(segmentVector("c-1", 0.1f, 0.2f))
+                .addVectors(segmentVector("c-2", 0.3f, 0.4f))
+                .build();
+        EmbeddingSet e5Set = EmbeddingSet.newBuilder()
+                .setEmbeddingSetId("es-e5")
+                .setSegmentationId("rs-1")
+                .setSegmentationDigest(DIGEST)
+                .setModel("e5_small.onnx")
+                .setDimensions(2)
+                .setSimilarity(similarity)
+                .addVectors(segmentVector("c-1", 0.9f, 0.8f))
+                .build();
         return Document.newBuilder()
                 .setDocId("doc-1")
                 .setSearchMetadata(SearchMetadata.newBuilder()
                         .setTitle("Qdrant in Practice")
                         .setSourceUri("s3://bucket/qdrant.html")
-                        .addSemanticResults(SemanticProcessingResult.newBuilder()
-                                .setResultId("rs-1")
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-1")
-                                        .setChunkNumber(0)
-                                        .setText("the first chunk")
-                                        .addEmbeddings(embedding(MINILM, 0.1f, 0.2f))
-                                        .addEmbeddings(embedding("e5_small.onnx", 0.9f, 0.8f)))
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-2")
-                                        .setChunkNumber(1)
-                                        .setText("the second chunk")
-                                        .addEmbeddings(embedding(MINILM, 0.3f, 0.4f)))
-                                // No embeddings: the chunk must not produce a point.
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-3")
-                                        .setChunkNumber(2)
-                                        .setText("the unembedded chunk"))))
+                        .addSegmentations(segmentation)
+                        .addEmbeddingSets(minilmSet)
+                        .addEmbeddingSets(e5Set))
                 .build();
     }
 
@@ -114,13 +162,17 @@ class QdrantPointMapperTest {
         assertThat(payload.get("source_uri").getStringValue()).isEqualTo("s3://bucket/qdrant.html");
         assertThat(payload.get("doc_id").getStringValue()).isEqualTo("doc-1");
         assertThat(payload.get("result_id").getStringValue()).isEqualTo("rs-1");
+        assertThat(payload.get("segmentation_id").getStringValue()).isEqualTo("rs-1");
         assertThat(payload.get("chunk_id").getStringValue()).isEqualTo("c-1");
+        assertThat(payload.get("segment_id").getStringValue()).isEqualTo("c-1");
         assertThat(payload.get("chunk_number").getIntegerValue()).isZero();
         assertThat(payload.get("chunk_text").getStringValue()).isEqualTo("the first chunk");
         assertThat(payload.get("models").getListValue().getValuesList())
                 .extracting(Value::getStringValue)
                 .containsExactly(MINILM_VECTOR, "e5_small_onnx");
-        assertThat(payload).doesNotContainKeys("body", "flattened_chunk_text", "embedding");
+        assertThat(payload).doesNotContainKeys(
+                "body", "flattened_chunk_text", "flattened_model",
+                "selected_segment_text", "embedding");
 
         // The second point carries only the one model it was embedded with.
         assertThat(points.get(1).getVectors().getVectors().getVectorsMap())
@@ -132,13 +184,15 @@ class QdrantPointMapperTest {
     @Test
     void expandsRegistryKnownStructuredDataIntoEveryPointPayload() throws Exception {
         DescriptorRegistry registry = new DescriptorRegistry();
-        registry.register(ChunkEmbedding.getDescriptor());
+        registry.register(Segment.getDescriptor());
         QdrantPointMapper anyMapper = new QdrantPointMapper(new ProtoFieldMapperImpl(registry));
         Document document = document().toBuilder()
-                .setStructuredData(Any.pack(ChunkEmbedding.newBuilder()
-                        .setEmbeddingId("emb-9")
-                        .setModel("m1")
-                        .setDimensions(2)
+                .setStructuredData(Any.pack(Segment.newBuilder()
+                        .setSegmentId("seg-9")
+                        .setOrdinal(2)
+                        .setText("hello")
+                        .setStart(0)
+                        .setEnd(5)
                         .build()))
                 .build();
         List<IndexMapping.IndexedField> fields = new ArrayList<>(mapping().fields());
@@ -150,8 +204,8 @@ class QdrantPointMapperTest {
 
         assertThat(points).hasSize(2);
         Map<String, Value> payload = points.get(0).getPayloadMap();
-        assertThat(payload.get("structured_data_model").getStringValue()).isEqualTo("m1");
-        assertThat(payload.get("structured_data_dimensions").getIntegerValue()).isEqualTo(2);
+        assertThat(payload.get("structured_data_segment_id").getStringValue()).isEqualTo("seg-9");
+        assertThat(payload.get("structured_data_ordinal").getIntegerValue()).isEqualTo(2);
         assertThat(payload).doesNotContainKey("structured_data");
     }
 
@@ -238,6 +292,12 @@ class QdrantPointMapperTest {
 
     // ---------------------------------------------------------------- vector hints
 
+    private static IndexMapping mappingWithoutVectorHint() {
+        return new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
+                new IndexMapping.IndexedField("search_metadata.title", "title",
+                        ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
+    }
+
     private static IndexMapping mappingWithVectorHint(String path, int dims,
                                                    ai.protomolt.proto.search.index.spi.VectorSimilarity similarity) {
         return new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
@@ -253,7 +313,7 @@ class QdrantPointMapperTest {
     @Test
     void declaredVectorDimsAreEnforcedOnWrite() {
         IndexMapping strict = mappingWithVectorHint(
-                "search_metadata.semantic_results.chunks.embeddings.vector", 3,
+                "search_metadata.embedding_sets.vectors.values", 3,
                 ai.protomolt.proto.search.index.spi.VectorSimilarity.COSINE);
 
         assertThatThrownBy(() -> mapper.map(document(), strict))
@@ -264,20 +324,24 @@ class QdrantPointMapperTest {
 
     @Test
     void vectorSpecsTakeSizeAndDistanceFromTheHint() throws Exception {
-        List<PointStruct> points = mapper.map(document(), mappingWithVectorHint(
-                "search_metadata.semantic_results.chunks.embeddings.vector", 2,
-                ai.protomolt.proto.search.index.spi.VectorSimilarity.L2));
+        Document euclideanDoc = document(Similarity.SIMILARITY_EUCLIDEAN);
+        IndexMapping l2Mapping = mappingWithVectorHint(
+                "search_metadata.embedding_sets.vectors.values", 2,
+                ai.protomolt.proto.search.index.spi.VectorSimilarity.L2);
+        List<PointStruct> points = mapper.map(euclideanDoc, l2Mapping);
 
-        assertThat(QdrantPointMapper.vectorSpecs(points, mappingWithVectorHint(
-                        "search_metadata.semantic_results.chunks.embeddings.vector", 2,
-                        ai.protomolt.proto.search.index.spi.VectorSimilarity.L2)))
+        assertThat(QdrantPointMapper.vectorSpecs(points, l2Mapping))
+                .containsExactlyInAnyOrder(
+                        new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Euclid),
+                        new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Euclid));
+        assertThat(QdrantPointMapper.vectorSpecs(euclideanDoc, l2Mapping))
                 .containsExactlyInAnyOrder(
                         new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Euclid),
                         new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Euclid));
     }
 
     @Test
-    void vectorSpecsFallBackToDataAndCosineWithoutAHint() throws Exception {
+    void projectedPointsRequireExplicitSimilarity() throws Exception {
         List<PointStruct> points = mapper.map(document(), mapping());
 
         // mapping() declares its VECTOR field with dims 2 and default (COSINE) similarity.
@@ -285,11 +349,143 @@ class QdrantPointMapperTest {
                 .containsExactlyInAnyOrder(
                         QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
                         QdrantVectorSpec.cosine("e5_small_onnx", 2));
-        // No mapping at all: pure data inference.
-        assertThat(QdrantPointMapper.vectorSpecs(points, null))
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(points, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Points do not carry similarity");
+    }
+
+    @Test
+    void vectorSpecsHonorEmbeddingSetSimilarityWithoutAHint() throws Exception {
+        Document dotDoc = document(Similarity.SIMILARITY_DOT_PRODUCT);
+        List<PointStruct> dotPoints = mapper.map(dotDoc, mappingWithoutVectorHint());
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(dotPoints, mappingWithoutVectorHint()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(QdrantPointMapper.vectorSpecs(dotDoc, null))
                 .containsExactlyInAnyOrder(
-                        QdrantVectorSpec.cosine(MINILM_VECTOR, 2),
-                        QdrantVectorSpec.cosine("e5_small_onnx", 2));
+                        new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Dot),
+                        new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Dot));
+
+        Document euclidDoc = document(Similarity.SIMILARITY_EUCLIDEAN);
+        List<PointStruct> euclidPoints = mapper.map(euclidDoc, mappingWithoutVectorHint());
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(euclidPoints, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(QdrantPointMapper.vectorSpecs(euclidDoc, mappingWithoutVectorHint()))
+                .containsExactlyInAnyOrder(
+                        new QdrantVectorSpec(MINILM_VECTOR, 2, qdrant.Collections.Distance.Euclid),
+                        new QdrantVectorSpec("e5_small_onnx", 2, qdrant.Collections.Distance.Euclid));
+    }
+
+    @Test
+    void equalAndSerializedPointsCannotSupplyUndeclaredSimilarity() throws Exception {
+        var dot = document(Similarity.SIMILARITY_DOT_PRODUCT);
+        var euclid = document(Similarity.SIMILARITY_EUCLIDEAN);
+        var dotPoints = mapper.map(dot, mappingWithoutVectorHint());
+        var euclidPoints = mapper.map(euclid, mappingWithoutVectorHint());
+        // Different source metrics project to identical wire points. A cache keyed by those
+        // points cannot carry the source contract, even before serialization or restart.
+        assertThat(dotPoints).isEqualTo(euclidPoints);
+        var restored = new java.util.ArrayList<PointStruct>();
+        for (var point : dotPoints) restored.add(PointStruct.parseFrom(point.toByteArray()));
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(restored, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Points do not carry similarity");
+        assertThat(QdrantPointMapper.vectorSpecs(dot, null))
+                .allSatisfy(spec -> assertThat(spec.distance()).isEqualTo(qdrant.Collections.Distance.Dot));
+        assertThat(QdrantPointMapper.vectorSpecs(euclid, null))
+                .allSatisfy(spec -> assertThat(spec.distance()).isEqualTo(qdrant.Collections.Distance.Euclid));
+    }
+
+    @Test
+    void conflictingVectorHintSimilarityIsRejected() {
+        IndexMapping l2Hint = mappingWithVectorHint(
+                "search_metadata.embedding_sets.vectors.values", 2,
+                ai.protomolt.proto.search.index.spi.VectorSimilarity.L2);
+
+        assertThatThrownBy(() -> mapper.map(document(Similarity.SIMILARITY_COSINE), l2Hint))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("SIMILARITY_COSINE")
+                .hasMessageContaining("L2");
+        assertThatThrownBy(() -> QdrantPointMapper.vectorSpecs(
+                document(Similarity.SIMILARITY_COSINE), l2Hint))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("SIMILARITY_COSINE")
+                .hasMessageContaining("L2");
+    }
+
+    @Test
+    void duplicateModelOnSameSegmentationIsRejected() {
+        Document base = document();
+        Document duplicateModel = base.toBuilder()
+                .setSearchMetadata(base.getSearchMetadata().toBuilder()
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-minilm-dup")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel(MINILM)
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(segmentVector("c-1", 0.5f, 0.6f))))
+                .build();
+
+        assertThatThrownBy(() -> mapper.map(duplicateModel, mapping()))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("collide on Qdrant vector name")
+                .hasMessageContaining(MINILM_VECTOR);
+    }
+
+    @Test
+    void collidingSanitizedModelNamesAreRejected() {
+        Segmentation segmentation = document().getSearchMetadata().getSegmentations(0);
+        Document colliding = Document.newBuilder()
+                .setDocId("doc-collide")
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .addSegmentations(segmentation)
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-slash")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel("a/b")
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(segmentVector("c-1", 0.1f, 0.2f)))
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-underscore")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel("a_b")
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(segmentVector("c-1", 0.3f, 0.4f))))
+                .build();
+
+        assertThatThrownBy(() -> mapper.map(colliding, mapping()))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("a/b")
+                .hasMessageContaining("a_b")
+                .hasMessageContaining("collide on Qdrant vector name");
+    }
+
+    @Test
+    void mismatchedSegmentationDigestIsRejected() {
+        String otherDigest =
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        Segmentation segmentation = document().getSearchMetadata().getSegmentations(0);
+        Document mismatched = Document.newBuilder()
+                .setDocId("doc-mismatch")
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .addSegmentations(segmentation)
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-bad-digest")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(otherDigest)
+                                .setModel(MINILM)
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(segmentVector("c-1", 0.1f, 0.2f))))
+                .build();
+
+        assertThatThrownBy(() -> mapper.map(mismatched, mapping()))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("segmentation_digest")
+                .hasMessageContaining("content_digest");
     }
 
     @Test
@@ -301,20 +497,20 @@ class QdrantPointMapperTest {
                                 .vectorSimilarity(ai.protomolt.proto.search.index.spi.VectorSimilarity.L2)
                                 .build()),
                 new IndexMapping.IndexedField(
-                        "search_metadata.semantic_results.chunks.embeddings.vector", "embedding",
+                        "search_metadata.embedding_sets.vectors.values", "embedding",
                         ResolvedFieldHint.builder(IndexFieldKind.VECTOR)
                                 .vectorDims(2)
                                 .vectorSimilarity(ai.protomolt.proto.search.index.spi.VectorSimilarity.DOT_PRODUCT)
                                 .build())));
 
-        // Two VECTOR fields would be ambiguous; the semantic-results one wins.
+        // Two VECTOR fields would be ambiguous; the embedding_sets one wins.
         assertThat(QdrantPointMapper.vectorHint(twoVectors)).isPresent()
                 .get().extracting(hint -> hint.vectorSimilarity())
                 .isEqualTo(ai.protomolt.proto.search.index.spi.VectorSimilarity.DOT_PRODUCT);
     }
 
     @Test
-    void hintSimilaritiesMapToQdrantDistances() {
+    void hintSimilaritiesMapToQdrantDistances() throws Exception {
         assertThat(QdrantPointMapper.distance(ai.protomolt.proto.search.index.spi.VectorSimilarity.COSINE))
                 .isEqualTo(qdrant.Collections.Distance.Cosine);
         assertThat(QdrantPointMapper.distance(ai.protomolt.proto.search.index.spi.VectorSimilarity.L2))
@@ -323,6 +519,12 @@ class QdrantPointMapperTest {
                 .isEqualTo(qdrant.Collections.Distance.Dot);
         assertThat(QdrantPointMapper.distance(ai.protomolt.proto.search.index.spi.VectorSimilarity.MAX_INNER_PRODUCT))
                 .isEqualTo(qdrant.Collections.Distance.Dot);
+        assertThat(QdrantPointMapper.distance(Similarity.SIMILARITY_COSINE))
+                .isEqualTo(qdrant.Collections.Distance.Cosine);
+        assertThat(QdrantPointMapper.distance(Similarity.SIMILARITY_DOT_PRODUCT))
+                .isEqualTo(qdrant.Collections.Distance.Dot);
+        assertThat(QdrantPointMapper.distance(Similarity.SIMILARITY_EUCLIDEAN))
+                .isEqualTo(qdrant.Collections.Distance.Euclid);
     }
 
     @Test
@@ -340,5 +542,14 @@ class QdrantPointMapperTest {
                 .isEqualTo("1970-01-01T00:00:00Z");
         // No flat payload representation.
         assertThat(QdrantPointMapper.toValue(SearchMetadata.getDefaultInstance())).isNull();
+    }
+
+    @Test
+    void vectorNameSanitizesByCodePoint() {
+        assertThat(QdrantPointMapper.vectorName("bge-small_v1")).isSameAs("bge-small_v1");
+        assertThat(QdrantPointMapper.vectorName("sentence-transformers/all-MiniLM-L6-v2"))
+                .isEqualTo("sentence-transformers_all-MiniLM-L6-v2");
+        assertThat(QdrantPointMapper.vectorName("model\uD83D\uDE00")).isEqualTo("model_");
+        assertThat(QdrantPointMapper.vectorName("a\uD83D\uDE00b\u00E9c\uD800d")).isEqualTo("a_b_c_d");
     }
 }

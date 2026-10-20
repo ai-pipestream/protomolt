@@ -6,9 +6,9 @@ import ai.protomolt.proto.actions.ActionException;
 import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Reply;
-import ai.protomolt.proto.repo.v1.DocumentMetadata;
-import ai.protomolt.proto.repo.v1.ListDocumentsResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.DocumentSummary;
+import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.Descriptors.Descriptor;
@@ -105,14 +105,14 @@ class ReplayActionTest {
         return new ReplayAction(lister, submit, new FakeIndex(RepoDocumentMapping.SUBJECT));
     }
 
-    static DocumentMetadata document(String docId) {
-        return DocumentMetadata.newBuilder()
-                .setDocId(docId)
+    static DocumentSummary document(String docId) {
+        return DocumentSummary.newBuilder()
                 .setAddress(NodeAddress.newBuilder()
                         .setDocId(docId)
                         .setGraphAddressId("ds-court")
                         .setAccountId("acct")
                         .setGraphId("intake:acct"))
+                .setRevision(1)
                 .build();
     }
 
@@ -121,13 +121,14 @@ class ReplayActionTest {
         RecordingSubmit submit = new RecordingSubmit();
         ReplayAction replay = replay(request -> {
             // Two pages: the first hands back a continuation token.
-            if (request.getContinuationToken().isEmpty()) {
-                assertThat(request.getDrive()).isEqualTo("intake");
+            if (request.getPageToken().isEmpty()) {
+                assertThat(request.getGraphAddressId()).isEqualTo("ds-court");
                 assertThat(request.getAccountId()).isEqualTo("acct");
+                assertThat(request.getPageSize()).isEqualTo(100);
                 return ListDocumentsResponse.newBuilder()
                         .addDocuments(document("doc-1"))
                         .addDocuments(document("doc-2"))
-                        .setNextContinuationToken("page-2")
+                        .setNextPageToken("page-2")
                         .build();
             }
             return ListDocumentsResponse.newBuilder()
@@ -138,8 +139,8 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
         input.put("accountId", "acct");
+        input.put("graphAddressId", "ds-court");
         ObjectNode output = dispatch(replay, input);
 
         assertThat(output.path("submitted").asInt()).isEqualTo(3);
@@ -164,12 +165,12 @@ class ReplayActionTest {
         Map<String, String> declaredNames = Map.of(
                 "workflowName", "workflowName",
                 "mappingSubject", "mappingSubject",
-                "drive", "drive");
+                "accountId", "accountId");
         for (String missing : declaredNames.keySet()) {
             ObjectNode input = MAPPER.createObjectNode();
             input.put("workflowName", "parse-and-index");
             input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-            input.put("drive", "intake");
+            input.put("accountId", "acct");
             input.remove(missing);
             assertThatThrownBy(() -> dispatch(replay, input))
                     .isInstanceOf(ActionException.class)
@@ -185,7 +186,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         ObjectNode output = dispatch(replay, input);
         assertThat(output.path("submitted").asInt()).isZero();
         assertThat(submit.submissions).isEmpty();
@@ -213,7 +214,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         // The refusal propagates; the run submitted before it stays submitted.
         assertThatThrownBy(() -> dispatch(replay, input))
                 .isInstanceOf(ActionException.class)
@@ -222,13 +223,13 @@ class ReplayActionTest {
     }
 
     @Test
-    void anEmptyPageStillFollowsItsContinuationToken() throws Exception {
+    void anEmptyPageStillFollowsItsPageToken() throws Exception {
         RecordingSubmit submit = new RecordingSubmit();
         ReplayAction replay = replay(request -> {
-            if (request.getContinuationToken().isEmpty()) {
+            if (request.getPageToken().isEmpty()) {
                 // An empty first page with a continuation: paging continues.
                 return ListDocumentsResponse.newBuilder()
-                        .setNextContinuationToken("page-2")
+                        .setNextPageToken("page-2")
                         .build();
             }
             return ListDocumentsResponse.newBuilder()
@@ -238,25 +239,28 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         ObjectNode output = dispatch(replay, input);
         assertThat(output.path("submitted").asInt()).isEqualTo(1);
         assertThat(submit.submissions).hasSize(1);
     }
 
     @Test
-    void anAbsentAccountIdSendsNoAccountFilter() throws Exception {
+    void anAbsentGraphScopeSendsNoGraphFilter() throws Exception {
+        List<String> graphFilters = new ArrayList<>();
         List<String> accountFilters = new ArrayList<>();
         ReplayAction replay = replay(request -> {
+            graphFilters.add(request.getGraphAddressId());
             accountFilters.add(request.getAccountId());
             return ListDocumentsResponse.getDefaultInstance();
         }, new RecordingSubmit());
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         dispatch(replay, input);
-        assertThat(accountFilters).containsExactly("");
+        assertThat(graphFilters).containsExactly("");
+        assertThat(accountFilters).containsExactly("acct");
     }
 
     @Test
@@ -264,9 +268,9 @@ class ReplayActionTest {
         RecordingSubmit submit = new RecordingSubmit();
         FakeIndex index = new FakeIndex(RepoDocumentMapping.SUBJECT, "doc-1", "doc-stale");
         ReplayAction action = new ReplayAction(request -> {
-            // Unscoped by design: prune reconciles the whole listing.
-            assertThat(request.getDrive()).isEmpty();
-            assertThat(request.getAccountId()).isEmpty();
+            // Account-wide by design: prune reconciles the account's whole listing.
+            assertThat(request.getGraphAddressId()).isEmpty();
+            assertThat(request.getAccountId()).isEqualTo("acct");
             return ListDocumentsResponse.newBuilder()
                     .addDocuments(document("doc-1"))
                     .build();
@@ -275,6 +279,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("accountId", "acct");
         input.put("prune", true);
         ObjectNode output = dispatch(action, input);
 
@@ -292,17 +297,16 @@ class ReplayActionTest {
                 request -> ListDocumentsResponse.getDefaultInstance(),
                 new RecordingSubmit(),
                 new FakeIndex(RepoDocumentMapping.SUBJECT));
-        for (String scope : new String[] {"drive", "accountId"}) {
-            ObjectNode input = MAPPER.createObjectNode();
-            input.put("workflowName", "parse-and-index");
-            input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-            input.put("prune", true);
-            input.put(scope, scope.equals("drive") ? "intake" : "acct");
-            assertThatThrownBy(() -> dispatch(action, input))
-                    .isInstanceOf(ActionException.class)
-                    .hasMessageContaining(scope)
-                    .hasMessageContaining("prune");
-        }
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("workflowName", "parse-and-index");
+        input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
+        input.put("accountId", "acct");
+        input.put("prune", true);
+        input.put("graphAddressId", "ds-court");
+        assertThatThrownBy(() -> dispatch(action, input))
+                .isInstanceOf(ActionException.class)
+                .hasMessageContaining("graphAddressId")
+                .hasMessageContaining("prune");
     }
 
     @Test
@@ -314,7 +318,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         // The reply carries the shape the response declares, so a replay that reconciled
         // nothing reports nothing pruned rather than leaving the members out.
         ObjectNode output = dispatch(action, input);
@@ -336,7 +340,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         input.put("replayId", "policy-change-2026-08");
 
         dispatch(replay, input);
@@ -375,7 +379,7 @@ class ReplayActionTest {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("workflowName", "parse-and-index");
         input.put("mappingSubject", RepoDocumentMapping.SUBJECT);
-        input.put("drive", "intake");
+        input.put("accountId", "acct");
         dispatch(replay, input);
         assertThat(submit.submissions.getFirst().has("jobId")).isFalse();
     }

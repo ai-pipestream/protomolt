@@ -267,6 +267,27 @@ class DocumentPartCodecTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void chunkFileName_handlesSupplementaryCodePointsLoneSurrogatesAndTruncationBoundary() {
+        // Supplementary code point (U+1F600, 2 UTF-16 chars) maps to a single underscore.
+        String emojiKey = "seg\uD83D\uDE00end";
+        assertThat(DocumentPartCodec.chunkFileName(emojiKey))
+                .startsWith("seg_end-");
+        // Lone surrogate maps to a single underscore.
+        String loneSurrogate = "seg\uD800end";
+        assertThat(DocumentPartCodec.chunkFileName(loneSurrogate))
+                .startsWith("seg_end-");
+        // BMP non-ASCII character maps to a single underscore.
+        String bmpNonAscii = "seg\u00E9end";
+        assertThat(DocumentPartCodec.chunkFileName(bmpNonAscii))
+                .startsWith("seg_end-");
+        // 96-character limit applies to the sanitized output after code-point replacement.
+        String longWithEmoji = "\uD83D\uDE00" + "a".repeat(95) + "XYZ";
+        String fileName = DocumentPartCodec.chunkFileName(longWithEmoji);
+        String prefix = fileName.substring(0, fileName.lastIndexOf('-'));
+        assertThat(prefix).hasSize(96).isEqualTo("_" + "a".repeat(95));
+    }
+
     // ---------------------------------------------------------------------
 
     private static Document fullDoc() {

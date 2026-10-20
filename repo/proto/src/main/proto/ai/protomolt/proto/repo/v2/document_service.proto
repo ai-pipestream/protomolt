@@ -1,0 +1,736 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
+import "ai/protomolt/proto/repo/v2/errors.proto";
+import "ai/protomolt/proto/repo/v2/events.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "DocumentServiceProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// DOCUMENT SERVICE — the parts-based repository contract
+// (docs/design/parts-based-repository-requirements.md, v2.5).
+//
+// repo.v2 is a working package name. It replaces the v1 DocumentService once
+// the requirements' §15 acceptance passes; it is not a second public API to
+// deploy beside v1. Section references (§n) point at the requirements.
+// ============================================================================
+
+// The repository's document contract. History lives here.
+service DocumentService {
+  // Commit one accession. Errors and their detail messages are listed in
+  // errors.proto.
+  rpc SaveDocument(SaveDocumentRequest) returns (SaveDocumentResponse);
+
+  // Bulk saves. Each request yields exactly one response, correlated by
+  // request_id, independent of the durable operation_id. Responses may arrive
+  // out of order. One document's failure never fails the stream.
+  rpc SaveDocuments(stream SaveDocumentsRequest) returns (stream SaveDocumentsResponse);
+
+  // Streamed raw-file or encoded-part upload: one header, then bytes, then
+  // client half-close. Runs the same save as SaveDocument. The HTTP upload
+  // route is a surface onto this operation.
+  rpc UploadDocument(stream UploadDocumentRequest) returns (UploadDocumentResponse);
+
+  // Tombstone. Itself an accession with a revision, an operation ID and an
+  // expected revision. No bytes are removed.
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+
+  // Administrative purge. Marks the document's references purged in one
+  // catalog transaction; bytes are deleted only for objects no unpurged
+  // reference points at. Idempotent by purge_id.
+  rpc PurgeDocument(PurgeDocumentRequest) returns (PurgeDocumentResponse);
+
+  // Three-state outcome lookup. "Lookup unavailable" is the status UNAVAILABLE.
+  rpc GetOperationOutcome(GetOperationOutcomeRequest) returns (GetOperationOutcomeResponse);
+
+  // Unary read of a whole or partial document. An exact revision that does not
+  // exist is NOT_FOUND, never the current one.
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+
+  // Streamed read: the manifest frame, pinned to one revision, then the
+  // selected parts' verified bytes, then a completion frame.
+  rpc ReadDocument(ReadDocumentRequest) returns (stream ReadDocumentResponse);
+
+  // Correlated bulk reads. Each item ends in complete or error, never both.
+  rpc ReadDocuments(stream ReadDocumentsRequest) returns (stream ReadDocumentsResponse);
+
+  // Streamed raw-file read with an optional byte range. A full read ends with a
+  // SHA-256 check; a mismatch ends the stream with DATA_LOSS.
+  rpc ReadBlob(ReadBlobRequest) returns (stream ReadBlobResponse);
+
+  // Manifest only. Fetches no payloads.
+  rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
+
+  // Revision history, newest first, paginated.
+  rpc ListRevisions(ListRevisionsRequest) returns (ListRevisionsResponse);
+
+  // Current documents in a scope.
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+}
+
+// ============================================================================
+// Save (§7, §9)
+// ============================================================================
+
+// How the call number is chosen.
+message DocumentTarget {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "target-required"
+    message: "a target names an address or an intake datasource"
+    expression: "has(this.address) || has(this.use_datasource_id)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "target-address-complete"
+    message: "a target address needs a non-blank doc_id, graph_address_id, account_id and graph_id"
+    expression: "!has(this.address) || (this.address.doc_id.matches('\\\\S') && this.address.graph_address_id.matches('\\\\S') && this.address.account_id.matches('\\\\S') && this.address.graph_id.matches('\\\\S'))"
+  };
+  // Exactly one way to choose it. Pipeline saves send a full address.
+  oneof target {
+    // The full call number.
+    ai.protomolt.proto.repo.v1.NodeAddress address = 1;
+    // An intake save: the call number is (document.doc_id, this datasource,
+    // document.ownership.account_id, "intake:<account>"). Requires a CORE PUT,
+    // since doc_id and ownership are CORE content.
+    string use_datasource_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {
+      min_len: 1
+      max_len: 200
+      pattern: ".*\\S.*"
+    }];
+  }
+}
+
+// What a save does to one part.
+enum WriteAction {
+  // Rejected.
+  WRITE_ACTION_UNSPECIFIED = 0;
+  // New content, from SaveDocumentRequest.document.
+  WRITE_ACTION_PUT = 1;
+  // The part is present and intentionally empty.
+  WRITE_ACTION_EMPTY = 2;
+  // The part is DELETED from this revision on.
+  WRITE_ACTION_DELETE = 3;
+}
+
+// One part a save changes.
+message PartWrite {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "delete-reason"
+    message: "only DELETE carries a nonempty deletion reason"
+    expression: "this.action == 3 ? size(this.deleted_reason) > 0 : size(this.deleted_reason) == 0"
+  };
+  // The part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // What happens to it.
+  WriteAction action = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // DELETE only.
+  string deleted_reason = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1024];
+}
+
+// Take one part from an exact revision of a document. The new accession
+// references the same stack object; nothing is copied. The source must have
+// the saving document's doc_id, or the request is malformed. It must also be
+// in the saving document's account, and the caller must be able to read the
+// source document's current revision, or the save is rejected with
+// SOURCE_NOT_FOUND.
+message PartSource {
+  // The part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The source document.
+  ai.protomolt.proto.repo.v1.NodeAddress from_address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The exact source revision.
+  int64 from_revision = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+}
+
+// How Any values are validated.
+enum ValidationMode {
+  // Treated as TYPED.
+  VALIDATION_MODE_UNSPECIFIED = 0;
+  // Every Any must resolve, decode and validate.
+  VALIDATION_MODE_TYPED = 1;
+  // Attested occurrences may be stored as type URL plus exact bytes. Refused
+  // unless host policy allows it.
+  VALIDATION_MODE_OPAQUE_ALLOWED = 2;
+}
+
+// Attribution of one opaque occurrence.
+message OpaqueAttestation {
+  // Where it sits in the candidate.
+  OccurrenceLocator occurrence = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Its exact type URL.
+  string type_url = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 4096}
+  }];
+  // The producing step. Omitted means the save's step owner; intake cannot be
+  // an opaque producer.
+  ai.protomolt.proto.repo.v1.WriteProvenance owner = 3;
+  // Required on edits: the previously committed occurrence carried forward.
+  OpaqueSource carried_from = 4;
+}
+
+// One save.
+message SaveDocumentRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "explicit-opaque-mode"
+    message: "opaque attestations require OPAQUE_ALLOWED"
+    expression: "size(this.opaque_attestations) == 0 || this.validation_mode == 2"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "intake-target-document-id"
+    message: "an intake datasource target needs a CORE PUT with a non-blank document doc_id"
+    expression: "!has(this.target.use_datasource_id) || (has(this.document) && this.document.doc_id.matches('\\\\S') && this.writes.exists(w, has(w.selector.part) && w.selector.part == 1 && w.action == 1))"
+  };
+  // Client-chosen, unique per account. The outcome is recorded under
+  // (account_id, operation_id).
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  }];
+  // The call number.
+  DocumentTarget target = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The expected current revision.
+  ExpectedRevision expected = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Content for every PUT in writes, and nothing else. Content for a part not
+  // listed as PUT is rejected, never dropped.
+  ai.protomolt.proto.repo.v1.Document document = 4;
+  // The parts this save changes.
+  repeated PartWrite writes = 5;
+  // Parts taken from other revisions. Every part neither written nor sourced
+  // carries forward from the expected revision.
+  repeated PartSource sources = 6;
+  // How Any values are validated.
+  ValidationMode validation_mode = 7 [(ai.protomolt.proto.validate.v1.field).enum.defined_only = true];
+  // Named storage for new objects. Resolves to the drive's current stack; the
+  // stack ID is recorded, never exposed.
+  string drive = 8 [(ai.protomolt.proto.validate.v1.field).string.max_len = 200];
+  // Who is writing.
+  SaveOwner owner = 9 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Attribution of opaque occurrences.
+  repeated OpaqueAttestation opaque_attestations = 10;
+  // Exact source revisions a derived document is created from. Each must be
+  // in the saving document's account, and the caller must be able to read its
+  // document's current revision, or the save is rejected with SOURCE_NOT_FOUND.
+  repeated SourceRevision derived_from = 11;
+  // Persisted request metadata; part of the retry identity. Transport tracing
+  // belongs in request context, not here.
+  map<string, string> metadata = 99;
+}
+
+// A committed save.
+message SaveDocumentResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-response-not-tombstone"
+    message: "a save response never carries a tombstone"
+    expression: "!this.accession.tombstone"
+  };
+  // The request's operation ID.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The accession.
+  Accession accession = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The recorded outcome was returned for a retry, including the concurrent
+  // same-ID case.
+  bool replayed = 3;
+}
+
+// One item of a bulk save.
+message SaveDocumentsRequest {
+  // Unique within the stream.
+  string request_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The save.
+  SaveDocumentRequest save = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One bulk save result.
+message SaveDocumentsResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-item-result-required"
+    message: "an item result is a save or an error"
+    expression: "has(this.saved) || has(this.error)"
+  };
+  // The operation ID of the item.
+  string operation_id = 1;
+  // The request ID of the item.
+  string request_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Exactly one result.
+  oneof result {
+    // The committed save.
+    SaveDocumentResponse saved = 2;
+    // The failure.
+    ItemError error = 3;
+  }
+}
+
+// ============================================================================
+// Upload (§11)
+// ============================================================================
+
+// The first frame of an upload.
+message UploadHeader {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "upload-payload-required"
+    message: "an upload carries a raw blob or an encoded part"
+    expression: "has(this.blob_id) || has(this.encoded_part)"
+  };
+  // The save this upload commits. For a raw blob its document carries the
+  // blob's metadata without data or storage_ref, and writes include BLOBS PUT;
+  // the server fills the claim check.
+  SaveDocumentRequest save = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // What the bytes are.
+  oneof payload {
+    // A raw file for this blob ID.
+    string blob_id = 2 [(ai.protomolt.proto.validate.v1.field).string.min_len = 1];
+    // One encoded codec fragment.
+    StreamedPart encoded_part = 5;
+  }
+  // Presence distinguishes an expected zero-byte object from unknown length.
+  optional int64 declared_length = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The bytes' SHA-256, checked when set.
+  string expected_sha256 = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+}
+
+// The bytes are one stored codec fragment; the server selects its schema from
+// the part layout.
+message StreamedPart {
+  // The part whose PUT the stream supplies.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One upload frame.
+message UploadDocumentRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "upload-frame-required"
+    message: "a frame is a header or data"
+    expression: "has(this.header) || has(this.data)"
+  };
+  // Exactly one frame kind.
+  oneof frame {
+    // First frame, exactly once.
+    UploadHeader header = 1;
+    // Any number of data frames.
+    bytes data = 2;
+  }
+}
+
+// The committed upload.
+message UploadDocumentResponse {
+  // The save it committed.
+  SaveDocumentResponse saved = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// ============================================================================
+// Delete, purge, outcomes
+// ============================================================================
+
+// A tombstone request.
+message DeleteDocumentRequest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "delete-existing-revision"
+    message: "delete requires an exact existing revision"
+    expression: "has(this.expected.revision)"
+  };
+  // Unique per account.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  }];
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The expected current revision.
+  ExpectedRevision expected = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Why.
+  string reason = 4 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1024];
+}
+
+// A committed tombstone.
+message DeleteDocumentResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "delete-response-tombstone"
+    message: "a delete response always carries a tombstone"
+    expression: "this.accession.tombstone"
+  };
+  // The request's operation ID.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The tombstone accession.
+  Accession accession = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The recorded outcome was returned for a retry.
+  bool replayed = 3;
+}
+
+// An administrative purge request.
+message PurgeDocumentRequest {
+  // Idempotency key of the purge.
+  string purge_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Why.
+  string reason = 3 [(ai.protomolt.proto.validate.v1.field).string.max_len = 1024];
+}
+
+// A purge's result.
+message PurgeDocumentResponse {
+  // The purge ID.
+  string purge_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // References marked purged.
+  int64 references_purged = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Objects with no unpurged reference left, now eligible for deletion.
+  int64 objects_to_delete = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Objects kept because another document still references them.
+  int64 objects_retained_shared = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// An outcome lookup.
+message GetOperationOutcomeRequest {
+  // The account the operation ID belongs to.
+  string account_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The operation ID.
+  string operation_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+}
+
+// A recorded terminal outcome.
+message RecordedOutcome {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "recorded-outcome-required"
+    message: "a recorded outcome is an accession or a rejection"
+    expression: "has(this.accession) || has(this.rejection)"
+  };
+  // Exactly one result.
+  oneof result {
+    // Committed success.
+    Accession accession = 1;
+    // Committed failure, such as a validation rejection.
+    SaveRejection rejection = 2;
+  }
+  // When it was recorded.
+  google.protobuf.Timestamp recorded_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// No outcome is recorded. This does not mean the request failed: an
+// outstanding request may still commit later.
+message NoRecordedOutcome {}
+
+// The outcome lookup's answer.
+message GetOperationOutcomeResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "outcome-state-required"
+    message: "an outcome is committed or none"
+    expression: "has(this.committed) || has(this.none)"
+  };
+  // Exactly one state.
+  oneof state {
+    // A recorded outcome.
+    RecordedOutcome committed = 1;
+    // Nothing recorded.
+    NoRecordedOutcome none = 2;
+  }
+}
+
+// ============================================================================
+// Reads (§8)
+// ============================================================================
+
+// A unary read.
+message GetDocumentRequest {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+  // Unset means every part.
+  PartSelection selection = 3;
+  // An opaque payload fails a typed read unless this is set.
+  bool allow_opaque = 4;
+}
+
+// A unary read's result.
+message GetDocumentResponse {
+  // Assembled from the selected parts only.
+  ai.protomolt.proto.repo.v1.Document document = 1;
+  // Entries mark which content was included.
+  DocumentManifest manifest = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The revision's validation record.
+  RevisionValidation validation = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Persisted request metadata from this same authorized revision, independent of part selection.
+  map<string, string> metadata = 4;
+}
+
+// A streamed read.
+message ReadDocumentRequest {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+  // Unset means every part.
+  PartSelection selection = 3;
+  // An opaque payload fails a typed read unless this is set.
+  bool allow_opaque = 4;
+}
+
+// A frame of one part's serialized protobuf fragment, as stored.
+message PartData {
+  // The part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Byte offset of this frame within the part.
+  int64 offset = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The bytes.
+  bytes data = 3;
+  // Last frame of this part; its SHA-256 was verified server-side.
+  bool last = 4;
+}
+
+// All selected parts were sent and verified.
+message ReadComplete {}
+
+// One streamed read frame.
+message ReadDocumentResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "read-frame-required"
+    message: "a frame is a manifest, part data or completion"
+    expression: "has(this.manifest) || has(this.part_data) || has(this.complete)"
+  };
+  // Exactly one frame kind.
+  oneof frame {
+    // First frame.
+    DocumentManifest manifest = 1;
+    // Part bytes.
+    PartData part_data = 2;
+    // Last frame; a prefix without it is not success.
+    ReadComplete complete = 3;
+  }
+}
+
+// One item of a bulk read.
+message ReadDocumentsRequest {
+  // Unique within the stream.
+  string request_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The read.
+  ReadDocumentRequest read = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One bulk read frame.
+message ReadDocumentsResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "read-item-result-required"
+    message: "an item frame is a read frame or an error"
+    expression: "has(this.frame) || has(this.error)"
+  };
+  // The item's request ID.
+  string request_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Exactly one result.
+  oneof result {
+    // A read frame.
+    ReadDocumentResponse frame = 2;
+    // The item's failure; no save side effects.
+    ItemError error = 3;
+  }
+}
+
+// A raw-file read.
+message ReadBlobRequest {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+  // The blob.
+  string blob_id = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Start offset; 0 is the start.
+  int64 offset = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Bytes to read; 0 means to the end.
+  int64 length = 5 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// The first frame of a raw-file read.
+message BlobHeader {
+  // The revision read.
+  int64 revision = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // Length of the whole object.
+  int64 total_length = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // SHA-256 of the whole object.
+  string sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // The blob's MIME type.
+  string mime_type = 4;
+  // The blob's filename.
+  string filename = 5;
+}
+
+// One raw-file read frame.
+message ReadBlobResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "blob-frame-required"
+    message: "a frame is a header or data"
+    expression: "has(this.header) || has(this.data)"
+  };
+  // Exactly one frame kind.
+  oneof frame {
+    // First frame.
+    BlobHeader header = 1;
+    // Bytes.
+    bytes data = 2;
+  }
+}
+
+// A manifest read.
+message GetManifestRequest {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+}
+
+// A manifest read's result.
+message GetManifestResponse {
+  // The manifest; content_included is false throughout.
+  DocumentManifest manifest = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The revision's validation record.
+  RevisionValidation validation = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A history page request.
+message ListRevisionsRequest {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Revisions per page.
+  int32 page_size = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gt: 0, lte: 1000}
+  }];
+  // From the previous page; empty for the first.
+  string page_token = 3;
+}
+
+// One revision in history.
+message RevisionSummary {
+  // The revision.
+  int64 revision = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // The revision it replaced; 0 for the first.
+  int64 previous_revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // When it was committed.
+  google.protobuf.Timestamp committed_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The operation that committed it.
+  string operation_id = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The save owner; present for saves.
+  SaveOwner owner = 5;
+  // The revision is a tombstone.
+  bool tombstone = 6;
+  // The validation verdict.
+  ValidationStatus validation_status = 7 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Parts this revision changed.
+  repeated PartChange changes = 8;
+}
+
+// A history page.
+message ListRevisionsResponse {
+  // Revision descending.
+  repeated RevisionSummary revisions = 1;
+  // Empty on the last page.
+  string next_page_token = 2;
+}
+
+// A document listing request.
+message ListDocumentsRequest {
+  // The account.
+  string account_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // Optional scope.
+  string graph_address_id = 2;
+  // Optional scope.
+  string graph_id = 3;
+  // Include documents whose current revision is a tombstone.
+  bool include_tombstoned = 4;
+  // Documents per page.
+  int32 page_size = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gt: 0, lte: 1000}
+  }];
+  // From the previous page; empty for the first.
+  string page_token = 6;
+}
+
+// One document in a listing.
+message DocumentSummary {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The current revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // When it was committed.
+  google.protobuf.Timestamp committed_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The current revision is a tombstone.
+  bool tombstone = 4;
+}
+
+// A document listing page.
+message ListDocumentsResponse {
+  // The documents.
+  repeated DocumentSummary documents = 1;
+  // Empty on the last page.
+  string next_page_token = 2;
+}

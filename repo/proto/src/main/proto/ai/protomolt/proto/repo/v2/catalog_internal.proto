@@ -1,0 +1,363 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v1/document.proto";
+import "ai/protomolt/proto/repo/v2/document_service.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "CatalogInternalProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// CATALOG-INTERNAL RECORDS — never on the public API. Stored as binary
+// protobuf in the catalog (requirements §10).
+// ============================================================================
+
+// One configured storage namespace. Repointing configuration creates a new
+// stack ID, so historical references never follow it.
+message StackRecord {
+  // The stack's catalog ID.
+  string stack_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // Provider name, for example "s3".
+  string provider = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // Provider endpoint.
+  string endpoint = 3;
+  // Bucket or container, plus prefix.
+  string namespace = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // When the record was created.
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// A stable reference to one write-once stack object.
+message StackRef {
+  // The stack it lives on.
+  string stack_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // Write-once key, never reused.
+  string key = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // SHA-256 of the object's bytes, computed by the server while writing.
+  string sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Length of the object in bytes.
+  int64 length = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// One raw blob's stack object, bound by the server to the blob's ID
+// (requirements §6, "Raw blob claim checks"; decision 45).
+message BlobObjectRef {
+  // Blob.blob_id in the BLOBS fragment; unique within the part.
+  string blob_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1024}
+  }];
+  // The stack object holding the blob's raw bytes, written or verified by the server.
+  StackRef ref = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One stored part of one accession.
+message StoredPartEntry {
+  // The public entry; content_included is unused in storage.
+  PartManifestEntry entry = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset for EMPTY and DELETED.
+  StackRef ref = 2;
+  // BLOBS only: each raw blob is its own stack object. The stored BLOBS fragment
+  // holds blob metadata without data or storage_ref; the server fills
+  // Blob.storage_ref from these bindings on read and refuses one from a client.
+  repeated BlobObjectRef blob_refs = 3;
+}
+
+// What the catalog stores per accession. Replaces today's JSON manifest,
+// security and history metadata.
+message StoredManifest {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-no-parts"
+    message: "tombstones contain no part references"
+    expression: "!this.tombstone || size(this.parts) == 0"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "tombstone-validation-status"
+    message: "only tombstones have NOT_APPLICABLE validation"
+    expression: "this.tombstone == (this.validation.status == 3)"
+  };
+
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-owner-present"
+    message: "save accessions require an owner"
+    expression: "this.tombstone || has(this.owner)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "save-authority-present"
+    message: "save accessions require grant or process-authority evidence"
+    expression: "has(this.validation.writer_grant) || has(this.validation.process_authority)"
+  };
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The revision.
+  int64 revision = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // The revision it replaced; 0 for a new document.
+  int64 previous_revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The accession is a tombstone.
+  bool tombstone = 4;
+  // Every part, in codec order.
+  repeated StoredPartEntry parts = 5;
+  // The validation record.
+  RevisionValidation validation = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The committing operation.
+  string operation_id = 7 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // SHA-256 of the committing SaveIntent.
+  string intent_sha256 = 8 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // The save owner; required for saves.
+  SaveOwner owner = 9;
+  // Exact source revisions of a derived document.
+  repeated SourceRevision derived_from = 10;
+  // Document ownership and security as of this revision. Access checks read
+  // it here, never from a JSON column.
+  ai.protomolt.proto.repo.v1.OwnershipContext ownership = 11 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // When the commit transaction ran.
+  google.protobuf.Timestamp committed_at = 12 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Persisted request metadata.
+  map<string, string> metadata = 99;
+}
+
+// A writer's credential identity. Grants name no generation, so they survive
+// key rotation; the commit checks the presented generation is current.
+message WriterCredential {
+  // A generation is evidence, not part of the grant.
+  reserved 3;
+  // The credential issuer.
+  string issuer = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The credential's UUID.
+  string credential_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {uuid: true}
+  }];
+}
+
+// The step a grant covers.
+message StepWriterScope {
+  // The module.
+  string module_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  }];
+  // Absent covers all of the module's nodes; present requires an exact match.
+  optional string node_id = 2 [(ai.protomolt.proto.validate.v1.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+}
+
+// An immutable writer grant for one account and one credential, provisioned by
+// an administrator outside DocumentService. Revocation is separate catalog
+// state, checked in the commit transaction. A scope change creates a new ID.
+message WriterGrant {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "grant-scope-required"
+    message: "a grant covers an intake origin or a step"
+    expression: "has(this.intake) || has(this.step)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "opaque-step-grant"
+    message: "only step grants may authorize opaque types"
+    expression: "size(this.opaque_type_urls) == 0 || has(this.step)"
+  };
+  // Never reused.
+  string grant_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The account it covers.
+  string account_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The credential it covers.
+  WriterCredential credential = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Exactly one scope.
+  oneof scope {
+    // An intake datasource and optional connector.
+    IntakeOrigin intake = 4;
+    // A step module and optional node.
+    StepWriterScope step = 5;
+  }
+  // The grant may create documents.
+  bool allow_create = 6;
+  // Exact opaque type URLs a step may attest. No wildcard or prefix matching.
+  repeated string opaque_type_urls = 7 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    unique: true
+    items: {
+      string: {min_len: 1, max_len: 4096}
+    }
+  }];
+}
+
+// One persisted metadata entry, sorted by unsigned UTF-8 key.
+message IntentMetadata {
+  // The key.
+  string key = 1;
+  // The value.
+  string value = 2;
+}
+
+// One write in intent order, bound to its content's digest and length.
+message IntentWrite {
+  // The write.
+  PartWrite write = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // PUT only: SHA-256 of the encoded fragment. Never a storage key.
+  string content_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // PUT only: length of the encoded fragment.
+  int64 content_length = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// The retry identity of one save. intent_sha256 is SHA-256 over this message's
+// binary encoding: fields in field-number order, metadata sorted by unsigned
+// UTF-8 key, an unspecified validation mode normalized to TYPED, writes and
+// sources in request order, and attestations sorted by their locator. Trace
+// IDs and transport details are never part of it.
+message SaveIntent {
+  // Only version 1 is defined.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // The resolved call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The expected revision.
+  ExpectedRevision expected = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The normalized validation mode.
+  ValidationMode validation_mode = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // The writes, with content identity.
+  repeated IntentWrite writes = 5;
+  // The sources.
+  repeated PartSource sources = 6;
+  // The drive name.
+  string drive = 7;
+  // The claimed owner.
+  SaveOwner owner = 8 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Persisted metadata, sorted.
+  repeated IntentMetadata metadata = 9;
+  // Opaque attestations, sorted, with owners normalized to the save owner.
+  repeated OpaqueAttestation opaque_attestations = 10;
+  // Domain separation: save, delete and purge never share an intent namespace.
+  string operation_kind = 11 [(ai.protomolt.proto.validate.v1.field).string.const = "save"];
+  // Exact source lineage.
+  repeated SourceRevision derived_from = 12;
+}
+
+// One part of a composed candidate, for RevisionValidation.candidate_sha256.
+message CandidatePart {
+  // The part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Its state.
+  PartState state = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // SHA-256 of its bytes; empty for EMPTY and DELETED.
+  string sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // Its length.
+  int64 length = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// The canonical digest input of a composed candidate: its parts in codec order.
+message CandidateDigestInput {
+  // Only version 1 is defined.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // The parts in codec order.
+  repeated CandidatePart parts = 2;
+}
+
+// Domain-separated retry identity for a tombstone operation.
+message DeleteIntent {
+  // Encoding version.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // Target document.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Expected live revision.
+  ExpectedRevision expected = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Recorded deletion reason.
+  string reason = 4;
+  // Prevents collision with save intents.
+  string operation_kind = 5 [(ai.protomolt.proto.validate.v1.field).string.const = "delete"];
+}
+
+// Internal metadata projection; authoritative content remains in the stored parts.
+message CatalogEntry {
+  option (ai.protomolt.proto.projection.v1.sources) = {source: "ai.protomolt.proto.repo.v1.Document"};
+  // Stable document identity.
+  string doc_id = 1 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "doc_id"}}];
+  // Current ownership used for listing access checks.
+  ai.protomolt.proto.repo.v1.OwnershipContext ownership = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership"}}];
+  // Exact commit timestamp supplied by the catalog; SQL timestamps can lose nanoseconds.
+  google.protobuf.Timestamp committed_at = 3;
+}
+
+// Internal binary continuation token, bound to the listing filters.
+message CatalogPageToken {
+  // Token format.
+  uint32 version = 1;
+  // Exact account filter.
+  string account_id = 2;
+  // Exact graph filter.
+  string graph_id = 3;
+  // Exact address filter.
+  string graph_address_id = 4;
+  // Exact tombstone filter.
+  bool include_tombstoned = 5;
+  // Last returned address.
+  ai.protomolt.proto.repo.v1.NodeAddress after = 6;
+}
+
+// Durable purge targets recorded before any provider deletion.
+message CatalogPurge {
+  // First authorized request; retries bind purge_id and address.
+  PurgeDocumentRequest request = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Newly marked part and raw blob references.
+  int64 references_purged = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Exact immutable object identities whose reference count reached zero.
+  repeated StackRef objects_to_delete = 3;
+  // Distinct candidate objects still referenced elsewhere.
+  int64 objects_retained_shared = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Time of the mark transaction.
+  google.protobuf.Timestamp marked_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
+}

@@ -3,6 +3,53 @@
 The [project README](../README.md) has the build and first-run instructions.
 The guides below follow the repository's module layout.
 
+## Protobuf toolkit overview
+
+The [library catalog](../README.md#1-libraries) lists individual modules and
+entry points. These are the reusable layers to check before adding another helper:
+
+- **Descriptors and schemas:** [descriptor loading](core/descriptor-sources.md),
+  [source gathering](acquire/gathering.md), compilation, [compatibility checking](schema/compatibility.md)
+  and the [registry](schema/registry.md) supply definitions for generated messages
+  and runtime `DynamicMessage` values. Name lookup is not a substitute for pinning
+  an immutable schema artifact when reading retained data.
+- **Mapping and selection:** [field mapping and CEL](transform/mapping.md) operate
+  on protobuf fields and builders. Use them for declared transformations rather
+  than converting a message to JSON to traverse it.
+- **Projections and shapes:** [projections](transform/projection.md) and
+  [derived shapes](transform/join-shapes.md) build typed outputs. Projection map
+  fields are currently refused; a source mask marked incomplete must not be used
+  to discard fields needed by CEL.
+- **Validation and annotations:** [runtime validation](transform/validation.md),
+  [metadata](schema/metadata.md), [masking](transform/masking.md) and
+  [quality scoring](transform/quality.md) interpret descriptor options. Quality
+  scores do not establish contract validity. A service must explicitly wire its
+  validation boundary; library availability alone does not enforce it.
+- **Protocol adapters:** [actions](surface/actions.md), [dynamic gRPC](surface/grpc-service.md),
+  [MCP](surface/mcp.md), [ACP](surface/acp.md) and [REST/OpenAPI](surface/rest-gateway.md)
+  expose typed behavior to callers. JSON belongs at protocols that require it.
+  JSON Schema/OpenAPI translate supported validation constraints; runtime-only
+  rules still require the validator.
+- **Execution and evidence:** [pipelines](transform/pipeline.md),
+  [workflows](transform/workflows.md), [delegation](transform/delegation.md) and
+  [signed work records](design/receipts.md) provide distinct execution and evidence
+  tools. A signed work record and a repository operation receipt are not the same
+  contract.
+- **Storage and derived output:** the [repository](../repo/README.md) supplies
+  parts, provider interfaces and retained-schema machinery;
+  [search indexing](search/indexing.md) consumes indexing/embedding hints, and
+  [Kafka](sink/kafka-serde.md) and [bundle emitters](sink/emitting.md) provide
+  integration boundaries. These capabilities do not imply automatic wiring into
+  every save path.
+
+For a runnable introduction, use the [standalone toolkit example](../examples/protobuf-toolkit/README.md).
+For the October 13 reconciliation findings and known defects, see the
+[source audit](design/protobuf-toolkit-audit.md) and
+[source/test index](design/protobuf-toolkit-source-index.md). Those records describe
+source inspection, not a new runtime certification. The
+[parts-based repository requirements](design/parts-based-repository-requirements.md)
+are a draft for review, not a description of completed repairs.
+
 ## Acquire
 
 - [Stream connectors](acquire/connector.md): bounded, flow-controlled inputs
@@ -76,8 +123,6 @@ built-in action exposed by the standalone and full catalogs.
 - [Building and testing](operations/building.md): builds, tests, linting, and publishing
 - [Nano1 ARM64 node](../deploy/nano1/README.md): native image builds and GPU inference boundary
 - [Outbound gRPC policy](operations/grpc-channel-policy.md): target, transport, deadline, and concurrency limits
-- [Repository backup and recovery](operations/repository-backup-recovery.md): offline backup of the ledger and pinned RustFS, restore into new resources, rehearsal harness
-- [Repository backup rehearsal suite](operations/repository-backup-rehearsal.md): JUnit clean-room backup and restore through V119 with negative cases (`RepositoryBackupRehearsalIT`)
 
 ## Tutorials
 

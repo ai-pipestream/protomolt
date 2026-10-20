@@ -9,7 +9,7 @@ import ai.protomolt.proto.delegation.lifecycle.InMemoryTranscriptRepository;
 import ai.protomolt.proto.delegation.repository.RepositoryServiceTranscriptRepository;
 import ai.protomolt.proto.delegation.repository.RepositoryStateKeyResolver;
 import ai.protomolt.proto.delegation.lifecycle.TranscriptRepository;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.inprocess.InProcessChannelBuilder;

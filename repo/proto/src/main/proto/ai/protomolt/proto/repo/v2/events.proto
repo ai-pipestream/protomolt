@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "EventsProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// DOCUMENT EVENTS (requirements §10). Every accession writes exactly one
+// outbox event in its commit transaction. Delivery is at-least-once.
+// ============================================================================
+
+// How one part changed in an accession.
+enum ChangeKind {
+  // Never sent.
+  CHANGE_KIND_UNSPECIFIED = 0;
+  // A part the previous revision did not have.
+  CHANGE_KIND_ADDED = 1;
+  // New bytes for an existing part.
+  CHANGE_KIND_REPLACED = 2;
+  // The part became EMPTY.
+  CHANGE_KIND_EMPTIED = 3;
+  // The part became DELETED.
+  CHANGE_KIND_DELETED = 4;
+  // Taken from another document's revision.
+  CHANGE_KIND_SOURCED = 5;
+}
+
+// One changed part. Parts carried forward unchanged are not listed.
+message PartChange {
+  // The part.
+  PartSelector selector = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // How it changed.
+  ChangeKind kind = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // SHA-256 of the new bytes; empty for EMPTIED and DELETED.
+  string sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+}
+
+// An accession was committed.
+message Accessioned {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "accessioned-content-verdict"
+    message: "content accession events cannot claim NOT_APPLICABLE"
+    expression: "this.validation_status != 3"
+  };
+  // The changed parts.
+  repeated PartChange changes = 1;
+  // The revision's validation verdict.
+  ValidationStatus validation_status = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+}
+
+// A tombstone accession was committed.
+message Tombstoned {
+  // The delete reason.
+  string reason = 1;
+}
+
+// References were marked purged. Not an accession; deduplicate by event_id.
+message PurgeMarked {
+  // The purge's correlation ID.
+  string purge_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // References marked.
+  int64 references_purged = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// Bytes were deleted for a purge; objects still shared elsewhere are kept.
+message PurgeCompleted {
+  // The purge's correlation ID.
+  string purge_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Objects deleted.
+  int64 objects_deleted = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Objects kept because another document still references them.
+  int64 objects_retained_shared = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// One document event. Consumers deduplicate accession and tombstone events by
+// (address, revision); every event can be deduplicated by event_id. PurgeMarked
+// and PurgeCompleted have distinct event IDs; purge_id groups them.
+message DocumentEvent {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "event-kind-required"
+    message: "an event has exactly one kind"
+    expression: "has(this.accessioned) || has(this.tombstoned) || has(this.purge_marked) || has(this.purge_completed)"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "event-revision-kind"
+    message: "accessions require positive revisions and operation IDs; purge events have revision zero"
+    expression: "(has(this.accessioned) || has(this.tombstoned)) ? (this.revision > 0 && size(this.operation_id) > 0) : this.revision == 0"
+  };
+  // Stable delivery deduplication ID.
+  string event_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The accession's revision; 0 for purge events.
+  int64 revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The revision it replaced; 0 for a new document.
+  int64 previous_revision = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The operation that committed it; required for accession and tombstone events.
+  string operation_id = 5;
+  // When it happened.
+  google.protobuf.Timestamp occurred_at = 6 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // What happened.
+  oneof kind {
+    // An accession.
+    Accessioned accessioned = 10;
+    // A tombstone.
+    Tombstoned tombstoned = 11;
+    // References marked purged.
+    PurgeMarked purge_marked = 12;
+    // Purged bytes deleted.
+    PurgeCompleted purge_completed = 13;
+  }
+  // Extension metadata.
+  map<string, string> metadata = 99;
+}

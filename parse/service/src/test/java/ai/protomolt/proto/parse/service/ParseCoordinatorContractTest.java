@@ -13,13 +13,13 @@ import ai.protomolt.proto.parse.v1.RoutingRule;
 import ai.protomolt.proto.repo.v1.Blob;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v1.ParseStatus;
 import ai.protomolt.proto.repo.v1.ParserDocument;
 import ai.protomolt.proto.repo.v1.ParserResult;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
@@ -138,8 +138,7 @@ class ParseCoordinatorContractTest {
     @BeforeEach
     void reset() {
         repo.saves.clear();
-        repo.saveGate = null;
-        repo.drive = "";
+        repo.saveFailure = null;
         alpha.reset();
         beta.reset();
         repo.seed(ADDRESS, seededDocument());
@@ -260,13 +259,12 @@ class ParseCoordinatorContractTest {
         // The pinned persist shape.
         assertThat(repo.saves).hasSize(1);
         SaveDocumentRequest save = repo.saves.getFirst();
-        assertThat(save.getPartsWrittenList()).containsExactly(
+        assertThat(save.getWritesList().stream().map(w -> w.getSelector().getPart()).toList()).containsExactly(
                 DocumentPart.DOCUMENT_PART_PARSED, DocumentPart.DOCUMENT_PART_CORE);
-        assertThat(save.getCopyUnwrittenPartsFrom()).isEqualTo(ADDRESS);
-        assertThat(save.getUseDatasourceId()).isTrue();
-        assertThat(save.getGraphId()).isEqualTo("intake:" + ACCOUNT);
-        assertThat(save.getConnectorId()).isEqualTo("parse-coordinator");
-        assertThat(save.getWrittenBy().getModuleId()).isEqualTo("parse-coordinator");
+        assertThat(save.getTarget().getAddress()).isEqualTo(ADDRESS);
+        assertThat(save.getExpected().getRevision()).isEqualTo(1);
+        assertThat(save.getOperationId()).isNotBlank();
+        assertThat(save.getOwner().getStep().getModuleId()).isEqualTo("parse-coordinator");
         assertThat(save.getDrive()).isEqualTo("intake");
 
         Document persisted = save.getDocument();
@@ -276,14 +274,13 @@ class ParseCoordinatorContractTest {
         assertThat(persisted.getSearchMetadata().getAuthor()).isEqualTo("Beta Author");
         // Untouched loaded fields survive the fold.
         assertThat(persisted.getSearchMetadata().getSourceMimeType()).isEqualTo("text/plain");
-        assertThat(persisted.getBlobBag().getBlob().getData().toByteArray()).isEqualTo(PDF_PAYLOAD);
+        assertThat(persisted.hasBlobBag()).isFalse();
     }
 
     @Test
-    void theLoadedRowsDriveWinsOverTheConfiguredFallback() {
-        repo.drive = "acct-drive";
+    void newPartsUseTheExplicitConfiguredDrive() {
         stub.parseDocument(ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
-        assertThat(repo.saves.getFirst().getDrive()).isEqualTo("acct-drive");
+        assertThat(repo.saves.getFirst().getDrive()).isEqualTo("intake");
     }
 
     @Test
@@ -447,32 +444,36 @@ class ParseCoordinatorContractTest {
     }
 
     @Test
-    void concurrentParsesOfTheSameDocumentSerializeTheSave() throws Exception {
-        CountDownLatch gate = new CountDownLatch(1);
-        repo.saveGate = gate;
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<ParseDocumentResponse> first = executor.submit(() -> stub.parseDocument(
-                    ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build()));
-            Future<ParseDocumentResponse> second = executor.submit(() -> stub.parseDocument(
-                    ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build()));
+    void repeatedParsesCarryTheReadRevisionRatherThanAnUnconditionalOverwrite() {
+        stub.parseDocument(ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+        stub.parseDocument(ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build());
+        assertThat(repo.saves).hasSize(2).allSatisfy(save ->
+                assertThat(save.getExpected().getRevision()).isEqualTo(1));
+        assertThat(repo.saves.get(0).getOperationId()).isNotEqualTo(repo.saves.get(1).getOperationId());
+    }
 
-            // Wait for the first save to arrive (and block on the gate)...
-            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
-            while (repo.saves.isEmpty() && System.nanoTime() < deadline) {
-                Thread.onSpinWait();
-            }
-            assertThat(repo.saves).hasSize(1);
-            // ...then prove the second save is HELD BACK by the per-document
-            // lock, not merely slow: it must not arrive while the first is
-            // still in flight.
-            Thread.sleep(300);
-            assertThat(repo.saves).hasSize(1);
+    @Test
+    void staleRevisionIsSurfacedWithoutAnUnconditionalRetry() {
+        repo.saveFailure = Status.ABORTED.withDescription("revision changed").asRuntimeException();
+        assertThatThrownBy(() -> stub.parseDocument(ParseDocumentRequest.newBuilder().setAddress(ADDRESS).build()))
+                .isInstanceOfSatisfying(StatusRuntimeException.class, e ->
+                        assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.ABORTED));
+        assertThat(repo.saves).hasSize(1);
+        assertThat(repo.saves.getFirst().getExpected().getRevision()).isEqualTo(1);
+    }
 
-            gate.countDown();
-            repo.saveGate = null;
-            first.get();
-            second.get();
-            assertThat(repo.saves).hasSize(2);
-        }
+    @Test
+    void aParsedOnlySavePreservesSiblingResultsAndDoesNotResubmitCoreOrBlobs() {
+        var original = repo.seeded.get(FakeDocumentService.key(ADDRESS));
+        repo.seed(ADDRESS, original.toBuilder().putParserResults("existing", ParserResult.newBuilder()
+                .setParserName("existing").setStatus(ParseStatus.PARSE_STATUS_OK).build()).build());
+        stub.parseDocument(ParseDocumentRequest.newBuilder().setAddress(ADDRESS).addParserOverride("ghost").build());
+        var save = repo.saves.getFirst();
+        assertThat(save.getDocument().getParserResultsMap()).containsOnlyKeys("existing", "ghost");
+        assertThat(save.getWritesList()).singleElement().satisfies(write ->
+                assertThat(write.getSelector().getPart()).isEqualTo(DocumentPart.DOCUMENT_PART_PARSED));
+        assertThat(save.getDocument().hasBlobBag()).isFalse();
+        assertThat(save.getDocument().hasSearchMetadata()).isFalse();
+        assertThat(save.getDocument().hasOwnership()).isFalse();
     }
 }

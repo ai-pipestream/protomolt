@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.LinkedHashMap;
 
 /**
  * A compiled projection: builds instances of one message type (the target) from
@@ -111,7 +111,9 @@ public final class MessageProjection {
     private final List<FieldRule> rules;
     private final ProtoFieldMapper fieldMapper;
     private final TypeConverter typeConverter = new TypeConverter();
-    private final ConcurrentHashMap<String, CelEvaluator> evaluators = new ConcurrentHashMap<>();
+    // A retention budget for compiled evaluators, not a limit on accepted source schemas.
+    static final int MAX_CACHED_EVALUATORS = 128;
+    private final Map<Descriptor, CelEvaluator> evaluators = new LinkedHashMap<>(16, 0.75f, true);
 
     private MessageProjection(
             Descriptor targetType,
@@ -462,12 +464,18 @@ public final class MessageProjection {
         }
     }
 
-    private CelEvaluator evaluatorFor(Descriptor sourceType) {
-        return evaluators.computeIfAbsent(sourceType.getFullName(), name ->
-                new CelEvaluator(CelEnvironmentFactory.builder()
-                        .addMessageVar("source", sourceType)
-                        .build()));
+    private synchronized CelEvaluator evaluatorFor(Descriptor sourceType) {
+        // Descriptors are immutable and use identity equality. The target is fixed for this projection.
+        // Eviction releases both the descriptor and its compiled environment; projection remains valid.
+        var evaluator = evaluators.get(sourceType);
+        if (evaluator != null) return evaluator;
+        evaluator = new CelEvaluator(CelEnvironmentFactory.builder().addMessageVar("source", sourceType).build());
+        if (evaluators.size() == MAX_CACHED_EVALUATORS) evaluators.remove(evaluators.keySet().iterator().next());
+        evaluators.put(sourceType, evaluator);
+        return evaluator;
     }
+
+    synchronized int cachedEvaluatorCount() { return evaluators.size(); }
 
     /**
      * The fields a projection reads from one source type, as a {@link FieldMask}

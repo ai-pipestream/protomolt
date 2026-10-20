@@ -13,28 +13,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the pre-existing fields.
  */
 class RepoServiceConfigTest {
-
-    @Test
-    void upstreamCredentialIsExplicitRedactedAndPreservedByCopies() {
-        assertThat(RepoServiceConfig.fromEnvironment(java.util.Map.of()).repoCredential()).isNull();
-        for (String blank : java.util.List.of("", " ")) {
-            assertThatThrownBy(() -> RepoServiceConfig.fromEnvironment(java.util.Map.of(
-                    RepoServiceConfig.ENV_REPO_API_TOKEN, blank)))
+    @Test void retiredRemoteStorageFailsBeforeOpeningTheLedger() {
+        for (var mode : java.util.List.of("repo", "repo-inprocess")) {
+            var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
+                    RepoServiceConfig.ENV_BLOB_STORE, mode,
+                    RepoServiceConfig.ENV_REPO_TARGET, "localhost:1"));
+            assertThatThrownBy(() -> RepoServices.build(config))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining(RepoServiceConfig.ENV_REPO_API_TOKEN).hasNoCause();
+                    .hasMessage("Remote repository blob storage is retired: " + mode);
         }
-        String secret = "synthetic-upstream-secret";
-        var config = RepoServiceConfig.fromEnvironment(java.util.Map.of(
-                RepoServiceConfig.ENV_BLOB_STORE, "repo",
-                RepoServiceConfig.ENV_REPO_TARGET, "localhost:9090",
-                RepoServiceConfig.ENV_REPO_API_TOKEN, secret,
-                "PROTOMOLT_API_TOKEN", "synthetic-inbound-secret"));
-        var copied = config.withManagedStorage(ManagedStoragePolicy.disabled())
-                .withRepoBucketBindings(java.util.Map.of("local", "upstream"));
-        assertThat(copied.repoCredential()).isSameAs(config.repoCredential());
-        assertThat(copied.toString()).doesNotContain(secret, "synthetic-inbound-secret");
-        assertThat(RepoServiceConfig.fromEnvironment(java.util.Map.of(
-                "PROTOMOLT_API_TOKEN", "synthetic-inbound-secret")).repoCredential()).isNull();
     }
 
     @Test void explicitBlankStorageAndDefaultedTextSettingsCannotSelectAnotherConfiguration() {

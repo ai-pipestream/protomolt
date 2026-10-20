@@ -566,8 +566,6 @@ project(':protomolt-delegation-repository').projectDir = file('transform/delegat
 include 'protomolt-delegation-receipt'
 project(':protomolt-delegation-receipt').projectDir = file('transform/delegation/receipt')
 
-include 'protomolt-repo-blob-grpc'
-project(':protomolt-repo-blob-grpc').projectDir = file('repo/blob/grpc')
 
 include 'protomolt-repo-spi'
 project(':protomolt-repo-spi').projectDir = file('repo/spi')
@@ -576,10 +574,13 @@ include 'protomolt-repo-engine'
 project(':protomolt-repo-engine').projectDir = file('repo/engine')
 
 include 'protomolt-repo-admission'
-include 'protomolt-repo-history-grpc'
-project(':protomolt-repo-history-grpc').projectDir = file('repo/history/grpc')
-include 'protomolt-repo-publication-grpc'
-project(':protomolt-repo-publication-grpc').projectDir = file('repo/publication/grpc')
 project(':protomolt-repo-admission').projectDir = file('repo/admission')
 include 'protomolt-repo-schema-registry'
 project(':protomolt-repo-schema-registry').projectDir = file('repo/schema/registry')
+// Parts-based repository v2.
+include 'protomolt-repo-stack'
+project(':protomolt-repo-stack').projectDir = file('repo/stack')
+include 'protomolt-repo-catalog'
+project(':protomolt-repo-catalog').projectDir = file('repo/catalog')
+include 'protomolt-repo-accession'
+project(':protomolt-repo-accession').projectDir = file('repo/accession')

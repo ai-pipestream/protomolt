@@ -7,7 +7,7 @@ import ai.protomolt.proto.mesh.cluster.InMemoryClusterEventRepository;
 import ai.protomolt.proto.mesh.cluster.PersistentClusterDirectory;
 import ai.protomolt.proto.mesh.cluster.RepositoryServiceClusterEventRepository;
 import ai.protomolt.proto.mesh.cluster.v1.ClusterDescriptor;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
 import org.slf4j.Logger;

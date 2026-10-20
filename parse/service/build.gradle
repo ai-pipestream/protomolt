@@ -28,11 +28,6 @@ dependencies {
 
     runtimeOnly libs.slf4j.simple
 
-    // The full-stack IT boots a real repo-service (Postgres + S3) behind the
-    // coordinator; the contract tests use in-package fakes for both sides.
-    testImplementation project(':protomolt-repo-service')
-    // LedgerConfig for the IT's RepoServiceConfig — config surface only.
-    testImplementation project(':protomolt-repo-container')
     // The durable-parse IT drives ParseDocument as a checkpointed workflow run.
     testImplementation project(':protomolt-jobs-service')
     testImplementation project(':protomolt-workflow')
@@ -41,4 +36,12 @@ dependencies {
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
+
+    // v2 real-provider qualification (runtime stays on the wire contract).
+    testImplementation project(':protomolt-repo-accession')
+    testImplementation project(':protomolt-repo-admission')
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation libs.awssdk.s3
+    testImplementation libs.awssdk.url.connection.client
+    testImplementation project(':protomolt-authz-grpc')
 }

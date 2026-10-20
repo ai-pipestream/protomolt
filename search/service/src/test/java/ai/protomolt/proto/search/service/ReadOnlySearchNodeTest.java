@@ -90,14 +90,14 @@ class ReadOnlySearchNodeTest {
             String name = io.grpc.inprocess.InProcessServerBuilder.generateName();
             server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
                     .directExecutor()
-                    .addService(new ai.protomolt.proto.repo.v1.DocumentServiceGrpc
+                    .addService(new ai.protomolt.proto.repo.v2.DocumentServiceGrpc
                             .DocumentServiceImplBase() {
                         @Override
-                        public void getDocumentByReference(
-                                ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest request,
-                                io.grpc.stub.StreamObserver<ai.protomolt.proto.repo.v1
+                        public void getDocument(
+                                ai.protomolt.proto.repo.v2.GetDocumentRequest request,
+                                io.grpc.stub.StreamObserver<ai.protomolt.proto.repo.v2
                                         .GetDocumentResponse> observer) {
-                            observer.onNext(ai.protomolt.proto.repo.v1.GetDocumentResponse
+                            observer.onNext(ai.protomolt.proto.repo.v2.GetDocumentResponse
                                     .newBuilder()
                                     .setDocument(corpus.get(request.getAddress().getDocId()))
                                     .build());

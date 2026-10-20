@@ -3,10 +3,17 @@ package ai.protomolt.proto.search.index.qdrant;
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
 import ai.protomolt.proto.mapper.MappingException;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
+import ai.protomolt.proto.repo.semantic.v1.EmbeddingSet;
+import ai.protomolt.proto.repo.semantic.v1.OffsetUnit;
+import ai.protomolt.proto.repo.semantic.v1.Segment;
+import ai.protomolt.proto.repo.semantic.v1.SegmentVector;
+import ai.protomolt.proto.repo.semantic.v1.Segmentation;
+import ai.protomolt.proto.repo.semantic.v1.SegmentationKind;
+import ai.protomolt.proto.repo.semantic.v1.Similarity;
+import ai.protomolt.proto.repo.semantic.v1.SourceTextBinding;
+import ai.protomolt.proto.repo.semantic.v1.TextSource;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
-import ai.protomolt.proto.repo.v1.SemanticChunk;
-import ai.protomolt.proto.repo.v1.SemanticProcessingResult;
 import ai.protomolt.proto.validate.FieldRules;
 import ai.protomolt.proto.validate.StringRules;
 import ai.protomolt.proto.validate.ValidateProto;
@@ -30,18 +37,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Validation on write: {@link QdrantPointMapper#map} gates the source message on its
- * declared {@code ai.protomolt.proto.validate.v1} rules before producing points. The repo
- * Document declares no rules today, so the gate is exercised with a ruled dynamic message:
- * a violating message is rejected by the validator, a valid one sails past validation and
- * fails only at the Document-type check — proving the gate ran first.
+ * declared {@code ai.protomolt.proto.validate.v1} rules before producing points.
  */
 class QdrantPointMapperValidationTest {
+
+    private static final String DIGEST =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     private final QdrantPointMapper mapper =
             new QdrantPointMapper(new ProtoFieldMapperImpl(new DescriptorRegistry()));
 
     private static final IndexMapping EMPTY_MAPPING =
             new IndexMapping("it.validate.Ruled", List.of());
+
+    private static final IndexMapping DOC_MAPPING =
+            new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
+                    new IndexMapping.IndexedField("doc_id", "doc_id",
+                            ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
     private static Descriptor ruledDescriptor() {
         try {
@@ -97,21 +109,66 @@ class QdrantPointMapperValidationTest {
 
     @Test
     void ruleFreeDocumentsMapUnchanged() throws Exception {
-        // The repo Document declares no validation rules: the gate is a pass-through.
         Document document = Document.newBuilder()
                 .setDocId("doc-1")
                 .setSearchMetadata(SearchMetadata.newBuilder()
-                        .addSemanticResults(SemanticProcessingResult.newBuilder()
-                                .setResultId("rs-1")
-                                .addChunks(SemanticChunk.newBuilder()
-                                        .setChunkId("c-1")
-                                        .setChunkNumber(0)
-                                        .setText("chunk text"))))
+                        .addSegmentations(segmentation("rs-1", "c-1")))
                 .build();
-        IndexMapping mapping = new IndexMapping("ai.protomolt.proto.repo.v1.Document", List.of(
-                new IndexMapping.IndexedField("doc_id", "doc_id",
-                        ResolvedFieldHint.of(IndexFieldKind.KEYWORD))));
 
-        assertThat(mapper.map(document, mapping)).isEmpty(); // no embeddings, but no rejection either
+        assertThat(mapper.map(document, DOC_MAPPING)).isEmpty(); // no embeddings, but no rejection either
+    }
+
+    @Test
+    void conflictingModelSimilaritiesAcrossSegmentationsAreRejected() {
+        Document document = Document.newBuilder()
+                .setDocId("doc-1")
+                .setSearchMetadata(SearchMetadata.newBuilder()
+                        .addSegmentations(segmentation("rs-1", "c-1"))
+                        .addSegmentations(segmentation("rs-2", "c-2"))
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-1")
+                                .setSegmentationId("rs-1")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel("shared-model")
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_COSINE)
+                                .addVectors(SegmentVector.newBuilder()
+                                        .setSegmentId("c-1")
+                                        .addValues(0.1f).addValues(0.2f)))
+                        .addEmbeddingSets(EmbeddingSet.newBuilder()
+                                .setEmbeddingSetId("es-2")
+                                .setSegmentationId("rs-2")
+                                .setSegmentationDigest(DIGEST)
+                                .setModel("shared-model")
+                                .setDimensions(2)
+                                .setSimilarity(Similarity.SIMILARITY_DOT_PRODUCT)
+                                .addVectors(SegmentVector.newBuilder()
+                                        .setSegmentId("c-2")
+                                        .addValues(0.3f).addValues(0.4f))))
+                .build();
+
+        assertThatThrownBy(() -> mapper.map(document, DOC_MAPPING))
+                .isInstanceOf(MappingException.class)
+                .hasMessageContaining("conflicting similarities");
+    }
+
+    private static Segmentation segmentation(String segmentationId, String segmentId) {
+        return Segmentation.newBuilder()
+                .setSegmentationId(segmentationId)
+                .setContentDigest(DIGEST)
+                .setKind(SegmentationKind.SEGMENTATION_KIND_PARAGRAPH)
+                .setOffsetUnit(OffsetUnit.OFFSET_UNIT_UTF8_BYTE)
+                .setSource(TextSource.newBuilder()
+                        .setFieldPath("search_metadata.body")
+                        .setBinding(SourceTextBinding.newBuilder()
+                                .setResolvedTextSha256(DIGEST)
+                                .setUtf8Length(10)))
+                .addSegments(Segment.newBuilder()
+                        .setSegmentId(segmentId)
+                        .setOrdinal(0)
+                        .setText("chunk text")
+                        .setStart(0)
+                        .setEnd(10))
+                .build();
     }
 }

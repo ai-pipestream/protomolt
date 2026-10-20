@@ -39,4 +39,45 @@ class BuiltinDocumentSchemaTest {
                 +RuntimeVersion.class.getField("PATCH").get(null)+RuntimeVersion.class.getField("SUFFIX").get(null);
         assertThat(provenance.getAdmissionRuntime().getVersion()).isEqualTo(loaded);
     }
+
+    @Test void documentContainerAndCoreReachableMessagesHaveNoCrossPartMessageLevelValidationRules() {
+        var nonCoreFieldFullNames = java.util.Set.of(
+                "ai.protomolt.proto.repo.v1.Document.blob_bag",
+                "ai.protomolt.proto.repo.v1.Document.parser_results",
+                "ai.protomolt.proto.repo.v1.SearchMetadata.semantic_results",
+                "ai.protomolt.proto.repo.v1.SearchMetadata.segmentations",
+                "ai.protomolt.proto.repo.v1.SearchMetadata.embedding_sets");
+        var visited = new java.util.HashSet<String>();
+        var queue = new java.util.ArrayDeque<com.google.protobuf.Descriptors.Descriptor>();
+        queue.add(Document.getDescriptor());
+        while (!queue.isEmpty()) {
+            var current = queue.removeFirst();
+            if (!visited.add(current.getFullName())) continue;
+            var options = current.getOptions();
+            assertThat(options.hasExtension(ai.protomolt.proto.validate.ValidateProto.message))
+                    .as("Message %s must not declare message-level protomolt rules while fragments are validated per part", current.getFullName())
+                    .isFalse();
+            assertThat(options.getUnknownFields().hasField(ai.protomolt.proto.validate.ValidateProto.message.getNumber()))
+                    .as("Message %s must not carry unknown message-level protomolt rule extension", current.getFullName())
+                    .isFalse();
+            assertThat(options.hasExtension(build.buf.validate.ValidateProto.message))
+                    .as("Message %s must not declare message-level buf.validate rules while fragments are validated per part", current.getFullName())
+                    .isFalse();
+            assertThat(options.getUnknownFields().hasField(build.buf.validate.ValidateProto.message.getNumber()))
+                    .as("Message %s must not carry unknown message-level buf.validate rule extension", current.getFullName())
+                    .isFalse();
+            for (var field : current.getFields()) {
+                if (nonCoreFieldFullNames.contains(field.getFullName())) continue;
+                if (field.getJavaType() == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) {
+                    queue.addLast(field.getMessageType());
+                }
+            }
+        }
+        assertThat(visited).contains(
+                Document.getDescriptor().getFullName(),
+                SearchMetadata.getDescriptor().getFullName(),
+                OwnershipContext.getDescriptor().getFullName(),
+                DocIdDerivation.getDescriptor().getFullName());
+    }
 }
+

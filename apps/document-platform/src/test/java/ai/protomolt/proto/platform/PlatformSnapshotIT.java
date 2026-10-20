@@ -10,13 +10,21 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentTarget;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.PartSelector;
+import ai.protomolt.proto.repo.v2.PartWrite;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.WriteAction;
 import ai.protomolt.proto.search.service.RepoDocumentMapping;
 import ai.protomolt.proto.search.v1.IndexDocumentRequest;
 import ai.protomolt.proto.search.v1.SearchIndexServiceGrpc;
@@ -165,19 +173,28 @@ class PlatformSnapshotIT {
                                 .build());
                 DocumentServiceGrpc.newBlockingStub(repo).saveDocument(
                         SaveDocumentRequest.newBuilder()
+                                .setOperationId(java.util.UUID.randomUUID().toString())
+                                .setTarget(DocumentTarget.newBuilder().setAddress(address))
+                                .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                                .setDrive("intake")
+                                .setOwner(SaveOwner.newBuilder()
+                                        .setIntake(IntakeOrigin.newBuilder()
+                                                .setDatasourceId("ds-snapshot")
+                                                .setConnectorId("snapshot-test")))
+                                .addWrites(PartWrite.newBuilder()
+                                        .setSelector(PartSelector.newBuilder()
+                                                .setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                        .setAction(WriteAction.WRITE_ACTION_PUT))
                                 .setDocument(Document.newBuilder()
                                         .setDocId(docId)
                                         .setOwnership(OwnershipContext.newBuilder()
                                                 .setAccountId(ACCOUNT)
-                                                .setDatasourceId("ds-snapshot"))
+                                                .setDatasourceId("ds-snapshot")
+                                                .setConnectorId("snapshot-test"))
                                         .setSearchMetadata(SearchMetadata.newBuilder()
                                                 .setTitle("Snapshot Corpus")
                                                 .setBody("The bucket carries the index"
                                                         + " across boots.")))
-                                .setDrive("intake")
-                                .setConnectorId("snapshot-test")
-                                .setUseDatasourceId(true)
-                                .setGraphId("intake:" + ACCOUNT)
                                 .build());
             });
             withChannel(writer.searchPort(), search ->
@@ -238,24 +255,40 @@ class PlatformSnapshotIT {
             try (DocumentPlatform writerTwo = DocumentPlatform.start(
                     config(List.of("repo", "search"), work.resolve("writer-index"),
                             snapshotEnvironment()), null)) {
-                withChannel(writerTwo.repoPort(), repo ->
+                withChannel(writerTwo.repoPort(), repo -> {
+                        NodeAddress secondAddress = NodeAddress.newBuilder()
+                                .setDocId(secondDocId)
+                                .setGraphAddressId("ds-snapshot")
+                                .setAccountId(ACCOUNT)
+                                .setGraphId("intake:" + ACCOUNT)
+                                .build();
                         DocumentServiceGrpc.newBlockingStub(repo).saveDocument(
                                 SaveDocumentRequest.newBuilder()
+                                        .setOperationId(java.util.UUID.randomUUID().toString())
+                                        .setTarget(DocumentTarget.newBuilder().setAddress(secondAddress))
+                                        .setExpected(ExpectedRevision.newBuilder().setNone(true))
+                                        .setDrive("intake")
+                                        .setOwner(SaveOwner.newBuilder()
+                                                .setIntake(IntakeOrigin.newBuilder()
+                                                        .setDatasourceId("ds-snapshot")
+                                                        .setConnectorId("snapshot-test")))
+                                        .addWrites(PartWrite.newBuilder()
+                                                .setSelector(PartSelector.newBuilder()
+                                                        .setPart(DocumentPart.DOCUMENT_PART_CORE))
+                                                .setAction(WriteAction.WRITE_ACTION_PUT))
                                         .setDocument(Document.newBuilder()
                                                 .setDocId(secondDocId)
                                                 .setOwnership(OwnershipContext.newBuilder()
                                                         .setAccountId(ACCOUNT)
-                                                        .setDatasourceId("ds-snapshot"))
+                                                        .setDatasourceId("ds-snapshot")
+                                                        .setConnectorId("snapshot-test"))
                                                 .setSearchMetadata(SearchMetadata.newBuilder()
                                                         .setTitle("Snapshot Corpus Two")
                                                         .setBody("The reader follows the"
                                                                 + " writer without a"
                                                                 + " reboot.")))
-                                        .setDrive("intake")
-                                        .setConnectorId("snapshot-test")
-                                        .setUseDatasourceId(true)
-                                        .setGraphId("intake:" + ACCOUNT)
-                                        .build()));
+                                        .build());
+                });
                 withChannel(writerTwo.searchPort(), search ->
                         SearchIndexServiceGrpc.newBlockingStub(search).indexDocument(
                                 IndexDocumentRequest.newBuilder()

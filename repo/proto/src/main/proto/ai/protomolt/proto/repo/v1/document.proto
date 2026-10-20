@@ -4,6 +4,7 @@ package ai.protomolt.proto.repo.v1;
 
 import "ai/protomolt/proto/meta/v1/metadata.proto";
 import "ai/protomolt/proto/repo/v1/security.proto";
+import "ai/protomolt/proto/repo/semantic/v1/semantic.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
@@ -199,6 +200,13 @@ message SearchMetadata {
   optional google.protobuf.Struct custom_fields = 14;
   // Path portion of source_uri for categorization.
   optional string source_path = 15;
+  // How the document's texts were cut, one entry per segmentation. Replaces
+  // semantic_results; the v2 parts codec stores each as one CHUNKS object.
+  // Field 13 is reserved once its consumers have moved.
+  repeated ai.protomolt.proto.repo.semantic.v1.Segmentation segmentations = 16;
+  // Vectors over segmentations, one entry per embedding set; the v2 parts
+  // codec stores each as one EMBEDDINGS object.
+  repeated ai.protomolt.proto.repo.semantic.v1.EmbeddingSet embedding_sets = 17;
 }
 
 // Collection of blobs (either arm of BlobBag).

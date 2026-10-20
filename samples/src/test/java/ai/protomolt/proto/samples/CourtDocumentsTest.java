@@ -1,19 +1,29 @@
 package ai.protomolt.proto.samples;
 
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.validate.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CourtDocumentsTest {
+
+    @Test
+    void missingEmbeddingInputIsNotRecordedAsEmptyText() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> CourtDocuments.withEmbedding(
+                Document.getDefaultInstance(), null, new float[]{1f}, "model"))
+                .isInstanceOf(NullPointerException.class).hasMessage("embeddedText");
+    }
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -114,6 +124,78 @@ class CourtDocumentsTest {
                 .isEqualTo("ansys-inc-v-computational-dynamics-north-america");
         assertThat(CourtDocuments.slug("Morrissette v. Teledyne Princeton, Inc."))
                 .isEqualTo("morrissette-v-teledyne-princeton-inc");
+    }
+
+    @Test
+    void attachesValidSegmentationAndEmbeddingSet() throws Exception {
+        Document base = CourtDocuments.toDocument(opinion("""
+                {
+                  "opinion_id": "10",
+                  "cluster_id": "20",
+                  "case_name": "Smith v. Jones",
+                  "plain_text": "Opinion text."
+                }
+                """));
+        assertThat(CourtDocuments.firstDocumentEmbedding(base)).isEmpty();
+
+        float[] vector = new float[] {0.25f, -0.5f, 0.75f};
+        String expectedText = CourtDocumentIndexSample.embedText(base);
+        assertThat(expectedText).isEqualTo("Smith v. Jones\nOpinion text.");
+        byte[] expectedBytes = expectedText.getBytes(StandardCharsets.UTF_8);
+        String expectedSha256 = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(expectedBytes));
+
+        Document embedded = CourtDocuments.withEmbedding(base, vector, "model2vec-sample");
+
+        assertThat(ValidationResult.validate(embedded).valid()).isTrue();
+        assertThat(CourtDocuments.firstDocumentEmbedding(embedded)).containsExactly(vector);
+        assertThat(embedded.getSearchMetadata().getSegmentationsCount()).isEqualTo(1);
+        assertThat(embedded.getSearchMetadata().getEmbeddingSetsCount()).isEqualTo(1);
+
+        var segmentation = embedded.getSearchMetadata().getSegmentations(0);
+        assertThat(segmentation.getSource().getDerived().getText()).isEqualTo(expectedText);
+        assertThat(segmentation.getSource().getBinding().getUtf8Length())
+                .isEqualTo(expectedBytes.length);
+        assertThat(segmentation.getSource().getBinding().getResolvedTextSha256())
+                .isEqualTo(expectedSha256);
+        assertThat(segmentation.getSegmentsCount()).isEqualTo(1);
+        var segment = segmentation.getSegments(0);
+        assertThat(segment.getText()).isEqualTo(expectedText);
+        assertThat(segment.getStart()).isZero();
+        assertThat(segment.getEnd()).isEqualTo(expectedBytes.length);
+    }
+
+    @Test
+    void repeatedEmbeddingReplacesOnlyItsOwnEntriesAndPreservesMetadata() {
+        var original = CourtDocuments.withEmbedding(Document.newBuilder().setDocId("doc").build(),
+                "original", new float[]{1f, 2f}, "first-model");
+        var metadata = original.getSearchMetadata();
+        var otherSegmentation = metadata.getSegmentations(0).toBuilder().setSegmentationId("other").build();
+        var otherEmbedding = metadata.getEmbeddingSets(0).toBuilder()
+                .setEmbeddingSetId("other").setSegmentationId("other").build();
+        var before = original.toBuilder().setSearchMetadata(metadata.toBuilder()
+                .addSegmentations(0, otherSegmentation).addEmbeddingSets(0, otherEmbedding)
+                .setTitle("preserved").putMetadata("key", "value")
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(999, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(42).build())
+                        .build())).build();
+        var after = CourtDocuments.withEmbedding(before, "replacement", new float[]{3f, 4f}, "second-model");
+        var result = after.getSearchMetadata();
+        assertThat(result.getSegmentationsCount()).isEqualTo(2);
+        assertThat(result.getEmbeddingSetsCount()).isEqualTo(2);
+        assertThat(result.getSegmentations(0)).isEqualTo(otherSegmentation);
+        assertThat(result.getEmbeddingSets(0)).isEqualTo(otherEmbedding);
+        assertThat(result.toBuilder().clearSegmentations().clearEmbeddingSets().build())
+                .isEqualTo(before.getSearchMetadata().toBuilder().clearSegmentations().clearEmbeddingSets().build());
+        var replacement = result.getSegmentations(1);
+        assertThat(replacement.getSegmentationId()).isEqualTo(CourtDocuments.EMBEDDING_RESULT_ID);
+        assertThat(replacement.getSource().getDerived().getDerivationId()).isEqualTo("document-embedding-source");
+        assertThat(replacement.getSource().getDerived().getText()).isEqualTo("replacement");
+        assertThat(replacement.getContentDigest()).isNotEqualTo(metadata.getSegmentations(0).getContentDigest());
+        assertThat(result.getEmbeddingSets(1).getSegmentationDigest()).isEqualTo(replacement.getContentDigest());
+        assertThat(result.getEmbeddingSets(1).getModel()).isEqualTo("second-model");
+        assertThat(result.getEmbeddingSets(1).getVectors(0).getValuesList()).containsExactly(3f, 4f);
+        assertThat(ValidationResult.validate(after).valid()).isTrue();
     }
 
     private static JsonNode opinion(String json) throws Exception {

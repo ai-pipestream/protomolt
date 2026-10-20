@@ -1,0 +1,275 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.semantic.v1;
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "SemanticProto";
+option java_package = "ai.protomolt.proto.repo.semantic.v1";
+
+// ============================================================================
+// SEMANTIC RESULTS — segmentations and embedding sets (requirements §5).
+//
+// Replaces SemanticProcessingResult, SemanticChunk and ChunkEmbedding. v1
+// SearchMetadata carries these as fields 16 and 17; the v2 parts codec stores
+// each segmentation as one CHUNKS object and each embedding set as one
+// EMBEDDINGS object. A package of its own that imports nothing from repo.v1 or
+// repo.v2: v1 document.proto imports it and repo.v2 imports v1, so placing
+// these types in repo.v2 would make the two packages import each other.
+//
+// Contains no google.protobuf.Any: the admission Any inventory pins exact
+// Any locations on Document.
+// ============================================================================
+
+// Names one embedding set: the segmentation it embeds and its own ID.
+message EmbeddingSetKey {
+  // The segmentation the vectors were computed over.
+  string segmentation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  }];
+  // The embedding set's ID, unique within its segmentation.
+  string embedding_set_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  }];
+}
+
+// How a text was cut.
+enum SegmentationKind {
+  // Rejected.
+  SEGMENTATION_KIND_UNSPECIFIED = 0;
+  // Sentence boundaries.
+  SEGMENTATION_KIND_SENTENCE = 1;
+  // Fixed token windows.
+  SEGMENTATION_KIND_TOKEN_WINDOW = 2;
+  // Paragraph boundaries.
+  SEGMENTATION_KIND_PARAGRAPH = 3;
+  // Boundaries chosen from semantic similarity.
+  SEGMENTATION_KIND_SEMANTIC_BOUNDARY = 4;
+}
+
+// The allowed offset units. Offsets are half-open [start, end).
+enum OffsetUnit {
+  // Rejected.
+  OFFSET_UNIT_UNSPECIFIED = 0;
+  // UTF-8 byte offsets (Rust, Go).
+  OFFSET_UNIT_UTF8_BYTE = 1;
+  // UTF-16 code unit offsets (a Java String index).
+  OFFSET_UNIT_UTF16_CODE_UNIT = 2;
+  // Unicode code point offsets (a Python str index).
+  OFFSET_UNIT_CODE_POINT = 3;
+}
+
+// Text that is not a field of the document, such as the normalized text that
+// semantic chunks are cut from. Stored inside the segmentation's CHUNKS object.
+message DerivedText {
+  // What produced the text, for example a normalizer configuration.
+  string derivation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512}
+  }];
+  // The derived text itself.
+  string text = 2;
+}
+
+// Binds a segmentation to the exact text it cut, not only to a field path.
+// The handler recomputes both values against the composed candidate.
+message SourceTextBinding {
+  // SHA-256 of the resolved text's UTF-8 bytes.
+  string resolved_text_sha256 = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Length of the resolved text in UTF-8 bytes.
+  int64 utf8_length = 2 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+}
+
+// Where a segmentation's text came from.
+message TextSource {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "text-source-required"
+    message: "a text source names a field path or carries derived text"
+    expression: "has(this.field_path) || has(this.derived)"
+  };
+  // Exactly one source.
+  oneof source {
+    // A string field of the document, for example "search_metadata.body".
+    string field_path = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1024}];
+    // Text carried inside the segmentation.
+    DerivedText derived = 2;
+  }
+  // Digest and length of the resolved text.
+  SourceTextBinding binding = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// One segment of a segmentation.
+message Segment {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "segment-offsets"
+    message: "end must not precede start"
+    expression: "this.end >= this.start"
+  };
+  // Stable ID; embedding vectors key on it.
+  string segment_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512}
+  }];
+  // Zero-based position in the segmentation.
+  int32 ordinal = 2 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
+  // The segment's text; must equal the source text over [start, end).
+  string text = 3;
+  // Start offset in the segmentation's offset unit.
+  int64 start = 4 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // End offset (exclusive) in the segmentation's offset unit.
+  int64 end = 5 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // Extension metadata; part of the segmentation digest.
+  map<string, string> metadata = 99;
+}
+
+// Who produced a segmentation or embedding set, and from what.
+message Lineage {
+  // Module or step that produced it.
+  string producer_id = 1;
+  // Version of that producer.
+  string producer_version = 2;
+  // Chunker or embedder configuration.
+  string config_id = 3;
+  // Segmentations this one was derived from.
+  repeated string derived_from_segmentation_ids = 4;
+  // Embedding sets this one was derived from.
+  repeated EmbeddingSetKey derived_from_embedding_sets = 5;
+  // When it was produced.
+  google.protobuf.Timestamp created_at = 6;
+}
+
+// How a text was cut. Immutable once committed; identity is the ID plus the
+// content digest. The same ID may carry a new digest in a later accession, and
+// carried embedding sets must then match the new digest or the save fails.
+message Segmentation {
+  // Unique within the document.
+  string segmentation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  }];
+  // Server-computed SHA-256 of SegmentationDigestInput. If the client sets it,
+  // it must match.
+  string content_digest = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {sha256_hex: true}
+  }];
+  // How the text was cut.
+  SegmentationKind kind = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // The text that was cut.
+  TextSource source = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unit of every segment offset.
+  OffsetUnit offset_unit = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Segments in ordinal order.
+  repeated Segment segments = 6;
+  // Producer lineage; not part of the digest.
+  Lineage lineage = 7;
+  // Extension metadata; not part of the digest.
+  map<string, string> metadata = 99;
+}
+
+// The canonical input of Segmentation.content_digest. Covers kind, source
+// selector and resolved-text binding, offset unit and ordered segments with
+// their metadata. Lineage and top-level metadata stay stored but do not define
+// embedding compatibility.
+message SegmentationDigestInput {
+  // Only version 1 is defined.
+  uint32 encoding_version = 1 [(ai.protomolt.proto.validate.v1.field).uint32.const = 1];
+  // The segmentation's kind.
+  SegmentationKind kind = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // The segmentation's source and its binding.
+  TextSource source = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The segmentation's offset unit.
+  OffsetUnit offset_unit = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // The segments in order.
+  repeated Segment segments = 5;
+}
+
+// Vector similarity an embedding set was trained for.
+enum Similarity {
+  // Rejected.
+  SIMILARITY_UNSPECIFIED = 0;
+  // Cosine similarity.
+  SIMILARITY_COSINE = 1;
+  // Dot product.
+  SIMILARITY_DOT_PRODUCT = 2;
+  // Euclidean distance.
+  SIMILARITY_EUCLIDEAN = 3;
+}
+
+// One segment's vector.
+message SegmentVector {
+  // The segment this vector embeds.
+  string segment_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512}
+  }];
+  // Vector components; length equals EmbeddingSet.dimensions.
+  repeated float values = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    items: {float: {finite: true}}
+  }];
+}
+
+// One model's vectors over one segmentation.
+message EmbeddingSet {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "vector-dimensions"
+    message: "every vector must match declared dimensions"
+    expression: "this.vectors.all(v, size(v.values) == this.dimensions)"
+  };
+  // Unique within its segmentation.
+  string embedding_set_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  }];
+  // The segmentation the vectors were computed over.
+  string segmentation_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512, pattern: ".*\\S.*"}
+  }];
+  // Must equal the segmentation's content_digest in the composed candidate,
+  // or the save fails with SEGMENTATION_MISMATCH. Vectors are never reattached.
+  string segmentation_digest = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Model that produced the vectors.
+  string model = 4 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 512}
+  }];
+  // Vector dimensionality.
+  int32 dimensions = 5 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gt: 0}
+  }];
+  // Similarity the vectors are meant for.
+  Similarity similarity = 6 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Exactly one vector per segment ID of the bound segmentation.
+  repeated SegmentVector vectors = 7;
+  // Producer lineage.
+  Lineage lineage = 8;
+  // Extension metadata.
+  map<string, string> metadata = 99;
+}

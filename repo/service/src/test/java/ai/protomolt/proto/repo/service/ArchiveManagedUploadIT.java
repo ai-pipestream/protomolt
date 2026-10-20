@@ -209,7 +209,7 @@ class ArchiveManagedUploadIT {
         assertThat(unbounded.get()).isZero();
     }
 
-    @Test void documentOrphanSweepCannotDeleteArchiveObjectsOrUploadCandidates() {
+    @Test void archiveReclamationRemovesExpiredCandidatesWithoutTouchingLiveOrLegacyObjects() {
         var request = request("published archive content");
         var saved = managed.putEntry(CALLER, request);
         var live = saved.getManifest().getRenditions(0);
@@ -223,19 +223,7 @@ class ArchiveManagedUploadIT {
         var staged = new ArchiveObjectWriter(new ArchiveUploadLedger(tx), opened.store(), "original",
                 opened.capabilities(), Duration.ofMinutes(5)).stage(UUID.fromString(saved.getEntryUuid()),
                         "account", "records", "managed-archive", pending, "text/plain", candidate);
-        var reconciler = new ai.protomolt.proto.repo.container.lifecycle.StorageReconciler(new DocumentLedger(tx));
-        // An explicitly armed zero-age sweep must still respect the archive's ownership domain.
-        var report = reconciler.reconcile(opened.store(), "managed-archive", prefix, Duration.ZERO, false);
-        assertThat(report.scanned()).isEqualTo(3);
-        assertThat(report.orphans()).isZero();
-        assertThat(report.deleted()).isZero();
-        assertThat(report.orphanKeys()).isEmpty();
-        assertThat(opened.store().get("managed-archive", live.getObjectKey()).data()).isEqualTo(request.getRenditions(0).getData().toByteArray());
-        assertThat(opened.store().get("managed-archive", pending.getObjectKey()).data()).isEqualTo(candidate);
-        assertThat(opened.store().get("managed-archive", legacyKey).data()).isEqualTo(legacy);
-        assertThat(managed.getEntry(CALLER, GetEntryRequest.newBuilder().setAddress(request.getAddress()).build())
-                .getRenditions(0).getData()).isEqualTo(request.getRenditions(0).getData());
-        // Excluding generic sweeps must not disable the owning lifecycle's reclamation.
+        // The owning lifecycle's reclamation removes the expired candidate and nothing else.
         tx.inTransaction(em -> {
             em.createNativeQuery("UPDATE archive_object_uploads SET lease_until=clock_timestamp()-interval '1 second' WHERE object_id=:id")
                     .setParameter("id", staged.objectId()).executeUpdate();

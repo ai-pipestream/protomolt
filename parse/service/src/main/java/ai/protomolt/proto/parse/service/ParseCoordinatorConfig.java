@@ -7,8 +7,7 @@ package ai.protomolt.proto.parse.service;
  * @param repoTarget the repo-service {@code DocumentService} endpoint — a
  *        {@code host:port} authority, or {@code inprocess:<name>} for an
  *        in-process repo (tests and all-in-one deployments)
- * @param drive fallback drive for the parsed-part save when the loaded
- *        document's read response does not name one
+ * @param drive named drive for newly written parts
  * @param parseDeadlineSeconds per-parser deadline of one {@code Parse}
  *        stream, in seconds
  */
@@ -21,7 +20,7 @@ public record ParseCoordinatorConfig(
     /** The default coordinator gRPC port. */
     public static final int DEFAULT_GRPC_PORT = 9093;
 
-    /** The default save-fallback drive. */
+    /** The default drive for new parts. */
     public static final String DEFAULT_DRIVE = "intake";
 
     /** The default per-parser deadline: 5 minutes. */
@@ -33,7 +32,7 @@ public record ParseCoordinatorConfig(
     /** Env var for the coordinator gRPC port. */
     public static final String ENV_GRPC_PORT = "DOCUMENT_PLATFORM_PARSE_GRPC_PORT";
 
-    /** Env var for the save-fallback drive. */
+    /** Env var for newly written parts' drive. */
     public static final String ENV_DRIVE = "DOCUMENT_PLATFORM_PARSE_DRIVE";
 
     /** Env var for the per-parser deadline in seconds. */

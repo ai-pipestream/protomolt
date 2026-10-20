@@ -1,1 +1,0 @@
-UPDATE archive_object_uploads SET state=$2 WHERE object_id=$1

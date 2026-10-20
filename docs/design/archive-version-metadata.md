@@ -29,7 +29,7 @@ Current authorization continues governing access; the snapshot grants no rights.
 This is an immutable descriptive snapshot, not a complete admission/ownership
 record, a restore operation or a JCR frozen node. It neither changes repository
 transaction boundaries nor adds JCR dependencies. Review against
-[the JCR gap assessment](repository-jcr-compatibility.md) found no new capability
+the JCR gap assessment found no new capability
 claim or incompatible foundation primitive.
 
 ## Persistence and bounds
@@ -66,7 +66,7 @@ Run response-boundary tests and relevant archive deletion/pruning regressions.
 
 Sol reviewed the contract shape, writer ordering, bounds and rollout caveat before
 implementation, then reviewed the final diff and corrected SQL guard. The
-[qualification evidence](../evidence/repository/2026-10-07-archive-metadata/README.md)
+qualification evidence
 records 89 passing tests, including populated migration, legacy move, bridge,
 classification, streaming, and snapshot-bearing response bounds. This descriptive
 snapshot checkpoint does not close the broader provenance or restoration work.

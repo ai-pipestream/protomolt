@@ -58,7 +58,8 @@ public final class DocumentSchemaAssessment implements AutoCloseable {
             control.run();
         };
         active.run();
-        if (input.commandSha256().size() != 32 || !input.policySha256().matches("[0-9a-f]{64}"))
+        if (input.commandSha256().size() != 32
+                || !ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(input.policySha256()))
             throw new IllegalArgumentException("exact command and policy digests required");
         if (input.fragments().size() > limits.maxFragments())
             throw new IllegalArgumentException("member admission count exceeds limit");

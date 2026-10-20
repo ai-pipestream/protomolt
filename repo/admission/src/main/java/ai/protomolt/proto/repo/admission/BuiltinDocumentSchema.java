@@ -17,17 +17,26 @@ public final class BuiltinDocumentSchema {
     /** Complete generated descriptor closure and producer-reported compiler artifact identity. */
     public static DocumentSchemaAdmission.Definition definition() { return Holder.DEFINITION; }
 
-    private static final class Holder {
-        private static final DocumentSchemaAdmission.Definition DEFINITION=load();
+    /**
+     * The same identity for another message compiled into the repository contract
+     * artifact, such as a retained WriterGrant snapshot's schema.
+     */
+    public static DocumentSchemaAdmission.Definition definition(com.google.protobuf.Descriptors.Descriptor descriptor) {
+        if (!descriptor.getFile().getPackage().startsWith("ai.protomolt.proto.repo."))
+            throw new IllegalArgumentException("Not a repository contract message: "+descriptor.getFullName());
+        return load(descriptor);
     }
 
-    private static DocumentSchemaAdmission.Definition load() {
+    private static final class Holder {
+        private static final DocumentSchemaAdmission.Definition DEFINITION=load(Document.getDescriptor());
+    }
+
+    private static DocumentSchemaAdmission.Definition load(com.google.protobuf.Descriptors.Descriptor descriptor) {
         var properties=new Properties();
         try (var input=Document.class.getResourceAsStream(COMPILER_RESOURCE)) {
             if (input==null) throw new IllegalStateException("Document contract compiler identity is missing");
             properties.load(input);
         } catch (IOException failure) { throw new UncheckedIOException("Cannot read document compiler identity",failure); }
-        var descriptor=Document.getDescriptor();
         var closure=DescriptorFingerprints.closure(descriptor);
         var bytes=closure.toByteString();
         var compilation=SchemaCompilationProvenance.newBuilder()
@@ -35,8 +44,7 @@ public final class BuiltinDocumentSchema {
                 .setEvidence(SchemaCompilerEvidence.SCHEMA_COMPILER_EVIDENCE_PRODUCER_REPORTED)
                 .setKnownCompiler(SchemaCompilerDetails.newBuilder().setTool(SchemaToolIdentity.newBuilder()
                         .setName(required(properties,"compiler.name")).setVersion(required(properties,"compiler.version"))))
-                .setAdmissionRuntime(SchemaToolIdentity.newBuilder().setName("com.google.protobuf:protobuf-java")
-                        .setVersion(loadedRuntimeVersion()));
+                .setAdmissionRuntime(admissionRuntime());
         var metadata=RepositorySchemaAsset.newBuilder().setTypeUrl("type.googleapis.com/"+descriptor.getFullName())
                 .setArtifactSha256(DocumentPartCodec.sha256Hex(bytes.toByteArray()))
                 .setSchema(PublicationSchemaCondition.newBuilder().setTypeName(descriptor.getFullName())
@@ -44,6 +52,11 @@ public final class BuiltinDocumentSchema {
                 .setCompilation(compilation).build();
         DocumentSchemaAssetCodec.encode(metadata,() -> {});
         return new DocumentSchemaAdmission.Definition(metadata,bytes,Optional.empty());
+    }
+
+    /** The protobuf runtime this host decodes with, for a definition's admission provenance. */
+    public static SchemaToolIdentity admissionRuntime() {
+        return SchemaToolIdentity.newBuilder().setName("com.google.protobuf:protobuf-java").setVersion(loadedRuntimeVersion()).build();
     }
 
     private static String required(Properties properties,String key) {

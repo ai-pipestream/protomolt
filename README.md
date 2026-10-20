@@ -181,6 +181,11 @@ For the full document platform (ingest, store, parse, search, metrics) run
 
 # 1. Libraries
 
+Start with the [toolkit overview](docs/README.md#protobuf-toolkit-overview) for how
+these libraries fit together. The [reconciliation audit](docs/design/protobuf-toolkit-audit.md)
+records source-backed integration gaps and fidelity concerns; the inventory below
+does not establish that every application uses these tools correctly.
+
 In-process only. Every entry point path is relative to the repository root.
 "Status" is blank where the module is shipped and exercised by tests; it names
 the exception otherwise.

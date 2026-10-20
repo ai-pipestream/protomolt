@@ -1,12 +1,9 @@
 package ai.protomolt.proto.repo.admission;
 
-import ai.protomolt.proto.descriptors.ClosedDescriptorSet;
 import ai.protomolt.proto.repo.v1.DocumentPart;
 import ai.protomolt.proto.repo.v1.DocumentRootSchemaEvidence;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +13,6 @@ import java.util.concurrent.CancellationException;
 
 /** Initial evidence production; only the independent verifier constructs a public proof. */
 final class DocumentSchemaPreparation {
-    private static final int MIB = 1024 * 1024;
     private DocumentSchemaPreparation() {}
 
     static DocumentSchemaAdmission.Proof check(DocumentSchemaAdmission.Preparation request,
@@ -36,7 +32,8 @@ final class DocumentSchemaPreparation {
             control.run();
         };
         active.run();
-        if (request.commandSha256().size() != 32 || !request.policySha256().matches("[0-9a-f]{64}"))
+        if (request.commandSha256().size() != 32
+                || !ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(request.policySha256()))
             throw new IllegalArgumentException("exact command and policy digests required");
         if (request.fragments().size() > limits.maxFragments())
             throw new IllegalArgumentException("member admission count exceeds limit");

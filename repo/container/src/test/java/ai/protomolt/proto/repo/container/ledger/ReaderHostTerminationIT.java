@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.context;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.context;
 import static org.assertj.core.api.Assertions.*;
 
 /** SQL receipt correctness with a verifier for an actual managed child, not remote-host qualification. */
@@ -40,8 +40,8 @@ class ReaderHostTerminationIT {
             assertThat(state(c.tx(), identity.execution())).isEqualTo("TERMINATED");
             assertThat(c.tx().readOnly(em -> em.createNativeQuery("SELECT state FROM repository_reader_incarnations WHERE incarnation=:id")
                 .setParameter("id", reader).getSingleResult()).toString()).isEqualTo("ACTIVE");
-            assertThatThrownBy(() -> new DocumentReadRecovery(c.tx()).recoverBatch(reader, 1))
-                .hasStackTraceContaining("proven quiescence");
+            assertThatThrownBy(() -> new ai.protomolt.proto.repo.container.archive.ArchiveReadRecovery(c.tx()).recoverReaderBatch(reader, 1))
+                .hasStackTraceContaining("proven reader quiescence");
             assertThatThrownBy(() -> ReaderRegistration.register(c.tx(), UUID.randomUUID(), identity.execution()))
                 .hasStackTraceContaining("not ACTIVE");
             assertThatThrownBy(() -> c.tx().inTransaction(em -> {

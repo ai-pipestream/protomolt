@@ -200,7 +200,8 @@ final class DocumentRetainedSchemaAssets {
     }
 
     private static void requireHash(String hash) {
-        if (!hash.matches("[0-9a-f]{64}")) throw new DataLoss("invalid retained schema artifact identity");
+        if (!ai.protomolt.proto.repo.codec.DocumentPartCodec.isSha256Hex(hash))
+            throw new DataLoss("invalid retained schema artifact identity");
     }
 
     private static Runnable guarded(Runnable control) {

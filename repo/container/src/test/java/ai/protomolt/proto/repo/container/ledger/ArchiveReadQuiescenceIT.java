@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Timeout;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.RepositoryRetentionMigrationIT.*;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.*;
 import static org.assertj.core.api.Assertions.*;
 
 /** Local lifetime evidence and bounded recovery against PostgreSQL retention triggers. */

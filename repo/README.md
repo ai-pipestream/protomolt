@@ -6,6 +6,19 @@ streaming HTTP upload route) — no framework, blocking style, virtual threads.
 
 ## What it is
 
+The canonical public API is the parts-based `DocumentService`. Two wire
+generations are mounted side by side by `RepoServices` (full profile):
+`ai.protomolt.proto.repo.v1.DocumentService` (the ledger-backed store below)
+and `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`,
+the parts-based Repository Service v2; see
+[the design requirements](../docs/design/parts-based-repository-requirements.md)).
+The side-by-side mounting is transitional: Step 5B (#392) retires the v1
+document service, after which `RepoServices` mounts the v2
+`AccessionGrpcService` alongside the frozen `Archive*` and `Drive*` services
+only. See the [current document guide](../docs/repo/publication.md). The
+separate publication transport is removed; internal publication and recovery
+components remain.
+
 When any part of the pipeline needs to persist a `Document` (the platform's
 core document protobuf), it comes here. The service writes the document body
 to S3-compatible object storage and records a row in Postgres that points at
@@ -17,8 +30,9 @@ Two design choices explain almost everything else.
 
 First, a stored document is not one blob. It is split along clean protobuf
 field boundaries into independently addressable **parts** — CORE, BLOBS,
-CHUNKS (one object per chunk set), PARSED — each written as its own object
-under a shared prefix, with a manifest that lists them. A reader fetches only
+CHUNKS (one object per segmentation), PARSED, EMBEDDINGS (one object per
+embedding set) — each written as its own object under a shared prefix, with a
+manifest that lists them. A reader fetches only
 the parts it needs (CORE without multi-megabyte BLOBS), and the full document
 reassembles byte-for-byte from the parts.
 
@@ -53,11 +67,32 @@ around that rule.
 | `repo/codec` | `:protomolt-repo-codec` | Document part layouts, splitting and typed assembly |
 | `repo/blob/spi` | `:protomolt-repo-blob-spi` | JDK-only byte storage contracts and provider discovery |
 | `repo/blob/s3`, `repo/blob/redis`, `repo/blob/cache` | `:protomolt-repo-blob-s3`, `:protomolt-repo-blob-redis`, `:protomolt-repo-blob-cache` | Object storage providers and cache decorator |
-| `repo/blob/grpc` | `:protomolt-repo-blob-grpc` | Remote byte storage client using a borrowed gRPC stub |
 | `repo/spi` | `:protomolt-repo-spi` | Shared document, archive, drive and raw-blob invocation contracts, caller identity and domain errors |
 | `repo/engine` | `:protomolt-repo-engine` | Shared document, archive, drive and raw-blob operations over ledgers and selected byte storage |
 | `repo/container` | `:protomolt-repo-container` | The storage engine: part fan-out IO and the Postgres ledger (Hibernate + HikariCP + Flyway) |
 | `repo/service` | `:protomolt-repo-service` | The service set: gRPC impls, the streaming HTTP upload route, `RepoServices` wiring |
+| `repo/stack` | `:protomolt-repo-stack` | v2 write-once stacks: streamed puts that return a `StackRef`, reads verified against it |
+| `repo/catalog` | `:protomolt-repo-catalog` | v2 catalog over JDBC + HikariCP + Flyway: revisions, part references, outcomes, writer grants, outbox (mounted in the dedicated `repo_catalog` schema) |
+| `repo/accession` | `:protomolt-repo-accession` | v2 `ai.protomolt.proto.repo.v2.DocumentService` (`AccessionGrpcService`): all 13 RPCs — save/read/manifest/revisions/outcome, streamed upload/read + blob reads, delete/list/purge, bulk streams and the Kafka outbox relay; mounted by full-profile `RepoServices` alongside the v1 service |
+
+## Repository v2 (parts-based)
+
+The v2 `DocumentService` stores each document revision as a manifest over
+write-once stack objects: `DocumentSaves` splits the document through the
+codec (CORE, BLOBS, PARSED, one CHUNKS per segmentation, one EMBEDDINGS per
+embedding set), writes each fragment to the save's drive stack under the
+`documents` namespace, and commits the revision in one catalog transaction
+(compare-and-swap on `ExpectedRevision`, idempotent by `operation_id` intent
+fingerprint). Reads re-verify retained bytes against the manifest before
+answering. Drives resolve per account at save time from the v1 drive ledger
+(`stack-<driveId>` registrations, `default` falling back to `intake`), and a
+cold host re-resolves a persisted stack by drive primary key. Purge is a
+separate two-phase resumable operation behind a `PurgeAuthorization` port
+(fail-closed deny-all until an admin identity is bound; process authority
+cannot purge). Co-mounted pipeline steps save with process authority and are
+rebound by `RepoServices` to a credential-bound step caller with an
+auto-installed writer grant, so step saves pass the same `WriterAuthority`
+and document-ACL checks as key-bound writers.
 
 ## Storage model
 
@@ -287,8 +322,6 @@ for the ledger, LocalStack for S3, the full stack booted through
 - `UploadHttpServerIT` — the streaming upload route over a real HTTP server:
   multi-MB streaming, byte-exact round trips, dedupe, the 411/400/404
   contract, checksum-mismatch rejection.
-- `RemoteBlobStoreIT` — the dogfood blob store over the in-process gRPC
-  transport.
 - `SeedAccountDrivesIT` — the seeded default account: `intake`/`pipeline`
   drives appear with the provisioning defaults, seeding is idempotent across
   repeat runs, and an unset variable is a no-op.
@@ -313,9 +346,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |
 | `DOCUMENT_PLATFORM_S3_ACCESS_KEY` / `_SECRET_KEY` | _(SDK default chain)_ | Static credentials; both or neither. Blank = the AWS default credentials chain (IRSA/instance profile in prod) |
 | `DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE` | `documents` | Provisioned drives without an explicit bucket get `<base>-<accountId>-<name>` |
-| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `repo` (delegate bytes to another repo-service over gRPC), `repo-inprocess` (same, in-process transport), `redis` (objects live in Redis), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache) |
-| `DOCUMENT_PLATFORM_REPO_TARGET` | _(none)_ | Required for the `repo` modes: `host:port` for `repo`, an in-process server name for `repo-inprocess` |
-| `DOCUMENT_PLATFORM_REPO_BUCKET_BINDINGS` | required for remote modes | JSON object mapping local ledger bucket names to distinct remote drive names; preserves object keys |
+| `DOCUMENT_PLATFORM_BLOB_STORE` | `s3` | Blob-store selection: `s3` (direct object storage), `redis` (objects live in Redis), `s3-redis-cache` (S3 of record behind a Redis read-through/write-through cache). The former `repo` / `repo-inprocess` delegation modes are retired (Step 5A) and fail construction with `Remote repository blob storage is retired` |
 | `DOCUMENT_PLATFORM_REDIS_URI` | `redis://localhost:6379` | Redis connection URI (`redis://[:password@]host:port[/db]`) for the `redis` and `s3-redis-cache` modes |
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
@@ -471,12 +502,15 @@ the entry UUID, version, SHA-256, size, object key, and root checksum.
 
 ### HTTP `POST /v1/documents:upload`
 
-The streaming raw-upload route. The request body flows through a SHA-256
-`DigestInputStream` straight into object storage — **no buffering in
-memory** — then the assembled `Document` runs through the same intake save
-as gRPC `SaveDocument`.
+The streaming raw-upload route, served by the v2 `UploadHttpHandler`
+(`repo/accession`): the request body streams into the document's drive
+stack through `DocumentUploads` — **no buffering in memory** — and lands as
+a raw blob of a new revision saved through the same accession pipeline as
+gRPC `UploadDocument`. Authentication comes first: every request must
+present the configured API token as an `api_token` header or as
+`Authorization: Bearer <token>`; anything else is `401` before routing.
 
-Identity comes from query parameters or headers (query wins):
+Identity comes from query parameters or headers (query takes precedence):
 
 | Param | Header | Required |
 |-------|--------|----------|
@@ -484,59 +518,60 @@ Identity comes from query parameters or headers (query wins):
 | `datasource_id` | `x-datasource-id` | yes |
 | `drive` | `x-drive-name` | yes |
 | `filename` | `x-filename` | yes |
-| `content_type` | `Content-Type` | no (default `application/octet-stream`) |
+| `operation_id` | `x-operation-id` | no (blank generates a random UUID) |
+| `doc_id` | `x-doc-id` | no (see identity rules below) |
+| `blob_id` | `x-blob-id` | no (blank derives from the document ID and filename) |
 | `connector_id` | `x-connector-id` | no |
-| `crawl_id` | `x-crawl-id` | no |
-| `doc_id` | `x-doc-id` | no (blank derives a name-based UUID from the content SHA-256) |
+| `content_type` | `Content-Type` | no (default `application/octet-stream`) |
+| `expected_revision` | `x-expected-revision` | no (integer `> 0` pins that exact revision; omitted or `0` means `ExpectedRevision.none`, a create) |
+| `sha256` | `X-Content-Sha256` | no (declared digest, verified while streaming) |
 
-**`Content-Length` is required** — a deliberate contract: the S3 sync client
-streams a PUT only with a known length, so chunked/absent-length requests
-get `411 Length Required` before any byte is read.
+**`Content-Length` is required** — chunked transfer and absent, blank, or
+duplicated length headers are refused (`411`, duplicates `400`) before any
+byte is read, because the length bounds the streamed write.
 
-An `X-Content-Sha256` header is verified against the digest computed while
-streaming; a mismatch is a 400 and the landed object is best-effort deleted.
+Identity and retry rules: with no `doc_id`, the document ID derives
+deterministically from the declared `sha256` when one is supplied, else
+from the supplied `operation_id`, else it is a fresh random UUID — so a
+retry that repeats neither creates a new document on every attempt.
+Retries should supply a stable `operation_id`: a retry with the same
+`operation_id` and the same intent replays the recorded outcome and answers
+with `replayed: true` instead of writing a duplicate revision. Updates to
+an existing document should also pin `expected_revision` to the revision
+they mean to advance; a concurrent write then conflicts (`409`) instead of
+being overwritten.
 
 Success is `200` with a JSON receipt:
 
 ```json
 {
-  "node_id": "3f8a…",
+  "operation_id": "…",
   "doc_id": "…",
-  "deduplicated": false,
+  "revision": 1,
+  "replayed": false,
   "size_bytes": 8388608,
-  "sha256": "…",
-  "storage_ref": {"drive_name": "intake", "object_key": "intake/blobs/<accountId>/<blobId>.bin"}
+  "sha256": "…"
 }
 ```
 
-Errors: 400 (names the offending parameter, or a checksum mismatch), 404
-(unknown drive), 405 (non-POST), 411 (absent/invalid Content-Length), 502
-(backing-store or intake-save failure).
+Errors are `{"error": "…"}` JSON: `400` (missing required parameter,
+invalid `expected_revision` or `Content-Length`, unknown drive, digest or
+length mismatch against the streamed bytes), `401` (missing or invalid API
+token), `403` (the caller may not write this document), `404` (wrong path,
+or a referenced document does not exist), `405` (non-POST), `409`
+(revision or operation conflict), `411` (missing `Content-Length`), `429`
+(capacity exhausted), `503` (stack or catalog unavailable).
 
-## The dogfood blob store
+## Retired: the dogfood blob store
 
-`RemoteBlobStore` (`ai.protomolt.proto.repo.blob.grpc`, artifact `protomolt-repo-blob-grpc`) implements the
-`BlobStore` port over a `DocumentService` gRPC stub: any protomolt consumer
-that speaks the port can use a repo-service as its byte store instead of
-carrying an S3 SDK. `put`→`PutBlob`, `get`→`GetBlob` (NOT_FOUND maps to
-`BlobNotFoundException`), `delete`→`DeleteBlob`. Documented gaps:
-`headObject` is a full fetch whose bytes are discarded (the v1 API has no
-cheaper probe), `copy` is a client-side get+put (no server-side copy across
-the API yet), and `list`/`deleteAll`/`headBucket` throw
-`UnsupportedOperationException`. Uploads are limited to 9 MiB of data and a 10 MiB serialized request. Stream\nuploads verify the declared length and optional checksum before RPC. Unary gRPC\nmeans the payload is in memory on
-both ends — huge payloads belong on the HTTP upload route.
-
-`DOCUMENT_PLATFORM_BLOB_STORE` picks the deployment shape:
-
-- **`s3`** (default) — the service talks to object storage directly. Zero
-  behavior change from the original wiring.
-- **`repo`** — bytes delegate to another repo-service at
-  `DOCUMENT_PLATFORM_REPO_TARGET` over gRPC.
-- **`repo-inprocess`** — same delegation over the in-process transport (the
-  embedded/test shape; the target is an in-process server name).
-
-The repo modes must point at a DIFFERENT service set — pointing one back at
-itself would recurse `PutBlob` into itself.
+`RemoteBlobStore` (`:protomolt-repo-blob-grpc`) — byte storage delegated to
+another repo-service over the v1 `DocumentService` gRPC API, selected by
+`DOCUMENT_PLATFORM_BLOB_STORE=repo` / `repo-inprocess` — was retired in
+Step 5A (#388). The module, its tests, and the service modes are gone;
+configuring either mode now fails fast at `RepoServices` construction.
+Consumers that need byte storage compose a provider (`s3`, `redis`,
+`s3-redis-cache`) directly; document access goes through the v2
+`DocumentService`.
 
 ## The Redis blob stores
 

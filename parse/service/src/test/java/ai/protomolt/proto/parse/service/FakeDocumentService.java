@@ -1,36 +1,29 @@
 package ai.protomolt.proto.parse.service;
 
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
-import ai.protomolt.proto.repo.v1.SaveDocumentRequest;
-import ai.protomolt.proto.repo.v1.SaveDocumentResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
 
 /**
  * Serves seeded documents by reference and records every {@code SaveDocument}
  * call. The contract under test is WHICH reads and saves the coordinator
- * issues — the whole repo-service stack would prove nothing extra here.
- *
- * <p>{@link #saveGate} (when set) blocks each save until released, so the
- * serialized-write contract is observable: a second save of the same document
- * must not arrive while the first is still in flight.
+ * issues — storage and durability are qualified separately by the real-provider integration test.
  */
 final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
 
     final Map<String, Document> seeded = new ConcurrentHashMap<>();
     final List<SaveDocumentRequest> saves = new CopyOnWriteArrayList<>();
-    volatile CountDownLatch saveGate;
-    volatile String drive = "";
+    volatile io.grpc.StatusRuntimeException saveFailure;
     /** Reads to fail UNAVAILABLE before serving (the durable-retry lever). */
     final java.util.concurrent.atomic.AtomicInteger failReadsRemaining =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -46,8 +39,8 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
     }
 
     @Override
-    public void getDocumentByReference(
-            GetDocumentByReferenceRequest request, StreamObserver<GetDocumentResponse> observer) {
+    public void getDocument(
+            GetDocumentRequest request, StreamObserver<GetDocumentResponse> observer) {
         if (failReadsRemaining.getAndUpdate(n -> n > 0 ? n - 1 : 0) > 0) {
             observer.onError(Status.UNAVAILABLE
                     .withDescription("injected transient read failure")
@@ -63,8 +56,8 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
         }
         observer.onNext(GetDocumentResponse.newBuilder()
                 .setDocument(document)
-                .setNodeId(UUID.nameUUIDFromBytes(key(request.getAddress()).getBytes()).toString())
-                .setDrive(drive)
+                .setManifest(ai.protomolt.proto.repo.v2.DocumentManifest.newBuilder()
+                        .setAddress(request.getAddress()).setRevision(1))
                 .build());
         observer.onCompleted();
     }
@@ -73,25 +66,10 @@ final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplB
     public void saveDocument(
             SaveDocumentRequest request, StreamObserver<SaveDocumentResponse> observer) {
         saves.add(request);
-        CountDownLatch gate = saveGate;
-        if (gate != null) {
-            try {
-                gate.await();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        NodeAddress address = NodeAddress.newBuilder()
-                .setDocId(request.getDocument().getDocId())
-                .setGraphAddressId(request.getDocument().getOwnership().getDatasourceId())
-                .setAccountId(request.getDocument().getOwnership().getAccountId())
-                .setGraphId(request.getGraphId())
-                .build();
+        if (saveFailure != null) { observer.onError(saveFailure); return; }
         observer.onNext(SaveDocumentResponse.newBuilder()
-                .setNodeId(UUID.nameUUIDFromBytes(address.toByteArray()).toString())
-                .setDrive(request.getDrive())
-                .setSizeBytes(request.getDocument().getSerializedSize())
-                .setAddress(address)
+                .setAccession(ai.protomolt.proto.repo.v2.Accession.newBuilder()
+                        .setAddress(request.getTarget().getAddress()).setRevision(2))
                 .build());
         observer.onCompleted();
     }

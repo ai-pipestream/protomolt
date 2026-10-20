@@ -7,9 +7,10 @@ import ai.protomolt.proto.actions.CatalogContract;
 import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Scopes;
 import ai.protomolt.proto.http.jsonschema.ProtoJsonSchemaGenerator;
-import ai.protomolt.proto.repo.v1.DocumentMetadata;
-import ai.protomolt.proto.repo.v1.ListDocumentsRequest;
-import ai.protomolt.proto.repo.v1.ListDocumentsResponse;
+import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.DocumentSummary;
+import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import ai.protomolt.proto.search.v1.ReplayDocumentsRequest;
 import ai.protomolt.proto.search.v1.ReplayDocumentsResponse;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -32,18 +33,20 @@ import java.util.UUID;
  * replace-by-identity guarantees replays never duplicate.
  *
  * <p>Every identity is explicit: the workflow name, the mapping subject,
- * and the drive all come from the request. Submission rides the jobs
+ * and the account all come from the request. Submission rides the jobs
  * module's own {@code submit-workflow} action, so replay inherits its
  * validation; with the optional {@code replayId} input, each document's run
  * also carries a deterministic {@code jobId} derived from it, so
  * resubmitting the same replay is idempotent at the jobs layer too.
  *
  * <p>With {@code prune} set, the replay is a reconcile: it runs over the
- * whole repository listing (a scope would make pruning delete other
- * scopes' documents, so {@code drive} and {@code accountId} are refused),
- * and indexed documents the listing no longer contains are removed from
- * the subject's index. The indexed set is captured before the listing
- * pages, so a document indexed concurrently is never a prune candidate.
+ * account's whole listing (a datasource scope would make pruning delete
+ * other scopes' documents, so {@code graphAddressId} is refused), and
+ * indexed documents the listing no longer contains are removed from the
+ * subject's index. The indexed set is captured before the listing pages,
+ * so a document indexed concurrently is never a prune candidate. The
+ * repository v2 listing is account-scoped, so both modes name an account;
+ * there is no repository-wide listing to reconcile against.
  */
 public final class ReplayAction implements ProtoAction {
 
@@ -121,7 +124,7 @@ public final class ReplayAction implements ProtoAction {
         String mappingSubject = request.getMappingSubject();
         boolean prune = request.getPrune();
         String accountId = request.getAccountId();
-        String drive = request.getDrive();
+        String graphAddressId = request.getGraphAddressId();
         Set<String> indexedBefore = null;
         if (prune) {
             // Captured before the listing pages: a document indexed while
@@ -134,20 +137,20 @@ public final class ReplayAction implements ProtoAction {
         ReplayDocumentsResponse.Builder output = ReplayDocumentsResponse.newBuilder();
         Set<String> listed = new LinkedHashSet<>();
         int submitted = 0;
-        String continuation = "";
+        String pageToken = "";
         do {
             ListDocumentsRequest.Builder page = ListDocumentsRequest.newBuilder()
-                    .setDrive(drive)
-                    .setLimit(PAGE_SIZE)
-                    .setContinuationToken(continuation);
-            if (!accountId.isEmpty()) {
-                page.setAccountId(accountId);
+                    .setAccountId(accountId)
+                    .setPageSize(PAGE_SIZE)
+                    .setPageToken(pageToken);
+            if (!graphAddressId.isEmpty()) {
+                page.setGraphAddressId(graphAddressId);
             }
             ListDocumentsResponse listing = lister.list(page.build());
-            for (DocumentMetadata document : listing.getDocumentsList()) {
-                listed.add(document.getDocId());
+            for (DocumentSummary document : listing.getDocumentsList()) {
+                listed.add(document.getAddress().getDocId());
                 ObjectNode workflowInput = MAPPER.createObjectNode();
-                workflowInput.set("address", addressJson(document));
+                workflowInput.set("address", addressJson(document.getAddress()));
                 workflowInput.put("mappingSubject", mappingSubject);
                 ObjectNode envelope = MAPPER.createObjectNode();
                 envelope.put("workflowName", workflowName);
@@ -157,8 +160,8 @@ public final class ReplayAction implements ProtoAction {
                 // an unnamed replay silently idempotent.
                 if (!replayId.isEmpty()) {
                     envelope.put("jobId", runJobId(
-                            replayId, workflowName, mappingSubject, drive,
-                            document.getDocId()));
+                            replayId, workflowName, mappingSubject, accountId,
+                            graphAddressId, document.getAddress().getDocId()));
                 }
                 // The submit verb runs on its own request message, so the envelope built
                 // here converts at this call the same way it would at any other front.
@@ -168,8 +171,8 @@ public final class ReplayAction implements ProtoAction {
                 output.addJobIds(result.path("jobId").asText());
                 submitted++;
             }
-            continuation = listing.getNextContinuationToken();
-        } while (!continuation.isEmpty());
+            pageToken = listing.getNextPageToken();
+        } while (!pageToken.isEmpty());
         output.setSubmitted(submitted);
         if (prune) {
             for (String docId : indexedBefore) {
@@ -183,12 +186,12 @@ public final class ReplayAction implements ProtoAction {
         return output.build();
     }
 
-    private static JsonNode addressJson(DocumentMetadata document) throws ActionException {
+    private static JsonNode addressJson(NodeAddress address) throws ActionException {
         try {
-            return MAPPER.readTree(JsonFormat.printer().print(document.getAddress()));
+            return MAPPER.readTree(JsonFormat.printer().print(address));
         } catch (Exception e) {
             throw new ActionException("invalid-address",
-                    "cannot render the stored address of '" + document.getDocId() + "': "
+                    "cannot render the stored address of '" + address.getDocId() + "': "
                             + e.getMessage());
         }
     }
@@ -214,9 +217,9 @@ public final class ReplayAction implements ProtoAction {
      * {@code jobId} as its idempotency key.
      */
     private static String runJobId(String replayId, String workflowName,
-            String mappingSubject, String drive, String docId) {
+            String mappingSubject, String accountId, String graphAddressId, String docId) {
         return UUID.nameUUIDFromBytes(String.join("\n",
-                        replayId, workflowName, mappingSubject, drive, docId)
+                        replayId, workflowName, mappingSubject, accountId, graphAddressId, docId)
                 .getBytes(StandardCharsets.UTF_8))
                 .toString();
     }

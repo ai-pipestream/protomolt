@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import static ai.protomolt.proto.repo.container.ledger.DocumentNativePublicationFixture.context;
+import static ai.protomolt.proto.repo.container.ledger.LedgerSqlFixture.context;
 import static org.assertj.core.api.Assertions.*;
 
 /** SQL-only archive pin reclamation after verified managed-child termination; no provider read is claimed. */

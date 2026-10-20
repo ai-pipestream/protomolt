@@ -17,11 +17,13 @@ import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.service.RepoServiceModule;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentPart;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import ai.protomolt.proto.repo.v1.DriveType;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
+import ai.protomolt.proto.repo.v2.DocumentPart;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.PartSelection;
+import ai.protomolt.proto.repo.v2.PartSelector;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
@@ -156,9 +158,10 @@ class RoleNodeIT {
         assertThat(receipt.getAddress().getGraphId()).isEqualTo("intake:" + ACCOUNT);
 
         Document stored = DocumentServiceGrpc.newBlockingStub(repoChannel)
-                .getDocumentByReference(GetDocumentByReferenceRequest.newBuilder()
+                .getDocument(GetDocumentRequest.newBuilder()
                         .setAddress(receipt.getAddress())
-                        .addParts(DocumentPart.DOCUMENT_PART_CORE)
+                        .setSelection(PartSelection.newBuilder()
+                                .addSelectors(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE)))
                         .build())
                 .getDocument();
         assertThat(stored.getDocId()).isEqualTo(receipt.getDocId());

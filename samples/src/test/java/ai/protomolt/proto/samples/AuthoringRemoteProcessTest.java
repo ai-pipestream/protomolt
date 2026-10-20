@@ -39,18 +39,8 @@ import ai.protomolt.proto.workflow.authoring.v1.ReadWorkflowAuthorEventsRequest;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowAuthorTaskServiceGrpc;
 import ai.protomolt.proto.samples.starter.v1.WorkflowAuthoringDeliverable;
 import ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationIntent;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.FileStorageReference;
-import ai.protomolt.proto.repo.v1.GetBlobRequest;
-import ai.protomolt.proto.repo.v1.GetBlobResponse;
-import ai.protomolt.proto.repo.v1.PutBlobRequest;
-import ai.protomolt.proto.repo.v1.PutBlobResponse;
-import ai.protomolt.proto.repo.v1.ConditionalBlobKey;
-import ai.protomolt.proto.repo.v1.ConditionalBlobVersion;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateRequest;
-import ai.protomolt.proto.repo.v1.GetBlobForUpdateResponse;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobRequest;
-import ai.protomolt.proto.repo.v1.CompareAndPutBlobResponse;
+import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
+import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
@@ -875,8 +865,11 @@ class AuthoringRemoteProcessTest {
         }
     }
 
-    private static final class FakeDocumentService extends DocumentServiceGrpc.DocumentServiceImplBase {
-        private final Map<String, StoredObject> objects = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The shared in-memory v2 document store with a hook that stops the fixture process
+     * once the first committed transcript carries a worker completion under review.
+     */
+    private static final class FakeDocumentService extends FakeRepositoryDocumentService {
         private final EncryptedRepositoryStateCodec codec = new EncryptedRepositoryStateCodec(
                 ignored -> new SecretKeySpec(Base64.getDecoder().decode(TRANSCRIPT_KEY), "AES"));
         private final boolean failFirstReview;
@@ -892,63 +885,30 @@ class AuthoringRemoteProcessTest {
         }
 
         private synchronized long reviewStarts() throws Exception {
-            StoredObject current = objects.get(key("protomolt", "delegation/serve/transcript.pb.enc"));
+            var current = documents.get("protomolt/delegation/serve/transcript.pb.enc");
             assertThat(current).isNotNull();
-            return transcript(current.bytes().toByteArray(),
-                    ConditionalBlobKey.newBuilder().setDriveName("protomolt")
-                            .setObjectKey("delegation/serve/transcript.pb.enc").build())
+            return transcript(current, "protomolt", "delegation/serve/transcript.pb.enc")
                     .getEntriesList().stream().filter(entry -> entry.hasCoordinatorFrame()
                             && entry.getCoordinatorFrame().hasReviewStarted()).count();
         }
 
-        private Transcript transcript(byte[] bytes, ConditionalBlobKey key) throws Exception {
-            EncryptedRepositoryState envelope = EncryptedRepositoryState.parseFrom(bytes);
+        private Transcript transcript(ai.protomolt.proto.repo.v1.Document document,
+                String drive, String objectKey) throws Exception {
+            EncryptedRepositoryState envelope = document.getStructuredData()
+                    .unpack(EncryptedRepositoryState.class);
             byte[] plaintext = codec.decrypt(envelope,
                     RepositoryServiceTranscriptRepository.CONTENT_TYPE,
-                    key.getDriveName() + "\n" + key.getObjectKey());
+                    drive + "\n" + objectKey);
             return Transcript.parseFrom(plaintext);
         }
-        @Override public void getBlob(GetBlobRequest request, StreamObserver<GetBlobResponse> observer) {
-            StoredObject stored = objects.get(key(request.getStorageRef().getDriveName(),
-                    request.getStorageRef().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobResponse.newBuilder().setData(stored.bytes()).setSizeBytes(stored.bytes().size())
-                    .setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void putBlob(PutBlobRequest request, StreamObserver<PutBlobResponse> observer) {
-            ByteString bytes = request.getData();
-            objects.put(key(request.getDriveName(), request.getObjectKey()),
-                    new StoredObject(bytes, request.getMimeType()));
-            observer.onNext(PutBlobResponse.newBuilder().setStorageRef(
-                    FileStorageReference.newBuilder().setDriveName(request.getDriveName())
-                            .setObjectKey(request.getObjectKey()))
-                    .setSizeBytes(bytes.size()).setSha256(sha256Unchecked(bytes.toByteArray())).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void getBlobForUpdate(GetBlobForUpdateRequest request,
-                StreamObserver<GetBlobForUpdateResponse> observer) {
-            StoredObject stored = objects.get(key(request.getKey().getDriveName(), request.getKey().getObjectKey()));
-            if (stored == null) { observer.onError(Status.NOT_FOUND.asRuntimeException()); return; }
-            observer.onNext(GetBlobForUpdateResponse.newBuilder().setData(stored.bytes())
-                    .setVersion(version(request.getKey(), stored)).setMimeType(stored.mimeType()).build());
-            observer.onCompleted();
-        }
-        @Override public synchronized void compareAndPutBlob(CompareAndPutBlobRequest request,
-                StreamObserver<CompareAndPutBlobResponse> observer) {
-            String objectKey = key(request.getKey().getDriveName(), request.getKey().getObjectKey());
-            StoredObject current = objects.get(objectKey);
-            boolean matches = switch (request.getPreconditionCase()) {
-                case IF_ABSENT -> request.getIfAbsent() && current == null;
-                case EXPECTED_ETAG -> current != null && current.etag().equals(request.getExpectedEtag());
-                default -> false;
-            };
-            if (!matches) { observer.onError(Status.ABORTED.asRuntimeException()); return; }
-            StoredObject stored = new StoredObject(request.getData(), request.getMimeType());
-            objects.put(objectKey, stored);
+
+        @Override protected boolean afterSave(SaveDocumentRequest request,
+                StreamObserver<SaveDocumentResponse> observer) {
             if (failFirstReview && !fixtureStoppedForReview) {
                 try {
-                    Transcript committed = transcript(request.getData().toByteArray(), request.getKey());
+                    Transcript committed = transcript(request.getDocument(),
+                            request.getTarget().getAddress().getAccountId(),
+                            request.getTarget().getAddress().getDocId());
                     int size = committed.getEntriesCount();
                     if (size >= 2 && committed.getEntries(size - 2).hasWorkerFrame()
                             && committed.getEntries(size - 2).getWorkerFrame().hasCompletion()
@@ -963,22 +923,10 @@ class AuthoringRemoteProcessTest {
                 } catch (Exception failure) {
                     observer.onError(Status.INTERNAL.withDescription("test fixture shutdown failed")
                             .asRuntimeException());
-                    return;
+                    return false;
                 }
             }
-            observer.onNext(CompareAndPutBlobResponse.newBuilder().setVersion(version(request.getKey(), stored)).build());
-            observer.onCompleted();
-        }
-        private static ConditionalBlobVersion version(ConditionalBlobKey key, StoredObject stored) {
-            return ConditionalBlobVersion.newBuilder().setKey(key).setEtag(stored.etag())
-                    .setSizeBytes(stored.bytes().size()).setSha256(sha256Unchecked(stored.bytes().toByteArray())).build();
-        }
-        private record StoredObject(ByteString bytes, String mimeType) {
-            String etag() { return "\"" + sha256Unchecked(bytes.toByteArray()) + "\""; }
-        }
-        private static String key(String drive, String object) { return drive + "/" + object; }
-        private static String sha256Unchecked(byte[] bytes) {
-            try { return sha256(bytes); } catch (Exception impossible) { throw new AssertionError(impossible); }
+            return true;
         }
     }
 }

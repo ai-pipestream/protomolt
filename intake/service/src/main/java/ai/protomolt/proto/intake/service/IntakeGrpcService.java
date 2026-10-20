@@ -13,7 +13,10 @@ import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.DocIdDerivation;
 import ai.protomolt.proto.repo.v1.DocIdDerivationMethod;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
+import ai.protomolt.proto.repo.v2.DeleteDocumentResponse;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
@@ -60,10 +63,18 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
      * @param maxPayloadBytes the service-wide payload cap for the in-memory
      *        gRPC lanes; must be positive (bulk payloads beyond it belong on
      *        the HTTP lane)
+     * @param stepWriters pipeline step module IDs granted read+write on created
+     *        documents (see {@link IntakeServiceConfig#stepWriters})
      */
     public IntakeGrpcService(
-            DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes) {
-        this.ingests = new RawIngests(documents, maxPayloadBytes);
+            DocumentServiceGrpc.DocumentServiceBlockingStub documents, long maxPayloadBytes,
+            java.util.Set<String> stepWriters) {
+        this.ingests = new RawIngests(documents, maxPayloadBytes, stepWriters);
+    }
+
+    @Override
+    public void deleteDocument(DeleteDocumentRequest request, StreamObserver<DeleteDocumentResponse> observer) {
+        GrpcErrors.run(observer, () -> ingests.delete(ApiKeyServerInterceptor.currentScope(), request));
     }
 
     @Override
@@ -83,28 +94,30 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         IntakeScope scope = ApiKeyServerInterceptor.currentScope();
         RawIngests.Targeting targeting = RawIngests.Targeting.of(scope, request.getDatasourceId(),
                 request.hasDrive() ? request.getDrive() : null);
+        ExpectedRevision expected = RawIngests.resolveExpected(request.getMode(),
+                request.hasExpected() ? request.getExpected() : null);
         RawIngests.Saved saved =
                 switch (request.getContentCase()) {
                     case DOCUMENT -> saveTypedDocument(
-                            scope, targeting, request.getDocument(), request.getMetadataMap());
+                            scope, targeting, request.getDocument(), request.getMetadataMap(), expected);
                     case RAW -> ingests.saveRawPayload(
                             scope,
                             targeting,
                             request.getRaw().getData(),
                             request.getRaw().getFilename(),
                             request.getRaw().getMimeType(),
-                            request.getMetadataMap());
+                            request.getMetadataMap(), expected);
                     case CONTENT_NOT_SET -> throw GrpcErrors.invalidArgument(
                             "content is required: set document or raw");
                 };
         return IngestDocumentResponse.newBuilder()
-                .setDocId(saved.response().getAddress().getDocId())
-                .setNodeId(saved.response().getNodeId())
-                .setAddress(saved.response().getAddress())
-                .setDrive(saved.response().getDrive())
+                .setDocId(saved.address().getDocId())
+                .setRevision(saved.revision())
+                .setAddress(saved.address())
+                .setDrive(saved.drive())
                 .setSizeBytes(saved.payloadSize())
                 .setSha256(saved.sha256())
-                .setDeduplicated(saved.response().getDeduplicated())
+                .setDeduplicated(saved.deduplicated())
                 .build();
     }
 
@@ -112,7 +125,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
             IntakeScope scope,
             RawIngests.Targeting targeting,
             Document caller,
-            Map<String, String> metadata) {
+            Map<String, String> metadata, ExpectedRevision expected) {
         long inlineBytes = totalInlineBlobBytes(caller);
         ingests.requirePayloadWithinCaps(scope, inlineBytes);
         requireBlobMimeTypesWithinScope(scope, caller);
@@ -123,15 +136,22 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
         // The key's scope dictates ownership; whatever the caller supplied loses.
         ownership.setAccountId(scope.accountId()).setDatasourceId(targeting.datasourceId());
         document.setOwnership(ownership);
-        if (!caller.getDocId().isBlank() && !caller.hasDocIdDerivation()) {
+        if (caller.getDocId().isBlank()) {
+            byte[] canonical = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(document.build());
+            byte[] digest = RawIngests.sha256(canonical);
+            document.setDocId(java.util.UUID.nameUUIDFromBytes(digest).toString())
+                    .setDocIdDerivation(DocIdDerivation.newBuilder()
+                            .setMethod(DocIdDerivationMethod.DOC_ID_DERIVATION_METHOD_CONTENT_HASH)
+                            .setSourceValue(java.util.HexFormat.of().formatHex(digest)));
+        } else if (!caller.hasDocIdDerivation()) {
             document.setDocIdDerivation(
                     DocIdDerivation.newBuilder()
                             .setMethod(DocIdDerivationMethod.DOC_ID_DERIVATION_METHOD_CALLER_PROVIDED));
         }
         Document toSave = document.build();
-        byte[] canonical = toSave.toByteArray();
+        byte[] canonical = ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(toSave);
         return ingests.save(
-                scope, targeting, toSave, metadata, RawIngests.sha256Hex(canonical), canonical.length);
+                scope, targeting, toSave, metadata, RawIngests.sha256Hex(canonical), canonical.length, expected);
     }
 
     private static void requireBlobMimeTypesWithinScope(IntakeScope scope, Document document) {
@@ -208,6 +228,7 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                 throw GrpcErrors.invalidArgument(
                         "metadata frame after the first frame; only the first frame carries metadata");
             }
+            RawIngests.resolveExpected(first.getMode(), first.hasExpected() ? first.getExpected() : null);
             metadata = first;
             targeting = RawIngests.Targeting.of(scope, first.getDatasourceId(),
                     first.hasDrive() ? first.getDrive() : null);
@@ -245,16 +266,17 @@ public final class IntakeGrpcService extends IntakeServiceGrpc.IntakeServiceImpl
                         ByteString.copyFrom(payload.toByteArray()),
                         metadata.getFilename(),
                         metadata.getMimeType(),
-                        metadata.getMetadataMap());
+                        metadata.getMetadataMap(), RawIngests.resolveExpected(metadata.getMode(),
+                                metadata.hasExpected() ? metadata.getExpected() : null));
                 observer.onNext(
                         IngestStreamResponse.newBuilder()
-                                .setDocId(saved.response().getAddress().getDocId())
-                                .setNodeId(saved.response().getNodeId())
-                                .setAddress(saved.response().getAddress())
-                                .setDrive(saved.response().getDrive())
+                                .setDocId(saved.address().getDocId())
+                                .setRevision(saved.revision())
+                                .setAddress(saved.address())
+                                .setDrive(saved.drive())
                                 .setSizeBytes(saved.payloadSize())
                                 .setSha256(saved.sha256())
-                                .setDeduplicated(saved.response().getDeduplicated())
+                                .setDeduplicated(saved.deduplicated())
                                 .build());
                 observer.onCompleted();
             } catch (Throwable t) {

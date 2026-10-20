@@ -1,5 +1,94 @@
 # AGENTS.md
 
+## Start here: reuse and scope control
+
+- Removed repository design docs and evidence (tag docs-archive/2026-10-14) are not
+  normative. Do not restore them. Old tests and evidence may be consulted only for
+  failure cases worth preserving.
+  docs/design/parts-based-repository-requirements.md is the only repository design source.
+- Protomolt is JDK-first with minimal dependencies. No application framework (no
+  Quarkus, no Spring).
+- Before implementation, read the current user authorization and these three
+  documents: [repository requirements](docs/design/parts-based-repository-requirements.md),
+  [toolkit audit](docs/design/protobuf-toolkit-audit.md), and the relevant entries
+  in the [source index](docs/design/protobuf-toolkit-source-index.md).
+  Verify their findings against the checkout; they are not proof that fixes landed.
+- Identify the branch, worktree, starting commit and existing local changes.
+  During this reconciliation, work only in `reconcile/parts-based-repository`.
+  Leave `main` and `ai-slop-archive-by-astra` untouched. Do not resume old goals,
+  automations or repair branches as implied authorization.
+- For each implementation slice, record the required behavior, existing classes
+  reused, entry-to-storage/read call path, and acceptance assertions before edits.
+  Search callers and tests before inventing a mapper, validator, schema resolver,
+  codec, receipt format, persistence layer or service. If an existing component
+  is insufficient, name the specific missing behavior; do not silently bypass it.
+- Use descriptor/Message/Builder APIs, the existing CEL mapper/projection tools,
+  ProtoValidator, parts layout and retained schema/receipt primitives. Internal
+  protobuf -> JSON/Struct -> protobuf is not a convenience implementation of
+  those capabilities. An intentional Struct field or external JSON boundary is
+  not a license to convert an unrelated typed message into it.
+- Stop the affected slice and explain the concrete tradeoff before changing an
+  approved architecture: another public document API, new authoritative format,
+  document size ceiling, weaker validation, changed part semantics, or loss of
+  retained identity. Obtain explicit user agreement for such a design change.
+  Ordinary implementation choices within the approved design do not need approval.
+- Existing broken behavior is not precedent. Do not copy a JSON persistence path,
+  swallowed exception, implicit schema/provider fallback or buffered size limit
+  merely because another module uses it. Preserve causes and distinguish missing,
+  unavailable, invalid and opaque data. Never turn one into successful validation.
+- Evidence must exercise the actual public path being changed. Assert fidelity,
+  invalid-input refusal and failure/recovery outcomes, not just successful returns.
+  Use real providers for claims about provider identity, transactions and durability;
+  mocks cannot establish those claims. Do not weaken tests, skip failures or substitute
+  a narrower path to obtain green. Report pre-existing failures separately.
+- At each completed slice, report behavior changed, reused components, meaningful
+  checks and remaining limitations. Distinguish local edits, commit, push, merge
+  and deployment. Keep the scope small enough to review before starting another.
+- Every delegated handoff or restart must carry these rules, exact branch/base,
+  owned files, exclusions and exit criteria. A worker report is evidence to review,
+  not approval to merge. Do not hand the user an unbounded review burden.
+- The current audit/planning authorization does not authorize implementing R1-R9.
+  Wait for a subsequent implementation instruction; this file does not grant it.
+
+## Repository architecture and data integrity
+
+- `DocumentService` is the canonical public document API. Preserve selected-part
+  saves, copy-forward of untouched parts, selected chunk sets and selective reads.
+  Do not replace these behaviors with a complete-replacement publication API.
+- The separate `DocumentPublicationService` transport and its remote client are
+  removed in this reconciliation. Internal publication, admission, receipts,
+  revision history and recovery machinery remain distinct from that public API.
+  Removing a transport does not authorize deleting those protections.
+- Retained `DocumentPublicationRepository` is an internal integration and
+  qualification boundary, not an alternative application-facing document API.
+  Do not expose it again or recommend it to callers because it exists in code.
+- Structured content remains protobuf through descriptor-based mapping,
+  projection, CEL validation and repository storage. Keep original source files
+  as bytes and large source content behind claim checks. SQL owns ledger state,
+  references and simple metadata lookups; richer search belongs to search.
+- JSON is permitted at actual external boundaries and for metadata lookup
+  projections in SQL. A projection must not replace authoritative protobuf
+  content, erase unknown fields, or become a JSON round trip for validation.
+- JSON front ends (REST gateway, MCP, ACP, A2A) are edge adapters generated
+  from proto descriptors, never transports between our own services. A2A streams
+  well but is JSON-RPC over HTTP with JSON payloads by design; its gRPC binding
+  is newer and less widely used. Internal calls stay protobuf over gRPC. Any
+  internal doc for a JSON-facing surface repeats this boundary.
+- Preserve parts, field presence, unknown fields, exact numeric values, retained
+  schema identities, Any bytes and validation annotations. Opaque storage does
+  not establish typed validation. Do not silently use a newer schema for history.
+- Reuse existing streaming and storage-provider capabilities. Document size,
+  transport message size and control-record budgets are separate. Do not invent
+  a document ceiling from a buffered adapter's limit or claim large-object
+  support by increasing a constant alone.
+- Propagate failures with their causes; never drop failed records, swallow errors,
+  return fake success or change credentials/providers as an implicit fallback.
+  Record unverified behavior explicitly instead of claiming completion.
+- Trace entry, storage, read and recovery paths before claiming fidelity. Tests
+  must assert the required behavior; a green suite alone proves no architecture.
+  Do not claim the canonical parts API gained typed admission unless its actual
+  call path and tests establish it. Historical evidence is not a current API guide.
+
 ## Remotes and push policy
 
 - **Push Forgejo first, GitHub second.** Forgejo

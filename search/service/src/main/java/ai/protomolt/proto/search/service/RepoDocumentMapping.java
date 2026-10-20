@@ -104,7 +104,8 @@ public final class RepoDocumentMapping {
             catalog.put(Document.getDescriptor().getFullName(), skipped,
                     ResolvedFieldHint.skipped());
         }
-        for (String skipped : new String[] {"semantic_results", "custom_fields", "metadata"}) {
+        for (String skipped : new String[] {
+                "segmentations", "embedding_sets", "custom_fields", "metadata"}) {
             catalog.put("ai.protomolt.proto.repo.v1.SearchMetadata", skipped,
                     ResolvedFieldHint.skipped());
         }

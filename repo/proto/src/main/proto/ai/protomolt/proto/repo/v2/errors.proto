@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "ErrorsProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// ERROR DETAILS — carried in gRPC status details, and per item in bulk streams.
+//
+//   ABORTED             RevisionConflict  stale expected revision, after the
+//                                         same-ID outcome re-read; not recorded
+//   ALREADY_EXISTS      OperationReuse    same operation ID, different intent
+//   INVALID_ARGUMENT    SaveRejection     MALFORMED_REQUEST (not recorded),
+//                                         VALIDATION_FAILED, INVALID_BYTES,
+//                                         UPLOAD_MISMATCH (recorded)
+//   FAILED_PRECONDITION SaveRejection     SCHEMA_MISSING, SOURCE_PURGED,
+//                                         SOURCE_NOT_FOUND, SEGMENTATION_MISMATCH,
+//                                         OPAQUE_UNOWNED (recorded); OWNER_UNKNOWN
+//                                         (not recorded)
+//   PERMISSION_DENIED   SaveRejection     OPAQUE_NOT_ALLOWED (recorded);
+//                                         WRITE_DENIED (not recorded)
+//   RESOURCE_EXHAUSTED  none              host reservation or schema-retention budget;
+//                                         never recorded
+//   INTERNAL            none              the host or registry misbehaved (admission
+//                                         host failure); never recorded
+//   UNAVAILABLE         none              registry or catalog unreachable; never recorded
+//   NOT_FOUND           none              exact revision, blob or document absent
+//   DATA_LOSS           none              stored bytes or retained evidence fail
+//                                         their digest checks
+//
+// Failures before the writer is authorized never record an outcome, so they
+// cannot claim an operation ID in another account. A recorded rejection is the
+// operation's terminal outcome: a retry with fixed content uses a new
+// operation ID.
+// ============================================================================
+
+// A stale expected revision.
+message RevisionConflict {
+  // The call number.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // What the caller expected.
+  ExpectedRevision expected = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The current revision; 0 when the document does not exist.
+  int64 current_revision = 3 [(ai.protomolt.proto.validate.v1.field).int64.gte = 0];
+  // The current revision is a tombstone.
+  bool current_is_tombstone = 4;
+}
+
+// An operation ID already recorded with a different intent.
+message OperationReuse {
+  // The reused operation ID.
+  string operation_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200}
+  }];
+  // The recorded intent digest.
+  string recorded_intent_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // The request's intent digest.
+  string request_intent_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+}
+
+// Why a save was refused.
+enum RejectionReason {
+  // Never sent.
+  REJECTION_REASON_UNSPECIFIED = 0;
+  // Duplicate or contradicting selectors, stray content, a blank document ID,
+  // a missing owner, or content this server does not support yet.
+  REJECTION_REASON_MALFORMED_REQUEST = 1;
+  // The composed candidate failed a rule.
+  REJECTION_REASON_VALIDATION_FAILED = 2;
+  // An Any type is not registered.
+  REJECTION_REASON_SCHEMA_MISSING = 3;
+  // Any bytes do not decode as their type.
+  REJECTION_REASON_INVALID_BYTES = 4;
+  // Opaque mode requested; host policy refuses it.
+  REJECTION_REASON_OPAQUE_NOT_ALLOWED = 5;
+  // A carried-forward object is purged.
+  REJECTION_REASON_SOURCE_PURGED = 6;
+  // A source revision or part does not exist.
+  REJECTION_REASON_SOURCE_NOT_FOUND = 7;
+  // An embedding set is bound to a changed segmentation.
+  REJECTION_REASON_SEGMENTATION_MISMATCH = 8;
+  // Declared length or SHA-256 differs from the uploaded bytes.
+  REJECTION_REASON_UPLOAD_MISMATCH = 9;
+  // Opaque ownership is missing or does not match.
+  REJECTION_REASON_OPAQUE_UNOWNED = 10;
+  // No writer grant exists for the owner in the account.
+  REJECTION_REASON_OWNER_UNKNOWN = 11;
+  // The caller holds no active grant matching the owner, its credential is
+  // not current, or the grant is revoked. Never names another credential's grants.
+  REJECTION_REASON_WRITE_DENIED = 12;
+}
+
+// One rule violation.
+message FieldViolation {
+  // The part the violation was found in.
+  PartSelector part = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The violating field.
+  string field_path = 2;
+  // The rule's ID.
+  string rule_id = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The rule's message.
+  string message = 4;
+}
+
+// A refused save.
+message SaveRejection {
+  // Why.
+  RejectionReason reason = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    enum: {defined_only: true}
+  }];
+  // Human-readable detail.
+  string message = 2;
+  // Rule violations, for VALIDATION_FAILED.
+  repeated FieldViolation violations = 3;
+}
+
+// A per-item error in bulk reads or saves: the gRPC status code and detail the
+// corresponding unary operation would return.
+message ItemError {
+  // gRPC status code.
+  int32 code = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int32: {gte: 1, lte: 16}
+  }];
+  // Status message.
+  string message = 2;
+  // The detail message, when the status carries one.
+  oneof detail {
+    // ABORTED.
+    RevisionConflict conflict = 3;
+    // ALREADY_EXISTS.
+    OperationReuse reuse = 4;
+    // A save refusal.
+    SaveRejection rejection = 5;
+  }
+}

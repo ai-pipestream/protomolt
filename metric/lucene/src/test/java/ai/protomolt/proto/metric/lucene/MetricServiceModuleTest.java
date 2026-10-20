@@ -25,9 +25,9 @@ import ai.protomolt.proto.metric.spi.MetricExecutor;
 import ai.protomolt.proto.metric.spi.MetricMapping;
 import ai.protomolt.proto.metric.spi.MetricMappings;
 import ai.protomolt.proto.repo.v1.Document;
-import ai.protomolt.proto.repo.v1.DocumentServiceGrpc;
-import ai.protomolt.proto.repo.v1.GetDocumentByReferenceRequest;
-import ai.protomolt.proto.repo.v1.GetDocumentResponse;
+import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetDocumentResponse;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.search.service.RepoDocumentMapping;
@@ -81,7 +81,7 @@ class MetricServiceModuleTest {
                     .directExecutor()
                     .addService(new DocumentServiceGrpc.DocumentServiceImplBase() {
                         @Override
-                        public void getDocumentByReference(GetDocumentByReferenceRequest request,
+                        public void getDocument(GetDocumentRequest request,
                                 StreamObserver<GetDocumentResponse> observer) {
                             observer.onNext(GetDocumentResponse.newBuilder()
                                     .setDocument(documents.get(

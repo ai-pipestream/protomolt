@@ -1,1 +1,0 @@
-SELECT storage_realm FROM managed_backend_profiles WHERE generation=$1

@@ -1,0 +1,35 @@
+description = 'Parts-based repository v2: the DocumentService save and read handlers over stacks and the catalog'
+
+dependencies {
+    api project(':protomolt-repo-proto')
+    api project(':protomolt-repo-catalog')
+    api project(':protomolt-repo-stack')
+    api project(':protomolt-repo-spi')
+    implementation project(':protomolt-repo-codec')
+    implementation project(':protomolt-descriptors')
+    implementation project(':protomolt-repo-admission')
+    implementation project(':protomolt-protobuf-validation')
+    implementation project(':protomolt-authz-grpc')
+    implementation libs.grpc.api
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+    compileOnly libs.javax.annotation.api
+
+    testImplementation project(':protomolt-repo-blob-s3')
+    testImplementation project(':protomolt-repo-container')
+    testImplementation project(':protomolt-repo-schema-registry')
+    testImplementation project(':protomolt-kafka-serde')
+    testImplementation libs.awssdk.s3
+    testImplementation libs.awssdk.url.connection.client
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.kafka.clients
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.redpanda
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
+        'hibernate-core', 'jedis', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')
