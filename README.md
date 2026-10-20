@@ -74,7 +74,7 @@ Run one process that gives you gRPC with reflection, the same verbs over
 JSON/REST, OpenAPI, Swagger UI, MCP, a task console and a git-backed registry:
 
 ```shell
-docker run -p 8080:8080 -p 9090:9090 pipestreamai/protomolt-serve --demo
+docker run -p 8080:8080 -p 8081:8081 -p 9090:9090 pipestreamai/protomolt-serve --demo
 ```
 
 That Hub image is a Docker Hardened Image
@@ -117,15 +117,23 @@ MCP) while leaving the documentation surfaces (health, OpenAPI, Swagger UI)
 open. With a token set and no task-console options, the browser surfaces are
 replaced by a handler that says they are disabled.
 
-From a clone, `docker compose up` builds and runs the GHCR-layout server, and
+From a clone, the images copy a Gradle distribution, so build the
+distributions first, then bring the Compose stack up:
+
+```shell
+./gradlew :protomolt-serve:installDist :protomolt-acp-agent:installDist --max-workers=2
+docker compose up
+```
+
 `docker compose run --rm acp` is the ACP agent an IDE drives over stdio;
 `./scripts/serve-dhi-smoke.sh` builds the hardened Hub image and proves
 `--demo`; `./scripts/docker-smoke.sh` brings the Compose stack up and proves
 both the MCP and ACP surfaces answer. See [Running in Docker](docs/apps/docker.md).
 
-Prefer a process over a container? Every release attaches runnable
-`protomolt-serve` and `protomolt-mcp` zips (JRE 25+ is the only prerequisite),
-or build from a clone:
+Prefer a process over a container? Build runnable `protomolt-serve` and
+`protomolt-mcp` distribution zips with
+`./gradlew :protomolt-serve:distZip :protomolt-mcp:distZip --max-workers=2`
+(JRE 25+ is the only prerequisite to run them), or run straight from a clone:
 
 ```shell
 git clone https://github.com/ai-pipestream/protomolt.git
