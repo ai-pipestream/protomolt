@@ -10,8 +10,12 @@ import java.util.function.Supplier;
 import static ai.protomolt.proto.repo.spi.RepositoryException.Code.*;
 
 /**
- * Domain failures shared by the archive and drive operations; wire translation belongs to
- * adapters. This class names only archive, drive and blob failures.
+ * Domain failures shared by the archive and drive operations. This class names only archive,
+ * drive and blob failures, and raises only {@link RepositoryException} with a
+ * {@link RepositoryException.Code}; wire translation belongs to the adapters at each service
+ * boundary (for gRPC, the repo service's {@code GrpcErrors}), so the engine stays free of
+ * transport types and each boundary owns its own lightweight status translator over this one
+ * domain exception type.
  */
 final class RepositoryErrors {
     private RepositoryErrors() {}

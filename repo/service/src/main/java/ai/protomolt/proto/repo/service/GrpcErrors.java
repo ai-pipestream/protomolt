@@ -28,6 +28,16 @@ import java.util.function.Supplier;
  *   <li>anything else → INTERNAL with only the exception message, never a
  *   stack trace, in the status description.</li>
  * </ul>
+ *
+ * <p>Each gRPC service boundary (account, intake, parse, repo) keeps its own
+ * small {@code GrpcErrors} rather than sharing one mapper, because each one
+ * translates a different domain exception type over a different wire contract:
+ * this copy is the only one that knows
+ * {@link ai.protomolt.proto.repo.spi.RepositoryException} and
+ * {@link BlobStore.BlobNotFoundException}. Sharing a mapper would force every
+ * service onto the union of all domain exception types and couple their wire
+ * contracts together; a status-mapping change here must not change what the
+ * account or intake services put on the wire.
  */
 final class GrpcErrors {
 
