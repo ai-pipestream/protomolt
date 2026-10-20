@@ -478,7 +478,8 @@ their container binds.
 35 MB RSS for catalog verbs, no JRE needed on the target machine. Building the
 native binary is the only task that requires GraalVM (a GraalVM JDK 25, for
 example `sdk install java 25.1.3-graalce`); every other build and test task runs
-on any JDK via Gradle toolchains.
+on the pinned Java 25 toolchain, which the Foojay resolver downloads when the
+launching JDK is something else.
 
 ```shell
 JAVA_HOME=<graalvm-home> ./gradlew :protomolt-cli:nativeCompile
@@ -840,8 +841,10 @@ Vocabulary note: the request-gating component is a **service**, **role** or
 
 # Requirements
 
-- JDK 25 or newer at runtime (the build itself runs on any JDK via Gradle
-  toolchains; GraalVM CE 25 works as the build JDK)
+- JDK 25, the only supported runtime. The build pins a Java 25 toolchain
+  (the Foojay resolver downloads it when needed; the Gradle wrapper needs
+  JDK 17+ to launch, and GraalVM CE 25 works as the build JDK). The full
+  list is in [building and testing](docs/operations/building.md)
 - Gradle 9.6+ for building from source (wrapper included)
 - GraalVM JDK 25 only when building the native CLI with
   `:protomolt-cli:nativeCompile`: the resulting binary needs no JDK at all
