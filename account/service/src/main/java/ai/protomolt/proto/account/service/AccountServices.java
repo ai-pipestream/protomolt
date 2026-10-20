@@ -18,7 +18,7 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
-import io.grpc.protobuf.services.ProtoReflectionService;
+import io.grpc.protobuf.services.ProtoReflectionServiceV1;
 import io.grpc.services.HealthStatusManager;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.slf4j.Logger;
@@ -163,7 +163,7 @@ public final class AccountServices implements AutoCloseable {
             var builder = NettyServerBuilder.forPort(port)
                     .executor(Executors.newVirtualThreadPerTaskExecutor())
                     .addService(health.getHealthService())
-                    .addService(ProtoReflectionService.newInstance());
+                    .addService(ProtoReflectionServiceV1.newInstance());
             Server server = registerAndStart(builder);
             health.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
             LOG.info("account-service listening on port {}", server.getPort());
