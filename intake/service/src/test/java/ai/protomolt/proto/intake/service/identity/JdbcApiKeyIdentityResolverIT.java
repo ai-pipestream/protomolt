@@ -26,7 +26,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * the duplicate-mint rejection, and — most load-bearing — the guarantee
  * that raw key material never lands in the table in any column.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcApiKeyIdentityResolverIT {
 
     @Container

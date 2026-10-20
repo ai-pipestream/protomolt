@@ -34,18 +34,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (native v3 API).
  *
  * <p>The suite provisions its own registry, a Testcontainers Apicurio Registry (see
- * {@link ApicurioRegistryContainer}), and skips when Docker is unavailable, so
- * {@code ./gradlew build} stays green without containers.</p>
+ * {@link ApicurioRegistryContainer}); Docker is required.</p>
  *
  * <p>To run against an external registry instead (for example the compose stack's):
  * {@code -Dprotomolt.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL}.
- * An unreachable override endpoint still skips via a JUnit assumption.</p>
+ * An unreachable override endpoint fails the suite.</p>
  *
  * <p>Artifacts are registered under unique per-run groups so reruns never collide. The shared
  * registry has deletion disabled (HTTP 405), so no cleanup is attempted.</p>
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ApicurioDescriptorLoaderIntegrationTest {
 

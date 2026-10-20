@@ -135,7 +135,7 @@ import org.testcontainers.utility.DockerImageName;
  * provider while staying deterministic (model quality has its own gated
  * live suite).
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class GoldenPathSystemTest {
 

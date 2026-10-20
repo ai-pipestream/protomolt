@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * its DLQ. No mocks — the schema, the SQL, and the JSONB round-trip are all
  * exercised as deployed.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class JdbcWorkflowRunStoreIT {
 
     @Container

@@ -43,11 +43,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link OpenSearchDocumentMapper}, get vectors from a fixed-table 4-dimensional
  * {@link EmbeddingProvider} via {@link MappingEmbedder} (the vectors form dog / cat / car
  * neighborhoods, so the kNN order is known), land through {@link OpenSearchSink}, and a
- * keyword-table {@link RerankProvider} reorders the recalled candidates. The suite skips when
- * Docker is unavailable.
+ * keyword-table {@link RerankProvider} reorders the recalled candidates. Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RerankedSearchLiveIntegrationTest {
 

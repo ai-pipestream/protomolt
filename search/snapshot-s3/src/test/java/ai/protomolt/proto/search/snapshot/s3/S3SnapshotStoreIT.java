@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the bucket and answers the same query. What the fake-store tests pin in
  * depth, this proves over the wire.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class S3SnapshotStoreIT {
 
     @Container

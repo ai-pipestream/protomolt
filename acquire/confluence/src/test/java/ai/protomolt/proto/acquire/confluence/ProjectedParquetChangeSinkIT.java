@@ -44,10 +44,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * post and DELETE changes through {@link ProjectedParquetChangeSink} into a real
  * LocalStack bucket (the same Testcontainers stand-in
  * {@code ParquetS3LiveIntegrationTest} uses), the part files listed, fetched back over
- * the wire, and read with Parquet's own reader. The suite skips when Docker is
- * unavailable.
+ * the wire, and read with Parquet's own reader. Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ProjectedParquetChangeSinkIT {
 
     private static final String BUCKET = "protomolt-projected-parquet";

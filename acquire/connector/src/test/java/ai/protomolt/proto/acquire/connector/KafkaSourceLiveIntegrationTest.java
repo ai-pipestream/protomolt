@@ -40,9 +40,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The Kafka source against a genuine broker: records arrive in order through the pump,
  * and pausing holds back a follow-up batch until resume lets it through. The broker is a
- * Testcontainers Redpanda instance; the suite skips when Docker is unavailable.
+ * Testcontainers Redpanda instance; Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class KafkaSourceLiveIntegrationTest {
 
     // The module has no no-arg constructor and no default tag; this is the baseline

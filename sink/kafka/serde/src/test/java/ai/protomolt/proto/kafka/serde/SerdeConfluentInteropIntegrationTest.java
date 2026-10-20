@@ -72,9 +72,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>The registry is a {@link SchemaRegistryServer} on an ephemeral port over an
  * {@link InMemorySchemaRegistryStore} with the {@link CompatibilityWriteGate} armed; the broker
- * is a Testcontainers Redpanda. The suite skips when Docker is unavailable.</p>
+ * is a Testcontainers Redpanda. Docker is required.</p>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class SerdeConfluentInteropIntegrationTest {
 
     // Same baseline image as the other broker lanes (testcontainers' own pinned tag).

@@ -59,7 +59,7 @@ import org.testcontainers.utility.DockerImageName;
  * directory (no repo anywhere), restores the corpus from the bucket,
  * answers the same query and its aggregate, and mounts no write surface.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class PlatformSnapshotIT {
 
     static final String ACCOUNT = "acct-snapshot";

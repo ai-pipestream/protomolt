@@ -35,9 +35,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * ({@code apache/iceberg-rest-fixture}, the image docker-compose.integration.yml runs):
  * tables created over the wire, snapshots committed through REST transactions, and the data
  * read back by Iceberg's own reader from the shared warehouse. A Testcontainers instance
- * provides the catalog; the suite skips when Docker is unavailable.
+ * provides the catalog; Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IcebergRestLiveIntegrationTest {
 
     // The warehouse is bind-mounted at the SAME absolute path inside the container, so the

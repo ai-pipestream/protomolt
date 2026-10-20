@@ -47,7 +47,7 @@ import org.testcontainers.utility.DockerImageName;
  * second credential path), the numbers come back hand-checked, and the
  * physical plan says what moved.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IcebergS3MetricIT {
 
     @Container

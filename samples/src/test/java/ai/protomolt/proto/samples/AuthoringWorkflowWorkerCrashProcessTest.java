@@ -63,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Kills the installed JVM that actually hosts WorkflowRunWorker between an external effect and checkpoint commit. */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AuthoringWorkflowWorkerCrashProcessTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()

@@ -33,10 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The lane end to end on an S3-compatible store: a Parquet file rendered in memory,
  * uploaded through {@link S3ParquetSink} to LocalStack (the same Testcontainers stand-in
  * {@code IcebergS3LiveIntegrationTest} uses for RustFS-class stores), fetched back over
- * the wire, and read with Parquet's own reader. The suite skips when Docker is
- * unavailable.
+ * the wire, and read with Parquet's own reader. Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ParquetS3LiveIntegrationTest {
 
     private static final String BUCKET = "protomolt-parquet";

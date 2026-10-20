@@ -48,7 +48,7 @@ import org.testcontainers.utility.DockerImageName;
  * {@code PROTOMOLT_REPO_TARGET}. A document ingested through B's intake service is
  * read back from A's store.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class RoleNodeIT {
 
     static final String ACCOUNT = "acct-rolenode";

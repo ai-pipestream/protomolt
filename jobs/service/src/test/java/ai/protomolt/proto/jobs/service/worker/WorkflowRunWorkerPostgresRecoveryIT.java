@@ -50,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * PostgreSQL-backed checkpoint recovery through a newly constructed store and worker.
  * This is an orderly reconstruction test, not a process-kill qualification.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class WorkflowRunWorkerPostgresRecoveryIT {
 
     private static final ObjectMapper JSON = new ObjectMapper();

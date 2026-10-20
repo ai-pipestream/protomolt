@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Real-broker offset behavior for the sample launch bridge; launch idempotency is test-owned here. */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class AcceptedWorkflowKafkaBridgeTest {
     @Container
     static final RedpandaContainer BROKER = new RedpandaContainer(

@@ -46,11 +46,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link OpenSearchDocumentMapper}, get their vector from a {@link Model2VecEmbeddingProvider}
  * via {@link MappingEmbedder}, land through {@link OpenSearchSink}, and a query embedded with the
  * same provider must rank the semantically nearest sentence first under kNN — no synthetic
- * vectors anywhere. The engine is a Testcontainers OpenSearch instance; the suite skips when
- * Docker is unavailable.
+ * vectors anywhere. The engine is a Testcontainers OpenSearch instance; Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SemanticSearchLiveIntegrationTest {
 

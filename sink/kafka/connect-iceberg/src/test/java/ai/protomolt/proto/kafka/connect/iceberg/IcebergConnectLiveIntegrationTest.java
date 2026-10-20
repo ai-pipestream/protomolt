@@ -43,9 +43,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * docker-compose.integration.yml runs). This is what the in-memory unit test cannot cover: the
  * {@code iceberg.catalog.*} config actually builds a catalog, the connector commits real
  * snapshots through it, and Iceberg's own reader gets the rows back. A Testcontainers instance
- * provides the catalog; the suite skips when Docker is unavailable.
+ * provides the catalog; Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IcebergConnectLiveIntegrationTest {
 
     private static final String LOCAL_FILE_IO = "ai.protomolt.proto.iceberg.LocalFileIO";

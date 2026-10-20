@@ -58,7 +58,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * A request naming an unknown workflow fails the job loudly — a FAILED row and
  * a FAILED event, never a silent drop.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class WorkflowRunKafkaIT {
 
     @Container

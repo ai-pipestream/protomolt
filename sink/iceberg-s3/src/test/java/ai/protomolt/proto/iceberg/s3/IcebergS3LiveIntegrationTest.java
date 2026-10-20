@@ -52,9 +52,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * created and committed over REST, the data files land on LocalStack as {@code s3://} objects,
  * and Iceberg's own reader gets every value back. Unlike the file:// suite there is no shared
  * warehouse volume: the catalog container and this JVM each reach the store by URL and resolve
- * the same keys. The suite skips when Docker is unavailable.
+ * the same keys. Docker is required.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class IcebergS3LiveIntegrationTest {
 
     private static final String BUCKET = "protomolt-lake";

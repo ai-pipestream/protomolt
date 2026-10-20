@@ -41,11 +41,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The generated Solr schema against a live Solr: every add-field-type / add-field /
  * add-copy-field the generator emits must be accepted by the Schema API, and documents
  * mapped from dynamic messages must index and answer analyzed, sorted, faceted, and kNN
- * queries. The engine is a Testcontainers Solr instance; the suite skips when Docker is
- * unavailable.
+ * queries. The engine is a Testcontainers Solr instance; Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SolrLiveIntegrationTest {

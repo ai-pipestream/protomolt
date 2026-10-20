@@ -45,10 +45,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link QdrantSink#ensureCollectionForPoints} must accept the mapped points, a named-vector
  * search must rank the right chunk first, and a second ensure must leave the collection
  * untouched. The engine is a Testcontainers Qdrant matching the vendored protos (v1.18.3);
- * the suite skips when Docker is unavailable.
+ * Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class QdrantLiveIntegrationTest {

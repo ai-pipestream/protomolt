@@ -5,13 +5,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Runs the Confluent-compat suite against Apicurio Registry's ccompat v7 facade, served by a
- * Testcontainers Apicurio Registry; the suite skips when Docker is unavailable.
+ * Testcontainers Apicurio Registry; Docker is required.
  *
  * <p>To run against an external registry instead (for example the compose stack's), override
- * with {@code -Dpipestream.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL};
+ * with {@code -Dprotomolt.it.apicurio.url=...} or env {@code PROTOMOLT_IT_APICURIO_URL};
  * the {@code /apis/ccompat/v7} path is appended here.</p>
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ApicurioCcompatIntegrationTest extends AbstractConfluentCompatIntegrationTest {
 
     @Container

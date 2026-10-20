@@ -45,10 +45,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * REST health, MCP on streamable HTTP, gRPC reflection driving a dynamic call, and the demo
  * registry. Waiting on the image's own HEALTHCHECK exercises the /dev/tcp probe, and a
  * healthy start proves the non-root user can read the chmod-normalized app directory.
- * The suite skips when Docker is unavailable.
+ * Docker is required.
  */
 @Tag("integration")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class ContainerSmokeIntegrationTest {
 
     private static final String SERVICE = "ai.protomolt.proto.grpc.service.v1.ProtoMoltService";
