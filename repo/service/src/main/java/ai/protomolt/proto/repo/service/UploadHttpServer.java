@@ -323,13 +323,19 @@ public final class UploadHttpServer implements AutoCloseable {
         if (rawQuery == null || rawQuery.isBlank()) {
             return out;
         }
-        for (String pair : rawQuery.split("&")) {
+        int from = 0;
+        while (from <= rawQuery.length()) {
+            int amp = rawQuery.indexOf('&', from);
+            String pair = amp < 0 ? rawQuery.substring(from) : rawQuery.substring(from, amp);
             int eq = pair.indexOf('=');
-            if (eq <= 0) {
-                continue;
+            if (eq > 0) {
+                out.put(URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                        URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
             }
-            out.put(URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
-                    URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+            if (amp < 0) {
+                break;
+            }
+            from = amp + 1;
         }
         return out;
     }

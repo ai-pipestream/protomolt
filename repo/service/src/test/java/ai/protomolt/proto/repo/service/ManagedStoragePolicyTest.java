@@ -41,6 +41,29 @@ class ManagedStoragePolicyTest {
         assertThat(policy).isEqualTo(new ManagedStoragePolicy("nas-v1", "account-a", true));
     }
 
+    @Test void identifierBoundariesMatchTheDeclaredAlphabet() {
+        // Accepted: 1 and 128 characters, and every interior punctuation form.
+        assertThatCode(() -> new ManagedStoragePolicy("a", "0", true)).doesNotThrowAnyException();
+        assertThatCode(() -> new ManagedStoragePolicy("a".repeat(128), "r".repeat(128), true))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> new ManagedStoragePolicy("Gen.1_2:3-4", "realm_1.x-y:z", true))
+                .doesNotThrowAnyException();
+        // Refused: 129 characters, leading punctuation, and characters outside the alphabet.
+        for (String invalid : java.util.List.of("a".repeat(129), ".lead", "-lead", "_lead", ":lead",
+                "white space", "slash/inside", "at@sign", "plus+sign", "perc%ent", "uniécode", "")) {
+            assertThatThrownBy(() -> new ManagedStoragePolicy(invalid, "realm", true))
+                    .as("generation '%s'", invalid)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage(ManagedStoragePolicy.ENV_GENERATION
+                            + " requires a nonsecret identifier of 1 to 128 characters");
+            assertThatThrownBy(() -> new ManagedStoragePolicy("generation", invalid, true))
+                    .as("realm '%s'", invalid)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage(ManagedStoragePolicy.ENV_REALM
+                            + " requires a nonsecret identifier of 1 to 128 characters");
+        }
+    }
+
     @Test void rejectsEndpointLikeIdentifiersWithoutEchoingTheirValues() {
         String sensitive = "https://user:password@example.com";
         assertThatThrownBy(() -> new ManagedStoragePolicy(sensitive, "realm", true))
