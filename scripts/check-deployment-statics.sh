@@ -264,7 +264,7 @@ for tool in ["buf", "bun", "docker", "grpcurl", "protoc", "uv"]:
     if tool not in workers:
         print("worker Dockerfile is missing common tool", tool)
         sys.exit(1)
-for version in ["21.0.12-tem", "25.0.4-tem", "26.0.2-tem", "25.2.4-graalce"]:
+for version in ["25.0.4-tem", "26.0.2-tem", "25.2.4-graalce"]:
     if version not in workers:
         print("worker Java target is missing SDKMAN candidate", version)
         sys.exit(1)

@@ -11,7 +11,7 @@ The published images are intentionally language-specific:
 
 | Image | Language toolchain |
 | --- | --- |
-| `ghcr.io/ai-pipestream/protomolt-worker-java:edge` | Temurin JDK 21, 25, and 26; GraalVM; SDKMAN; Gradle; Maven; Java gRPC generation |
+| `ghcr.io/ai-pipestream/protomolt-worker-java:edge` | Temurin JDK 25 and 26; GraalVM; SDKMAN; Gradle; Maven; Java gRPC generation |
 | `ghcr.io/ai-pipestream/protomolt-worker-cpp:edge` | GCC; Clang; CMake; Ninja; Conan; C++ gRPC libraries and generation |
 
 Both images support `linux/amd64` and `linux/arm64`. They run
@@ -101,14 +101,13 @@ runtimes require no download:
 
 ```shell
 source "$SDKMAN_DIR/bin/sdkman-init.sh"
-sdk use java 21.0.12-tem
 sdk use java 26.0.2-tem
 sdk use java 25.2.4-graalce
 ```
 
-This lets a worker run the agent host on JDK 25, still build JDK 21
-applications, exercise JDK 26, and produce GraalVM native images without
-maintaining one oversized all-language image.
+This lets a worker run the agent host on JDK 25, exercise JDK 26, and
+produce GraalVM native images without maintaining one oversized
+all-language image.
 
 ## Build, run, and verify
 

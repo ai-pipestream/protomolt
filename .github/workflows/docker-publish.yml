@@ -172,7 +172,7 @@ jobs:
           tags: ${{ steps.tags.outputs.worker-java-arch-tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 21, 25, 26, GraalVM, SDKMAN, and gRPC tools
+            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 25, 26, GraalVM, SDKMAN, and gRPC tools
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}
@@ -296,7 +296,7 @@ jobs:
           tags: ${{ steps.tags.outputs.worker-java-arch-tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 21, 25, 26, GraalVM, SDKMAN, and gRPC tools
+            org.opencontainers.image.description=ProtoMolt Java coding worker with JDK 25, 26, GraalVM, SDKMAN, and gRPC tools
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version != '' && inputs.version || 'edge' }}

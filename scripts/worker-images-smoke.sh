@@ -36,8 +36,6 @@ bun --version
 buf --version
 grpcurl --version
 docker --version
-sdk use java 21.0.12-tem >/dev/null
-java -version
 sdk use java 25.0.4-tem >/dev/null
 java -version
 sdk use java 26.0.2-tem >/dev/null
