@@ -7,18 +7,13 @@ import ai.protomolt.proto.search.embedding.EmbeddingProviders;
 import ai.protomolt.proto.search.embedding.VectorizationPolicy;
 import ai.protomolt.proto.search.index.lucene.LuceneFieldSpecs;
 import ai.protomolt.proto.search.index.lucene.ProtoLuceneMapper;
-import ai.protomolt.proto.search.index.spi.DateResolution;
-import ai.protomolt.proto.search.index.spi.IndexFieldKind;
-import ai.protomolt.proto.search.index.spi.IndexMapping;
 import ai.protomolt.proto.search.index.spi.ResolvedFieldHint;
 import ai.protomolt.proto.mapper.ProtoFieldMapperImpl;
 import ai.protomolt.proto.search.v1.SearchHit;
 import ai.protomolt.proto.search.v1.SearchRequest;
 import ai.protomolt.proto.search.v1.StoredValue;
 import ai.protomolt.proto.search.v1.SubjectInfo;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
-import com.google.protobuf.Timestamp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -35,9 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.StoredField;
@@ -53,15 +46,11 @@ import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
-import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
@@ -91,9 +80,6 @@ import org.slf4j.LoggerFactory;
  * not serve); the gRPC layer maps them onto statuses.
  */
 public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Closeable {
-
-    /** Reciprocal-rank fusion constant for the hybrid lane. */
-    private static final int RRF_K = 60;
 
     /** The most hits one query may ask for; larger k is refused by name. */
     public static final int MAX_K = 10_000;
@@ -424,7 +410,7 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
             SubjectInfo.Builder info = SubjectInfo.newBuilder()
                     .setSubject(entry.getKey())
                     .setDocIdField(served.docIdField())
-                    .addAllTextFields(textFields(served.mapping()));
+                    .addAllTextFields(SearchQueries.textFields(served.mapping()));
             if (served.chunkLane() != null) {
                 info.setHasVectorLane(true)
                         .setPolicyDigest(served.chunkLane().policy().digest());
@@ -668,72 +654,24 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
                     "k must be at most " + MAX_K + ", got " + request.getK());
         }
         return switch (request.getLane()) {
-            case SEARCH_LANE_LEXICAL -> hits(subject, lexical(subject, request), request.getK());
-            case SEARCH_LANE_VECTOR -> hits(subject, vector(subject, request), request.getK());
-            case SEARCH_LANE_HYBRID -> fuse(subject, request);
+            case SEARCH_LANE_LEXICAL -> hits(subject,
+                    SearchQueries.lexical(subject.served().mapping(), analyzer, request),
+                    request.getK());
+            case SEARCH_LANE_VECTOR -> hits(subject,
+                    SearchQueries.vector(subject.served(), subject.embedder(), request),
+                    request.getK());
+            case SEARCH_LANE_HYBRID -> SearchQueries.fuse(
+                    hits(subject,
+                            SearchQueries.lexical(subject.served().mapping(), analyzer, request),
+                            request.getK()),
+                    hits(subject,
+                            SearchQueries.vector(subject.served(), subject.embedder(), request),
+                            request.getK()),
+                    request.getK());
             default -> throw new IllegalArgumentException(
                     "lane must be one of SEARCH_LANE_LEXICAL, SEARCH_LANE_VECTOR,"
                             + " SEARCH_LANE_HYBRID; got " + request.getLane());
         };
-    }
-
-    private Query lexical(Subject subject, SearchRequest request) {
-        Set<String> textFields = textFields(subject.served().mapping());
-        List<String> fields;
-        if (request.getFieldsList().isEmpty()) {
-            fields = List.copyOf(textFields);
-        } else {
-            for (String field : request.getFieldsList()) {
-                if (!textFields.contains(field)) {
-                    throw new IllegalArgumentException("field '" + field
-                            + "' is not a text field of this subject's mapping;"
-                            + " text fields: " + String.join(", ", textFields));
-                }
-            }
-            fields = request.getFieldsList();
-        }
-        BooleanQuery.Builder query = new BooleanQuery.Builder();
-        for (String field : fields) {
-            for (String token : analyze(field, request.getQuery())) {
-                query.add(new TermQuery(new Term(field, token)), BooleanClause.Occur.SHOULD);
-            }
-        }
-        return query.build();
-    }
-
-    private Query vector(Subject subject, SearchRequest request) {
-        ServedMapping.ChunkLane lane = subject.served().chunkLane();
-        if (lane == null) {
-            throw new IllegalStateException(
-                    "this subject serves no vector lane: it has no chunking policy");
-        }
-        return new KnnFloatVectorQuery(
-                lane.vectorField(),
-                subject.embedder().embed(request.getQuery()),
-                request.getK());
-    }
-
-    /** Reciprocal-rank fusion of the lexical and vector lanes. */
-    private List<SearchHit> fuse(Subject subject, SearchRequest request) {
-        List<SearchHit> lexical = hits(subject, lexical(subject, request), request.getK());
-        List<SearchHit> vector = hits(subject, vector(subject, request), request.getK());
-        Map<String, SearchHit> byKey = new LinkedHashMap<>();
-        Map<String, Double> scores = new LinkedHashMap<>();
-        for (List<SearchHit> lane : List.of(lexical, vector)) {
-            for (int rank = 0; rank < lane.size(); rank++) {
-                SearchHit hit = lane.get(rank);
-                String key = hit.getChunkId().isEmpty() ? hit.getDocId() : hit.getChunkId();
-                byKey.putIfAbsent(key, hit);
-                scores.merge(key, 1.0 / (RRF_K + rank + 1), Double::sum);
-            }
-        }
-        return scores.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(request.getK())
-                .map(fused -> byKey.get(fused.getKey()).toBuilder()
-                        .setScore(fused.getValue().floatValue())
-                        .build())
-                .toList();
     }
 
     private List<SearchHit> hits(Subject subject, Query query, int k) {
@@ -741,14 +679,16 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
         IndexSearcher searcher = null;
         try {
             searcher = searchers.acquire();
-            Map<String, ResolvedFieldHint> hints = storedHints(subject.served().mapping());
+            Map<String, ResolvedFieldHint> hints =
+                    StoredHintDecoding.storedHints(subject.served().mapping());
             List<SearchHit> hits = new ArrayList<>();
             for (ScoreDoc scored : searcher.search(query, k).scoreDocs) {
                 org.apache.lucene.document.Document doc =
                         searcher.storedFields().document(scored.doc);
                 SearchHit.Builder hit = SearchHit.newBuilder().setScore(scored.score);
                 for (IndexableField field : doc.getFields()) {
-                    StoredValue value = storedValue(hints.get(field.name()), field);
+                    StoredValue value =
+                            StoredHintDecoding.storedValue(hints.get(field.name()), field);
                     if (value != null) {
                         hit.putStored(field.name(), value);
                     }
@@ -787,114 +727,6 @@ public final class LuceneSearchStore implements SubjectIndex, SubjectSearch, Clo
                 throw new UncheckedIOException("cannot release the searcher", e);
             }
         }
-    }
-
-    private List<String> analyze(String field, String query) {
-        List<String> tokens = new ArrayList<>();
-        try (TokenStream stream = analyzer.tokenStream(field, query)) {
-            CharTermAttribute term = stream.addAttribute(CharTermAttribute.class);
-            stream.reset();
-            while (stream.incrementToken()) {
-                tokens.add(term.toString());
-            }
-            stream.end();
-        } catch (IOException e) {
-            throw new UncheckedIOException("cannot analyze the query", e);
-        }
-        return tokens;
-    }
-
-    /** The mapping's field hints by index field name, for typing stored values. */
-    private static Map<String, ResolvedFieldHint> storedHints(IndexMapping mapping) {
-        Map<String, ResolvedFieldHint> hints = new LinkedHashMap<>();
-        for (IndexMapping.IndexedField field : mapping.indexable()) {
-            hints.put(field.fieldName(), field.hint());
-        }
-        return hints;
-    }
-
-    /**
-     * One stored Lucene field as a typed cell. The mapping's declared kind
-     * decides the arm; a field the mapping does not declare (chunk text,
-     * chunk identity) or whose stored form disagrees with its kind falls
-     * back to the runtime form. Returns {@code null} only when the field
-     * carries nothing storable.
-     */
-    private static StoredValue storedValue(ResolvedFieldHint hint, IndexableField field) {
-        Number number = field.numericValue();
-        String string = field.stringValue();
-        BytesRef binary = field.binaryValue();
-        if (hint != null) {
-            switch (hint.type()) {
-                case DATE -> {
-                    if (number != null) {
-                        long epoch = number.longValue();
-                        long millis = hint.dateResolution() == DateResolution.SECONDS
-                                ? epoch * 1000L
-                                : epoch;
-                        return StoredValue.newBuilder()
-                                .setTimestampValue(Timestamp.newBuilder()
-                                        .setSeconds(Math.floorDiv(millis, 1000L))
-                                        .setNanos((int) Math.floorMod(millis, 1000L) * 1_000_000))
-                                .build();
-                    }
-                }
-                case INT32, INT64 -> {
-                    if (number != null) {
-                        return StoredValue.newBuilder()
-                                .setInt64Value(number.longValue()).build();
-                    }
-                }
-                case FLOAT, DOUBLE -> {
-                    if (number != null) {
-                        return StoredValue.newBuilder()
-                                .setDoubleValue(number.doubleValue()).build();
-                    }
-                }
-                case BOOLEAN -> {
-                    if (string != null) {
-                        return StoredValue.newBuilder()
-                                .setBoolValue(Boolean.parseBoolean(string)).build();
-                    }
-                }
-                case BINARY -> {
-                    if (binary != null) {
-                        return StoredValue.newBuilder()
-                                .setBytesValue(ByteString.copyFrom(
-                                        binary.bytes, binary.offset, binary.length))
-                                .build();
-                    }
-                }
-                default -> {
-                    // TEXT, KEYWORD, and JSON-folded fields land below.
-                }
-            }
-        }
-        if (string != null) {
-            return StoredValue.newBuilder().setStringValue(string).build();
-        }
-        if (number instanceof Float || number instanceof Double) {
-            return StoredValue.newBuilder().setDoubleValue(number.doubleValue()).build();
-        }
-        if (number != null) {
-            return StoredValue.newBuilder().setInt64Value(number.longValue()).build();
-        }
-        if (binary != null) {
-            return StoredValue.newBuilder()
-                    .setBytesValue(ByteString.copyFrom(binary.bytes, binary.offset, binary.length))
-                    .build();
-        }
-        return null;
-    }
-
-    private static Set<String> textFields(IndexMapping mapping) {
-        Set<String> fields = new LinkedHashSet<>();
-        for (IndexMapping.IndexedField field : mapping.indexable()) {
-            if (field.type() == IndexFieldKind.TEXT) {
-                fields.add(field.fieldName());
-            }
-        }
-        return fields;
     }
 
     /**
