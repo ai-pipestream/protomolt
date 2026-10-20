@@ -241,7 +241,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | `DOCUMENT_PLATFORM_REDIS_TTL_SECONDS` | `3600` | Per-object TTL in Redis (0 = no expiry); the cache-entry TTL in `s3-redis-cache` mode |
 | `DOCUMENT_PLATFORM_REDIS_MAX_OBJECT_BYTES` | `8388608` | Largest object admitted to Redis (0 = unbounded); the cache ceiling in `s3-redis-cache` mode — larger objects bypass the cache |
 | `PROTOMOLT_API_TOKEN` | _(required to open network listeners)_ | Bearer token for gRPC, HTTP, and MCP |
-| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Total bytes independently buffered across verified document and blob reads |
+| `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` | Total bytes independently buffered across verified document and blob reads. Streaming `ReadDocument` reserves each non-opaque part's catalog length while decoding and streaming it (a bounded 131,072-byte chunk buffer for opaque parts); `ReadBlob` streams in 64 KiB chunks without a catalog-length reservation; unary `GetDocument` and bulk `ReadDocuments` reserve each selected part's catalog length |
 | `DOCUMENT_PLATFORM_S3_CONDITIONAL_WRITES` | `true` | Require S3 `If-None-Match` semantics for write-once stack-object creation |
 | `DOCUMENT_PLATFORM_LIFECYCLE_ENABLED` | `true` | Run the background loops when `startLifecycle()` is called (archive mutation recovery, archive reconciliation, the v2 outbox relay) |
 | `DOCUMENT_PLATFORM_PURGE_INTERVAL_MS` | `5000` | Lifecycle cadence: archive mutation-recovery lookback and idle sleep; also the v2 outbox relay's idle sleep |
