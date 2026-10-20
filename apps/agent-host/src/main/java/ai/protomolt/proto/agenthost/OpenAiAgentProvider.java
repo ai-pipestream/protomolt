@@ -28,7 +28,6 @@ final class OpenAiAgentProvider implements AgentProvider {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_RESPONSE_CHARS = 1024 * 1024;
     private static final int MAX_HISTORY_MESSAGES = 64;
-    private static final String MODEL_PATTERN = "[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}";
 
     private final URI chatCompletions;
     private final String model;
@@ -169,11 +168,30 @@ final class OpenAiAgentProvider implements AgentProvider {
     }
 
     private static String validateModel(String model) {
-        if (model == null || !model.matches(MODEL_PATTERN)) {
+        if (model == null || !isModelName(model)) {
             throw new IllegalArgumentException("provider model must be a bounded "
                     + "identifier such as meta-models/Muse-Glimmer-30B");
         }
         return model;
+    }
+
+    /**
+     * The model name grammar: 1 to 256 ASCII characters, a letter or digit first, then
+     * letters, digits, {@code '.'}, {@code '_'}, {@code ':'}, {@code '/'} or {@code '-'}.
+     */
+    static boolean isModelName(String model) {
+        int length = model.length();
+        if (length < 1 || length > 256 || !HostText.isAsciiLetterOrDigit(model.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < length; i++) {
+            char c = model.charAt(i);
+            if (!HostText.isAsciiLetterOrDigit(c)
+                    && c != '.' && c != '_' && c != ':' && c != '/' && c != '-') {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

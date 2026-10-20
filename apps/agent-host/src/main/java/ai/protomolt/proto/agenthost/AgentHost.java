@@ -52,7 +52,7 @@ final class AgentHost implements AutoCloseable {
 
         Config {
             if (role == null || identity == null
-                    || !identity.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+                    || !isIdentity(identity)
                     || workspace == null || !workspace.isAbsolute()
                     || pollTimeout == null || pollTimeout.isNegative()
                     || pollTimeout.compareTo(Duration.ofSeconds(30)) > 0
@@ -60,6 +60,25 @@ final class AgentHost implements AutoCloseable {
                     || maxBatchFailures < 1) {
                 throw new IllegalArgumentException("invalid agent host configuration");
             }
+        }
+
+        /**
+         * The host identity grammar: 1 to 128 ASCII characters, a letter or digit first,
+         * then letters, digits, {@code '.'}, {@code '_'} or {@code '-'}.
+         */
+        static boolean isIdentity(String identity) {
+            int length = identity.length();
+            if (length < 1 || length > 128
+                    || !HostText.isAsciiLetterOrDigit(identity.charAt(0))) {
+                return false;
+            }
+            for (int i = 1; i < length; i++) {
+                char c = identity.charAt(i);
+                if (!HostText.isAsciiLetterOrDigit(c) && c != '.' && c != '_' && c != '-') {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /** A configuration that refuses to rejoin across transcript loss. */
