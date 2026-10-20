@@ -116,18 +116,23 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
      *        it on {@link #close()}
      * @param bucket the bucket part files land in
      * @param prefix key prefix under the bucket (blank becomes {@link #DEFAULT_PREFIX})
-     * @param batchSize rows per part file (values below 1 become
-     *        {@link #DEFAULT_BATCH_SIZE})
+     * @param batchSize rows per part file; must be positive (use
+     *        {@link #DEFAULT_BATCH_SIZE} when unconfigured)
+     * @throws IllegalArgumentException when {@code batchSize} is not positive
      * @throws IllegalStateException when {@code ConfluenceContentRow} declares no
      *         projection sources
      * @throws ProjectionException when the declared projection is invalid (a CEL rule
      *         that compiles against no declared source)
      */
     public ProjectedParquetChangeSink(S3Client s3, String bucket, String prefix, int batchSize) {
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException(
+                    "batchSize must be positive (configured via " + ENV_BATCH_SIZE + ")");
+        }
         this.sink = new S3ParquetSink(Objects.requireNonNull(s3, "s3"), bucket);
         this.prefix = prefix == null || prefix.isBlank()
                 ? DEFAULT_PREFIX : trimSlashes(prefix.trim());
-        this.batchSize = batchSize > 0 ? batchSize : DEFAULT_BATCH_SIZE;
+        this.batchSize = batchSize;
         this.runId = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
                 .withZone(ZoneOffset.UTC).format(Instant.now())
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
@@ -151,16 +156,21 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
 
     /**
      * Builds the sink from an explicit environment map; production calls
-     * {@link #fromEnvironment()}, tests call this.
+     * {@link #fromEnvironment()}, tests call this. {@link #ENV_BATCH_SIZE} falls back
+     * to {@link #DEFAULT_BATCH_SIZE} when unset and is refused by name when malformed
+     * or non-positive.
      *
      * @param env the environment to read
      * @return the sink, or empty when the projected-parquet lane is not configured
+     * @throws IllegalArgumentException when {@link #ENV_BATCH_SIZE} is malformed or
+     *         not positive
      */
     static Optional<ProjectedParquetChangeSink> fromEnvironment(Map<String, String> env) {
         String bucket = env.get(ENV_BUCKET);
         if (bucket == null || bucket.isBlank()) {
             return Optional.empty();
         }
+        int batchSize = parseBatchSize(env.get(ENV_BATCH_SIZE));
         String region = env.get(ENV_REGION);
         if (region == null || region.isBlank()) {
             region = DEFAULT_REGION;
@@ -180,7 +190,7 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
             s3 = S3Clients.awsRegion(region);
         }
         return Optional.of(new ProjectedParquetChangeSink(s3, bucket.trim(),
-                env.get(ENV_PREFIX), parseInt(env.get(ENV_BATCH_SIZE), DEFAULT_BATCH_SIZE)));
+                env.get(ENV_PREFIX), batchSize));
     }
 
     /**
@@ -254,14 +264,21 @@ public final class ProjectedParquetChangeSink implements ChangeSink, AutoCloseab
         return trimmed.isEmpty() ? DEFAULT_PREFIX : trimmed;
     }
 
-    private static int parseInt(String value, int fallback) {
+    private static int parseBatchSize(String value) {
         if (value == null || value.isBlank()) {
-            return fallback;
+            return DEFAULT_BATCH_SIZE;
         }
+        int parsed;
         try {
-            return Integer.parseInt(value.trim());
+            parsed = Integer.parseInt(value.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            throw new IllegalArgumentException(
+                    ENV_BATCH_SIZE + " must be a positive integer (rows per part file)", e);
         }
+        if (parsed <= 0) {
+            throw new IllegalArgumentException(
+                    ENV_BATCH_SIZE + " must be a positive integer (rows per part file)");
+        }
+        return parsed;
     }
 }

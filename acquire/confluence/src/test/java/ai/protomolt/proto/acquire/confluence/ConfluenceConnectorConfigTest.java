@@ -2,6 +2,7 @@ package ai.protomolt.proto.acquire.confluence;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,9 +51,41 @@ class ConfluenceConnectorConfigTest {
     }
 
     @Test
-    void capsPageSizeAtTheApiMaximum() {
-        assertThat(valid().pageSize(1000).build().pageSize()).isEqualTo(250);
-        assertThat(valid().pageSize(-1).build().pageSize()).isEqualTo(100);
+    void refusesAPageSizeOutsideTheApiRangeInsteadOfClamping() {
+        assertThat(valid().pageSize(1).build().pageSize()).isEqualTo(1);
+        assertThat(valid().pageSize(250).build().pageSize()).isEqualTo(250);
+        for (int bad : new int[] {1000, 251, 0, -1}) {
+            assertThatThrownBy(() -> valid().pageSize(bad).build())
+                    .as("page size %d", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("pageSize")
+                    .hasMessageContaining("CONFLUENCE_PAGE_SIZE");
+        }
+    }
+
+    @Test
+    void environmentPageSizeIsParsedOrRefusedByName() {
+        Map<String, String> base = Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki",
+                "CONFLUENCE_EMAIL", "bot@protomolt.ai",
+                "CONFLUENCE_API_TOKEN", "token");
+        assertThat(ConfluenceConnectorConfig.fromEnvironment(
+                withPageSize(base, " 250 ")).pageSize()).isEqualTo(250);
+        assertThat(ConfluenceConnectorConfig.fromEnvironment(
+                withPageSize(base, " ")).pageSize()).isEqualTo(100);
+        for (String bad : List.of("1OO", "many", "2.5", "0", "-1", "251", "1000")) {
+            assertThatThrownBy(() -> ConfluenceConnectorConfig.fromEnvironment(
+                            withPageSize(base, bad)))
+                    .as("page size %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageStartingWith("CONFLUENCE_PAGE_SIZE ");
+        }
+    }
+
+    private static Map<String, String> withPageSize(Map<String, String> base, String pageSize) {
+        Map<String, String> env = new HashMap<>(base);
+        env.put("CONFLUENCE_PAGE_SIZE", pageSize);
+        return env;
     }
 
     @Test
