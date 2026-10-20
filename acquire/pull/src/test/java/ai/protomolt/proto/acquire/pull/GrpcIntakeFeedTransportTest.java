@@ -92,8 +92,11 @@ class GrpcIntakeFeedTransportTest {
         assertThat(GrpcIntakeFeed.plaintextRequested(null)).isFalse();
         assertThat(GrpcIntakeFeed.plaintextRequested(
                 Map.of(GrpcIntakeFeed.ENV_PLAINTEXT, "true"))).isTrue();
-        // Anything that is not "true" keeps the encrypted default rather than guessing.
-        assertThat(GrpcIntakeFeed.plaintextRequested(
-                Map.of(GrpcIntakeFeed.ENV_PLAINTEXT, "yes"))).isFalse();
+        // An unrecognized value is refused by name rather than silently keeping a guess;
+        // GrpcIntakeFeedPlaintextTest covers the full form set.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> GrpcIntakeFeed.plaintextRequested(
+                Map.of(GrpcIntakeFeed.ENV_PLAINTEXT, "yes")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("PROTOMOLT_ACQUIRE_INTAKE_PLAINTEXT");
     }
 }

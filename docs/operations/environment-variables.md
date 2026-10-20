@@ -111,7 +111,7 @@ blank text falls back to the default (unlike the repo service's helper).
 | `DOCUMENT_PLATFORM_ACCOUNT_KAFKA_BOOTSTRAP_SERVERS` | unset = eventing off | text |
 | `DOCUMENT_PLATFORM_ACCOUNT_KAFKA_TOPIC` | `account-events` | text |
 | `DOCUMENT_PLATFORM_ACCOUNT_SCHEMA_REGISTRY_URL` | unset = registry-free | URL |
-| `DOCUMENT_PLATFORM_ACCOUNT_LIFECYCLE_ENABLED` | `true` | boolean; an unrecognized value falls back to the default rather than failing |
+| `DOCUMENT_PLATFORM_ACCOUNT_LIFECYCLE_ENABLED` | `true` | `true`/`false`/`1`/`0`, case-insensitive, trimmed; unset or blank keeps the default, anything else fails fast naming the variable |
 | `DOCUMENT_PLATFORM_ACCOUNT_RELAY_INTERVAL_MS` | `5000` | integer; non-positive falls back to the default |
 | `DOCUMENT_PLATFORM_ACCOUNT_JDBC_URL` | `jdbc:postgresql://localhost:5432/accounts` | JDBC URL |
 | `DOCUMENT_PLATFORM_ACCOUNT_USERNAME` | `accounts` | text |
@@ -267,7 +267,7 @@ naming the variable on a malformed value.
 | `PROTOMOLT_TASK_CONSOLE_TOKEN` | unset = console sessions off | token text |
 | `PROTOMOLT_TASK_CONSOLE_SESSION_SECONDS` | `43200` | integer |
 | `PROTOMOLT_DELEGATION_REPO_ENDPOINT` | unset = in-memory transcripts | repo-service `host:port` |
-| `PROTOMOLT_DELEGATION_REPO_TLS` | TLS on when unset | presence-sensitive; the raw value is parsed as a boolean |
+| `PROTOMOLT_DELEGATION_REPO_TLS` | `false` (plaintext) when unset | strictly `true` or `false`, anything else fails fast naming the variable; setting it at all without the repo endpoint is refused at startup |
 | `PROTOMOLT_DELEGATION_REPO_DRIVE` | unset | drive name |
 | `PROTOMOLT_DELEGATION_TRANSCRIPT_OBJECT` | unset | object key |
 | `PROTOMOLT_DELEGATION_STATE_KEY_REF` | unset | `env:<NAME>` credential reference for the AES key |
@@ -308,7 +308,7 @@ is unset; a set URL without both client credentials refuses by name.
 | `PROTOMOLT_ACQUIRE_JDBC_URL` | required | JDBC URL; unset fails fast |
 | `PROTOMOLT_ACQUIRE_JDBC_USERNAME` | unset | text |
 | `PROTOMOLT_ACQUIRE_JDBC_PASSWORD` | unset | text |
-| `PROTOMOLT_ACQUIRE_INTAKE_PLAINTEXT` | `false` (TLS) | `Boolean.parseBoolean` form: only exactly `true` (case-insensitive) opts out of TLS, any other value silently stays TLS |
+| `PROTOMOLT_ACQUIRE_INTAKE_PLAINTEXT` | `false` (TLS) | `true`/`false`/`1`/`0`, case-insensitive, trimmed; unset or blank keeps TLS, anything else fails fast naming the variable |
 
 ## Receipts and trust (`transform/workflow`)
 
@@ -396,7 +396,7 @@ required set.
 | `PROTOMOLT_COORDINATOR_TARGET` | required | coordinator `host:port` |
 | `PROTOMOLT_WORKFLOW_LAUNCH_TOKEN_FILE` | required | path to the launch token |
 | `PROTOMOLT_LAUNCH_RPC_TIMEOUT_SECONDS` | bridge default | positive integer |
-| `PROTOMOLT_COORDINATOR_PLAINTEXT` | `false` | only exactly `true` opts out of TLS |
+| `PROTOMOLT_COORDINATOR_PLAINTEXT` | `false` (TLS) | `true`/`false`/`1`/`0`, case-insensitive, trimmed; unset or blank keeps TLS, anything else fails fast naming the variable |
 | `PROTOMOLT_KAFKA_CLIENT_PROPERTIES_FILE` | unset | path to extra Kafka client properties |
 
 ## Confluence connector (`acquire/confluence`)
@@ -449,7 +449,7 @@ fast naming the variable.
 | `PARSE_GRPARSE_PORT` | `9096` | port 0..65535, fails fast otherwise |
 | `PARSE_GRPARSE_EMITS_PREVIEWS` | adapter default | exactly `true` or `false`, fails fast otherwise |
 | `PARSE_PLAYGROUND_PARSER_TARGET` | unset = embedded demo text parser | parser `host:port` |
-| `PARSE_PLAYGROUND_HTTP_PORT` | `8095` | integer; a malformed value throws a raw `NumberFormatException` that does not name the variable |
+| `PARSE_PLAYGROUND_HTTP_PORT` | `8095` | port 1..65535; a malformed, non-positive or >65535 value fails fast naming the variable |
 
 ## Inference credentials
 

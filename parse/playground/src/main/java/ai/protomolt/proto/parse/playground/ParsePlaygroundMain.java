@@ -22,6 +22,9 @@ public final class ParsePlaygroundMain {
     /** Env var for the HTTP port (default 8095). */
     public static final String ENV_HTTP_PORT = "PARSE_PLAYGROUND_HTTP_PORT";
 
+    /** The playground's default HTTP port. */
+    public static final int DEFAULT_HTTP_PORT = 8095;
+
     private static final Logger LOG = LoggerFactory.getLogger(ParsePlaygroundMain.class);
 
     private ParsePlaygroundMain() {
@@ -40,8 +43,7 @@ public final class ParsePlaygroundMain {
             target = ParsePlaygroundServer.INPROCESS_TARGET_PREFIX + name;
             LOG.info("demo mode: embedded text parser");
         }
-        String portEnv = System.getenv(ENV_HTTP_PORT);
-        int port = portEnv == null || portEnv.isBlank() ? 8095 : Integer.parseInt(portEnv);
+        int port = port(System.getenv(ENV_HTTP_PORT));
         JsonFormat.TypeRegistry registry = JsonFormat.TypeRegistry.newBuilder()
                 .add(ai.protomolt.proto.parse.document.v1.Document.getDescriptor())
                 .build();
@@ -55,5 +57,22 @@ public final class ParsePlaygroundMain {
             }
         }, "playground-shutdown"));
         Thread.currentThread().join();
+    }
+
+    /** Package-private for direct testing of the port refusals. */
+    static int port(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return DEFAULT_HTTP_PORT;
+        }
+        int parsed;
+        try {
+            parsed = Integer.parseInt(spec.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(ENV_HTTP_PORT + " must be a port number in 1..65535", e);
+        }
+        if (parsed < 1 || parsed > 65535) {
+            throw new IllegalArgumentException(ENV_HTTP_PORT + " must be a port number in 1..65535");
+        }
+        return parsed;
     }
 }

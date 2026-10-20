@@ -31,15 +31,34 @@ public final class GrpcIntakeFeed implements IntakeFeed {
     public static final String INPROCESS_TARGET_PREFIX = "inprocess:";
 
     /**
-     * Set to {@code true} to send a {@code host:port} intake target's traffic unencrypted:
-     * {@value}. For a trusted network or a sidecar that terminates TLS itself. Any other
-     * value, and an unset variable, keep TLS.
+     * Set to {@code true} (or {@code 1}) to send a {@code host:port} intake target's traffic
+     * unencrypted: {@value}. For a trusted network or a sidecar that terminates TLS itself.
+     * Unset or blank keeps TLS; an unrecognized value is refused by name rather than silently
+     * keeping TLS.
      */
     public static final String ENV_PLAINTEXT = "PROTOMOLT_ACQUIRE_INTAKE_PLAINTEXT";
 
-    /** Whether {@link #ENV_PLAINTEXT} in {@code env} opts out of TLS. */
+    /**
+     * Whether {@link #ENV_PLAINTEXT} in {@code env} opts out of TLS.
+     *
+     * @throws IllegalArgumentException on a value that is not true/false or 1/0
+     */
     public static boolean plaintextRequested(Map<String, String> env) {
-        return env != null && Boolean.parseBoolean(env.getOrDefault(ENV_PLAINTEXT, "false"));
+        if (env == null) {
+            return false;
+        }
+        String value = env.get(ENV_PLAINTEXT);
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        String v = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.equals("true") || v.equals("1")) {
+            return true;
+        }
+        if (v.equals("false") || v.equals("0")) {
+            return false;
+        }
+        throw new IllegalArgumentException(ENV_PLAINTEXT + " must be true/false or 1/0: " + value);
     }
 
     private static final Metadata.Key<String> API_KEY_HEADER =
