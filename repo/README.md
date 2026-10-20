@@ -3,6 +3,9 @@
 The platform's document store: durable bodies in object storage, a Postgres
 ledger that indexes them, and a small set of transport surfaces (gRPC, plus a
 streaming HTTP upload route) — no framework, blocking style, virtual threads.
+Every `DOCUMENT_PLATFORM_*` variable the service reads is listed, with
+defaults and failure behavior, in the
+[environment-variable reference](../docs/operations/environment-variables.md).
 
 ## What it is
 

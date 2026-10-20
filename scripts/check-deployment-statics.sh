@@ -299,4 +299,7 @@ if bad:
 print("no em dashes in", len(paths), "files")
 PYEOF
 
+say "environment variables documented"
+scripts/check-env-vars-documented.sh
+
 say "PASS: deployment statics"
