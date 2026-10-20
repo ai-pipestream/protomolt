@@ -7,6 +7,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths:
+      - 'search/**'
+      - '.forgejo/workflows/tei-integration.yml'
+      - 'gradle/libs.versions.toml'
+      - 'build.gradle'
   # Forgejo is master and nothing mirrors into it (mirror: false, no push
   # mirrors), so commits arrive here by direct push. The manual trigger stays
   # because a lane this expensive is worth being able to start by hand.
@@ -37,10 +42,15 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # The test bind-mounts this directory into both TEI containers at /data when it exists,
-      # so the ~1.2 GB of models download once and persist across runs on the runner.
-      - name: Create the TEI model cache
-        run: mkdir -p /work/tei-model-cache
+      # Models are provisioned on the runner outside CI.
+      - name: Require the pre-provisioned TEI model cache
+        shell: bash
+        run: |
+          cache=/work/tei-model-cache
+          if [[ ! -d "$cache" ]] || [[ -z "$(find "$cache" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+            echo "::error::Required model cache /work/tei-model-cache is missing or empty; provision it before running TEI integration."
+            exit 1
+          fi
 
       - name: Run the TEI rerank lane
         env:
