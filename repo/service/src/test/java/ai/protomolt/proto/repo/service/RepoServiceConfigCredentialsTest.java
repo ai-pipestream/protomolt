@@ -17,7 +17,7 @@ class RepoServiceConfigCredentialsTest {
     private static final LedgerConfig LEDGER =
             new LedgerConfig("jdbc:postgresql://localhost:5432/x", "u", "p");
 
-    /** The 14-component compatibility constructor with credentials as the variable. */
+    /** The compatibility constructor with credentials as the variable. */
     private static RepoServiceConfig withCredentials(String accessKey, String secretKey) {
         return new RepoServiceConfig(0, LEDGER, null, null, accessKey, secretKey, null,
                 0, null, null, -1, -1L);
@@ -61,9 +61,15 @@ class RepoServiceConfigCredentialsTest {
                 0, " S3 ", null, -1, -1L);
         assertThat(loud.blobStore()).isEqualTo("s3");
 
-        RepoServiceConfig inProcess = new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
-                0, "Repo-InProcess", null, -1, -1L);
-        assertThat(inProcess.blobStore()).isEqualTo("repo-inprocess");
+        RepoServiceConfig redis = new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
+                0, " ReDiS ", null, -1, -1L);
+        assertThat(redis.blobStore()).isEqualTo("redis");
+        for (var retired : java.util.List.of(" RePo ", "Repo-InProcess")) {
+            assertThatThrownBy(() -> new RepoServiceConfig(0, LEDGER, null, null, null, null, null,
+                    0, retired, null, -1, -1L))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Remote repository blob storage is retired");
+        }
     }
 
     @Test
