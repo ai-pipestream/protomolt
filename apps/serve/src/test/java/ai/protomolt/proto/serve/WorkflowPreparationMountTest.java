@@ -94,14 +94,9 @@ class WorkflowPreparationMountTest {
     }
 
     @Test
-    void hostPublishesPreparationDescriptorOnlyWhenConfigured() throws Exception {
-        var method = ProtoMoltServe.class.getDeclaredMethod("contributedServices",
-                boolean.class, boolean.class, boolean.class);
-        method.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        List<ServiceDescriptor> disabled = (List<ServiceDescriptor>) method.invoke(null, false, true, false);
-        @SuppressWarnings("unchecked")
-        List<ServiceDescriptor> enabled = (List<ServiceDescriptor>) method.invoke(null, false, true, true);
+    void hostPublishesPreparationDescriptorOnlyWhenConfigured() {
+        List<ServiceDescriptor> disabled = GrpcMount.contributedServices(false, true, false);
+        List<ServiceDescriptor> enabled = GrpcMount.contributedServices(false, true, true);
         assertThat(disabled).noneMatch(service -> service.getFullName()
                 .equals("ai.protomolt.proto.workflow.authoring.v1.WorkflowPreparationService"));
         assertThat(enabled).anyMatch(service -> service.getFullName()

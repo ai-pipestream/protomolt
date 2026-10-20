@@ -221,7 +221,7 @@ class ProtoMoltServeTest {
 
     @Test
     void inferenceModelSpecAdvertisesStructuredOutputCapability() {
-        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+        InferenceEngines engines = InferenceMount.engines(java.util.List.of(
                 "judge|openai|https://models.example.test|backend|machine:krick|"
                         + "streaming,structured-output"));
 
@@ -235,7 +235,7 @@ class ProtoMoltServeTest {
     @Test
     void inferenceModelSpecRejectsUnknownCapability() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                ProtoMoltServe.inferenceEngines(java.util.List.of(
+                InferenceMount.engines(java.util.List.of(
                         "judge|openai|https://models.example.test|||telepathy")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("telepathy");
@@ -243,7 +243,7 @@ class ProtoMoltServeTest {
 
     @Test
     void inferenceModelSpecParsesCredentialReference() {
-        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+        InferenceEngines engines = InferenceMount.engines(java.util.List.of(
                 "judge|openai|https://models.example.test|backend||structured-output|"
                         + "env:OPENAI_TOKEN"));
 
@@ -255,7 +255,7 @@ class ProtoMoltServeTest {
 
     @Test
     void inferenceModelSpecWithoutCredentialReferenceLeavesItEmpty() {
-        InferenceEngines engines = ProtoMoltServe.inferenceEngines(java.util.List.of(
+        InferenceEngines engines = InferenceMount.engines(java.util.List.of(
                 "judge|openai|https://models.example.test|backend|machine:krick|streaming"));
 
         ModelEntry entry = engines.describe(DescribeModelRequest.newBuilder()
@@ -267,7 +267,7 @@ class ProtoMoltServeTest {
     void inferenceModelSpecRejectsMalformedCredentialReference() {
         String credentialRef = "not-a-valid-reference";
         IllegalArgumentException failure = org.assertj.core.api.Assertions.catchThrowableOfType(() ->
-                ProtoMoltServe.inferenceEngines(java.util.List.of(
+                InferenceMount.engines(java.util.List.of(
                         "judge|openai|https://models.example.test||||" + credentialRef)),
                 IllegalArgumentException.class);
 
