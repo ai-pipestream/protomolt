@@ -1,14 +1,19 @@
 package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import io.grpc.Status;
 import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,6 +52,52 @@ class GrpcErrorsTest {
         Status status = Status.fromThrowable(mapped);
         assertThat(status.getCode()).isEqualTo(Status.Code.NOT_FOUND);
         assertThat(status.getDescription()).isEqualTo("no object at bucket/k");
+    }
+
+    @ParameterizedTest
+    @MethodSource("repositoryCodes")
+    void repositoryExceptionMapsItsCodeKeepingOnlyTheMessage(RepositoryException.Code code, Status.Code expected) {
+        Throwable mapped = GrpcErrors.map(new RepositoryException(code, "repository said " + code,
+                new IllegalStateException("provider detail")));
+        assertThat(mapped).isInstanceOf(StatusRuntimeException.class);
+        Status status = Status.fromThrowable(mapped);
+        assertThat(status.getCode()).isEqualTo(expected);
+        assertThat(status.getDescription()).isEqualTo("repository said " + code);
+        assertThat(mapped.getCause()).isNull();
+    }
+
+    @Test
+    void everyRepositoryCodeHasAnExpectedStatus() {
+        assertThat(repositoryCodes()).hasSize(RepositoryException.Code.values().length);
+    }
+
+    static Stream<Arguments> repositoryCodes() {
+        return Stream.of(RepositoryException.Code.values()).map(code -> Arguments.of(code, switch (code) {
+            case INVALID_ARGUMENT -> Status.Code.INVALID_ARGUMENT;
+            case NOT_FOUND -> Status.Code.NOT_FOUND;
+            case FAILED_PRECONDITION -> Status.Code.FAILED_PRECONDITION;
+            case PERMISSION_DENIED -> Status.Code.PERMISSION_DENIED;
+            case CONFLICT -> Status.Code.ABORTED;
+            case UNSUPPORTED -> Status.Code.UNIMPLEMENTED;
+            case UNAVAILABLE -> Status.Code.UNAVAILABLE;
+            case INTERNAL -> Status.Code.INTERNAL;
+            case CANCELLED -> Status.Code.CANCELLED;
+            case UNKNOWN -> Status.Code.UNKNOWN;
+            case DEADLINE_EXCEEDED -> Status.Code.DEADLINE_EXCEEDED;
+            case ALREADY_EXISTS -> Status.Code.ALREADY_EXISTS;
+            case RESOURCE_EXHAUSTED -> Status.Code.RESOURCE_EXHAUSTED;
+            case OUT_OF_RANGE -> Status.Code.OUT_OF_RANGE;
+            case DATA_LOSS -> Status.Code.DATA_LOSS;
+            case UNAUTHENTICATED -> Status.Code.UNAUTHENTICATED;
+        }));
+    }
+
+    @Test
+    void repositoryExceptionWithoutAMessageLeavesNoDescription() {
+        Status status = Status.fromThrowable(GrpcErrors.map(
+                new RepositoryException(RepositoryException.Code.CONFLICT, null)));
+        assertThat(status.getCode()).isEqualTo(Status.Code.ABORTED);
+        assertThat(status.getDescription()).isNull();
     }
 
     @Test
