@@ -18,6 +18,7 @@ import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.Status;
 import java.io.IOException;
 import java.time.Clock;
@@ -72,6 +73,13 @@ public final class DocumentReads {
 
     /**
      * Reads and merges the selected parts of a document revision.
+     * <p>
+     * Each selected part's catalog length is validated against the host's part size
+     * ceiling and reserved against the read byte budget before anything is opened or
+     * allocated; a length the remaining budget does not cover fails fast with
+     * {@code RESOURCE_EXHAUSTED} and never reaches the stack. The merged response
+     * aliases the buffered part bytes, so every part's reservation is held until the
+     * response is built and handed off, then released.
      *
      * @param caller the authenticated repository caller
      * @param request the document read request
@@ -83,28 +91,36 @@ public final class DocumentReads {
             var stored = resolve(caller, request.getAddress(), request.getRevision());
             var selected = selected(request.getSelection());
             var document = Document.newBuilder();
-            for (var part : stored.getPartsList()) {
-                var entry = part.getEntry();
-                if (!selected.apply(entry.getSelector()) || entry.getState() != PartState.PART_STATE_PRESENT) continue;
-                if (entry.getOpaque() && !request.getAllowOpaque())
-                    throw new AccessionException(Status.Code.FAILED_PRECONDITION,
-                            "The revision holds opaque content; request its opaque representation explicitly", null);
-                var bytes = read(part.getRef());
-                // Opaque occurrences are verified undecoded against their record inside
-                // decodeRetained; typed siblings in the same part still decode (§9).
-                decodeRetained(stored, entry.getSelector(), bytes);
-                // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
-                if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
-                    bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
-                try {
-                    document.mergeFrom(bytes);
-                } catch (InvalidProtocolBufferException corrupt) {
-                    throw new AccessionException(Status.Code.DATA_LOSS, "Stored part does not decode", null, corrupt);
+            var leases = new java.util.ArrayList<DocumentAdmissionReservations.Lease>();
+            try {
+                for (var part : stored.getPartsList()) {
+                    var entry = part.getEntry();
+                    if (!selected.apply(entry.getSelector()) || entry.getState() != PartState.PART_STATE_PRESENT) continue;
+                    if (entry.getOpaque() && !request.getAllowOpaque())
+                        throw new AccessionException(Status.Code.FAILED_PRECONDITION,
+                                "The revision holds opaque content; request its opaque representation explicitly", null);
+                    requirePartWithinCeiling(part.getRef());
+                    leases.add(Objects.requireNonNull(
+                            reservations.reserve(part.getRef().getLength()), "reservation lease"));
+                    var bytes = read(part.getRef());
+                    // Opaque occurrences are verified undecoded against their record inside
+                    // decodeRetained; typed siblings in the same part still decode (§9).
+                    decodeRetained(stored, entry.getSelector(), bytes);
+                    // Raw blobs live behind claim checks: the server fills storage_ref (decision 45).
+                    if (entry.getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
+                        bytes = RawBlobs.withClaimChecks(bytes, part.getBlobRefsList());
+                    try {
+                        document.mergeFrom(bytes);
+                    } catch (InvalidProtocolBufferException corrupt) {
+                        throw new AccessionException(Status.Code.DATA_LOSS, "Stored part does not decode", null, corrupt);
+                    }
                 }
+                return GetDocumentResponse.newBuilder().setDocument(document)
+                        .setManifest(manifest(stored, selected)).setValidation(stored.getValidation())
+                        .putAllMetadata(stored.getMetadataMap()).build();
+            } finally {
+                for (var lease : leases) lease.close();
             }
-            return GetDocumentResponse.newBuilder().setDocument(document)
-                    .setManifest(manifest(stored, selected)).setValidation(stored.getValidation())
-                    .putAllMetadata(stored.getMetadataMap()).build();
         });
     }
 
@@ -160,8 +176,13 @@ public final class DocumentReads {
      * any of its frames are emitted; raw blobs go out with their claim checks
      * filled (decision 45). An opaque part the request does not allow fails the
      * item before any frame is emitted. A prefix without the completion frame is
-     * not a successful read. Each selected part reserves its recorded byte length
-     * before storage is opened and holds that lease through its final frame callback.
+     * not a successful read.
+     * <p>
+     * One part is buffered at a time: its catalog length is validated against the host's
+     * part size ceiling and reserved against the read byte budget before anything is
+     * opened or allocated, and the reservation is released once the part's final frame
+     * callback returns, before the next part is read, so a bulk read never holds
+     * reservations for all of a document's parts at once.
      */
     public void readDocument(RepositoryCaller caller, ReadDocumentRequest request,
             java.util.function.Consumer<ReadDocumentResponse> frames) {
@@ -182,7 +203,8 @@ public final class DocumentReads {
             frames.accept(ReadDocumentResponse.newBuilder().setManifest(manifest(stored, selected)).build());
             for (var part : parts) {
                 var entry = part.getEntry();
-                try (var lease = Objects.requireNonNull(
+                requirePartWithinCeiling(part.getRef());
+                try (var ignored = Objects.requireNonNull(
                         reservations.reserve(part.getRef().getLength()), "reservation lease")) {
                     var bytes = read(part.getRef());
                     if (!entry.getOpaque()) decodeRetained(stored, entry.getSelector(), bytes);
@@ -369,9 +391,44 @@ public final class DocumentReads {
         return new AccessionException(Status.Code.DATA_LOSS, message, null, cause);
     }
 
+    /**
+     * Refuses a part whose recorded catalog length no admitted save could have written:
+     * a negative length is a corrupt record (DATA_LOSS); a length above the member's
+     * fragment ceiling is refused RESOURCE_EXHAUSTED before anything is opened or
+     * allocated, the same fail-fast surface as an exhausted read budget.
+     */
+    private void requirePartWithinCeiling(StackRef ref) {
+        long length = ref.getLength();
+        if (length < 0)
+            throw new AccessionException(Status.Code.DATA_LOSS,
+                    "Part records a negative length: " + length, null);
+        if (length > limits.maxFragmentBytes())
+            throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED,
+                    "Part records " + length + " bytes, above the " + limits.maxFragmentBytes()
+                            + " byte part ceiling", null);
+    }
+
+    /**
+     * Buffers one stack object in full into a single array of exactly its catalog
+     * length, which callers reserve against the read budget before this method runs.
+     * The stack stream is read straight into that array, so the read allocates no
+     * scratch chunk and no growable output beyond the reserved bytes, and the returned
+     * {@link ByteString} wraps the array without copying it. Reading to end of stream
+     * lets the verifying stack stream check length and digest; a stream that ends
+     * early or runs past the catalog length is DATA_LOSS.
+     */
     ByteString read(StackRef ref) {
+        long length = ref.getLength();
+        if (length < 0 || length > Integer.MAX_VALUE)
+            throw new AccessionException(Status.Code.DATA_LOSS,
+                    "Part records an unreadable length: " + length, null);
         try (var stream = drives.byId(ref.getStackId()).open(ref)) {
-            return ByteString.readFrom(stream);
+            var bytes = new byte[(int) length];
+            int filled = stream.readNBytes(bytes, 0, bytes.length);
+            if (filled != bytes.length || stream.read() >= 0)
+                throw new AccessionException(Status.Code.DATA_LOSS,
+                        "Stored object length differs from its reference: " + length + " bytes", null);
+            return UnsafeByteOperations.unsafeWrap(bytes);
         } catch (StackDataLoss loss) {
             throw new AccessionException(Status.Code.DATA_LOSS, loss.getMessage(), null, loss);
         } catch (IOException failure) {
