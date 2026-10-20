@@ -38,13 +38,21 @@ final class ArchiveRequests {
         return address;
     }
 
-    /** Validates an account id (1..200 characters). */
+    /**
+     * Validates an account id (1..200 characters). The id becomes one archive
+     * storage key segment, so {@code .}, {@code ..} and ids carrying a path
+     * separator are refused rather than rewritten.
+     */
     static String accountId(String accountId) {
         if (accountId.isBlank()) {
             throw invalidArgument("account_id is required");
         }
         if (accountId.length() > 200) {
             throw invalidArgument("account_id exceeds 200 characters");
+        }
+        if (accountId.equals(".") || accountId.equals("..")
+                || accountId.indexOf('/') >= 0 || accountId.indexOf('\\') >= 0) {
+            throw invalidArgument("account_id must not be '.', '..' or contain a path separator");
         }
         return accountId;
     }

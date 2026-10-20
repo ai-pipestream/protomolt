@@ -52,7 +52,12 @@ final class ArchiveKeys {
                 + "/" + entryUuid + "/writes/" + UUID.randomUUID());
     }
 
-    /** Path-segment sanitization: anything outside {@code [A-Za-z0-9._-]} becomes {@code _}. */
+    /**
+     * Path-segment sanitization: anything outside {@code [A-Za-z0-9._-]} becomes {@code _}.
+     *
+     * @throws IllegalArgumentException when the result is empty, {@code .} or {@code ..},
+     *         because such a segment would collapse or climb out of its namespace
+     */
     static String sanitize(String segment) {
         StringBuilder out = new StringBuilder(segment.length());
         for (int i = 0; i < segment.length(); i++) {
@@ -61,6 +66,11 @@ final class ArchiveKeys {
                     || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
             out.append(safe ? c : '_');
         }
-        return out.toString();
+        String sanitized = out.toString();
+        if (sanitized.isEmpty() || sanitized.equals(".") || sanitized.equals("..")) {
+            throw new IllegalArgumentException(
+                    "archive key segment must not be empty, '.' or '..': '" + sanitized + "'");
+        }
+        return sanitized;
     }
 }
