@@ -3,7 +3,7 @@
 ProtoMolt publishes two coding worker images with a common agent and gRPC
 tooling layer:
 
-- `protomolt-worker-java` carries JDK 21, 25, and 26, GraalVM, SDKMAN,
+- `protomolt-worker-java` carries JDK 25 and 26, GraalVM, SDKMAN,
   Gradle, Maven, and the Java gRPC generator.
 - `protomolt-worker-cpp` carries GCC, Clang, CMake, Ninja, Conan, the gRPC C++
   development libraries, and the C++ gRPC generator.
@@ -78,7 +78,6 @@ installed runtime without downloading it:
 
 ```shell
 source "$SDKMAN_DIR/bin/sdkman-init.sh"
-sdk use java 21.0.12-tem
 sdk use java 26.0.2-tem
 sdk use java 25.2.4-graalce
 ```

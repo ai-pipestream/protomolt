@@ -20,7 +20,10 @@ import java.util.function.Consumer;
  */
 final class ApicurioRegistryContainer extends GenericContainer<ApicurioRegistryContainer> {
 
-    static final String IMAGE = "apicurio/apicurio-registry:3.3.2";
+    // The root build injects the catalog's apicurio version as a system property;
+    // the literal is only the fallback for IDE runs outside Gradle.
+    static final String IMAGE =
+            System.getProperty("protomolt.test.apicurio.image", "apicurio/apicurio-registry:3.3.3");
 
     private static final int REGISTRY_PORT = 8080; // inside the container
     private final BoundedLogTail logTail = new BoundedLogTail(64 * 1024);

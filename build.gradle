@@ -124,6 +124,13 @@ subprojects {
         tasks.withType(Test).configureEach {
             useJUnitPlatform()
             maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
+            // One source of truth for the integration-suite container images:
+            // the version catalog. The test classes read these properties and
+            // keep a matching literal only as the fallback for IDE runs.
+            systemProperty 'protomolt.test.apicurio.image',
+                    "apicurio/apicurio-registry:${libs.versions.apicurio.get()}"
+            systemProperty 'protomolt.test.opensearch.image',
+                    "opensearchproject/opensearch:${libs.versions.opensearch.image.get()}"
         }
 
         // -PtestJdk=NN runs every test JVM on that Java version, proving a runtime
