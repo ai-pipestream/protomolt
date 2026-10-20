@@ -433,8 +433,7 @@ public final class RepoServices implements AutoCloseable {
                                 return java.util.Optional.empty();
                             }
                         });
-                var limits = new ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024,
-                        64, 4L * 1024 * 1024, 32, 32L * 1024 * 1024, 64 * 1024 * 1024);
+                var limits = ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
                 ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolver builtinSchemas =
                         selection -> {
                             if (selection.typeUrl().equals("type.googleapis.com/ai.protomolt.proto.repo.v1.SearchMetadata"))

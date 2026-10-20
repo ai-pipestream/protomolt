@@ -91,16 +91,9 @@ public final class V2RepositoryFixture implements AutoCloseable {
     public static final String SEARCH_METADATA_TYPE_URL =
             "type.googleapis.com/" + SearchMetadata.getDescriptor().getFullName();
 
-    /** Explicit fixture resource budget for candidate and schema admission. */
+    /** Candidate and schema admission limits: the ones the repository service runs with. */
     public static final DocumentSchemaAdmission.Limits DEFAULT_LIMITS =
-            new DocumentSchemaAdmission.Limits(
-                    16,
-                    64L * 1024 * 1024,
-                    64,
-                    4L * 1024 * 1024,
-                    32,
-                    32L * 1024 * 1024,
-                    64 * 1024 * 1024);
+            DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
 
     /** Default descriptor artifact cache limits when constructing an owned {@link RegistrySchemaResolver}. */
     public static final DocumentSchemaArtifactCache.Limits DEFAULT_CACHE_LIMITS =

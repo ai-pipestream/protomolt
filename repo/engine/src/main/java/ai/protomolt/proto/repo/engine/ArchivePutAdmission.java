@@ -15,7 +15,7 @@ import java.util.Objects;
 public final class ArchivePutAdmission implements AutoCloseable {
     public record Limits(int maxObjectBytes, int maxRequestBytes, int maxRenditions) {
         public Limits {
-            if (maxObjectBytes < 1 || maxRequestBytes < maxObjectBytes || maxRequestBytes > 256 * 1024 * 1024
+            if (maxObjectBytes < 1 || maxRequestBytes < maxObjectBytes || maxRequestBytes > MessageCeiling.MAX_BYTES
                     || maxRenditions < 1 || maxRenditions > 256)
                 throw new IllegalArgumentException("Invalid bounded archive put limits");
         }

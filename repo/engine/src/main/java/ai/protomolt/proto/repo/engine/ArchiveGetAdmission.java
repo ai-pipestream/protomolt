@@ -18,8 +18,8 @@ public final class ArchiveGetAdmission implements AutoCloseable {
         }
         public Limits {
             if (maxObjectBytes < 1 || maxResponseBytes < maxObjectBytes
-                    || maxResponseBytes > 256 * 1024 * 1024 || maxRenditions < 1 || maxRenditions > 256
-                    || maxManifestBytes < 1 || maxManifestBytes > 256 * 1024 * 1024)
+                    || maxResponseBytes > MessageCeiling.MAX_BYTES || maxRenditions < 1 || maxRenditions > 256
+                    || maxManifestBytes < 1 || maxManifestBytes > MessageCeiling.MAX_BYTES)
                 throw new IllegalArgumentException("Invalid archive read limits");
         }
     }

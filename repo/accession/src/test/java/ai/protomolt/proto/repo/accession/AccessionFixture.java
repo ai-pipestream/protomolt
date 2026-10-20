@@ -155,8 +155,7 @@ final class AccessionFixture implements AutoCloseable {
     }
 
     static DocumentSchemaAdmission.Limits limits() {
-        return new DocumentSchemaAdmission.Limits(16, 64L * 1024 * 1024, 64, 4L * 1024 * 1024, 32,
-                32L * 1024 * 1024, 64 * 1024 * 1024);
+        return DocumentSchemaAdmission.Limits.SERVICE_DEFAULTS;
     }
 
     // ------------------------------------------------------------------ identities
