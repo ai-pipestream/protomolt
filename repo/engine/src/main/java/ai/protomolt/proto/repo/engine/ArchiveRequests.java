@@ -40,8 +40,9 @@ final class ArchiveRequests {
 
     /**
      * Validates an account id (1..200 characters). The id becomes one archive
-     * storage key segment, so {@code .}, {@code ..} and ids carrying a path
-     * separator are refused rather than rewritten.
+     * storage key segment, so an id consisting solely of {@code .} characters,
+     * one carrying a path separator, and one carrying an ASCII control
+     * character are refused rather than rewritten.
      */
     static String accountId(String accountId) {
         if (accountId.isBlank()) {
@@ -50,9 +51,19 @@ final class ArchiveRequests {
         if (accountId.length() > 200) {
             throw invalidArgument("account_id exceeds 200 characters");
         }
-        if (accountId.equals(".") || accountId.equals("..")
-                || accountId.indexOf('/') >= 0 || accountId.indexOf('\\') >= 0) {
-            throw invalidArgument("account_id must not be '.', '..' or contain a path separator");
+        boolean onlyDots = true;
+        for (int i = 0; i < accountId.length(); i++) {
+            char c = accountId.charAt(i);
+            if (c < 0x20 || c == 0x7F) {
+                throw invalidArgument("account_id must not contain control characters");
+            }
+            if (c != '.') {
+                onlyDots = false;
+            }
+        }
+        if (onlyDots || accountId.indexOf('/') >= 0 || accountId.indexOf('\\') >= 0) {
+            throw invalidArgument("account_id must not consist solely of '.' characters"
+                    + " or contain a path separator");
         }
         return accountId;
     }

@@ -64,16 +64,31 @@ class ArchiveRequestsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {".", "..", "a/b", "a\\b", "/", "\\", "../x", "acct/"})
+    @ValueSource(strings = {".", "..", "...", "....", "a/b", "a\\b", "/", "\\", "../x", "acct/"})
     void accountIdsThatWouldBeDotSegmentsOrCarryASeparatorAreRefused(String accountId) {
-        String message = "account_id must not be '.', '..' or contain a path separator";
+        String message = "account_id must not consist solely of '.' characters"
+                + " or contain a path separator";
+        refused(() -> ArchiveRequests.accountId(accountId), message);
+        refused(() -> ArchiveRequests.address(true, address(accountId, "docs", "e1")), message);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\u0000", "a\u0000b", "acct\u007f", "a\u001fb", "a\tb", "a\nb", "a\rb"})
+    void accountIdsCarryingControlCharactersAreRefused(String accountId) {
+        String message = "account_id must not contain control characters";
         refused(() -> ArchiveRequests.accountId(accountId), message);
         refused(() -> ArchiveRequests.address(true, address(accountId, "docs", "e1")), message);
     }
 
     @Test
+    void anAccountIdThatIsOnlyControlWhitespaceIsRefusedAsBlank() {
+        refused(() -> ArchiveRequests.accountId("\n"), "account_id is required");
+        refused(() -> ArchiveRequests.accountId("\r"), "account_id is required");
+    }
+
+    @Test
     void accountIdsThatOnlyContainDotsAmongOtherCharactersAreAdmitted() {
-        for (String accountId : new String[] {"...", ".a", "a.", "a..b", " .. "}) {
+        for (String accountId : new String[] {".a", "a.", "a..b", " .. "}) {
             assertThat(ArchiveRequests.accountId(accountId)).isEqualTo(accountId);
         }
     }
