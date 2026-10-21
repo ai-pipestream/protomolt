@@ -16,6 +16,9 @@ import java.util.Optional;
 public final class DocumentRetainedDefinitions {
     private static final int MIB = 1024 * 1024;
 
+    /** The largest retained descriptor set a revision can reference: the closure byte limit admission applies. */
+    public static final int MAX_DESCRIPTOR_BYTES = 16 * MIB;
+
     private DocumentRetainedDefinitions() {}
 
     /** The retained artifact store. Empty is authoritative absence; failures to reach it propagate. */
@@ -41,7 +44,7 @@ public final class DocumentRetainedDefinitions {
             return bytes;
         };
         var assets = new DocumentRetainedSchemaAssets(once, new DocumentRetainedSchemaAssets.Limits(1, 64L * MIB,
-                new ClosedDescriptorSet.Limits(16 * MIB, 256, 4096, 64)));
+                new ClosedDescriptorSet.Limits(MAX_DESCRIPTOR_BYTES, 256, 4096, 64)));
         var bound = assets.resolve(new DocumentRetainedSchemaAssets.Reference(reference.getTypeUrl(),
                 reference.getDescriptorSha256(), reference.getMetadataCodec(), reference.getMetadataVersion(),
                 reference.getMetadataSha256(), reference.hasSourceSha256() ? Optional.of(reference.getSourceSha256())

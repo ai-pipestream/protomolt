@@ -313,6 +313,7 @@ Shared database indexes, connections and storage still contend, and are measured
 - History is paginated with defined ordering.
 - A listing returns each document's lookup fields (`DocumentLookup`, projected from the CORE part and kept on the catalog entry) with its save owner, accepts typed exact-match filters on those fields, the save owner and the commit time, and orders by call number, commit time or title with the call number as tie-break. Filters are protobuf fields, never a query language.
 - Large reads stream a pinned manifest and the selected content.
+- A revision's retained schema descriptor set is readable by its digest, scoped to that revision and its document's read access; a digest the caller cannot reach and one that does not exist both answer `NOT_FOUND`, and the bytes are verified against the digest before they are returned.
 
 ## 9. Validation
 
