@@ -21,6 +21,8 @@ export function repositoryRouter(): Router {
       { path: '/repository/accounts/:accountId', name: 'repository-account', component: stub },
       { path: '/repository/document', name: 'repository-document', component: stub },
       { path: '/repository/lookup', name: 'repository-lookup', component: stub },
+      { path: '/repository/archive', name: 'repository-archive', component: stub },
+      { path: '/repository/archive-entry', name: 'repository-archive-entry', component: stub },
     ],
   })
 }

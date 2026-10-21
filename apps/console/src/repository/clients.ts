@@ -5,6 +5,7 @@
 import { createClient, type Client, type Transport } from '@connectrpc/connect'
 import { inject, type InjectionKey } from 'vue'
 import { AccountService } from '@/gen/ai/protomolt/proto/account/v1/account_service_pb'
+import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import { DriveService } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 
@@ -13,6 +14,7 @@ export interface RepositoryClients {
   documents: Client<typeof DocumentService>
   drives: Client<typeof DriveService>
   accounts: Client<typeof AccountService>
+  archives: Client<typeof ArchiveService>
 }
 
 /** Clients for every repository service over one transport. */
@@ -21,6 +23,7 @@ export function repositoryClients(transport: Transport): RepositoryClients {
     documents: createClient(DocumentService, transport),
     drives: createClient(DriveService, transport),
     accounts: createClient(AccountService, transport),
+    archives: createClient(ArchiveService, transport),
   }
 }
 

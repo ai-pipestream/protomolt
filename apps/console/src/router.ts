@@ -64,6 +64,16 @@ export const router = createRouter({
           component: () => import('./views/repository/RepositoryDocumentView.vue'),
         },
         {
+          path: 'archive',
+          name: 'repository-archive',
+          component: () => import('./views/repository/RepositoryArchiveView.vue'),
+        },
+        {
+          path: 'archive-entry',
+          name: 'repository-archive-entry',
+          component: () => import('./views/repository/RepositoryArchiveEntryView.vue'),
+        },
+        {
           path: 'lookup',
           name: 'repository-lookup',
           component: () => import('./views/repository/RepositoryLookupView.vue'),

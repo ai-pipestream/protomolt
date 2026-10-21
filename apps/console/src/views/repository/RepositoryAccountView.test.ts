@@ -11,6 +11,7 @@ import {
   ListDocumentsResponseSchema,
   type ListDocumentsRequest,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import RepositoryAccountView from '@/views/repository/RepositoryAccountView.vue'
 import { at, testAddress } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
@@ -139,10 +140,16 @@ describe('RepositoryAccountView', () => {
           throw new ConnectError('catalog unavailable', Code.Unavailable)
         },
       })
+      router.service(ArchiveService, {
+        listArchives() {
+          throw new ConnectError('archive store unreachable', Code.Unavailable)
+        },
+      })
     })
     const failures = wrapper.findAll('[data-testid="rpc-failure"]').map((f) => f.text())
     expect(failures).toEqual([
       expect.stringContaining('PERMISSION_DENIED'),
+      expect.stringContaining('archive store unreachable'),
       expect.stringContaining('UNAVAILABLE'),
     ])
     expect(failures[0]).toContain('account acct-b is not bound to this caller')

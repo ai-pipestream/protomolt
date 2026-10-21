@@ -268,7 +268,7 @@ own chapter: [Task console](task-console.md).
 ## Repository
 
 The Repository section reads the parts-based `DocumentService`, plus
-`DriveService` for an account's drives. It is served by the repository host,
+`DriveService` for an account's drives and `ArchiveService` for its archives. It is served by the repository host,
 not by `protomolt-serve`: the host serves the console bundle at `/console` and
 a Connect gateway at `/connect` on the same HTTP port, and the browser calls
 the gateway with Connect-ES in binary protobuf (`application/proto` for unary
@@ -300,6 +300,15 @@ generated from the protos.
   in memory, and the screen says which. A whole-file read is hashed
   incrementally and must match the stored SHA-256; a byte range is shown as
   unverified against the whole-file digest.
+- **Archives.** An account's archives from `ArchiveService`, each with its
+  stats (entries, versions, current and retained bytes, per-rendition and
+  per-classification counts) and its entries, filtered by classification state
+  and paged by continuation token. An entry opens on its current version or an
+  exact one: its descriptive fields, the version's renditions with state,
+  size, SHA-256 and provenance, and its version history. A present rendition
+  previews and downloads through `ReadRendition`, pinned to the version shown,
+  with the same range, streaming and verification rules as raw files: a
+  whole-object read must hash to the SHA-256 the manifest attests.
 - **Look up.** Open a document by its call number (account, graph, graph
   address and document IDs, with an optional exact revision), or ask what
   happened to an operation ID. `GetOperationOutcome` answers committed,

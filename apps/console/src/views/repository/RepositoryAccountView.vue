@@ -47,6 +47,24 @@
     </v-card>
 
     <v-card class="mb-4">
+      <v-card-title class="text-subtitle-2">Archives</v-card-title>
+      <v-card-text>
+        <RpcFailureAlert v-if="archivesFailure" :failure="archivesFailure" title="Listing archives" />
+        <v-list v-if="archives.length > 0" density="compact" data-testid="archive-list">
+          <v-list-item
+            v-for="a in archives"
+            :key="a.name"
+            :to="{ name: 'repository-archive', query: { account: accountId, archive: a.name } }"
+            :title="a.name"
+            :subtitle="a.description || `drive ${a.driveName}`"
+            prepend-icon="mdi-archive-outline"
+          />
+        </v-list>
+        <div v-else-if="!archivesLoading && !archivesFailure" class="text-body-2 text-medium-emphasis">This account has no archives.</div>
+      </v-card-text>
+    </v-card>
+
+    <v-card class="mb-4">
       <v-card-title class="text-subtitle-2">Documents</v-card-title>
       <v-card-text>
         <v-row dense>
@@ -173,6 +191,8 @@ import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
+import type { Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
+import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import { DriveStatusSchema, DriveTypeSchema, ListDrivesRequestSchema, type Drive } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentSortField } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { useRepositoryClients } from '@/repository/clients'
@@ -236,6 +256,36 @@ async function loadDrives(first: boolean) {
     if (!isOwnCancellation(error, signal)) drivesFailure.value = rpcFailure(error)
   } finally {
     drivesLoading.value = false
+  }
+}
+
+// Archives
+const archivesScope = useCallScope()
+const archives = shallowRef<Archive[]>([])
+const archivesLoading = ref(false)
+const archivesFailure = ref<RpcFailure | null>(null)
+
+async function loadArchives() {
+  const signal = archivesScope.next()
+  archivesLoading.value = true
+  archivesFailure.value = null
+  archives.value = []
+  try {
+    const all: Archive[] = []
+    let token = ''
+    do {
+      const page = await clients.archives.listArchives(
+        create(ListArchivesRequestSchema, { accountId: accountId.value, limit: 100, continuationToken: token }),
+        { signal },
+      )
+      all.push(...page.archives)
+      token = page.nextContinuationToken
+    } while (token !== '')
+    if (!signal.aborted) archives.value = all
+  } catch (error) {
+    if (!signal.aborted) archivesFailure.value = rpcFailure(error)
+  } finally {
+    if (!signal.aborted) archivesLoading.value = false
   }
 }
 
@@ -323,6 +373,7 @@ function openRow(row: DocumentRow) {
 
 function loadAll() {
   void loadDrives(true)
+  void loadArchives()
   void loadPage()
 }
 
