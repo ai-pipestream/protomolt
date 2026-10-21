@@ -8,7 +8,13 @@ import com.google.protobuf.Any;
 import com.google.protobuf.Int32Value;
 import com.google.protobuf.StringValue;
 import com.sun.net.httpserver.HttpServer;
+import io.grpc.ForwardingServerCall;
+import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.ServerServiceDefinition;
 import io.grpc.Status;
 import io.grpc.protobuf.ProtoUtils;
@@ -37,12 +43,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -74,6 +82,38 @@ class ConnectGatewayTest {
                     .build();
 
     private final AtomicInteger invocations = new AtomicInteger();
+    private final AtomicReference<Metadata> seen = new AtomicReference<>();
+    private static final Metadata.Key<String> WANT = Metadata.Key.of("x-want-metadata", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> ANSWER = Metadata.Key.of("x-answer", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> DONE = Metadata.Key.of("x-done", Metadata.ASCII_STRING_MARSHALLER);
+
+    /**
+     * Records each call's request metadata, and when asked by {@code x-want-metadata} answers a
+     * response header and a trailer, as a service with its own metadata would.
+     */
+    private final class MetadataProbe implements ServerInterceptor {
+        @Override
+        public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
+                ServerCallHandler<Q, R> next) {
+            seen.set(headers);
+            if (!headers.containsKey(WANT)) {
+                return next.startCall(call, headers);
+            }
+            return next.startCall(new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+                @Override
+                public void sendHeaders(Metadata response) {
+                    response.put(ANSWER, "42");
+                    super.sendHeaders(response);
+                }
+
+                @Override
+                public void close(Status status, Metadata trailers) {
+                    trailers.put(DONE, "yes");
+                    super.close(status, trailers);
+                }
+            }, headers);
+        }
+    }
     private final CountDownLatch cancelled = new CountDownLatch(1);
 
     private ConnectGateway gateway;
@@ -165,7 +205,7 @@ class ConnectGatewayTest {
 
     @BeforeEach
     void start() throws IOException {
-        gateway = new ConnectGateway(List.of(echo()),
+        gateway = new ConnectGateway(List.of(ServerInterceptors.intercept(echo(), new MetadataProbe())),
                 Set.of(SERVICE + "/Say", SERVICE + "/Count", SERVICE + "/Collect"),
                 resolver(), new ConnectLimits(64, 1 << 20));
         http = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -370,6 +410,50 @@ class ConnectGatewayTest {
         assertThat(say("x", "api_token", OPERATOR, "Sec-Fetch-Site", "none").statusCode()).isEqualTo(200);
     }
 
+    @Test
+    void customHeadersReachTheServiceButCredentialsAndProtocolHeadersDoNot() throws Exception {
+        byte[] token = {1, 2, 3, (byte) 0xff};
+        HttpResponse<byte[]> response = say("x", "api_token", OPERATOR, "Cookie", "session=secret",
+                "X-Trace", "abc", "X-Token-Bin", Base64.getEncoder().encodeToString(token),
+                "Connect-Timeout-Ms", "5000", "Sec-Fetch-Site", "same-origin");
+        assertThat(response.statusCode()).isEqualTo(200);
+        Metadata headers = seen.get();
+        assertThat(headers.get(Metadata.Key.of("x-trace", Metadata.ASCII_STRING_MARSHALLER))).isEqualTo("abc");
+        assertThat(headers.get(Metadata.Key.of("x-token-bin", Metadata.BINARY_BYTE_MARSHALLER))).isEqualTo(token);
+        assertThat(headers.keys()).doesNotContain("api_token", "authorization", "cookie", "content-type",
+                "connect-timeout-ms", "sec-fetch-site");
+    }
+
+    @Test
+    void responseHeadersAndTrailersComeBackOnUnaryAndStreams() throws Exception {
+        HttpResponse<byte[]> unary = say("x", "api_token", OPERATOR, "X-Want-Metadata", "1");
+        assertThat(unary.statusCode()).isEqualTo(200);
+        assertThat(unary.headers().firstValue("x-answer")).hasValue("42");
+        assertThat(unary.headers().firstValue("trailer-x-done")).hasValue("yes");
+
+        HttpResponse<byte[]> failed = say("fail", "api_token", OPERATOR, "X-Want-Metadata", "1");
+        assertThat(failed.statusCode()).isEqualTo(400);
+        assertThat(failed.headers().firstValue("trailer-x-done")).hasValue("yes");
+        assertThat(failed.headers().map().keySet()).noneMatch(name -> name.toLowerCase(Locale.ROOT)
+                .startsWith("trailer-grpc"));
+
+        HttpResponse<byte[]> stream = count(2, "api_token", OPERATOR, "X-Want-Metadata", "1");
+        assertThat(stream.headers().firstValue("x-answer")).hasValue("42");
+        assertThat(frames(stream.body()).getLast().text()).isEqualTo("{\"metadata\":{\"x-done\":[\"yes\"]}}");
+    }
+
+    @Test
+    void reservedOrMalformedForwardedHeadersAreRefused() throws Exception {
+        HttpResponse<byte[]> reserved = say("x", "api_token", OPERATOR, "protomolt-connect-call", "forged");
+        assertThat(reserved.statusCode()).isEqualTo(400);
+        assertThat(text(reserved)).contains("invalid_argument", "reserved");
+
+        HttpResponse<byte[]> notBase64 = say("x", "api_token", OPERATOR, "X-Token-Bin", "!!!");
+        assertThat(notBase64.statusCode()).isEqualTo(400);
+        assertThat(text(notBase64)).contains("invalid_argument", "x-token-bin");
+        assertThat(invocations).hasValue(0);
+    }
+
     // ------------------------------------------------------------------ server streaming
 
     private HttpResponse<byte[]> count(int n, String... headers) throws Exception {
@@ -417,12 +501,12 @@ class ConnectGatewayTest {
         HttpResponse<byte[]> extra = post(SERVICE + "/Count", ConnectGateway.STREAM_CONTENT_TYPE,
                 Arrays.copyOf(trailing, trailing.length + 1), "api_token", OPERATOR);
         assertThat(frames(extra.body())).singleElement()
-                .satisfies(frame -> assertThat(frame.text()).contains("invalid_argument", "exactly one message"));
+                .satisfies(frame -> assertThat(frame.text()).contains("unimplemented", "exactly one message"));
 
         HttpResponse<byte[]> compressed = post(SERVICE + "/Count", ConnectGateway.STREAM_CONTENT_TYPE,
                 envelope(1, Int32Value.of(1).toByteArray()), "api_token", OPERATOR);
         assertThat(frames(compressed.body())).singleElement()
-                .satisfies(frame -> assertThat(frame.text()).contains("unimplemented"));
+                .satisfies(frame -> assertThat(frame.text()).contains("internal", "without a negotiated encoding"));
         assertThat(invocations).hasValue(2);
     }
 

@@ -34,6 +34,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -119,6 +120,7 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         }
     };
 
+    private final String basePath;
     private final RequestCallerResolver callers;
     private final ConnectLimits limits;
     private final Map<String, MethodDescriptor<byte[], byte[]>> methods;
@@ -143,6 +145,29 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
      */
     public ConnectGateway(List<ServerServiceDefinition> services, Set<String> exposed,
             RequestCallerResolver callers, ConnectLimits limits) {
+        this(services, exposed, callers, limits, PATH);
+    }
+
+    /**
+     * Builds the gateway for a context other than {@link #PATH}; a Connect client then calls
+     * {@code POST <basePath>/<package.Service>/<Method>}.
+     *
+     * @param services the services the exposed procedures belong to, as in the four-argument form
+     * @param exposed the procedures reachable through the gateway
+     * @param callers resolves the caller of every request
+     * @param limits the request and response message bounds
+     * @param basePath the context path the gateway is mounted at: empty for the server root,
+     *        otherwise starting with {@code /} and not ending with one
+     * @throws IllegalArgumentException as the four-argument form, or for a malformed base path
+     */
+    public ConnectGateway(List<ServerServiceDefinition> services, Set<String> exposed,
+            RequestCallerResolver callers, ConnectLimits limits, String basePath) {
+        Objects.requireNonNull(basePath, "basePath");
+        if (!basePath.isEmpty() && (!basePath.startsWith("/") || basePath.endsWith("/"))) {
+            throw new IllegalArgumentException("basePath must be empty or start with / and not end with /: "
+                    + basePath);
+        }
+        this.basePath = basePath;
         Objects.requireNonNull(services, "services");
         Objects.requireNonNull(exposed, "exposed");
         if (exposed.isEmpty()) {
@@ -215,11 +240,11 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
 
     private void serve(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getRawPath();
-        if (!path.startsWith(PATH + "/")) {
+        if (!path.startsWith(basePath + "/")) {
             unaryError(exchange, Status.NOT_FOUND.withDescription("no Connect procedure at " + path), null);
             return;
         }
-        String procedure = path.substring(PATH.length() + 1);
+        String procedure = path.substring(basePath.length() + 1);
         MethodDescriptor<byte[], byte[]> method = methods.get(procedure);
         if (method == null) {
             // The protocol answers an unknown procedure with 404 and code unimplemented.
@@ -237,17 +262,19 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         boolean streaming = type == MethodDescriptor.MethodType.SERVER_STREAMING;
         if (!"POST".equals(exchange.getRequestMethod())) {
             exchange.getResponseHeaders().set("Allow", "POST");
-            sendError(exchange, 405, Status.UNIMPLEMENTED.withDescription(
-                    "Connect calls are POST; got " + exchange.getRequestMethod()), null);
+            // A protocol-level refusal: plain HTTP, not a Connect error record.
+            sendPlain(exchange, 405, "Connect calls are POST; got " + exchange.getRequestMethod());
             return;
         }
         String expected = streaming ? STREAM_CONTENT_TYPE : UNARY_CONTENT_TYPE;
         String contentType = mediaType(exchange.getRequestHeaders().getFirst("Content-Type"));
         if (!expected.equals(contentType)) {
             exchange.getResponseHeaders().set("Accept-Post", expected);
-            sendError(exchange, 415, Status.UNIMPLEMENTED.withDescription(procedure + " takes "
-                    + expected + "; got " + (contentType == null ? "no content type" : contentType)
-                    + ". The gateway carries binary protobuf only and does not transcode JSON"), null);
+            // A protocol-level refusal: plain HTTP 415, as the protocol specifies for an
+            // unsupported codec, not a Connect error record.
+            sendPlain(exchange, 415, procedure + " takes " + expected + "; got "
+                    + (contentType == null ? "no content type" : contentType)
+                    + ". The gateway carries binary protobuf only and does not transcode JSON");
             return;
         }
         Headers headers = exchange.getRequestHeaders();
@@ -268,6 +295,13 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         Deadline deadline;
         try {
             deadline = deadline(headers);
+        } catch (IllegalArgumentException e) {
+            reject(exchange, streaming, Status.INVALID_ARGUMENT.withDescription(e.getMessage()));
+            return;
+        }
+        Metadata forwarded;
+        try {
+            forwarded = ConnectMetadata.requestMetadata(headers, CALL_KEY.name());
         } catch (IllegalArgumentException e) {
             reject(exchange, streaming, Status.INVALID_ARGUMENT.withDescription(e.getMessage()));
             return;
@@ -295,23 +329,29 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         }
         CallOptions options = deadline == null ? CallOptions.DEFAULT : CallOptions.DEFAULT.withDeadline(deadline);
         if (streaming) {
-            serverStream(exchange, method, options, caller, request);
+            serverStream(exchange, method, options, caller, forwarded, request);
         } else {
-            unary(exchange, method, options, caller, request);
+            unary(exchange, method, options, caller, forwarded, request);
         }
     }
 
     // ------------------------------------------------------------------ calls
 
     private void unary(HttpExchange exchange, MethodDescriptor<byte[], byte[]> method, CallOptions options,
-            AuthenticatedCaller caller, byte[] request) throws IOException {
+            AuthenticatedCaller caller, Metadata forwarded, byte[] request) throws IOException {
         CompletableFuture<Outcome> outcome = new CompletableFuture<>();
         AtomicReference<byte[]> response = new AtomicReference<>();
+        AtomicReference<Metadata> responseHeaders = new AtomicReference<>();
         String id = UUID.randomUUID().toString();
         handoffs.put(id, caller);
         ClientCall<byte[], byte[]> call = channel.newCall(method, options);
         try {
             call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onHeaders(Metadata metadata) {
+                    responseHeaders.set(metadata);
+                }
+
                 @Override
                 public void onMessage(byte[] message) {
                     response.set(message);
@@ -321,11 +361,14 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
                 public void onClose(Status status, Metadata trailers) {
                     outcome.complete(new Outcome(status, trailers));
                 }
-            }, handoffMetadata(id));
+            }, handoff(forwarded, id));
             call.sendMessage(request);
             call.halfClose();
             call.request(2);
             Outcome done = await(outcome, call);
+            // Connect carries unary trailers as headers with a trailer- prefix, on success and on error.
+            ConnectMetadata.writeHeaders(responseHeaders.get(), exchange.getResponseHeaders(), "");
+            ConnectMetadata.writeHeaders(done.trailers, exchange.getResponseHeaders(), "trailer-");
             if (!done.status.isOk()) {
                 unaryError(exchange, done.status, done.trailers);
                 return;
@@ -349,13 +392,18 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
     }
 
     private void serverStream(HttpExchange exchange, MethodDescriptor<byte[], byte[]> method,
-            CallOptions options, AuthenticatedCaller caller, byte[] request) throws IOException {
+            CallOptions options, AuthenticatedCaller caller, Metadata forwarded, byte[] request) throws IOException {
         BlockingQueue<Object> events = new LinkedBlockingQueue<>();
         String id = UUID.randomUUID().toString();
         handoffs.put(id, caller);
         ClientCall<byte[], byte[]> call = channel.newCall(method, options);
         try {
             call.start(new ClientCall.Listener<>() {
+                @Override
+                public void onHeaders(Metadata metadata) {
+                    events.add(new ResponseHeaders(metadata));
+                }
+
                 @Override
                 public void onMessage(byte[] message) {
                     events.add(message);
@@ -365,13 +413,11 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
                 public void onClose(Status status, Metadata trailers) {
                     events.add(new Outcome(status, trailers));
                 }
-            }, handoffMetadata(id));
+            }, handoff(forwarded, id));
             call.sendMessage(request);
             call.halfClose();
             call.request(1);
-            exchange.getResponseHeaders().set("Content-Type", STREAM_CONTENT_TYPE);
-            exchange.sendResponseHeaders(200, 0);
-            OutputStream out = exchange.getResponseBody();
+            OutputStream out = null;
             while (true) {
                 Object event;
                 try {
@@ -382,12 +428,25 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
                     throw new IOException("interrupted while streaming " + method.getFullMethodName(), e);
                 }
                 try {
-                    if (event instanceof byte[] message) {
+                    if (event instanceof ResponseHeaders responseHeaders) {
+                        if (out != null) {
+                            throw new IllegalStateException(method.getFullMethodName()
+                                    + " sent response headers after its first message");
+                        }
+                        ConnectMetadata.writeHeaders(responseHeaders.metadata(), exchange.getResponseHeaders(), "");
+                        out = startStream(exchange);
+                    } else if (event instanceof byte[] message) {
+                        if (out == null) {
+                            out = startStream(exchange);
+                        }
                         writeEnvelope(out, 0, message);
                         out.flush();
                         call.request(1);
                     } else {
                         Outcome done = (Outcome) event;
+                        if (out == null) {
+                            out = startStream(exchange);
+                        }
                         writeEnvelope(out, FLAG_END_STREAM, ConnectErrors.endOfStream(done.status, done.trailers));
                         out.close();
                         return;
@@ -403,10 +462,21 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         }
     }
 
-    private static Metadata handoffMetadata(String id) {
-        Metadata metadata = new Metadata();
-        metadata.put(CALL_KEY, id);
-        return metadata;
+    /** Sends the stream's HTTP status and headers; the body follows chunked. */
+    private static OutputStream startStream(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", STREAM_CONTENT_TYPE);
+        exchange.sendResponseHeaders(200, 0);
+        return exchange.getResponseBody();
+    }
+
+    /** The response headers a stream's service sent before its first message. */
+    private record ResponseHeaders(Metadata metadata) {
+    }
+
+    /** The forwarded request metadata plus the key the dispatch server finds the caller by. */
+    private static Metadata handoff(Metadata forwarded, String id) {
+        forwarded.put(CALL_KEY, id);
+        return forwarded;
     }
 
     private static Outcome await(CompletableFuture<Outcome> outcome, ClientCall<byte[], byte[]> call)
@@ -513,13 +583,14 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
     private byte[] readEnvelope(InputStream body) throws IOException {
         byte[] prefix = body.readNBytes(5);
         if (prefix.length < 5) {
-            throw new RequestRefused(Status.INVALID_ARGUMENT.withDescription(
+            throw new RequestRefused(Status.UNIMPLEMENTED.withDescription(
                     "a server-streaming request is one enveloped message"));
         }
         int flags = prefix[0] & 0xff;
         if ((flags & FLAG_COMPRESSED) != 0) {
-            throw new RequestRefused(Status.UNIMPLEMENTED.withDescription(
-                    "compressed messages are not accepted; send identity encoding"));
+            // No compression was negotiated, so a compressed message is a protocol violation.
+            throw new RequestRefused(Status.INTERNAL.withDescription(
+                    "a compressed message arrived without a negotiated encoding"));
         }
         if (flags != 0) {
             throw new RequestRefused(Status.INVALID_ARGUMENT.withDescription(
@@ -537,7 +608,7 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
                     "request envelope declares " + length + " bytes but carries " + message.length));
         }
         if (body.read() != -1) {
-            throw new RequestRefused(Status.INVALID_ARGUMENT.withDescription(
+            throw new RequestRefused(Status.UNIMPLEMENTED.withDescription(
                     "a server-streaming request carries exactly one message"));
         }
         return message;
@@ -581,6 +652,15 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
 
     private static void unaryError(HttpExchange exchange, Status status, Metadata trailers) throws IOException {
         sendError(exchange, ConnectErrors.httpStatus(status.getCode()), status, trailers);
+    }
+
+    private static void sendPlain(HttpExchange exchange, int httpStatus, String message) throws IOException {
+        byte[] body = message.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+        exchange.sendResponseHeaders(httpStatus, body.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+        }
     }
 
     private static void sendError(HttpExchange exchange, int httpStatus, Status status, Metadata trailers)

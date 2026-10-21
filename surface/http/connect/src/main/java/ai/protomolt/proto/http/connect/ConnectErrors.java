@@ -8,6 +8,7 @@ import io.grpc.protobuf.StatusProto;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The Connect protocol's error record and end-of-stream record. The protocol defines both as
@@ -84,16 +85,43 @@ final class ConnectErrors {
     }
 
     /**
-     * The end-of-stream record: empty on success, the error record under {@code error} on
-     * failure.
+     * The end-of-stream record: the error record under {@code error} on failure, and the
+     * call's trailers under {@code metadata} when it has any; {@code {}} for a bare success.
      *
      * @param status the call's status
      * @param trailers the call's trailers, or null when the call never reached a service
      * @return the record as UTF-8 JSON bytes
      */
     static byte[] endOfStream(Status status, Metadata trailers) {
-        String record = status.isOk() ? "{}" : "{\"error\":" + error(status, trailers) + "}";
-        return record.getBytes(StandardCharsets.UTF_8);
+        StringBuilder record = new StringBuilder("{");
+        if (!status.isOk()) {
+            record.append("\"error\":").append(error(status, trailers));
+        }
+        Map<String, List<String>> metadata = ConnectMetadata.values(trailers);
+        if (!metadata.isEmpty()) {
+            if (record.length() > 1) {
+                record.append(',');
+            }
+            record.append("\"metadata\":{");
+            boolean firstKey = true;
+            for (Map.Entry<String, List<String>> entry : metadata.entrySet()) {
+                if (!firstKey) {
+                    record.append(',');
+                }
+                firstKey = false;
+                string(record, entry.getKey());
+                record.append(":[");
+                for (int i = 0; i < entry.getValue().size(); i++) {
+                    if (i > 0) {
+                        record.append(',');
+                    }
+                    string(record, entry.getValue().get(i));
+                }
+                record.append(']');
+            }
+            record.append('}');
+        }
+        return record.append('}').toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private static String error(Status status, Metadata trailers) {
