@@ -9,6 +9,8 @@ import { defineConfig } from 'vitest/config'
 const registry = process.env.PROTOMOLT_REGISTRY_URL ?? 'http://localhost:8081'
 // protomolt-serve's REST/verbs port, for reflect/compile/gather calls.
 const serve = process.env.PROTOMOLT_SERVE_URL ?? 'http://localhost:8080'
+// A repository host's HTTP port, whose Connect gateway the Repository section calls.
+const repository = process.env.PROTOMOLT_REPOSITORY_URL ?? 'http://localhost:8080'
 
 export default defineConfig({
   // Served at /console by protomolt-serve (and any reverse proxy that mirrors it).
@@ -50,6 +52,10 @@ export default defineConfig({
       '/api/correction': {
         target: serve,
         changeOrigin: true,
+      },
+      '/connect': {
+        target: repository,
+        changeOrigin: false,
       },
     },
   },

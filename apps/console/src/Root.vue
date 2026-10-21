@@ -69,11 +69,16 @@ const sections = [
   { to: '/search', icon: 'mdi-magnify', title: 'Search', hint: 'Query indexed subjects' },
   { to: '/metrics', icon: 'mdi-chart-box-outline', title: 'Metrics', hint: 'Measures over indexed rows' },
   { to: '/receipts', icon: 'mdi-file-certificate-outline', title: 'Receipts', hint: 'Verify signed work records' },
+  { to: '/repository', icon: 'mdi-archive-outline', title: 'Repository', hint: 'Documents, revisions and files' },
 ]
 
 const theme = useTheme()
 const route = useRoute()
-const taskRoute = computed(() => route.path.startsWith('/tasks') || route.path.startsWith('/start'))
+// Task and repository screens are served by hosts without the schema registry,
+// so the registry chip and its probe stay off there.
+const taskRoute = computed(
+  () => route.path.startsWith('/tasks') || route.path.startsWith('/start') || route.path.startsWith('/repository'),
+)
 const isDark = computed(() => theme.global.current.value.dark)
 
 function toggleTheme() {

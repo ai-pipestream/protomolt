@@ -42,6 +42,34 @@ export const router = createRouter({
       name: 'receipts',
       component: () => import('./views/ReceiptsView.vue'),
     },
+    {
+      path: '/repository',
+      component: () => import('./views/repository/RepositoryShell.vue'),
+      children: [
+        {
+          path: '',
+          name: 'repository',
+          component: () => import('./views/repository/RepositoryAccountsView.vue'),
+        },
+        {
+          path: 'accounts/:accountId',
+          name: 'repository-account',
+          component: () => import('./views/repository/RepositoryAccountView.vue'),
+        },
+        {
+          // The call number rides in the query (account, graph, node, doc, and
+          // an optional exact revision): its parts may hold slashes and colons.
+          path: 'document',
+          name: 'repository-document',
+          component: () => import('./views/repository/RepositoryDocumentView.vue'),
+        },
+        {
+          path: 'lookup',
+          name: 'repository-lookup',
+          component: () => import('./views/repository/RepositoryLookupView.vue'),
+        },
+      ],
+    },
     // Pre-section paths that may live in bookmarks and shared links.
     { path: '/schema-registry/workflows', redirect: '/workflows' },
     { path: '/schema-registry/connect', redirect: '/services/connect' },
