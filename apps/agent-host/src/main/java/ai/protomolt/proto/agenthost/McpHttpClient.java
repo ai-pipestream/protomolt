@@ -40,7 +40,7 @@ final class McpHttpClient implements AutoCloseable {
 
     static McpHttpClient usingTokenEnvironment(URI endpoint, String tokenEnvironment) {
         if (tokenEnvironment != null
-                && !tokenEnvironment.matches("[A-Z][A-Z0-9_]{0,127}")) {
+                && !isTokenEnvironmentName(tokenEnvironment)) {
             throw new IllegalArgumentException("token environment name is invalid");
         }
         return new McpHttpClient(endpoint, () -> {
@@ -54,6 +54,24 @@ final class McpHttpClient implements AutoCloseable {
             }
             return value;
         });
+    }
+
+    /**
+     * The token environment variable grammar: 1 to 128 ASCII characters, an uppercase
+     * letter first, then uppercase letters, digits or {@code '_'}.
+     */
+    static boolean isTokenEnvironmentName(String name) {
+        int length = name.length();
+        if (length < 1 || length > 128 || !HostText.isAsciiUpper(name.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < length; i++) {
+            char c = name.charAt(i);
+            if (!HostText.isAsciiUpper(c) && !HostText.isAsciiDigit(c) && c != '_') {
+                return false;
+            }
+        }
+        return true;
     }
 
     synchronized ObjectNode callTool(String name, ObjectNode arguments) {

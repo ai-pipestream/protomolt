@@ -139,7 +139,7 @@ final class CodexAgentProvider implements AgentProvider {
 
     private void captureSessionId(byte[] output) {
         String text = new String(output, StandardCharsets.UTF_8);
-        for (String line : text.split("\\R")) {
+        for (String line : HostText.splitOnLineBreaks(text)) {
             if (line.isBlank()) {
                 continue;
             }

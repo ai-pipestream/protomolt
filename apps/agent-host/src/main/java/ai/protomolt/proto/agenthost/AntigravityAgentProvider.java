@@ -134,7 +134,7 @@ final class AntigravityAgentProvider implements AgentProvider {
      */
     private String finalAnswer(byte[] out) {
         JsonNode result = null;
-        for (String line : new String(out, StandardCharsets.UTF_8).split("\n")) {
+        for (String line : HostText.splitOnNewline(new String(out, StandardCharsets.UTF_8))) {
             if (line.isBlank()) {
                 continue;
             }
