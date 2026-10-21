@@ -44,8 +44,10 @@ public final class StarterRecordExport {
         try (InputStream body = login.body()) {
             if (login.statusCode() != 200) throw new IllegalStateException("starter console login failed");
         }
-        String cookie = login.headers().firstValue("set-cookie")
-                .orElseThrow(() -> new IllegalStateException("console returned no session cookie")).split(";", 2)[0];
+        String setCookie = login.headers().firstValue("set-cookie")
+                .orElseThrow(() -> new IllegalStateException("console returned no session cookie"));
+        int parameter = setCookie.indexOf(';');
+        String cookie = parameter < 0 ? setCookie : setCookie.substring(0, parameter);
         try {
             HttpResponse<InputStream> response = client.send(HttpRequest.newBuilder(
                             URI.create("http://127.0.0.1:8080/api/tasks/" + taskId + "/record"))

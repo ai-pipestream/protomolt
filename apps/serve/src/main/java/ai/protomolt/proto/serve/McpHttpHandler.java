@@ -400,14 +400,31 @@ public final class McpHttpHandler implements HttpHandler, AutoCloseable {
             return false;
         }
         for (String value : values) {
-            for (String item : value.split(",")) {
-                String mediaType = item.split(";", 2)[0].trim();
-                if (expected.equalsIgnoreCase(mediaType)) {
+            // Limit-0 comma-split semantics: trailing empty segments are dropped.
+            int end = value.length();
+            while (end > 0 && value.charAt(end - 1) == ',') {
+                end--;
+            }
+            int start = 0;
+            while (start < end) {
+                int comma = value.indexOf(',', start);
+                if (comma < 0 || comma >= end) {
+                    comma = end;
+                }
+                if (matchesMediaType(value.substring(start, comma), expected)) {
                     return true;
                 }
+                start = comma + 1;
             }
         }
         return false;
+    }
+
+    /** Media type of one comma-separated header item: the part before any {@code ;} parameter, trimmed. */
+    private static boolean matchesMediaType(String item, String expected) {
+        int semi = item.indexOf(';');
+        String mediaType = (semi < 0 ? item : item.substring(0, semi)).trim();
+        return expected.equalsIgnoreCase(mediaType);
     }
 
     private JsonNode error(JsonNode id, int code, String message) {
