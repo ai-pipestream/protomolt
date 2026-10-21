@@ -21,7 +21,9 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -45,6 +47,12 @@ public final class UploadHttpServer implements AutoCloseable {
     /** The archive's upload route (served when the archive surface is wired). */
     public static final String ARCHIVE_UPLOAD_PATH = "/v1/archive:upload";
 
+    /**
+     * The path reserved for the Connect gateway; an extra route can neither be it nor sit
+     * under it.
+     */
+    public static final String CONNECT_PATH = "/connect";
+
     private static final Logger LOG = LoggerFactory.getLogger(UploadHttpServer.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -53,6 +61,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final byte[] expectedToken;
     private final ArchiveRepository archiveOperations;
     private final RepositoryConsole console;
+    private final Map<String, HttpHandler> routes;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -76,12 +85,61 @@ public final class UploadHttpServer implements AutoCloseable {
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console) {
+        this(uploads, callers, apiToken, archiveOperations, console, Map.of());
+    }
+
+    /**
+     * Serves the routes of
+     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, ArchiveRepository, RepositoryConsole)}
+     * plus {@code routes}, each mounted as its own context before the server starts. The
+     * server matches the longest context path, so a route such as {@code /console/session}
+     * takes precedence over the console bundle below it. A route owns its own credential
+     * check; none is applied for it here.
+     *
+     * @param uploads the parts-based streaming upload coordinator, or null to leave
+     *        the document route unmounted (archive-only host)
+     * @param callers supplies the caller a request acts as once its credential matches
+     * @param apiToken the operator credential both upload routes require
+     * @param archiveOperations the archive rendition upload port, or null to leave
+     *        that route unmounted
+     * @param console the console bundle served at {@link RepositoryConsole#PATH}
+     * @param routes extra context path to handler; a path must start with {@code /}, must
+     *        not be {@code /}, a built-in route, {@link #CONNECT_PATH} or under it
+     * @throws IllegalArgumentException when a route path is refused
+     */
+    public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
+            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
+            Map<String, HttpHandler> routes) {
         String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         this.documentUploads = uploads == null ? null : new UploadHttpHandler(uploads, token,
                 Objects.requireNonNull(callers, "callers"));
         this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
         this.console = Objects.requireNonNull(console, "console");
+        this.routes = extraRoutes(routes);
+    }
+
+    private static Map<String, HttpHandler> extraRoutes(Map<String, HttpHandler> routes) {
+        Objects.requireNonNull(routes, "routes");
+        Map<String, HttpHandler> accepted = new LinkedHashMap<>();
+        routes.forEach((path, handler) -> {
+            Objects.requireNonNull(path, "route path");
+            Objects.requireNonNull(handler, "handler for route " + path);
+            if (!path.startsWith("/") || path.equals("/")) {
+                throw new IllegalArgumentException("route path must start with / and name a route: "
+                        + path);
+            }
+            if (path.equals(UPLOAD_PATH) || path.equals(ARCHIVE_UPLOAD_PATH)
+                    || path.equals(RepositoryConsole.PATH)) {
+                throw new IllegalArgumentException("route path " + path + " is a built-in route");
+            }
+            if (path.equals(CONNECT_PATH) || path.startsWith(CONNECT_PATH + "/")) {
+                throw new IllegalArgumentException("route path " + path
+                        + " is reserved for the Connect gateway");
+            }
+            accepted.put(path, handler);
+        });
+        return Collections.unmodifiableMap(accepted);
     }
 
     /**
@@ -133,6 +191,7 @@ public final class UploadHttpServer implements AutoCloseable {
                 created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
             }
             created.createContext(RepositoryConsole.PATH, console.handler());
+            routes.forEach(created::createContext);
             // Connect gateway mount point (#524): the console calls DocumentService,
             // DriveService and ArchiveService same-origin over binary protobuf Connect,
             // one context per service path:
