@@ -1,39 +1,44 @@
 // @vitest-environment jsdom
 import { create } from '@bufbuild/protobuf'
-import { Code, ConnectError } from '@connectrpc/connect'
-import { describe, expect, it } from 'vitest'
-import { AccountSchema, AccountStatus } from '@/gen/ai/protomolt/proto/account/v1/account_pb'
-import { AccountService, ListAccountsResponseSchema } from '@/gen/ai/protomolt/proto/account/v1/account_service_pb'
-import RepositoryAccountsView from '@/views/repository/RepositoryAccountsView.vue'
+import { describe, expect, it, vi } from 'vitest'
+import { ConsoleSessionStatusSchema, type ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { REPOSITORY_SESSION, REPOSITORY_SIGN_IN } from '@/repository/clients'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
+import { SessionApiError } from '@/services/session'
+import RepositoryAccountsView from './RepositoryAccountsView.vue'
+
+async function mountWith(status: () => Promise<ConsoleSessionStatus>, signIn = vi.fn()) {
+  const mounted = await mountRepositoryView(RepositoryAccountsView, '/repository', () => {}, {
+    [REPOSITORY_SESSION as symbol]: { status },
+    [REPOSITORY_SIGN_IN as symbol]: signIn,
+  })
+  return { ...mounted, signIn }
+}
 
 describe('RepositoryAccountsView', () => {
-  it('lists the accounts across pages and links each to its documents', async () => {
-    const { wrapper } = await mountRepositoryView(RepositoryAccountsView, '/repository', (router) =>
-      router.service(AccountService, {
-        listAccounts(request) {
-          return request.continuationToken === ''
-            ? create(ListAccountsResponseSchema, {
-                accounts: [create(AccountSchema, { accountId: 'acct-a', displayName: 'Alpha', status: AccountStatus.ACTIVE })],
-                nextContinuationToken: 'p2',
-              })
-            : create(ListAccountsResponseSchema, { accounts: [create(AccountSchema, { accountId: 'acct-b', status: AccountStatus.DEACTIVATED })] })
-        },
-      }),
+  it("lists the session's bound accounts and links each to its documents", async () => {
+    const { wrapper } = await mountWith(async () =>
+      create(ConsoleSessionStatusSchema, { authenticated: true, principal: 'ada', accountIds: ['acct-a', 'acct-b'] }),
     )
+    expect(wrapper.get('[data-testid="session-principal"]').text()).toContain('ada')
     const list = wrapper.get('[data-testid="account-list"]')
-    expect(list.text()).toContain('Alpha')
-    expect(list.text()).toContain('acct-a · ACTIVE')
-    expect(list.text()).toContain('acct-b · DEACTIVATED')
-    expect(list.find('a[href="/repository/accounts/acct-a"]').exists()).toBe(true)
+    expect(list.text()).toContain('acct-a')
+    expect(list.text()).toContain('acct-b')
+    expect(list.find('a[href="/repository/accounts/acct-b"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('shows the gateway status when AccountService is not served, and still opens an account by ID', async () => {
-    const { wrapper, router } = await mountRepositoryView(RepositoryAccountsView, '/repository', () => {})
-    const failure = wrapper.get('[data-testid="rpc-failure"]')
-    expect(failure.text()).toContain('Listing accounts')
-    expect(failure.text()).toContain('UNIMPLEMENTED')
+  it('says so when the session is bound to no account', async () => {
+    const { wrapper } = await mountWith(async () => create(ConsoleSessionStatusSchema, { authenticated: true, principal: 'ada' }))
+    expect(wrapper.get('[data-testid="no-accounts"]').text()).toContain('bound to no accounts')
+    wrapper.unmount()
+  })
+
+  it('offers sign-in when there is no session, and still opens an account by ID', async () => {
+    const { wrapper, router, signIn } = await mountWith(async () => create(ConsoleSessionStatusSchema, { authenticated: false }))
+    expect(wrapper.find('[data-testid="signed-out"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="sign-in"]').trigger('click')
+    expect(signIn).toHaveBeenCalledTimes(1)
     await wrapper.get('[data-testid="account-id-input"] input').setValue('acct-z')
     await wrapper.get('[data-testid="open-account"]').trigger('click')
     await settle()
@@ -41,16 +46,14 @@ describe('RepositoryAccountsView', () => {
     wrapper.unmount()
   })
 
-  it('shows a PERMISSION_DENIED with the server message, not an empty list', async () => {
-    const { wrapper } = await mountRepositoryView(RepositoryAccountsView, '/repository', (router) =>
-      router.service(AccountService, {
-        listAccounts() {
-          throw new ConnectError('no account binding for principal ada', Code.PermissionDenied)
-        },
-      }),
-    )
-    expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('no account binding for principal ada')
-    expect(wrapper.text()).not.toContain('No accounts are visible')
+  it('shows a session read the host did not answer, by its HTTP status', async () => {
+    const { wrapper } = await mountWith(async () => {
+      throw new SessionApiError(503, '/console/session answered 503: identity provider unreachable')
+    })
+    const failure = wrapper.get('[data-testid="rpc-failure"]').text()
+    expect(failure).toContain('HTTP 503')
+    expect(failure).toContain('identity provider unreachable')
+    expect(wrapper.find('[data-testid="signed-out"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

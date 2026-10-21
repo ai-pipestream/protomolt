@@ -4,17 +4,16 @@
  */
 import { createClient, type Client, type Transport } from '@connectrpc/connect'
 import { inject, type InjectionKey } from 'vue'
-import { AccountService } from '@/gen/ai/protomolt/proto/account/v1/account_service_pb'
 import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import { DriveService } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { SessionApi } from '@/services/session'
 import type { UploadRequest } from './uploadCore'
 
 /** One client per service the screens call. */
 export interface RepositoryClients {
   documents: Client<typeof DocumentService>
   drives: Client<typeof DriveService>
-  accounts: Client<typeof AccountService>
   archives: Client<typeof ArchiveService>
 }
 
@@ -23,7 +22,6 @@ export function repositoryClients(transport: Transport): RepositoryClients {
   return {
     documents: createClient(DocumentService, transport),
     drives: createClient(DriveService, transport),
-    accounts: createClient(AccountService, transport),
     archives: createClient(ArchiveService, transport),
   }
 }
@@ -52,3 +50,10 @@ export function useSignIn(): () => void {
 
 /** Makes the HTTP request an upload sends; the browser's XMLHttpRequest unless a test provides one. */
 export const REPOSITORY_UPLOAD_REQUEST: InjectionKey<() => UploadRequest> = Symbol('repository-upload-request')
+
+/** The session status read the account picker uses; the host's SessionApi unless a test provides one. */
+export const REPOSITORY_SESSION: InjectionKey<Pick<SessionApi, 'status'>> = Symbol('repository-session')
+
+export function useRepositorySession(): Pick<SessionApi, 'status'> {
+  return inject(REPOSITORY_SESSION, () => new SessionApi(), true)
+}

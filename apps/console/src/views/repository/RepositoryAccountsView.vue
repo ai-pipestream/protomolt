@@ -17,22 +17,30 @@
     <v-row dense>
       <v-col cols="12" md="7">
         <v-card class="mb-4">
-          <v-card-title class="text-subtitle-2">Accounts</v-card-title>
+          <v-card-title class="text-subtitle-2">Your accounts</v-card-title>
           <v-card-text>
             <v-progress-linear v-if="loading" indeterminate class="mb-2" />
-            <RpcFailureAlert v-if="failure" :failure="failure" title="Listing accounts" />
-            <v-list v-if="accounts.length > 0" density="compact" data-testid="account-list">
-              <v-list-item
-                v-for="account in accounts"
-                :key="account.accountId"
-                :to="accountRoute(account.accountId)"
-                :title="account.displayName || account.accountId"
-                :subtitle="`${account.accountId} · ${statusLabel(account.status)}`"
-                prepend-icon="mdi-domain"
-              />
-            </v-list>
-            <div v-else-if="!loading && !failure" class="text-body-2 text-medium-emphasis">
-              No accounts are visible to this session.
+            <RpcFailureAlert v-if="failure" :failure="failure" title="Reading the session" />
+            <template v-if="session?.authenticated">
+              <div class="text-caption text-medium-emphasis mb-1" data-testid="session-principal">
+                Signed in as <span class="text-mono">{{ session.principal }}</span>
+              </div>
+              <v-list v-if="session.accountIds.length > 0" density="compact" data-testid="account-list">
+                <v-list-item
+                  v-for="accountId in session.accountIds"
+                  :key="accountId"
+                  :to="accountRoute(accountId)"
+                  :title="accountId"
+                  prepend-icon="mdi-domain"
+                />
+              </v-list>
+              <div v-else class="text-body-2 text-medium-emphasis" data-testid="no-accounts">
+                Your session is bound to no accounts.
+              </div>
+            </template>
+            <div v-else-if="session" data-testid="signed-out">
+              <div class="text-body-2 mb-2">You are not signed in.</div>
+              <v-btn size="small" color="primary" data-testid="sign-in" @click="signIn">Sign in</v-btn>
             </div>
           </v-card-text>
         </v-card>
@@ -59,21 +67,18 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
-import { create } from '@bufbuild/protobuf'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
-import { AccountStatusSchema, type Account } from '@/gen/ai/protomolt/proto/account/v1/account_pb'
-import { ListAccountsRequestSchema } from '@/gen/ai/protomolt/proto/account/v1/account_service_pb'
-import { useRepositoryClients } from '@/repository/clients'
-import { enumLabel } from '@/repository/formatCore'
-import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
-import { useCallScope } from '@/repository/useCallScope'
+import type { ConsoleSessionStatus } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { useRepositorySession, useSignIn } from '@/repository/clients'
+import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import { SessionApiError } from '@/services/session'
 
-const clients = useRepositoryClients()
 const router = useRouter()
-const scope = useCallScope()
-const accounts = ref<Account[]>([])
+const sessions = useRepositorySession()
+const signIn = useSignIn()
+const session = shallowRef<ConsoleSessionStatus | null>(null)
 const loading = ref(false)
 const failure = ref<RpcFailure | null>(null)
 const typedAccount = ref('')
@@ -82,32 +87,23 @@ function accountRoute(accountId: string) {
   return { name: 'repository-account', params: { accountId } }
 }
 
-function statusLabel(status: number): string {
-  return enumLabel(AccountStatusSchema, status)
-}
-
 function openTyped() {
   const id = typedAccount.value.trim()
   if (id !== '') void router.push(accountRoute(id))
 }
 
+// The accounts come from the session itself: the repository host does not
+// serve AccountService, and the session names exactly the accounts its
+// principal is bound to.
 onMounted(async () => {
-  const signal = scope.next()
   loading.value = true
   try {
-    const all: Account[] = []
-    let token = ''
-    do {
-      const page = await clients.accounts.listAccounts(
-        create(ListAccountsRequestSchema, { limit: 200, continuationToken: token }),
-        { signal },
-      )
-      all.push(...page.accounts)
-      token = page.nextContinuationToken
-    } while (token !== '')
-    accounts.value = all
+    session.value = await sessions.status()
   } catch (error) {
-    if (!isOwnCancellation(error, signal)) failure.value = rpcFailure(error)
+    failure.value =
+      error instanceof SessionApiError
+        ? { code: `HTTP ${error.status}`, codeNumber: null, message: error.message }
+        : rpcFailure(error)
   } finally {
     loading.value = false
   }
