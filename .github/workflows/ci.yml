@@ -134,9 +134,16 @@ jobs:
           cache: npm
           cache-dependency-path: apps/console/package-lock.json
 
-      - name: Install, test, typecheck, build
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          # Match proto-stubs.sh: generated stubs depend on the CLI version.
+          version: '1.70.0'
+
+      - name: Install, check generated stubs, test, typecheck, build
         run: |
           npm ci
+          scripts/proto-stubs.sh --check
           npm test
           npm run typecheck
           npm run build
