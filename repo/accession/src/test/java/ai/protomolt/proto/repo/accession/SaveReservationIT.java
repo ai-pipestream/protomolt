@@ -143,6 +143,45 @@ class SaveReservationIT {
         f.stack.reset();
     }
 
+    @Test void anOverBudgetSaveOnAColdDriveRegistersNothing() {
+        // Production-shaped dynamic resolver: a drive's first resolve registers
+        // its stack in the catalog, exactly like RepoV2Wiring.driveStacks.
+        var registrations = new java.util.concurrent.atomic.AtomicInteger();
+        var cachedStacks = new java.util.concurrent.ConcurrentHashMap<String, ai.protomolt.proto.repo.stack.Stack>();
+        String coldStackId = "stack-cold-" + UUID.randomUUID();
+        java.util.function.BiFunction<String, String, java.util.Optional<ai.protomolt.proto.repo.stack.Stack>> byDrive =
+                (accountId, driveName) -> java.util.Optional.of(cachedStacks.computeIfAbsent("drive", name -> {
+                    registrations.incrementAndGet();
+                    f.catalog.registerStack(ai.protomolt.proto.repo.v2.StackRecord.newBuilder()
+                            .setStackId(coldStackId)
+                            .setProvider("s3")
+                            .setEndpoint("")
+                            .setNamespace("cold/" + coldStackId)
+                            .build());
+                    return f.stack;
+                }));
+        var drives = DocumentSaves.Drives.dynamic("default", byDrive,
+                stackId -> java.util.Optional.ofNullable(cachedStacks.get("drive")));
+
+        var tiny = new TrackingBudget(8);
+        var limited = new DocumentSaves(f.catalog, drives, resolver(), limits(), tiny, Clock.systemUTC());
+        var address = address(account, "doc-cold");
+        var request = create("op-cold", address, document(account, "doc-cold", "t")).build();
+
+        assertThatThrownBy(() -> limited.save(processAuthority(), request))
+                .isInstanceOfSatisfying(AccessionException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+        assertThat(registrations.get()).as("the cold drive registered nothing").isZero();
+        assertThat(cachedStacks).as("the cold drive stays uncached").isEmpty();
+        assertThat(tiny.outstanding.get()).isZero();
+
+        var roomy = new TrackingBudget(Long.MAX_VALUE);
+        var open = new DocumentSaves(f.catalog, drives, resolver(), limits(), roomy, Clock.systemUTC());
+        assertThat(open.save(processAuthority(), request).getAccession().getRevision()).isEqualTo(1);
+        assertThat(registrations.get()).as("the first within-budget save registers the drive").isEqualTo(1);
+        assertThat(roomy.outstanding.get()).isZero();
+    }
+
     @Test void aFailedStackWriteReleasesItsLease() {
         var budget = new TrackingBudget(Long.MAX_VALUE);
         var saves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), budget, Clock.systemUTC());
@@ -162,9 +201,13 @@ class SaveReservationIT {
         // 8 MiB part buffer, so the put takes the multipart streaming path.
         var budget = new TrackingBudget(Long.MAX_VALUE);
         var saves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), budget, Clock.systemUTC());
-        String big = "x".repeat(9 * 1024 * 1024);
+        // The bulk rides the body, not the title: the title is a catalog lookup
+        // field with its own storability check.
+        var base = document(account, "doc-big", "t");
+        var doc = base.toBuilder().setSearchMetadata(base.getSearchMetadata().toBuilder()
+                .setBody("x".repeat(9 * 1024 * 1024))).build();
         var address = address(account, "doc-big");
-        var request = create("op-big", address, document(account, "doc-big", big)).build();
+        var request = create("op-big", address, doc).build();
 
         assertThat(saves.save(processAuthority(), request).getAccession().getRevision()).isEqualTo(1);
         assertThat(budget.peak.get()).isGreaterThan(9L * 1024 * 1024);

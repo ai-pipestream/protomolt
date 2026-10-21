@@ -664,11 +664,14 @@ public final class DocumentSaves {
             throw new AccessionException(Status.Code.INTERNAL, "Document schema host failure: " + host.getMessage(), null, host);
         }
 
-        // S3-S4: call number, account scope and drive existence.
+        // S3: call number and account scope. The drive existence check (S4) moves
+        // inside the reservation below: with the dynamic resolver a cold drive's
+        // first resolve registers its stack in the catalog, and an over-budget
+        // save must be refused before any catalog write. Malformed drive names
+        // are already rejected by the S1 structure check.
         var address = resolveAddress(request, document);
         var account = address.getAccountId();
         DocumentReads.requireAccount(caller, account);
-        drives.resolve(account, request.getDrive());
 
         // S6-S7: content identity, intent, and the early outcome lookup. The intent binds the
         // client's fragments, raw blob bytes included; the stored BLOBS fragment leaves them out
@@ -692,6 +695,10 @@ public final class DocumentSaves {
         for (var fragment : storedFragments.values()) bufferedBytes += fragment.size();
         for (var raw : rawBlobs) bufferedBytes += raw.data().size();
         try (var reserved = reservations.reserve(bufferedBytes)) {
+            // S4: drive existence, inside the lease so a resolve failure releases
+            // it, and after the reserve so a cold drive's stack registration
+            // never happens for a save the budget refuses.
+            drives.resolve(account, request.getDrive());
             var contents = new HashMap<Integer, SaveIntents.Content>();
             for (int index = 0; index < request.getWritesCount(); index++) {
                 var write = request.getWrites(index);
