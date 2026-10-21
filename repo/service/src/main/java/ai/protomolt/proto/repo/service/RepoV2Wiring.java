@@ -103,9 +103,11 @@ final class RepoV2Wiring {
                     // Module-contributed schemas (the fleet document model).
                     return admittedSchemas.get().get(selection.typeUrl());
                 };
-        // Saves reserve serialized fragment bytes against a real host budget while
-        // they buffer and write, sized like the read budget: a save past it is
-        // RESOURCE_EXHAUSTED before anything is allocated, matching the read path.
+        // The save budget, sized like the read budget: a unary save reserves its
+        // admitted serialized fragments and raw blob bytes from admission until
+        // the revision commits, and a streamed upload reserves per received
+        // chunk. An over-budget save is RESOURCE_EXHAUSTED before any stack
+        // write, the same answer the read path gives.
         var v2Saves = new DocumentSaves(catalog, v2Drives, builtinSchemas,
                 limits, new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC());
         var v2Uploads = new DocumentUploads(v2Saves);

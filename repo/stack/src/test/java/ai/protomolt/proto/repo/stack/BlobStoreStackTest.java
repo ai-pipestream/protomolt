@@ -76,6 +76,61 @@ class BlobStoreStackTest {
                 .hasMessageContaining("object length lookup is unsupported");
     }
 
+    @Test void fallsBackToTheKnownLengthStreamingPutWhenMultipartIsUnsupported() throws Exception {
+        var store = new StreamOnlyStore();
+        var stack = new BlobStoreStack("s1", store, "bucket", "prefix", 8, () -> {});
+        var body = "well past the eight byte part size".getBytes();
+
+        var ref = stack.put(new Unrewindable(body), body.length);
+        assertThat(store.objects.get(ref.getKey())).isEqualTo(body);
+        assertThat(ref.getSha256()).isEqualTo(VerifyingInputStream.sha256Hex(body));
+        assertThat(ref.getLength()).isEqualTo(body.length);
+        try (var read = stack.open(ref)) {
+            assertThat(read.readAllBytes()).isEqualTo(body);
+        }
+
+        // An unknown-length body has no known-length route on such a provider.
+        assertThatThrownBy(() -> stack.put(new Unrewindable(body), Stack.UNKNOWN_LENGTH))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("multipart streamed write is unsupported");
+    }
+
+    /** A provider with the required puts only: no multipart override (Redis-shaped). */
+    private static final class StreamOnlyStore implements BlobStore {
+        final Map<String, byte[]> objects = new HashMap<>();
+
+        @Override public PutResult put(PutSpec spec, byte[] body) {
+            objects.put(spec.key(), body.clone());
+            return new PutResult("\"etag\"", null);
+        }
+
+        @Override public PutResult put(PutSpec spec, InputStream body, long contentLength) {
+            try {
+                byte[] bytes = body.readNBytes((int) contentLength);
+                if (bytes.length != contentLength || body.read() != -1)
+                    throw new IllegalArgumentException("Stream differs from declared contentLength");
+                objects.put(spec.key(), bytes);
+                return new PutResult("\"etag\"", null);
+            } catch (IOException failure) {
+                throw new java.io.UncheckedIOException(failure);
+            }
+        }
+
+        @Override public InputStream openStream(String bucket, String key, long offset, long length) {
+            var bytes = objects.get(key);
+            if (bytes == null) throw new BlobNotFoundException("missing " + key);
+            return new ByteArrayInputStream(bytes);
+        }
+
+        @Override public GetResult get(String bucket, String key, String versionId) { throw new UnsupportedOperationException(); }
+        @Override public void copy(String srcBucket, String srcKey, String dstBucket, String dstKey) { throw new UnsupportedOperationException(); }
+        @Override public boolean delete(String bucket, String key) { return objects.remove(key) != null; }
+        @Override public BatchDeleteResult deleteAll(String bucket, List<String> keys) { return new BatchDeleteResult(Map.of()); }
+        @Override public List<ListedObject> list(String bucket, String prefix) { return List.of(); }
+        @Override public void headBucket(String bucket) {}
+        @Override public void headObject(String bucket, String key) {}
+    }
+
     /** The caller's stream: any rewind attempt fails the test. */
     private static final class Unrewindable extends ByteArrayInputStream {
         Unrewindable(byte[] bytes) { super(bytes); }

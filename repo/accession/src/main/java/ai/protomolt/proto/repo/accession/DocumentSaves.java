@@ -681,37 +681,49 @@ public final class DocumentSaves {
             storedFragments.put(BLOBS_SELECTOR, extracted.stored());
             rawBlobs = extracted.blobs();
         }
-        var contents = new HashMap<Integer, SaveIntents.Content>();
-        for (int index = 0; index < request.getWritesCount(); index++) {
-            var write = request.getWrites(index);
-            if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
-            var bytes = fragments.get(write.getSelector());
-            contents.put(index, new SaveIntents.Content(sha256(bytes), bytes.size()));
+        // The unary save reservation: one lease over the admitted serialized
+        // fragments and raw blob bytes, taken here, where the buffers come into
+        // being, and held until finishSave returns, so the lease spans intent
+        // computation, admission and the stack writes. An over-budget save is
+        // RESOURCE_EXHAUSTED before any catalog or stack write, matching the
+        // read path, and the lease releases on success and on failure. The
+        // per-write path in put() takes no lease of its own.
+        long bufferedBytes = 0;
+        for (var fragment : storedFragments.values()) bufferedBytes += fragment.size();
+        for (var raw : rawBlobs) bufferedBytes += raw.data().size();
+        try (var reserved = reservations.reserve(bufferedBytes)) {
+            var contents = new HashMap<Integer, SaveIntents.Content>();
+            for (int index = 0; index < request.getWritesCount(); index++) {
+                var write = request.getWrites(index);
+                if (write.getAction() != WriteAction.WRITE_ACTION_PUT) continue;
+                var bytes = fragments.get(write.getSelector());
+                contents.put(index, new SaveIntents.Content(sha256(bytes), bytes.size()));
+            }
+            var intentSha = SaveIntents.sha256(SaveIntents.intent(request, address, contents));
+            var recorded = catalog.outcome(account, request.getOperationId());
+            if (recorded.isPresent()) return replay(caller, request, intentSha, recorded.get());
+
+            // S5, S8, S9: ownership, write policy and writer authority, against the current revision.
+            var current = catalog.current(address);
+            boolean creating = request.getExpected().hasNone();
+            if (!creating && current.isEmpty()) return conflict(caller, request, intentSha, address);
+            var base = current.map(state -> catalog.manifest(address, state.revision())
+                    .orElseThrow(() -> new IllegalStateException("Current revision has no manifest")));
+            if (base.isPresent() && !DocumentAccessPolicy.allows(caller, account, base.get().getOwnership().getSecurity(),
+                    null, Access.ACCESS_WRITE))
+                throw WriterAuthority.denied("The caller may not write this document");
+            var ownership = ownership(document, address, base, writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT);
+            requireOwnerMatches(request.getOwner(), ownership);
+            var authorized = authority.authorize(caller, request.getOwner(), account,
+                    ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
+            // S9: process authority is never valid for opaque writes (requirements §3, §11).
+            if (caller.processAuthority() && (request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED
+                    || request.getOpaqueAttestationsCount() > 0))
+                throw WriterAuthority.denied("Process authority may not save opaque content");
+
+            return finishSave(caller, request, address, intentSha, container, documentType, writes, current, base,
+                    ownership, authorized, storedFragments, rawBlobs, List.of());
         }
-        var intentSha = SaveIntents.sha256(SaveIntents.intent(request, address, contents));
-        var recorded = catalog.outcome(account, request.getOperationId());
-        if (recorded.isPresent()) return replay(caller, request, intentSha, recorded.get());
-
-        // S5, S8, S9: ownership, write policy and writer authority, against the current revision.
-        var current = catalog.current(address);
-        boolean creating = request.getExpected().hasNone();
-        if (!creating && current.isEmpty()) return conflict(caller, request, intentSha, address);
-        var base = current.map(state -> catalog.manifest(address, state.revision())
-                .orElseThrow(() -> new IllegalStateException("Current revision has no manifest")));
-        if (base.isPresent() && !DocumentAccessPolicy.allows(caller, account, base.get().getOwnership().getSecurity(),
-                null, Access.ACCESS_WRITE))
-            throw WriterAuthority.denied("The caller may not write this document");
-        var ownership = ownership(document, address, base, writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT);
-        requireOwnerMatches(request.getOwner(), ownership);
-        var authorized = authority.authorize(caller, request.getOwner(), account,
-                ownership.hasConnectorId() ? Optional.of(ownership.getConnectorId()) : Optional.empty(), creating);
-        // S9: process authority is never valid for opaque writes (requirements §3, §11).
-        if (caller.processAuthority() && (request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED
-                || request.getOpaqueAttestationsCount() > 0))
-            throw WriterAuthority.denied("Process authority may not save opaque content");
-
-        return finishSave(caller, request, address, intentSha, container, documentType, writes, current, base,
-                ownership, authorized, storedFragments, rawBlobs, List.of());
     }
 
     private SaveDocumentResponse finishSave(RepositoryCaller caller, SaveDocumentRequest request, NodeAddress address,
@@ -1818,16 +1830,16 @@ public final class DocumentSaves {
      * Writes one object and checks the stack's reference against the bytes it was given.
      *
      * <p>The write streams the fragment ({@code ByteString.newInput} copies nothing;
-     * a body past the stack's part buffer uploads in parts), and the host reservation
-     * is held for the duration of the write: a save past the host budget is
-     * RESOURCE_EXHAUSTED before the stack allocates anything, the same answer the
-     * read path gives, and the lease is released when the write completes or fails.
-     * The stack computes the digest over the streamed bytes itself; the reference it
+     * a body past the stack's part buffer uploads in parts). The write takes no
+     * reservation of its own: the bytes are already covered by the save's lease
+     * (the unary path reserves at fragment admission, the streamed path reserves
+     * per received chunk), so a second lease here would charge them twice. The
+     * stack computes the digest over the streamed bytes itself; the reference it
      * returns must restate the expected digest and length or the write is refused.
      */
     private StackRef put(Stack stack, ByteString bytes, String expectedSha256) {
         final StackRef ref;
-        try (var reserved = reservations.reserve(bytes.size())) {
+        try {
             ref = stack.put(bytes.newInput(), bytes.size());
         } catch (IOException failure) {
             throw new AccessionException(Status.Code.UNAVAILABLE, "Stack write failed", null, failure);

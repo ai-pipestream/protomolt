@@ -43,6 +43,7 @@ class SaveReservationIT {
         final long budget;
         final AtomicLong outstanding = new AtomicLong();
         final AtomicLong peak = new AtomicLong();
+        final java.util.List<Long> sizes = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
         TrackingBudget(long budget) { this.budget = budget; }
 
@@ -53,6 +54,7 @@ class SaveReservationIT {
                 throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
                         "Save buffer budget exhausted: " + bytes + " bytes requested");
             }
+            sizes.add(bytes);
             peak.accumulateAndGet(now, Math::max);
             var released = new AtomicBoolean();
             return () -> {
@@ -76,15 +78,69 @@ class SaveReservationIT {
         assertThat(f.catalog.outcome(account, "op-over")).as("the operation ID is still usable").isEmpty();
     }
 
-    @Test void aSuccessfulSaveReservesDuringItsWritesAndReleasesEverything() {
+    @Test void aUnarySaveHoldsOneAdmissionLeaseAcrossItsWritesWithNoSecondCharge() throws Exception {
         var budget = new TrackingBudget(Long.MAX_VALUE);
         var saves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), budget, Clock.systemUTC());
+        var duringWrite = new AtomicLong(-1);
+        f.stack.afterPut = () -> duringWrite.set(budget.outstanding.get());
         var address = address(account, "doc-ok");
         var request = create("op-ok", address, document(account, "doc-ok", "t")).build();
 
         assertThat(saves.save(processAuthority(), request).getAccession().getRevision()).isEqualTo(1);
-        assertThat(budget.peak.get()).as("the writes reserved real bytes").isPositive();
+        // The first reservation is the admission lease over the serialized
+        // fragments and raw blobs; during the stack writes it is the only
+        // open lease, so the write path charges nothing a second time.
+        long admission = budget.sizes.get(0);
+        assertThat(admission).isPositive();
+        assertThat(duringWrite.get()).as("only the admission lease is open during writes")
+                .isEqualTo(admission);
         assertThat(budget.outstanding.get()).as("every lease is released").isZero();
+        f.stack.reset();
+    }
+
+    @Test void aStreamedEncodedUploadChargesItsChunksOnceThroughTheStackWrite() throws Exception {
+        var budget = new TrackingBudget(Long.MAX_VALUE);
+        var saves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), budget, Clock.systemUTC());
+        var uploads = new DocumentUploads(saves);
+        var duringWrite = new AtomicLong(-1);
+        f.stack.afterPut = () -> duringWrite.set(budget.outstanding.get());
+
+        var address = address(account, "doc-stream");
+        // Past one 64 KiB chunk, so the upload reserves per received chunk.
+        var core = ai.protomolt.proto.repo.v1.Document.newBuilder()
+                .setDocId("doc-stream")
+                .setOwnership(ownership(account))
+                .setSearchMetadata(ai.protomolt.proto.repo.v1.SearchMetadata.newBuilder()
+                        .setTitle("streamed core").setBody("x".repeat(90_000)))
+                .build();
+        byte[] coreBytes = RawBlobs.deterministic(core).toByteArray();
+        var save = ai.protomolt.proto.repo.v2.SaveDocumentRequest.newBuilder()
+                .setOperationId("op-stream")
+                .setTarget(ai.protomolt.proto.repo.v2.DocumentTarget.newBuilder().setAddress(address))
+                .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setNone(true))
+                .addWrites(put(ai.protomolt.proto.repo.v2.DocumentPart.DOCUMENT_PART_CORE))
+                .setOwner(intakeOwner())
+                .build();
+        var header = ai.protomolt.proto.repo.v2.UploadHeader.newBuilder()
+                .setSave(save)
+                .setEncodedPart(ai.protomolt.proto.repo.v2.StreamedPart.newBuilder()
+                        .setSelector(ai.protomolt.proto.repo.v2.PartSelector.newBuilder()
+                                .setPart(ai.protomolt.proto.repo.v2.DocumentPart.DOCUMENT_PART_CORE)))
+                .setDeclaredLength(coreBytes.length)
+                .setExpectedSha256(SaveIntents.sha256Hex(coreBytes))
+                .build();
+
+        var committed = uploads.upload(processAuthority(), header,
+                new java.io.ByteArrayInputStream(coreBytes));
+        assertThat(committed.getSaved().getAccession().getRevision()).isEqualTo(1);
+        // The chunk leases cover exactly the streamed bytes and stay open
+        // through the stack write; the write path adds no lease of its own.
+        assertThat(duringWrite.get()).as("chunk leases only during the write")
+                .isEqualTo(coreBytes.length);
+        assertThat(budget.sizes).as("every reservation is one received chunk")
+                .allSatisfy(size -> assertThat(size).isLessThan((long) coreBytes.length));
+        assertThat(budget.outstanding.get()).as("every lease is released").isZero();
+        f.stack.reset();
     }
 
     @Test void aFailedStackWriteReleasesItsLease() {
