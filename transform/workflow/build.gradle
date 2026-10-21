@@ -17,6 +17,9 @@ dependencies {
     // Run evidence projects into canonical signed work records.
     api project(':protomolt-receipt')
 
+    // WorkflowVerifier and SuggestMappingsAction check step/source identifiers with
+    // the shared zero-regex grammar.
+    implementation project(':protomolt-formats')
     implementation project(':protomolt-http-json')
     implementation project(':protomolt-protobuf-validation')
     implementation project(':protomolt-protobuf-metadata')

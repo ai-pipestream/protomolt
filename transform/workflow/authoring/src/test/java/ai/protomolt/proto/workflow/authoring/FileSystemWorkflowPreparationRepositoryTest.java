@@ -56,6 +56,24 @@ class FileSystemWorkflowPreparationRepositoryTest {
     private static final String HOLDER = "worker-one";
 
     @Test
+    void taskIdMustBeACanonicalUuidInEitherCase(@TempDir Path directory) throws Exception {
+        var repository = new FileSystemWorkflowPreparationRepository(directory);
+        // Uppercase hex is the same tuple as its lowercase spelling's key domain:
+        // accepted (absent), not refused.
+        assertThat(repository.find("00000000-0000-4000-8000-00000000000A", 1, 1)).isEmpty();
+        assertThat(repository.find("abcdef01-2345-6789-abcd-ef0123456789", 1, 1)).isEmpty();
+        for (String invalid : List.of("", "not-a-uuid", "00000000-0000-4000-8000-00000000001",
+                "00000000-0000-4000-8000-0000000000001", "00000000000040008000000000000001",
+                "0000000g-0000-4000-8000-000000000001", "00000000_0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000 ")) {
+            assertThatThrownBy(() -> repository.find(invalid, 1, 1))
+                    .as("taskId '%s'", invalid)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("valid preparation tuple required");
+        }
+    }
+
+    @Test
     void reservationAndCompletedRetrySurviveRepositoryReopen(@TempDir Path directory) throws Exception {
         var first = new FileSystemWorkflowPreparationRepository(directory);
         var intent = intent(TASK_A, 1, 1, PREP_A, "{}");

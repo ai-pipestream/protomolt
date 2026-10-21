@@ -151,7 +151,7 @@ public final class StreamJoiner implements AutoCloseable {
         }
         Descriptor current = side.method().getOutputType();
         FieldDescriptor field = null;
-        for (String segment : side.keyPath().split("\\.")) {
+        for (String segment : DotSegments.segments(side.keyPath())) {
             if (current == null) {
                 throw new IllegalArgumentException(side.name() + " keyPath '" + side.keyPath()
                         + "' descends through a non-message field");

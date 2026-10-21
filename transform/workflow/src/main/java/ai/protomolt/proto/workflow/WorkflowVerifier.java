@@ -1,6 +1,7 @@
 package ai.protomolt.proto.workflow;
 
 import ai.protomolt.proto.descriptors.DescriptorRegistry;
+import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.shapes.RuleChecker;
 import com.google.protobuf.Descriptors.Descriptor;
 
@@ -8,7 +9,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Verifies a workflow without running it — {@code check-workflow}'s engine. Step names must be
@@ -26,7 +26,6 @@ import java.util.regex.Pattern;
  */
 public final class WorkflowVerifier {
 
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     /** One problem: {@code step} is empty for workflow-level findings. */
     public record Finding(String step, String kind, String error) {
@@ -43,7 +42,7 @@ public final class WorkflowVerifier {
         scope.put("input", workflow.inputType());
 
         for (CompiledWorkflow.Step step : workflow.steps()) {
-            if (!IDENTIFIER.matcher(step.name()).matches()
+            if (!Formats.isIdentifier(step.name())
                     || step.name().equals("input") || step.name().equals("target")) {
                 findings.add(new Finding(step.name(), "workflow",
                         "step name must be an identifier other than 'input'/'target'"));
@@ -142,7 +141,7 @@ public final class WorkflowVerifier {
         }
         Map<String, Descriptor> restricted = new LinkedHashMap<>();
         for (String source : edge.sources()) {
-            if (!IDENTIFIER.matcher(source).matches()) {
+            if (!Formats.isIdentifier(source)) {
                 findings.add(new Finding(step.name(), "edge",
                         "edge source '" + source + "' is not an identifier"));
                 continue;

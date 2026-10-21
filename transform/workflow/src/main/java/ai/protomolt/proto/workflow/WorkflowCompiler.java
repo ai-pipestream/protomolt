@@ -205,11 +205,33 @@ public final class WorkflowCompiler {
      * connection detail.
      */
     static String endpointName(String target) {
-        String sanitized = target.replaceAll("[^A-Za-z0-9._-]", "-");
+        String sanitized = sanitizeEndpoint(target);
         if (sanitized.isEmpty() || !Character.isLetterOrDigit(sanitized.charAt(0))) {
             sanitized = "e" + sanitized;
         }
         return sanitized.length() > 128 ? sanitized.substring(0, 128) : sanitized;
+    }
+
+    /**
+     * Every code point outside {@code [A-Za-z0-9._-]} folds to a single dash. The walk is
+     * by code points, not UTF-16 units: a supplementary character folds to one dash (as
+     * the character-class replacement it stands in for did), while a lone surrogate is
+     * its own code point here and also folds to one dash.
+     */
+    private static String sanitizeEndpoint(String target) {
+        StringBuilder sanitized = new StringBuilder(target.length());
+        for (int i = 0; i < target.length();) {
+            int c = target.codePointAt(i);
+            boolean keep = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+            if (keep) {
+                sanitized.appendCodePoint(c);
+            } else {
+                sanitized.append('-');
+            }
+            i += Character.charCount(c);
+        }
+        return sanitized.toString();
     }
 
     private static Duration millis(long deadlineMs) {

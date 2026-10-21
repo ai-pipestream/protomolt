@@ -89,7 +89,7 @@ final class ExportWorkRecordAction implements ProtoAction {
             recordId = "record-" + runId;
         }
         String prior = WorkflowRequests.optionalText(input, "priorManifestSha256");
-        if (prior != null && !prior.matches("[0-9a-f]{64}")) {
+        if (prior != null && !isSha256Hex(prior)) {
             throw WorkflowRequests.invalid(
                     "'priorManifestSha256' must be a lowercase SHA-256 digest",
                     "/priorManifestSha256");
@@ -101,7 +101,7 @@ final class ExportWorkRecordAction implements ProtoAction {
                     "a disclosure names both 'maskClasses' and 'discloseOf'",
                     maskClasses == null ? "/maskClasses" : "/discloseOf");
         }
-        if (discloseOf != null && !discloseOf.matches("[0-9a-f]{64}")) {
+        if (discloseOf != null && !isSha256Hex(discloseOf)) {
             throw WorkflowRequests.invalid(
                     "'discloseOf' must be a lowercase SHA-256 digest", "/discloseOf");
         }
@@ -170,5 +170,19 @@ final class ExportWorkRecordAction implements ProtoAction {
             classes.add(entry);
         }
         return classes;
+    }
+
+    /** Exactly 64 lowercase hex characters: a lowercase SHA-256 digest. */
+    private static boolean isSha256Hex(String value) {
+        if (value.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

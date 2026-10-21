@@ -253,13 +253,54 @@ public final class FileSystemWorkflowPreparationRepository implements WorkflowPr
 
     private static String fileKey(Path path) throws IOException {
         String name = path.getFileName().toString();
-        if (!name.matches("[0-9a-f]{64}\\.pb")) throw new IOException("invalid preparation record name");
+        if (!isRecordName(name)) throw new IOException("invalid preparation record name");
         return name.substring(0, 64);
     }
 
+    /** A record file name: 64 lowercase hex characters plus the {@code .pb} suffix. */
+    private static boolean isRecordName(String name) {
+        return name.length() == 67 && name.endsWith(".pb") && isHex(name, 0, 64, false);
+    }
+
+    /**
+     * A canonical UUID text form: hex groups of 8-4-4-4-12 joined by dashes,
+     * either letter case.
+     */
+    private static boolean isUuid(String value) {
+        if (value.length() != 36) {
+            return false;
+        }
+        int[] groups = {8, 4, 4, 4, 12};
+        int at = 0;
+        for (int g = 0; g < groups.length; g++) {
+            if (!isHex(value, at, at + groups[g], true)) {
+                return false;
+            }
+            at += groups[g];
+            if (g < groups.length - 1) {
+                if (value.charAt(at) != '-') {
+                    return false;
+                }
+                at++;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isHex(String value, int from, int to, boolean eitherCase) {
+        for (int i = from; i < to; i++) {
+            char c = value.charAt(i);
+            boolean ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                    || (eitherCase && c >= 'A' && c <= 'F');
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static String key(String taskId, int attempt, int revision) {
-        if (taskId == null || !taskId.matches(
-                "(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        if (taskId == null || !isUuid(taskId)
                 || attempt < 1 || attempt > 1024 || revision < 1 || revision > 1024) {
             throw new IllegalArgumentException("valid preparation tuple required");
         }

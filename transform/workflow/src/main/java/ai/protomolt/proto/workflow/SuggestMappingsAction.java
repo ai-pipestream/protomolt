@@ -8,6 +8,7 @@ import ai.protomolt.proto.actions.ProtoAction;
 import ai.protomolt.proto.actions.Reply;
 import ai.protomolt.proto.actions.SchemaResolver;
 import ai.protomolt.proto.actions.Scopes;
+import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.shapes.MappingSuggester;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
@@ -19,7 +20,6 @@ import java.util.Map;
 final class SuggestMappingsAction implements ProtoAction {
 
     private static final int MAX_SOURCES = 64;
-    private static final String SOURCE_NAME_PATTERN = "[A-Za-z_][A-Za-z0-9_]{0,127}";
 
     @Override
     public String name() {
@@ -62,7 +62,7 @@ final class SuggestMappingsAction implements ProtoAction {
         for (int index = 0; index < declared.size(); index++) {
             Message source = declared.get(index);
             String name = WorkflowRequests.text(source, "name");
-            if (!name.matches(SOURCE_NAME_PATTERN)) {
+            if (name.length() > 128 || !Formats.isIdentifier(name)) {
                 throw WorkflowRequests.invalid("source name must be a mapping-scope identifier",
                         "/sources/" + index + "/name");
             }
