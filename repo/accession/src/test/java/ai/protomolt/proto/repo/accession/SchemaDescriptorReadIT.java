@@ -219,6 +219,8 @@ class SchemaDescriptorReadIT {
     }
 
     @Test void theGrpcSurfaceServesTheBytesAndOneNotFoundStatus() throws Exception {
+        assertThat(grpcNotFound(processAuthority(), request(address, "f".repeat(64))))
+                .isEqualTo(grpcNotFound(caller("outsider", account), request(address, payloadSchema(first).getDescriptorSha256())));
         var name = "schemas-" + UUID.randomUUID();
         var server = InProcessServerBuilder.forName(name).directExecutor()
                 .addService(new AccessionGrpcService(f.saves, f.reads, authentication -> new RepositoryCaller(
@@ -247,6 +249,13 @@ class SchemaDescriptorReadIT {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** The wire status a refused read becomes, code and description, for comparing refusals. */
+    private String grpcNotFound(RepositoryCaller caller, GetSchemaDescriptorRequest.Builder request) {
+        var status = AccessionGrpcService.toStatus(refused(caller, request)).getStatus();
+        assertThat(status.getCode()).isEqualTo(Status.Code.NOT_FOUND);
+        return status.getCode() + ": " + status.getDescription();
+    }
 
     private static GetSchemaDescriptorRequest.Builder request(NodeAddress address, String digest) {
         return GetSchemaDescriptorRequest.newBuilder().setAddress(address).setDescriptorSha256(digest);
