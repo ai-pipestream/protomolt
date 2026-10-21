@@ -257,6 +257,82 @@ class RepositoryV2ContractTest {
         check(UploadDocumentRequest.newBuilder().setData(ByteString.EMPTY).build(), true);
     }
 
+    @Test void listingFiltersAreTypedAndRefuseContradictions() throws Exception {
+        var listing = ListDocumentsRequest.newBuilder().setAccountId("acct-1").setPageSize(10);
+        check(listing.build(), true);
+        var filter = DocumentFilter.newBuilder().setDocId("doc-1").setTitle("Quarterly report")
+                .setDocumentType("report").setSourceUri("https://example.test/q1.pdf").setSourceMimeType("application/pdf")
+                .setLanguage("en-US").setAuthor("Ada").setCategory("finance").setDatasourceId("ds-1").setConnectorId("c-1")
+                .setCommittedAfter(Timestamp.newBuilder().setSeconds(10)).setCommittedBefore(Timestamp.newBuilder().setSeconds(20))
+                .addMetadata(MetadataMatch.newBuilder().setKey("region").setValue("emea")).setOwnerDatasourceId("ds-1");
+        check(filter.build(), true);
+        check(listing.clone().setFilter(filter).build(), true);
+        // The house string rules refuse blank identities and malformed media types, language tags and URIs.
+        check(filter.clone().setDocId(" ").build(), false);
+        check(filter.clone().setTitle("").build(), false);
+        check(filter.clone().setSourceMimeType("pdf").build(), false);
+        check(filter.clone().setLanguage("not a tag").build(), false);
+        check(filter.clone().setSourceUri("q1.pdf").build(), false);
+        check(filter.clone().setOwnerModuleId(" ").build(), false);
+        check(filter.clone().addMetadata(MetadataMatch.newBuilder().setKey("").setValue("x")).build(), false);
+        check(filter.clone().addMetadata(MetadataMatch.newBuilder().setKey("k")).build(), true); // empty values are stored values
+        // An empty or inverted committed range is contradictory.
+        check(filter.clone().setCommittedBefore(Timestamp.newBuilder().setSeconds(10)).build(), false);
+        check(filter.clone().setCommittedBefore(Timestamp.newBuilder().setSeconds(5)).build(), false);
+        check(filter.clone().clearCommittedAfter().build(), true);
+        check(filter.clone().clearCommittedBefore().build(), true);
+        assertThat(DocumentFilter.getDescriptor().getRealOneofs()).extracting(d -> d.getName()).containsExactly("owner");
+    }
+
+    @Test void listingSortsAreDefinedAndSummariesCarryLookupAndOwner() throws Exception {
+        check(DocumentSort.getDefaultInstance(), true);
+        check(DocumentSort.newBuilder().setField(DocumentSortField.DOCUMENT_SORT_FIELD_COMMITTED_AT).setDescending(true).build(), true);
+        check(DocumentSort.newBuilder().setField(DocumentSortField.DOCUMENT_SORT_FIELD_TITLE).build(), true);
+        check(DocumentSort.newBuilder().setFieldValue(9).build(), false);
+        var summary = DocumentSummary.newBuilder().setAddress(ADDRESS).setRevision(1)
+                .setCommittedAt(Timestamp.newBuilder().setSeconds(1));
+        check(summary.build(), true);
+        check(summary.clone().setLookup(DocumentLookup.newBuilder().setTitle("t").setDatasourceId("ds-1"))
+                .setOwner(intakeOwner()).build(), true);
+        check(summary.clone().setOwner(SaveOwner.getDefaultInstance()).build(), false);
+        // The internal catalog entry and page token carry the same public types.
+        assertThat(CatalogEntry.getDescriptor().findFieldByName("lookup").getMessageType()).isEqualTo(DocumentLookup.getDescriptor());
+        assertThat(CatalogEntry.getDescriptor().findFieldByName("owner").getMessageType()).isEqualTo(SaveOwner.getDescriptor());
+        assertThat(CatalogPageToken.getDescriptor().findFieldByName("filter").getMessageType()).isEqualTo(DocumentFilter.getDescriptor());
+        assertThat(CatalogPageToken.getDescriptor().findFieldByName("sort").getMessageType()).isEqualTo(DocumentSort.getDescriptor());
+    }
+
+    @Test void lookupFieldsProjectFromTheDocument() {
+        var document = ai.protomolt.proto.repo.v1.Document.newBuilder().setDocId("doc-1")
+                .setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder().setAccountId("acct-1")
+                        .setDatasourceId("ds-1").setConnectorId("c-1"))
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle("Quarterly report").setDocumentType("report")
+                        .setSourceUri("https://example.test/q1.pdf").setSourceMimeType("application/pdf").setLanguage("en")
+                        .setAuthor("Ada").setCategory("finance").setCreationDate(Timestamp.newBuilder().setSeconds(5))
+                        .setLastModifiedDate(Timestamp.newBuilder().setSeconds(6)).putMetadata("region", "emea"))
+                .build();
+        var projection = ai.protomolt.proto.projection.MessageProjection.forTarget(DocumentLookup.getDescriptor(),
+                name -> name.equals(document.getDescriptorForType().getFullName())
+                        ? java.util.Optional.of(document.getDescriptorForType()) : java.util.Optional.empty()).orElseThrow();
+        var lookup = DocumentLookup.newBuilder().mergeFrom(projection.project(document)).build();
+        assertThat(lookup).isEqualTo(DocumentLookup.newBuilder().setTitle("Quarterly report").setDocumentType("report")
+                .setSourceUri("https://example.test/q1.pdf").setSourceMimeType("application/pdf").setLanguage("en")
+                .setAuthor("Ada").setCategory("finance").setCreationDate(Timestamp.newBuilder().setSeconds(5))
+                .setLastModifiedDate(Timestamp.newBuilder().setSeconds(6))
+                .setDatasourceId("ds-1").setConnectorId("c-1").build());
+        // The projection carries no map fields; the catalog copies metadata itself.
+        assertThat(DocumentLookup.getDescriptor().findFieldByName("metadata")
+                .getOptions().hasExtension(ai.protomolt.proto.projection.ProjectionProto.from)).isFalse();
+        // Absent source fields stay absent: a bare document projects only its ownership.
+        var bare = DocumentLookup.newBuilder().mergeFrom(projection.project(ai.protomolt.proto.repo.v1.Document.newBuilder()
+                .setDocId("doc-2").setOwnership(ai.protomolt.proto.repo.v1.OwnershipContext.newBuilder()
+                        .setAccountId("acct-1").setDatasourceId("ds-1")).build())).build();
+        assertThat(bare.hasTitle()).isFalse();
+        assertThat(bare.hasConnectorId()).isFalse();
+        assertThat(bare.getDatasourceId()).isEqualTo("ds-1");
+        assertThat(bare.getMetadataMap()).isEmpty();
+    }
+
     private static SaveDocumentRequest.Builder save() {
         return SaveDocumentRequest.newBuilder().setOperationId("op-1")
                 .setTarget(DocumentTarget.newBuilder().setAddress(ADDRESS))

@@ -8,6 +8,7 @@ import "ai/protomolt/proto/repo/v1/manifest.proto";
 import "ai/protomolt/proto/repo/v2/errors.proto";
 import "ai/protomolt/proto/repo/v2/events.proto";
 import "ai/protomolt/proto/repo/v2/manifest.proto";
+import "ai/protomolt/proto/projection/v1/projection.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -708,8 +709,124 @@ message ListDocumentsRequest {
     required: true
     int32: {gt: 0, lte: 1000}
   }];
-  // From the previous page; empty for the first.
+  // From the previous page; empty for the first. A token is bound to the
+  // account, scope, filter and sort it was issued for.
   string page_token = 6;
+  // Catalog filters; every set field must hold. Absent means no filter.
+  DocumentFilter filter = 7;
+  // Listing order. Absent means address order (DOCUMENT_SORT_FIELD_UNSPECIFIED).
+  DocumentSort sort = 8;
+}
+
+// Exact-match filters evaluated by the catalog over each document's current
+// revision. A filter on a lookup field matches only documents whose current
+// CORE part carries that value; documents without the field never match.
+// Filters are typed fields, never a query language. A request with an
+// unknown field or a contradictory filter is refused by name.
+message DocumentFilter {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "committed-range-ordered"
+    message: "committed_before must be after committed_after"
+    expression: "!has(this.committed_after) || !has(this.committed_before) || this.committed_before > this.committed_after"
+  };
+  // Exact document ID.
+  optional string doc_id = 1 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.title.
+  optional string title = 2 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1000, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.document_type.
+  optional string document_type = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.source_uri.
+  optional string source_uri = 4 [(ai.protomolt.proto.validate.v1.field).string = {uri: true, max_len: 4000}];
+  // Exact DocumentLookup.source_mime_type.
+  optional string source_mime_type = 5 [(ai.protomolt.proto.validate.v1.field).string = {mime_type: true, max_len: 200}];
+  // Exact DocumentLookup.language.
+  optional string language = 6 [(ai.protomolt.proto.validate.v1.field).string = {language_tag: true, max_len: 50}];
+  // Exact DocumentLookup.author.
+  optional string author = 7 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 500, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.category.
+  optional string category = 8 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.datasource_id (document ownership).
+  optional string datasource_id = 9 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Exact DocumentLookup.connector_id (document ownership).
+  optional string connector_id = 10 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  // Current revision committed at or after this instant (inclusive).
+  google.protobuf.Timestamp committed_after = 11;
+  // Current revision committed before this instant (exclusive).
+  google.protobuf.Timestamp committed_before = 12;
+  // Each pair must match an entry of DocumentLookup.metadata. One key given
+  // twice with different values is contradictory and refused.
+  repeated MetadataMatch metadata = 13 [(ai.protomolt.proto.validate.v1.field).repeated.max_items = 50];
+  // The save owner of the current revision.
+  oneof owner {
+    // An intake owner for this datasource.
+    string owner_datasource_id = 14 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+    // A step owner from this module.
+    string owner_module_id = 15 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
+  }
+}
+
+// One metadata entry a listed document must carry.
+message MetadataMatch {
+  // The metadata key.
+  string key = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 200, pattern: ".*\\S.*"}
+  }];
+  // The exact value.
+  string value = 2 [(ai.protomolt.proto.validate.v1.field).string.max_len = 4000];
+}
+
+// What a listing is ordered by. Ties, and the whole order when unspecified,
+// break on the call number: graph_id, graph_address_id, doc_id compared as
+// unsigned UTF-8 bytes, ascending.
+enum DocumentSortField {
+  // Call number order.
+  DOCUMENT_SORT_FIELD_UNSPECIFIED = 0;
+  // DocumentSummary.committed_at.
+  DOCUMENT_SORT_FIELD_COMMITTED_AT = 1;
+  // DocumentLookup.title; a document without a title sorts as the empty string.
+  DOCUMENT_SORT_FIELD_TITLE = 2;
+}
+
+// A listing order.
+message DocumentSort {
+  // The field; the call number tie-break is implied.
+  DocumentSortField field = 1 [(ai.protomolt.proto.validate.v1.field).enum.defined_only = true];
+  // Reverse the field order. The tie-break stays ascending.
+  bool descending = 2;
+}
+
+// A document's lookup fields (the catalog entry of requirements §2): the
+// projection of its current CORE part the catalog keeps for listing and
+// filtering. Unset fields were unset in the document. Rebuildable from the
+// stored parts; never the source of truth.
+message DocumentLookup {
+  option (ai.protomolt.proto.projection.v1.sources) = {source: "ai.protomolt.proto.repo.v1.Document"};
+  // SearchMetadata.title.
+  optional string title = 1 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.title"}}];
+  // SearchMetadata.document_type.
+  optional string document_type = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.document_type"}}];
+  // SearchMetadata.source_uri.
+  optional string source_uri = 3 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.source_uri"}}];
+  // SearchMetadata.source_mime_type.
+  optional string source_mime_type = 4 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.source_mime_type"}}];
+  // SearchMetadata.language.
+  optional string language = 5 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.language"}}];
+  // SearchMetadata.author.
+  optional string author = 6 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.author"}}];
+  // SearchMetadata.category.
+  optional string category = 7 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.category"}}];
+  // SearchMetadata.creation_date.
+  google.protobuf.Timestamp creation_date = 8 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.creation_date"}}];
+  // SearchMetadata.last_modified_date.
+  google.protobuf.Timestamp last_modified_date = 9 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "search_metadata.last_modified_date"}}];
+  // SearchMetadata.metadata, copied by the catalog; the projection does not
+  // carry map fields.
+  map<string, string> metadata = 10;
+  // OwnershipContext.datasource_id.
+  string datasource_id = 11 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership.datasource_id"}}];
+  // OwnershipContext.connector_id.
+  optional string connector_id = 12 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership.connector_id"}}];
 }
 
 // One document in a listing.
@@ -725,6 +842,10 @@ message DocumentSummary {
   google.protobuf.Timestamp committed_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
   // The current revision is a tombstone.
   bool tombstone = 4;
+  // The lookup fields of the current revision; unset for a tombstone.
+  DocumentLookup lookup = 5;
+  // The save owner of the current revision; unset for a tombstone.
+  SaveOwner owner = 6;
 }
 
 // A document listing page.
