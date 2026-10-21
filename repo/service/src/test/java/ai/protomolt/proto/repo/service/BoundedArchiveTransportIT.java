@@ -357,6 +357,7 @@ class BoundedArchiveTransportIT {
         var reviewed = new java.util.HashSet<>(BoundedArchiveMethods.UNARY);
         reviewed.add(ArchiveServiceGrpc.getBridgeEntryMethod().getFullMethodName());
         reviewed.add(ArchiveServiceGrpc.getUploadRenditionMethod().getFullMethodName());
+        reviewed.add(ArchiveServiceGrpc.getReadRenditionMethod().getFullMethodName());
         assertThat(reviewed).isEqualTo(described);
         try (var f = new Fixture(false)) {
             var status = new CompletableFuture<Status>();
@@ -371,6 +372,13 @@ class BoundedArchiveTransportIT {
             stream.onNext(UploadRenditionRequest.getDefaultInstance()); stream.onCompleted();
             assertThat(status.get(5, TimeUnit.SECONDS).getCode()).isEqualTo(Status.Code.UNIMPLEMENTED);
             f.awaitBudget(0); assertThat(f.writes.get()).isZero();
+            // The streamed rendition read is not in the bounded unary profile either.
+            var read = io.grpc.stub.ClientCalls.blockingServerStreamingCall(f.future.getChannel(),
+                    ArchiveServiceGrpc.getReadRenditionMethod(), f.future.getCallOptions().withDeadlineAfter(5, TimeUnit.SECONDS),
+                    ReadRenditionRequest.getDefaultInstance());
+            assertThatThrownBy(read::hasNext).isInstanceOfSatisfying(StatusRuntimeException.class,
+                    e -> assertThat(e.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+            f.awaitBudget(0);
         }
     }
 

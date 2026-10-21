@@ -30,8 +30,11 @@ class ArchiveRenditionReadContractTest {
         check(request.clone().setVersion(-1).build(), false);
         check(request.clone().setOffset(-1).build(), false);
         check(request.clone().setLength(-1).build(), false);
-        check(request.clone().setOffset(Long.MAX_VALUE).setLength(1).build(), false);
-        check(request.clone().setOffset(Long.MAX_VALUE).build(), true);
+        long largest = (1L << 62) - 1;
+        check(request.clone().setOffset(largest).setLength(largest).build(), true);
+        check(request.clone().setOffset(largest + 1).build(), false);
+        check(request.clone().setLength(largest + 1).build(), false);
+        check(request.clone().setOffset(Long.MAX_VALUE).build(), false);
     }
 
     @Test void headersMarkWholeObjectsExactlyAndKeepRangesInside() throws Exception {

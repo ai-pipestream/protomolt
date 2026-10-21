@@ -296,11 +296,6 @@ message GetEntryResponse {
 // byte range. Bytes flow from the object store in bounded frames; nothing
 // holds the whole rendition in memory.
 message ReadRenditionRequest {
-  option (ai.protomolt.proto.validate.v1.message).cel = {
-    id: "read-rendition-range"
-    message: "offset plus length must not overflow"
-    expression: "this.offset <= 9223372036854775807 - this.length"
-  };
   // The entry's logical identity.
   EntryAddress address = 1 [
     (ai.protomolt.proto.validate.v1.field) = {required: true}
@@ -326,15 +321,16 @@ message ReadRenditionRequest {
     }
   ];
   // First byte to send; 0 is the start. Must not pass the object's size.
+  // Offset and length are each at most 2^62 - 1, so their sum cannot overflow.
   int64 offset = 5 [
     (ai.protomolt.proto.validate.v1.field) = {
-      int64: {gte: 0}
+      int64: {gte: 0, lte: 4611686018427387903}
     }
   ];
   // Bytes to send; 0 = through the end of the object.
   int64 length = 6 [
     (ai.protomolt.proto.validate.v1.field) = {
-      int64: {gte: 0}
+      int64: {gte: 0, lte: 4611686018427387903}
     }
   ];
 }

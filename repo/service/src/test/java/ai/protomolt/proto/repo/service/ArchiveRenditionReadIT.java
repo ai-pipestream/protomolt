@@ -44,6 +44,7 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.ClientResponseObserver;
+import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -172,7 +173,7 @@ class ArchiveRenditionReadIT {
     @Test void aRangeIsServedWithoutClaimingWholeObjectIntegrity() throws Exception {
         var bytes = ByteString.copyFromUtf8("0123456789".repeat(1000));
         var address = address();
-        var item = put(managed(opened.store()), address, bytes);
+        put(managed(opened.store()), address, bytes);
         try (var harness = new Harness(managed(opened.store()), new ReadByteBudget(BUDGET))) {
             var range = harness.read(request(address).setOffset(10).setLength(4000).build());
             var header = range.getFirst().getHeader();
@@ -181,19 +182,23 @@ class ArchiveRenditionReadIT {
             assertThat(header.getOffset()).isEqualTo(10);
             assertThat(header.getLength()).isEqualTo(4000);
             assertThat(data(range)).isEqualTo(bytes.substring(10, 4010));
-
-            // Corrupt the stored object outside the range: the range still reads, the whole object does not.
-            var damaged = bytes.toByteArray();
-            damaged[9000] ^= 1;
-            opened.store().put(new BlobStore.PutSpec(BUCKET, item.getObjectKey(), "application/octet-stream", null, null), damaged);
-            assertThat(data(harness.read(request(address).setOffset(10).setLength(4000).build())))
-                    .isEqualTo(bytes.substring(10, 4010));
-            assertThat(harness.failure(request(address).build()).getCode()).isEqualTo(Status.Code.DATA_LOSS);
             var tail = harness.read(request(address).setOffset(bytes.size() - 5).build());
             assertThat(tail.getFirst().getHeader().getLength()).isEqualTo(5);
             assertThat(tail.getFirst().getHeader().getWholeObject()).isFalse();
+            assertThat(data(tail)).isEqualTo(bytes.substring(bytes.size() - 5));
+        }
+        // A provider serving one flipped byte: a range over it is delivered as stored, with
+        // no integrity claim, and the full read ends in DATA_LOSS instead of success.
+        var damaged = bytes.toByteArray();
+        damaged[9000] ^= 1;
+        try (var harness = new Harness(managed(serving(damaged)), new ReadByteBudget(BUDGET))) {
+            var range = harness.read(request(address).setOffset(8000).setLength(2000).build());
+            assertThat(range.getFirst().getHeader().getWholeObject()).isFalse();
+            assertThat(data(range)).isEqualTo(ByteString.copyFrom(damaged, 8000, 2000));
+            assertThat(harness.failure(request(address).build()).getCode()).isEqualTo(Status.Code.DATA_LOSS);
             assertThat(harness.budget.remainingBytes()).isEqualTo(BUDGET);
         }
+        assertThat(pins()).isZero();
     }
 
     @Test void legacyManifestsStreamFromTheirDrive() throws Exception {
@@ -360,6 +365,26 @@ class ArchiveRenditionReadIT {
                             return read;
                         }
                     };
+                });
+    }
+
+    /** The real store, except that streamed reads serve slices of {@code content}. */
+    private static BlobStore serving(byte[] content) {
+        var store = opened.store();
+        return (BlobStore) Proxy.newProxyInstance(BlobStore.class.getClassLoader(), new Class<?>[] {BlobStore.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("openStream")) {
+                        int last = arguments.length - 1;
+                        long offset = (Long) arguments[last - 1];
+                        long length = (Long) arguments[last];
+                        int count = (int) (length < 0 ? content.length - offset : length);
+                        return new ByteArrayInputStream(content, (int) offset, count);
+                    }
+                    try {
+                        return method.invoke(store, arguments);
+                    } catch (InvocationTargetException failure) {
+                        throw failure.getCause();
+                    }
                 });
     }
 
