@@ -31,8 +31,3 @@ dependencies {
 application {
     mainClass = 'ai.protomolt.proto.repo.fixtures.CorpusSeederMain'
 }
-
-// The seeder suite loads the corpus into PostgreSQL and S3 containers through
-// a real RepoServices composition, so it runs in the integration lane only;
-// the refusal rules stay in test.
-optInSuite('**/CorpusSeederIT*', ['PROTOMOLT_CORPUS_IT=1'])

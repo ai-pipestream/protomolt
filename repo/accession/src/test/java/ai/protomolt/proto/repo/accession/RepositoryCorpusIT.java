@@ -38,7 +38,7 @@ import org.testcontainers.utility.DockerImageName;
  * digests, commit times come from the stepped clock, and what the console and
  * the catalog tests rely on holds: lookup fields, filters, sorts, tombstones,
  * account scoping, ACL filtering, revision history, and a ranged read of the
- * large blob. Opt-in: {@code PROTOMOLT_CORPUS_IT=1}.
+ * large blob. An integration suite: it runs in {@code integrationTest}, not {@code test}.
  */
 class RepositoryCorpusIT {
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine");
