@@ -55,6 +55,7 @@ class ArchiveBackendGenerationHostIT {
     private static final String BACKEND_NOT_CONFIGURED = "Original archive backend is not configured on this host";
     private static final RepositoryCaller OPERATOR = new RepositoryCaller("operator", true);
     private static final RepositoryCaller MEMBER = new RepositoryCaller("member", false, Set.of("archive-account"), Set.of());
+    private static final RepositoryCaller OUTSIDER = new RepositoryCaller("outsider", false, Set.of("another-account"), Set.of());
 
     @Test void hostUnderAnotherGenerationRefusesBoundReadsAsPreconditionForLibraryAndTransport() throws Exception {
         String recorded = "archive-generation-" + UUID.randomUUID();
@@ -84,11 +85,17 @@ class ArchiveBackendGenerationHostIT {
             assertThat(transport.archive(OPERATOR_KEY).getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(address).build()).getManifest())
                     .as("catalog-only reads need no provider generation").isEqualTo(manifest);
 
-            // Authorization precedes resolver and provider access: a caller without process authority never reaches the binding.
-            assertThatThrownBy(() -> host.archiveRepository().getEntry(MEMBER, GetEntryRequest.newBuilder().setAddress(address).build()))
+            // Authorization precedes resolver and provider access: a caller bound to another account never reaches the binding.
+            assertThatThrownBy(() -> host.archiveRepository().getEntry(OUTSIDER, GetEntryRequest.newBuilder().setAddress(address).build()))
                     .isInstanceOfSatisfying(RepositoryException.class, failure -> {
                         assertThat(failure.code()).isEqualTo(RepositoryException.Code.PERMISSION_DENIED);
-                        assertThat(failure.getMessage()).isEqualTo("Repository account policy is not configured for this principal");
+                        assertThat(failure.getMessage()).isEqualTo("The caller is not bound to account 'archive-account'");
+                    });
+            // A caller bound to the account reaches the read and meets the same unserved generation as the operator.
+            assertThatThrownBy(() -> host.archiveRepository().getEntry(MEMBER, GetEntryRequest.newBuilder().setAddress(address).build()))
+                    .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                        assertThat(failure.code()).isEqualTo(RepositoryException.Code.FAILED_PRECONDITION);
+                        assertThat(failure.getMessage()).isEqualTo(BACKEND_NOT_CONFIGURED);
                     });
             assertThatThrownBy(() -> transport.archive("member-key").getEntry(GetEntryRequest.newBuilder().setAddress(address).build()))
                     .isInstanceOfSatisfying(StatusRuntimeException.class,
