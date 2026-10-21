@@ -24,7 +24,7 @@ class CatalogBaselineIT {
              var rows = connection.createStatement().executeQuery(
                      "SELECT count(*) FROM " + CatalogBaseline.HISTORY_TABLE + " WHERE success")) {
             rows.next();
-            assertThat(rows.getInt(1)).isEqualTo(1);
+            assertThat(rows.getInt(1)).isEqualTo(2);
         }
     }
 

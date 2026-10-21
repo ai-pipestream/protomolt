@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.catalog.CatalogRecords.Commit;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.Accession;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
+import ai.protomolt.proto.repo.v2.DocumentLookup;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.RecordedOutcome;
@@ -87,7 +88,8 @@ class CatalogGrantRecheckIT {
         var event = DocumentEvent.newBuilder().setEventId(UUID.randomUUID().toString()).setAddress(address).setRevision(1)
                 .build();
         return new Commit(address, operation, intent, ExpectedRevision.newBuilder().setNone(true).build(), manifest,
-                outcome, event, List.of(), List.of(), Map.of(), grantIds, Optional.empty());
+                outcome, event, List.of(), List.of(), Map.of(), grantIds, Optional.empty(),
+                Optional.of(DocumentLookup.getDefaultInstance()));
     }
 
     private static String database(String name) throws Exception {

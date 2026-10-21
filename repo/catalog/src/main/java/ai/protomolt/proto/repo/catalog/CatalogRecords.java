@@ -1,13 +1,18 @@
 package ai.protomolt.proto.repo.catalog;
 
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.CatalogEntry;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
+import ai.protomolt.proto.repo.v2.DocumentFilter;
+import ai.protomolt.proto.repo.v2.DocumentLookup;
+import ai.protomolt.proto.repo.v2.DocumentSort;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.RecordedOutcome;
 import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Timestamp;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -18,9 +23,33 @@ import java.util.UUID;
 public final class CatalogRecords {
     private CatalogRecords() {}
 
-    /** A document's current-revision pointer. */
+    /** One row of a listing: the current-revision pointer, its entry and its place in the order. */
     public record ListedDocument(NodeAddress address, long revision, boolean tombstone,
-            com.google.protobuf.Timestamp committedAt, ai.protomolt.proto.repo.v2.CatalogEntry entry) {}
+            Timestamp committedAt, CatalogEntry entry, Cursor cursor) {}
+
+    /**
+     * A row's position in every supported order: the address, the commit time as
+     * the database holds it (microseconds), and the title or the empty string.
+     * A listing resumes strictly after it.
+     */
+    public record Cursor(NodeAddress after, Timestamp committedAt, String title) {
+        public Cursor { Objects.requireNonNull(after); Objects.requireNonNull(committedAt); Objects.requireNonNull(title); }
+    }
+
+    /** What a listing selects and how it is ordered. */
+    public record Listing(String accountId, String graphId, String graphAddressId, boolean includeTombstoned,
+            DocumentFilter filter, DocumentSort sort) {
+        public Listing {
+            Objects.requireNonNull(accountId); Objects.requireNonNull(graphId); Objects.requireNonNull(graphAddressId);
+            Objects.requireNonNull(filter); Objects.requireNonNull(sort);
+        }
+
+        /** The unfiltered address-ordered listing of one account. */
+        public static Listing of(String accountId, String graphId, String graphAddressId, boolean includeTombstoned) {
+            return new Listing(accountId, graphId, graphAddressId, includeTombstoned,
+                    DocumentFilter.getDefaultInstance(), DocumentSort.getDefaultInstance());
+        }
+    }
 
     public record PurgeState(ai.protomolt.proto.repo.v2.CatalogPurge record, boolean completed) {}
     /** An idempotency key already belongs to a different document. */
@@ -47,16 +76,23 @@ public final class CatalogRecords {
      * for revision {@code expected + 1}; the commit refuses any other numbering.
      * {@code grantIds} are every writer grant authorizing this write, not
      * historical producer evidence; the commit rechecks each against revocation
-     * under a share lock.
+     * under a share lock. {@code lookup} is the lookup of a written or sourced CORE
+     * part; empty when CORE is carried, in which case the catalog keeps the row's
+     * current lookup. A tombstone has none; a create needs one.
      */
     public record Commit(NodeAddress address, String operationId, String intentSha256, ExpectedRevision expected,
                          StoredManifest manifest, RecordedOutcome outcome, DocumentEvent event,
                          List<StackRef> newObjects, List<StackRef> carriedObjects, Map<String, ByteString> artifacts,
-                         List<String> grantIds, Optional<CredentialCheck> credential) {
+                         List<String> grantIds, Optional<CredentialCheck> credential,
+                         Optional<DocumentLookup> lookup) {
         public Commit {
             Objects.requireNonNull(address); Objects.requireNonNull(operationId); Objects.requireNonNull(intentSha256);
             Objects.requireNonNull(expected); Objects.requireNonNull(manifest); Objects.requireNonNull(outcome);
-            Objects.requireNonNull(event);
+            Objects.requireNonNull(event); Objects.requireNonNull(lookup);
+            if (manifest.getTombstone() && lookup.isPresent())
+                throw new IllegalArgumentException("A tombstone commit carries no lookup");
+            if (expected.hasNone() && !manifest.getTombstone() && lookup.isEmpty())
+                throw new IllegalArgumentException("A creating commit needs the lookup of its CORE part");
             newObjects = List.copyOf(newObjects); carriedObjects = List.copyOf(carriedObjects);
             artifacts = Map.copyOf(artifacts);
             // Deduplicated and in unsigned UTF-8 order: the commit locks grants in this order.

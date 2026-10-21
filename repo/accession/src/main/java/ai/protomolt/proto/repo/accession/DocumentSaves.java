@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
 import ai.protomolt.proto.repo.admission.DocumentSchemas;
 import ai.protomolt.proto.repo.admission.DocumentSemanticAdmission;
+import ai.protomolt.proto.repo.catalog.CatalogEntries;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.catalog.CatalogRecords;
 import ai.protomolt.proto.repo.catalog.Catalog;
@@ -1066,9 +1067,23 @@ public final class DocumentSaves {
             var checked = VALIDATOR.validate(record);
             if (!checked.valid()) throw new IllegalStateException("Built record is invalid: " + checked.violations().getFirst());
         }
+        // The catalog entry's lookup follows the CORE part: projected from the written or
+        // sourced bytes admitted above, carried by the catalog when CORE is unchanged.
+        var coreBytes = writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT
+                ? storedFragments.get(CORE_SELECTOR) : sourcedBytes.get(CORE_SELECTOR);
+        var lookup = coreBytes == null ? Optional.<DocumentLookup>empty()
+                : Optional.of(CatalogEntries.lookup(parseCore(coreBytes, documentType)));
+        // The catalog indexes the title and metadata keys and holds every lookup string in a
+        // text column, so what it cannot store is refused here by field, not inside the commit.
+        var unstorable = lookup.map(CatalogEntries::unstorable).orElse(List.of());
+        if (!unstorable.isEmpty())
+            return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "The CORE part carries lookup fields the catalog cannot store", unstorable.stream()
+                            .map(problem -> FieldViolation.newBuilder().setPart(CORE_SELECTOR).setFieldPath(problem.fieldPath())
+                                    .setRuleId("catalog-lookup-storable").setMessage(problem.message()).build()).toList());
         var result = catalog.commit(new CatalogRecords.Commit(address, request.getOperationId(), intentSha,
                 request.getExpected(), stored, outcome, event, newObjects, carriedObjects, artifacts,
-                authorized.grantIds(), authorized.credential()));
+                authorized.grantIds(), authorized.credential(), lookup));
         return switch (result) {
             case CatalogRecords.Committed ignored -> SaveDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId()).setAccession(accession).build();
@@ -1303,14 +1318,7 @@ public final class DocumentSaves {
      */
     private static boolean coreHasContent(ByteString core, Descriptors.Descriptor documentType,
             ai.protomolt.proto.repo.codec.PartLayout layout) {
-        final Message fragment;
-        try {
-            fragment = documentType == Document.getDescriptor()
-                    ? Document.parseFrom(core)
-                    : DynamicMessage.parseFrom(documentType, core);
-        } catch (InvalidProtocolBufferException impossible) {
-            throw new IllegalStateException("A freshly split CORE fragment failed to parse", impossible);
-        }
+        var fragment = parseCore(core, documentType);
         if (!fragment.getUnknownFields().asMap().isEmpty()) return true;
         var parents = layout.nestedParents();
         for (var entry : fragment.getAllFields().entrySet()) {
@@ -1582,6 +1590,17 @@ public final class DocumentSaves {
                 throw malformedException("A document's account, datasource and connector are fixed when it is created");
         }
         return ownership;
+    }
+
+    /** Decodes admitted CORE bytes as the host's document type; they were verified to parse. */
+    private static Message parseCore(ByteString core, Descriptors.Descriptor documentType) {
+        try {
+            return documentType == Document.getDescriptor()
+                    ? Document.parseFrom(core)
+                    : DynamicMessage.parseFrom(documentType, core);
+        } catch (InvalidProtocolBufferException impossible) {
+            throw new IllegalStateException("An admitted CORE fragment failed to parse", impossible);
+        }
     }
 
     private static void requireOwnerMatches(SaveOwner owner, OwnershipContext ownership) {

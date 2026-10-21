@@ -66,13 +66,13 @@ class DocumentPurgesIT {
     private static void assertCode(Status.Code code, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
         assertThatThrownBy(action).isInstanceOfSatisfying(AccessionException.class, failure -> assertThat(failure.code()).isEqualTo(code));
     }
-    private static DocumentPurges purges(AccessionFixture f) {
+    static DocumentPurges purges(AccessionFixture f) {
         return new DocumentPurges(f.catalog, f.drives, (caller, account) -> new PurgeAuthorization.Decision(true, true), Clock.systemUTC());
     }
-    private static PurgeDocumentRequest request(String id, NodeAddress address) {
+    static PurgeDocumentRequest request(String id, NodeAddress address) {
         return PurgeDocumentRequest.newBuilder().setPurgeId(id).setAddress(address).build();
     }
-    private static ai.protomolt.proto.repo.spi.RepositoryCaller administrator() {
+    static ai.protomolt.proto.repo.spi.RepositoryCaller administrator() {
         return writer("a", "administrator", UUID.randomUUID(), 1);
     }
     static SaveDocumentRequest source(NodeAddress from, NodeAddress to) {
