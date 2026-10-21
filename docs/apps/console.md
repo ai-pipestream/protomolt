@@ -294,6 +294,15 @@ generated from the protos.
   what it shows. Reading a part decodes it with the descriptor set the revision
   retained, fetched by digest through `GetSchemaDescriptor` and hashed again in
   the browser; unknown fields are listed, not dropped.
+- **Delete.** The current revision of a live document can be tombstoned
+  through `DeleteDocument`. The confirmation names the call number and the
+  revision it replaces and shows the operation ID chosen when it opened; the
+  request expects exactly that revision. A stale revision (`ABORTED`, with the
+  current revision read from the `RevisionConflict` detail) is shown with a
+  Reload button and is never retried on its own; a write refusal shows its
+  reason. A failed send can be sent again under the same operation ID, so it
+  cannot record twice. The tombstone opens as the newest revision in history;
+  earlier revisions keep their bytes, and the console has no purge.
 - **Files.** Previews read the first 64 KiB of a byte range. Downloads stream
   `ReadBlob` frames: in browsers with the File System Access API each frame is
   written to the chosen file as it arrives; elsewhere the frames are assembled

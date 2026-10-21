@@ -17,11 +17,27 @@
         <v-btn v-if="uploadRoute" size="small" variant="tonal" prepend-icon="mdi-upload" data-testid="upload-revision" :to="uploadRoute">
           Upload a new revision
         </v-btn>
+        <v-btn v-if="deletable" size="small" variant="tonal" color="error" prepend-icon="mdi-delete-outline"
+               data-testid="delete-document" @click="deleting = true">
+          Delete
+        </v-btn>
       </v-card-title>
       <v-card-text v-if="call" class="text-caption text-mono pt-0">
         account {{ call.accountId }} · graph {{ call.graphId }} · graph address {{ call.graphAddressId }}
       </v-card-text>
     </v-card>
+
+    <DeleteDocumentDialog
+      v-if="deleting && address && pinned !== null"
+      :address="address"
+      :revision="pinned"
+      @close="deleting = false"
+      @reload="reloadAfterStale"
+      @deleted="openTombstone"
+    />
+    <v-alert v-if="deletedNotice" type="success" variant="tonal" density="compact" class="mb-3" data-testid="deleted-notice">
+      {{ deletedNotice }}
+    </v-alert>
 
     <v-alert v-if="routeError" type="warning" variant="tonal" density="compact" class="mb-3" data-testid="route-error">
       {{ routeError }}
@@ -196,6 +212,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { create, type DescMessage, type Message } from '@bufbuild/protobuf'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
+import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
@@ -204,6 +221,7 @@ import {
   DocumentPart,
   PartSelectionSchema,
   PartSelectorSchema,
+  type Accession,
   type DocumentManifest,
   type RevisionValidation,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
@@ -247,6 +265,24 @@ const blobs = ref<BlobRow[]>([])
 const documentFailure = ref<RpcFailure | null>(null)
 
 const parts = computed(() => (manifest.value ? partRows(manifest.value) : []))
+
+// Only the current revision of a live document can be tombstoned.
+const deleting = ref(false)
+const deletedNotice = ref<string | null>(null)
+let deletedRevision: bigint | null = null
+const deletable = computed(() => manifest.value !== null && !manifest.value.tombstone && requested.value === null)
+
+function reloadAfterStale() {
+  deleting.value = false
+  void load()
+}
+
+function openTombstone(accession: Accession) {
+  deleting.value = false
+  deletedRevision = accession.revision
+  deletedNotice.value = `Deleted: revision ${accession.revision} is a tombstone${accession.previousRevision > 0n ? ` after revision ${accession.previousRevision}` : ''}. The bytes of earlier revisions stay.`
+  openRevision(accession.revision)
+}
 
 // The upload route saves intake documents, whose call number is (doc, datasource,
 // account, "intake:<account>"); a new revision of the current one expects it.
@@ -312,6 +348,11 @@ async function load() {
   }
   address.value = target
   call.value = callNumber
+  // The deletion notice belongs to the tombstone it opened, and goes with any other page.
+  if (requested.value !== deletedRevision) {
+    deletedNotice.value = null
+    deletedRevision = null
+  }
   loading.value = true
   let revision: bigint
   try {
