@@ -823,6 +823,72 @@ class StreamingUploadAndReadIT {
     }
 
     @Test
+    void httpUploadHandlerAnswersInProtobufWhenTheClientAcceptsIt() throws Exception {
+        String token = "secret-upload-token-" + UUID.randomUUID();
+        var httpServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        httpServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        httpServer.createContext(UploadHttpHandler.UPLOAD_PATH, new UploadHttpHandler(f.uploads, token));
+        httpServer.start();
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        String baseUrl = "http://127.0.0.1:" + httpServer.getAddress().getPort();
+        try {
+            byte[] payload = "protobuf-answered-upload-bytes".getBytes(StandardCharsets.UTF_8);
+            String sha256 = SaveIntents.sha256Hex(payload);
+
+            var unauth = client.send(
+                    HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH))
+                            .header("Accept", "application/proto")
+                            .header("api_token", "wrong-token")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(unauth.statusCode()).isEqualTo(401);
+            assertThat(unauth.headers().firstValue("grpc-status")).hasValue("16");
+            assertThat(unauth.headers().firstValue("grpc-message")).hasValue("Unauthorized");
+            assertThat(unauth.body()).isEmpty();
+
+            var badDigest = client.send(
+                    HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH
+                                    + "?account_id=" + account + "&datasource_id=ds-1&drive=default"
+                                    + "&filename=bad.bin&operation_id=proto-op-bad&doc_id=proto-doc-bad"))
+                            .header("Accept", "text/html, application/proto;q=0.9")
+                            .header("api_token", token)
+                            .header("X-Content-Sha256", "f".repeat(64))
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(badDigest.statusCode()).isEqualTo(400);
+            assertThat(badDigest.headers().firstValue("grpc-status")).hasValue("3");
+            assertThat(badDigest.headers().firstValue("grpc-message")).isPresent().get().asString().isNotBlank();
+            assertThat(badDigest.headers().firstValue("Content-Type")).isEmpty();
+            assertThat(badDigest.body()).isEmpty();
+
+            var uploadUri = URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH
+                    + "?account_id=" + account + "&datasource_id=ds-1&drive=default&filename=proto.pdf"
+                    + "&operation_id=proto-op-ok&doc_id=proto-doc-1&blob_id=proto-blob-1&content_type=application/pdf");
+            for (boolean replay : new boolean[] {false, true}) {
+                var ok = client.send(
+                        HttpRequest.newBuilder(uploadUri)
+                                .header("Accept", "application/proto")
+                                .header("Authorization", "Bearer " + token)
+                                .header("X-Content-Sha256", sha256)
+                                .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
+                                .build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+                assertThat(ok.statusCode()).isEqualTo(200);
+                assertThat(ok.headers().firstValue("Content-Type")).hasValue("application/proto");
+                var saved = UploadDocumentResponse.parseFrom(ok.body()).getSaved();
+                assertThat(saved.getOperationId()).isEqualTo("proto-op-ok");
+                assertThat(saved.getReplayed()).isEqualTo(replay);
+                assertThat(saved.getAccession().getRevision()).isEqualTo(1);
+                assertThat(saved.getAccession().getAddress().getDocId()).isEqualTo("proto-doc-1");
+            }
+        } finally {
+            httpServer.stop(0);
+        }
+    }
+
+    @Test
     void httpUploadHandlerStreamsRawUploadsEnforcesAuthAndReplaysIdempotentRetries() throws Exception {
         String token = "secret-upload-token-" + UUID.randomUUID();
         var handler = new UploadHttpHandler(f.uploads, token);
