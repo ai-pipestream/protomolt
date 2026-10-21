@@ -23,6 +23,7 @@ service workspaces, validating interceptors and authorization.
 | `:protomolt-grpc-validation-micrometer` | `surface/grpc/validation-micrometer` | Micrometer binding for the gRPC validation metrics SPI |
 | `:protomolt-http-json` | `surface/http/json` | Protobuf and JSON transcoding, typed and dynamic |
 | `:protomolt-http-rest` | `surface/http/rest` | The framework-agnostic REST gateway |
+| `:protomolt-http-connect` | `surface/http/connect` | The Connect protocol, binary protobuf only, over in-process gRPC services on the JDK `HttpServer` |
 | `:protomolt-http-openapi` | `surface/http/openapi` | OpenAPI 3 generation from service descriptors |
 | `:protomolt-http-jsonschema` | `surface/http/jsonschema` | JSON Schema draft 2020-12 from descriptors and validation constraints |
 | `:protomolt-mcp` | `surface/mcp` | The MCP server over the action catalog and registry |

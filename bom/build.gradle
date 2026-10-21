@@ -139,6 +139,7 @@ def supportedModules = [
         'protomolt-server-quarkus',
         'protomolt-http-json',
         'protomolt-http-rest',
+        'protomolt-http-connect',
         'protomolt-http-openapi',
         'protomolt-asset-proto',
         'protomolt-asset-characterize',

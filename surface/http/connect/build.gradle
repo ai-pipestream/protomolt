@@ -1,0 +1,17 @@
+description = 'Connect protocol gateway with binary protobuf only, over in-process gRPC services, for the JDK HttpServer'
+
+dependencies {
+    // The request-to-caller resolver the gateway runs each call under.
+    api project(':protomolt-authz')
+    api libs.grpc.api
+    // The caller lands on the same gRPC Context keys the credential interceptor sets.
+    implementation project(':protomolt-authz-grpc')
+    // Dispatch goes through a private in-process server holding the registered services.
+    implementation libs.grpc.inprocess
+    // google.rpc.Status details on errors, carried as protobuf bytes.
+    implementation libs.grpc.protobuf
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.stub
+    testRuntimeOnly libs.slf4j.simple
+}
