@@ -22,6 +22,7 @@ import {
   type PartSelector,
   type RevisionValidation,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import { linkedController } from './blobReadCore'
 import { partLabel, revisionSelector } from './documentCore'
 import { Sha256 } from './sha256'
 
@@ -62,39 +63,52 @@ export async function readPart(
   let size = 0n
   let last = false
   let complete = false
-  for await (const response of client.readDocument(request, { signal })) {
-    const frame = response.frame
-    if (complete) throw new PartStreamError('ReadDocument sent a frame after its completion frame.')
-    switch (frame.case) {
-      case 'manifest':
-        if (manifest !== null) throw new PartStreamError('ReadDocument sent a second manifest frame.')
-        manifest = frame.value
-        break
-      case 'partData': {
-        if (manifest === null) throw new PartStreamError('ReadDocument sent part data before its manifest frame.')
-        const data = frame.value
-        if (data.selector === undefined || !equals(PartSelectorSchema, data.selector, selector)) {
-          throw new PartStreamError(`ReadDocument sent bytes for ${partLabel(data.selector)}, which was not requested.`)
+  const call = linkedController(signal)
+  try {
+    for await (const response of client.readDocument(request, { signal: call.controller.signal })) {
+      const frame = response.frame
+      if (complete) throw new PartStreamError('ReadDocument sent a frame after its completion frame.')
+      switch (frame.case) {
+        case 'manifest':
+          if (manifest !== null) throw new PartStreamError('ReadDocument sent a second manifest frame.')
+          manifest = frame.value
+          break
+        case 'partData': {
+          if (manifest === null) throw new PartStreamError('ReadDocument sent part data before its manifest frame.')
+          const data = frame.value
+          if (data.selector === undefined || !equals(PartSelectorSchema, data.selector, selector)) {
+            throw new PartStreamError(`ReadDocument sent bytes for ${partLabel(data.selector)}, which was not requested.`)
+          }
+          if (last) throw new PartStreamError(`ReadDocument sent bytes for ${partLabel(selector)} after its last frame.`)
+          if (data.offset !== size) {
+            throw new PartStreamError(`ReadDocument sent a frame at offset ${data.offset}; the next byte is ${size}.`)
+          }
+          chunks.push(data.data)
+          size += BigInt(data.data.length)
+          last = data.last
+          break
         }
-        if (last) throw new PartStreamError(`ReadDocument sent bytes for ${partLabel(selector)} after its last frame.`)
-        if (data.offset !== size) {
-          throw new PartStreamError(`ReadDocument sent a frame at offset ${data.offset}; the next byte is ${size}.`)
-        }
-        chunks.push(data.data)
-        size += BigInt(data.data.length)
-        last = data.last
-        break
+        case 'complete':
+          complete = true
+          break
+        case undefined:
+          throw new PartStreamError('ReadDocument sent an empty frame.')
       }
-      case 'complete':
-        complete = true
-        break
-      case undefined:
-        throw new PartStreamError('ReadDocument sent an empty frame.')
     }
+  } finally {
+    call.release()
   }
   if (manifest === null) throw new PartStreamError('ReadDocument ended without a manifest frame.')
+  if (revision !== null && manifest.revision !== revision) {
+    throw new PartStreamError(`ReadDocument answered for revision ${manifest.revision}; revision ${revision} was asked for.`)
+  }
   if (!complete) throw new PartStreamError('ReadDocument ended without its completion frame; the read is incomplete.')
-  if (chunks.length > 0 && !last) throw new PartStreamError(`ReadDocument completed before the last frame of ${partLabel(selector)}.`)
+  const entry = manifest.parts.find((p) => p.selector !== undefined && equals(PartSelectorSchema, p.selector, selector))
+  if (entry === undefined || !entry.contentIncluded) {
+    throw new PartStreamError(`${partLabel(selector)} has no content at revision ${manifest.revision}.`)
+  }
+  // The server ends every included part with a last frame, an empty part included.
+  if (!last) throw new PartStreamError(`ReadDocument completed before the last frame of ${partLabel(selector)}.`)
   const bytes = new Uint8Array(Number(size))
   let at = 0
   for (const c of chunks) {

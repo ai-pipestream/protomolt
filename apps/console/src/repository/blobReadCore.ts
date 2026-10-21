@@ -72,8 +72,30 @@ export function isFullRead(range: BlobRange): boolean {
 }
 
 /**
+ * Ties a call to the caller's signal and lets it be ended on its own: Connect
+ * does not end a server stream when the reading loop stops early, so every
+ * exit aborts the call's own controller.
+ */
+export function linkedController(signal: AbortSignal): { controller: AbortController; release: () => void } {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(signal.reason)
+  if (signal.aborted) controller.abort(signal.reason)
+  else signal.addEventListener('abort', onAbort, { once: true })
+  return {
+    controller,
+    release: () => {
+      signal.removeEventListener('abort', onAbort)
+      controller.abort()
+    },
+  }
+}
+
+/**
  * Reads the blob, handing each data frame to `sink` and reporting progress
- * after each. The signal ends the stream at the server when aborted.
+ * after each. The signal ends the stream at the server when aborted. With
+ * `stopAfter`, the read keeps only that many bytes of the range and then ends
+ * the stream itself, which is how a preview reads the start of a file of any
+ * size; such a read is never a verified whole-file read.
  */
 export async function readBlob(
   client: Client<typeof DocumentService>,
@@ -81,6 +103,7 @@ export async function readBlob(
   sink: (chunk: Uint8Array) => void | Promise<void>,
   signal: AbortSignal,
   onProgress?: (received: bigint, expected: bigint) => void,
+  stopAfter?: bigint,
 ): Promise<BlobReadResult> {
   const request = create(ReadBlobRequestSchema, {
     address: spec.address,
@@ -89,39 +112,53 @@ export async function readBlob(
     offset: spec.range.offset,
     length: spec.range.length,
   })
-  const full = isFullRead(spec.range)
-  const hash = full ? new Sha256() : null
+  const hash = isFullRead(spec.range) && stopAfter === undefined ? new Sha256() : null
+  const call = linkedController(signal)
   let header: BlobHeader | null = null
   let expected = 0n
   let received = 0n
-  for await (const frame of client.readBlob(request, { signal })) {
-    switch (frame.frame.case) {
-      case 'header':
-        if (header !== null) throw new BlobStreamError('ReadBlob sent a second header frame.')
-        header = frame.frame.value
-        if (spec.range.offset > header.totalLength) {
-          throw new BlobStreamError(
-            `Offset ${spec.range.offset} is past the end of the ${header.totalLength}-byte file.`,
-          )
+  let stopped = false
+  try {
+    for await (const frame of client.readBlob(request, { signal: call.controller.signal })) {
+      switch (frame.frame.case) {
+        case 'header':
+          if (header !== null) throw new BlobStreamError('ReadBlob sent a second header frame.')
+          header = frame.frame.value
+          if (spec.revision !== null && header.revision !== spec.revision) {
+            throw new BlobStreamError(`ReadBlob answered for revision ${header.revision}; revision ${spec.revision} was asked for.`)
+          }
+          if (spec.range.offset > header.totalLength) {
+            throw new BlobStreamError(
+              `Offset ${spec.range.offset} is past the end of the ${header.totalLength}-byte file.`,
+            )
+          }
+          expected = header.totalLength - spec.range.offset
+          if (spec.range.length > 0n && spec.range.length < expected) expected = spec.range.length
+          if (stopAfter !== undefined && stopAfter < expected) expected = stopAfter
+          break
+        case 'data': {
+          if (header === null) throw new BlobStreamError('ReadBlob sent data before its header frame.')
+          let chunk = frame.frame.value
+          if (stopAfter !== undefined && received + BigInt(chunk.length) > expected) {
+            chunk = chunk.subarray(0, Number(expected - received))
+            stopped = true
+          }
+          received += BigInt(chunk.length)
+          if (received > expected) {
+            throw new BlobStreamError(`ReadBlob sent ${received} bytes; the requested range holds ${expected}.`)
+          }
+          hash?.update(chunk)
+          await sink(chunk)
+          onProgress?.(received, expected)
+          break
         }
-        expected = header.totalLength - spec.range.offset
-        if (spec.range.length > 0n && spec.range.length < expected) expected = spec.range.length
-        break
-      case 'data': {
-        if (header === null) throw new BlobStreamError('ReadBlob sent data before its header frame.')
-        const chunk = frame.frame.value
-        received += BigInt(chunk.length)
-        if (received > expected) {
-          throw new BlobStreamError(`ReadBlob sent ${received} bytes; the requested range holds ${expected}.`)
-        }
-        hash?.update(chunk)
-        await sink(chunk)
-        onProgress?.(received, expected)
-        break
+        case undefined:
+          throw new BlobStreamError('ReadBlob sent a frame with neither a header nor data.')
       }
-      case undefined:
-        throw new BlobStreamError('ReadBlob sent a frame with neither a header nor data.')
+      if (stopped || (stopAfter !== undefined && header !== null && received === expected)) break
     }
+  } finally {
+    call.release()
   }
   if (header === null) throw new BlobStreamError('ReadBlob ended without a header frame.')
   if (received !== expected) {

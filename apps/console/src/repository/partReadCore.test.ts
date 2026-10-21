@@ -22,7 +22,9 @@ import {
 import {
   DocumentManifestSchema,
   DocumentPart,
+  PartManifestEntrySchema,
   PartSchemaBindingSchema,
+  PartState,
   PartSelectorSchema,
   RevisionValidationSchema,
   ValidationStatus,
@@ -50,9 +52,16 @@ const STORED = new Uint8Array([...toBinary(DocumentSchema, document), ...unknown
 const DESCRIPTORS = descriptorSetOf(file_ai_protomolt_proto_repo_v1_document)
 const DESCRIPTORS_SHA = createHash('sha256').update(DESCRIPTORS).digest('hex')
 
-function manifestFrame(revision = 3n): ReadDocumentResponse {
+function manifestFrame(revision = 3n, contentIncluded = true): ReadDocumentResponse {
   return create(ReadDocumentResponseSchema, {
-    frame: { case: 'manifest', value: create(DocumentManifestSchema, { address: testAddress(), revision }) },
+    frame: {
+      case: 'manifest',
+      value: create(DocumentManifestSchema, {
+        address: testAddress(),
+        revision,
+        parts: [create(PartManifestEntrySchema, { selector: CORE, state: PartState.PRESENT, writtenInRevision: revision, contentIncluded })],
+      }),
+    },
   })
 }
 function dataFrame(offset: number, bytes: Uint8Array, last: boolean, selector = CORE): ReadDocumentResponse {
@@ -107,6 +116,9 @@ describe('readPart', () => {
     ['completes before the last frame', [manifestFrame(), dataFrame(0, STORED, false), completeFrame], 'completed before the last frame'],
     ['sends data before the manifest', [dataFrame(0, STORED, true), completeFrame], 'before its manifest frame'],
     ['sends nothing', [], 'without a manifest frame'],
+    ['completes with no frame for a part with content', [manifestFrame(), completeFrame], 'completed before the last frame of CORE'],
+    ['answers for another revision', [manifestFrame(2n), dataFrame(0, STORED, true), completeFrame], 'answered for revision 2; revision 3 was asked for'],
+    ['includes no content for the part', [manifestFrame(3n, false), completeFrame], 'CORE has no content at revision 3'],
   ])('refuses a stream that %s', async (_name, frames, message) => {
     const clients = routerClients((router) =>
       router.service(DocumentService, {
@@ -115,9 +127,9 @@ describe('readPart', () => {
         },
       }),
     )
-    const reading = readPart(clients.documents, testAddress(), null, CORE, false, signal())
+    const reading = readPart(clients.documents, testAddress(), 3n, CORE, false, signal())
     await expect(reading).rejects.toThrow(PartStreamError)
-    await expect(readPart(clients.documents, testAddress(), null, CORE, false, signal())).rejects.toThrow(message)
+    await expect(readPart(clients.documents, testAddress(), 3n, CORE, false, signal())).rejects.toThrow(message)
   })
 })
 

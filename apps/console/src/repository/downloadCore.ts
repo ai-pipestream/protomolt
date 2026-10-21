@@ -60,12 +60,22 @@ export function memorySink(filename: string, mimeType: string, save: (blob: Blob
   }
 }
 
+/**
+ * How long an object URL outlives the click that starts its download. Browsers
+ * read the Blob after the click returns; revoking at once can cut a large
+ * download short.
+ */
+export const OBJECT_URL_LIFETIME_MS = 60_000
+
 /** The browser's download of a Blob, through a temporary object URL. */
 export function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
   anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+  anchor.remove()
+  setTimeout(() => URL.revokeObjectURL(url), OBJECT_URL_LIFETIME_MS)
 }

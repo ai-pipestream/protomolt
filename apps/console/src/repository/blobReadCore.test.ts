@@ -34,6 +34,10 @@ function honestServer(seen: ReadBlobRequest[] = []) {
     router.service(DocumentService, {
       async *readBlob(request) {
         seen.push(request)
+        // The server's own range rule (DocumentStreams.prepareBlobRead).
+        if (request.offset > BigInt(FILE.length) || request.length > BigInt(FILE.length) - request.offset) {
+          throw new ConnectError(`Requested byte range [${request.offset}, +${request.length}) is outside blob length ${FILE.length}`, Code.InvalidArgument)
+        }
         yield header(BigInt(FILE.length))
         const start = Number(request.offset)
         const end = request.length === 0n ? FILE.length : Math.min(FILE.length, start + Number(request.length))
@@ -110,10 +114,58 @@ describe('readBlob', () => {
     await expect(readBlob(clients.documents, spec(), () => {}, new AbortController().signal)).rejects.toThrow(message)
   })
 
-  it('refuses an offset past the end of the file', async () => {
-    await expect(
-      readBlob(honestServer().documents, spec(BigInt(FILE.length + 1)), () => {}, new AbortController().signal),
-    ).rejects.toThrow('past the end')
+  it('passes the server refusal of an offset past the end of the file', async () => {
+    const error = await readBlob(honestServer().documents, spec(BigInt(FILE.length + 1)), () => {}, new AbortController().signal).catch((e) => e)
+    expect(ConnectError.from(error).code).toBe(Code.InvalidArgument)
+  })
+
+  it('keeps only stopAfter bytes of a longer range and ends the stream itself', async () => {
+    let serverSignal: AbortSignal | null = null
+    const clients = routerClients((router) =>
+      router.service(DocumentService, {
+        async *readBlob(_request, context) {
+          serverSignal = context.signal
+          yield header(BigInt(FILE.length))
+          for (let i = 0; i < FILE.length && !context.signal.aborted; i += 1000) yield data(FILE.subarray(i, i + 1000))
+        },
+      }),
+    )
+    const out = collector()
+    const result = await readBlob(clients.documents, spec(), out.sink, new AbortController().signal, undefined, 2500n)
+    expect(out.bytes()).toEqual(FILE.subarray(0, 2500))
+    expect(result.verification.kind).toBe('range-unverified')
+    expect(serverSignal!.aborted).toBe(true)
+  })
+
+  it('reads a file shorter than stopAfter whole, without asking for bytes past its end', async () => {
+    const seen: ReadBlobRequest[] = []
+    const out = collector()
+    const result = await readBlob(honestServer(seen).documents, spec(BigInt(FILE.length - 10)), out.sink, new AbortController().signal, undefined, 65536n)
+    expect(seen[0].length).toBe(0n)
+    expect(out.bytes()).toEqual(FILE.subarray(FILE.length - 10))
+    expect(result.receivedBytes).toBe(10n)
+  })
+
+  it('ends the server stream when it refuses a frame', async () => {
+    let serverSignal: AbortSignal | null = null
+    const clients = routerClients((router) =>
+      router.service(DocumentService, {
+        async *readBlob(_request, context) {
+          serverSignal = context.signal
+          yield header(10n)
+          yield header(10n)
+          await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve(), { once: true }))
+        },
+      }),
+    )
+    await expect(readBlob(clients.documents, spec(), () => {}, new AbortController().signal)).rejects.toThrow('second header')
+    expect(serverSignal!.aborted).toBe(true)
+  })
+
+  it('refuses a header for another revision than the one asked for', async () => {
+    await expect(readBlob(honestServer().documents, { ...spec(), revision: 7n }, () => {}, new AbortController().signal)).rejects.toThrow(
+      'answered for revision 2; revision 7 was asked for',
+    )
   })
 
   it('passes the server status through unchanged, DATA_LOSS included', async () => {

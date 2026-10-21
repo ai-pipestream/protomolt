@@ -20,16 +20,31 @@ export function signInLocation(returnTo: string): string {
 /**
  * Calls `onUnauthenticated` when the gateway answers UNAUTHENTICATED (no
  * session, or an expired one), then rethrows, so the calling screen still
- * fails visibly instead of showing an empty result.
+ * fails visibly instead of showing an empty result. A unary call carries the
+ * code as HTTP 401; a server stream answers HTTP 200 and carries it in its
+ * end-of-stream record, so stream messages are watched too.
  */
 export function unauthenticatedInterceptor(onUnauthenticated: () => void): Interceptor {
-  return (next) => async (request) => {
+  const check = (error: unknown) => {
+    if (error instanceof ConnectError && error.code === Code.Unauthenticated) onUnauthenticated()
+  }
+  async function* watched<T>(messages: AsyncIterable<T>): AsyncIterable<T> {
     try {
-      return await next(request)
+      yield* messages
     } catch (error) {
-      if (ConnectError.from(error).code === Code.Unauthenticated) onUnauthenticated()
+      check(error)
       throw error
     }
+  }
+  return (next) => async (request) => {
+    let response
+    try {
+      response = await next(request)
+    } catch (error) {
+      check(error)
+      throw error
+    }
+    return response.stream ? { ...response, message: watched(response.message) } : response
   }
 }
 

@@ -220,7 +220,7 @@ import {
 } from '@/repository/documentCore'
 import { byteSize, hexDump } from '@/repository/formatCore'
 import { decodePart, readPart, type DecodedPart } from '@/repository/partReadCore'
-import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
+import { rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const clients = useRepositoryClients()
@@ -264,6 +264,11 @@ function queryText(name: string): string {
 }
 
 async function load() {
+  // A new route starts from nothing: earlier reads, a part read still running
+  // and the previous revision's metadata and files all go.
+  const signal = readScope.next()
+  partScope.next()
+  partBusy.value = null
   routeError.value = null
   manifestFailure.value = null
   documentFailure.value = null
@@ -272,45 +277,57 @@ async function load() {
   manifest.value = null
   validation.value = null
   pinned.value = null
+  metadata.value = []
+  blobs.value = []
+  call.value = null
+  address.value = null
   const callNumber: CallNumber = {
     accountId: queryText('account'),
     graphId: queryText('graph'),
     graphAddressId: queryText('node'),
     docId: queryText('doc'),
   }
+  let target: NodeAddress
   try {
-    address.value = nodeAddress(callNumber)
+    target = nodeAddress(callNumber)
     requested.value = parseRevision(queryText('revision'))
   } catch (error) {
     routeError.value = (error as Error).message
     return
   }
+  address.value = target
   call.value = callNumber
-  const signal = readScope.next()
   loading.value = true
+  let revision: bigint
   try {
     const answer = await clients.documents.getManifest(
-      create(GetManifestRequestSchema, { address: address.value, revision: revisionSelector(requested.value) }),
+      create(GetManifestRequestSchema, { address: target, revision: revisionSelector(requested.value) }),
       { signal },
     )
-    manifest.value = answer.manifest ?? null
-    validation.value = answer.validation ?? null
+    if (signal.aborted) return
     if (answer.manifest === undefined || answer.validation === undefined) {
       throw new Error('GetManifest answered without a manifest or validation record.')
     }
+    if (requested.value !== null && answer.manifest.revision !== requested.value) {
+      throw new Error(`GetManifest answered for revision ${answer.manifest.revision}; revision ${requested.value} was asked for.`)
+    }
+    manifest.value = answer.manifest
+    validation.value = answer.validation
     // Every later read pins the revision this manifest answered for, so a
     // newer save cannot mix into the screen.
-    pinned.value = answer.manifest.revision
+    revision = answer.manifest.revision
+    pinned.value = revision
   } catch (error) {
-    if (!isOwnCancellation(error, signal)) manifestFailure.value = rpcFailure(error)
+    if (signal.aborted) return
+    manifestFailure.value = rpcFailure(error)
     loading.value = false
     return
   }
   try {
     const document = await clients.documents.getDocument(
       create(GetDocumentRequestSchema, {
-        address: address.value,
-        revision: revisionSelector(pinned.value),
+        address: target,
+        revision: revisionSelector(revision),
         selection: create(PartSelectionSchema, {
           selectors: [create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.BLOBS } })],
         }),
@@ -318,12 +335,14 @@ async function load() {
       }),
       { signal },
     )
+    if (signal.aborted) return
     metadata.value = metadataEntries(document.metadata)
     blobs.value = blobRows(document.document)
   } catch (error) {
-    if (!isOwnCancellation(error, signal)) documentFailure.value = rpcFailure(error)
+    if (!signal.aborted) documentFailure.value = rpcFailure(error)
   } finally {
-    loading.value = false
+    // Only the newest load owns the indicator.
+    if (!signal.aborted) loading.value = false
   }
 }
 
@@ -337,6 +356,7 @@ async function readPartAt(index: number) {
   try {
     const part = await readPart(clients.documents, address.value, pinned.value, entry.selector, allowOpaque.value, signal)
     const decoded = await decodePart(clients.documents, address.value, part.revision, validation.value, entry.selector, part.bytes, signal)
+    if (signal.aborted) return
     partView.value = {
       label: parts.value[index].label,
       revision: part.revision,
@@ -346,9 +366,9 @@ async function readPartAt(index: number) {
       hex: decoded.kind === 'raw' ? hexDump(part.bytes.subarray(0, 4096)) : [],
     }
   } catch (error) {
-    if (!isOwnCancellation(error, signal)) partFailure.value = rpcFailure(error)
+    if (!signal.aborted) partFailure.value = rpcFailure(error)
   } finally {
-    partBusy.value = null
+    if (!signal.aborted) partBusy.value = null
   }
 }
 

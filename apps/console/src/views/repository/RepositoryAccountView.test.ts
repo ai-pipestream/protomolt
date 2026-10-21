@@ -165,4 +165,79 @@ describe('RepositoryAccountView', () => {
     wrapper.unmount()
     expect(serverSignal!.aborted).toBe(true)
   })
+
+  it('opens a tombstoned row at its tombstone revision, which a current read refuses', async () => {
+    const { wrapper, router } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments: () =>
+          create(ListDocumentsResponseSchema, {
+            documents: [
+              create(DocumentSummarySchema, { address: testAddress({ docId: 'gone' }), revision: 4n, committedAt: at('2026-10-01T00:00:00Z'), tombstone: true }),
+              summary('live'),
+            ],
+          }),
+      })
+    })
+    await wrapper.get('[data-testid="doc-row-gone"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query).toMatchObject({ doc: 'gone', revision: '4' })
+    await router.push('/repository/accounts/acct-a')
+    await settle()
+    await wrapper.get('[data-testid="doc-row-live"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query.revision).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('pages with the query the tokens were issued for, not with unsent form edits', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments(request) {
+          seen.push(request)
+          return create(ListDocumentsResponseSchema, { documents: [summary('d')], nextPageToken: request.pageToken === '' ? 'p2' : '' })
+        },
+      })
+    })
+    const vm = wrapper.vm as unknown as { query: { includeTombstoned: boolean; filter: { text: { title: string } } } }
+    vm.query.includeTombstoned = true
+    vm.query.filter.text.title = 'unsent'
+    await wrapper.get('[data-testid="page-next"]').trigger('click')
+    await settle()
+    const paged = seen[seen.length - 1]
+    expect(paged.pageToken).toBe('p2')
+    expect(paged.includeTombstoned).toBe(false)
+    expect(paged.filter).toBeUndefined()
+    await wrapper.get('[data-testid="page-previous"]').trigger('click')
+    await settle()
+    expect(seen[seen.length - 1].filter).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('clears Descending when the sort returns to call number order', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments(request) {
+          seen.push(request)
+          return create(ListDocumentsResponseSchema)
+        },
+      })
+    })
+    const vm = wrapper.vm as unknown as { query: { sortField: DocumentSortField; descending: boolean } }
+    vm.query.sortField = DocumentSortField.TITLE
+    vm.query.descending = true
+    await settle()
+    vm.query.sortField = DocumentSortField.UNSPECIFIED
+    await settle()
+    expect(vm.query.descending).toBe(false)
+    await wrapper.get('[data-testid="apply-query"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="input-error"]').exists()).toBe(false)
+    expect(seen[seen.length - 1].sort).toBeUndefined()
+    wrapper.unmount()
+  })
 })

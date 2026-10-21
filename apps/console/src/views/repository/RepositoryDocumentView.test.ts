@@ -58,9 +58,11 @@ const TEXT_SHA = createHash('sha256').update(TEXT).digest('hex')
 const PDF = new Uint8Array(Array.from({ length: 300_000 }, (_, i) => (i * 13) & 0xff))
 const PDF_SHA = createHash('sha256').update(PDF).digest('hex')
 
+const SMALL = new TextEncoder().encode('twelve bytes')
 const FILES: Record<string, { bytes: Uint8Array; sha: string; mime: string; name: string }> = {
   'blob-txt': { bytes: TEXT, sha: TEXT_SHA, mime: 'text/plain', name: 'notes.txt' },
   'blob-pdf': { bytes: PDF, sha: PDF_SHA, mime: 'application/pdf', name: 'report.pdf' },
+  'blob-small': { bytes: SMALL, sha: createHash('sha256').update(SMALL).digest('hex'), mime: 'text/plain', name: 'small.txt' },
 }
 
 function validation() {
@@ -81,7 +83,7 @@ function validation() {
 }
 
 /** A repository holding one document at revisions 1 to 3 (3 is current). */
-function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[] }) {
+function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequest[]; holdPartReads?: boolean }) {
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -101,7 +103,11 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
           validation: validation(),
         })
       },
-      getDocument() {
+      getDocument(request) {
+        const selector = request.revision?.selector
+        if (selector?.case === 'revision' && selector.value === 2n) {
+          throw new ConnectError('stack read failed', Code.Unavailable)
+        }
         return create(GetDocumentResponseSchema, {
           document: create(DocumentSchema, {
             blobBag: create(BlobBagSchema, {
@@ -135,8 +141,19 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
           ),
         })
       },
-      async *readDocument() {
-        yield create(ReadDocumentResponseSchema, { frame: { case: 'manifest', value: create(DocumentManifestSchema, { address: testAddress(), revision: 3n }) } })
+      async *readDocument(request) {
+        if (seen.holdPartReads) await new Promise((resolve) => setTimeout(resolve, 20))
+        void request
+        yield create(ReadDocumentResponseSchema, {
+          frame: {
+            case: 'manifest',
+            value: create(DocumentManifestSchema, {
+              address: testAddress(),
+              revision: 3n,
+              parts: [create(PartManifestEntrySchema, { selector: CORE, state: PartState.PRESENT, writtenInRevision: 3n, owner, contentIncluded: true })],
+            }),
+          },
+        })
         yield create(ReadDocumentResponseSchema, { frame: { case: 'partData', value: create(PartDataSchema, { selector: CORE, offset: 0n, data: coreBytes, last: true }) } })
         yield create(ReadDocumentResponseSchema, { frame: { case: 'complete', value: create(ReadCompleteSchema) } })
       },
@@ -147,6 +164,11 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
         seen.blobs.push(request)
         const file = FILES[request.blobId]
         if (!file) throw new ConnectError(`no blob ${request.blobId}`, Code.NotFound)
+        const total = BigInt(file.bytes.length)
+        // The server's own range rule (DocumentStreams.prepareBlobRead).
+        if (request.offset > total || request.length > total - request.offset) {
+          throw new ConnectError(`Requested byte range [${request.offset}, +${request.length}) is outside blob length ${total}`, Code.InvalidArgument)
+        }
         yield create(ReadBlobResponseSchema, {
           frame: { case: 'header', value: create(BlobHeaderSchema, { revision: 3n, totalLength: BigInt(file.bytes.length), sha256: file.sha, mimeType: file.mime, filename: file.name }) },
         })
@@ -162,7 +184,7 @@ function repository(seen: { manifests: GetManifestRequest[]; blobs: ReadBlobRequ
 const DOC = { name: 'repository-document', query: { account: 'acct-a', graph: 'intake:acct-a', node: 'ds-files', doc: 'doc-1' } }
 
 function seenCalls() {
-  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[] }
+  return { manifests: [] as GetManifestRequest[], blobs: [] as ReadBlobRequest[], holdPartReads: false }
 }
 
 afterEach(() => {
@@ -298,6 +320,66 @@ describe('RepositoryDocumentView', () => {
     await settle()
     expect(wrapper.get('[data-testid="preview-text"]').text()).toContain('line one')
     expect(wrapper.get('[data-testid="verification"]').text()).toContain('65536 bytes of a byte range')
+    wrapper.unmount()
+  })
+
+  it('previews a file shorter than the preview whole instead of asking past its end', async () => {
+    const seen = seenCalls()
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
+    await wrapper.get('[data-testid="tab-files"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="select-blob-blob-small"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="preview"]').trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid="rpc-failure"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="preview-text"]').text()).toBe('twelve bytes')
+    expect(seen.blobs[seen.blobs.length - 1].length).toBe(0n)
+    wrapper.unmount()
+  })
+
+  it('drops the previous revision\'s metadata and files when the next one cannot be read', async () => {
+    const { wrapper, router } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seenCalls()))
+    const tabs = () => wrapper.findAll('.v-tab')
+    await tabs().find((t) => t.text() === 'Metadata')!.trigger('click')
+    await settle()
+    expect(wrapper.get('[data-testid="metadata-table"]').text()).toContain('request.source')
+    await router.push({ ...DOC, query: { ...DOC.query, revision: '2' } })
+    await settle()
+    expect(wrapper.find('[data-testid="metadata-table"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('stack read failed')
+    await tabs().find((t) => t.text() === 'Files')!.trigger('click')
+    await settle()
+    expect(wrapper.find('[data-testid^="blob-blob-"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('discards a part read still running when another revision opens', async () => {
+    const seen = seenCalls()
+    seen.holdPartReads = true
+    const { wrapper, router } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seen))
+    await wrapper.get('[data-testid="read-part-0"]').trigger('click')
+    await router.push({ ...DOC, query: { ...DOC.query, revision: '1' } })
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await settle()
+    expect(wrapper.get('[data-testid="revision-chip"]').text()).toBe('revision 1')
+    expect(wrapper.find('[data-testid="part-view"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows a save dialog failure instead of dropping it', async () => {
+    ;(globalThis as Record<string, unknown>).showSaveFilePicker = async () => {
+      throw new DOMException('not allowed here', 'SecurityError')
+    }
+    const { wrapper } = await mountRepositoryView(RepositoryDocumentView, DOC, repository(seenCalls()))
+    await wrapper.get('[data-testid="tab-files"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="select-blob-blob-pdf"]').trigger('click')
+    await settle()
+    await wrapper.get('[data-testid="download"]').trigger('click')
+    await settle()
+    expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('not allowed here')
     wrapper.unmount()
   })
 })

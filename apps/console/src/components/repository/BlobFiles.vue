@@ -164,20 +164,25 @@ async function preview() {
   reset()
   const wanted = range()
   if (!wanted) return
-  const bounded: BlobRange = {
-    offset: wanted.offset,
-    length: wanted.length === 0n || wanted.length > PREVIEW_BYTES ? PREVIEW_BYTES : wanted.length,
-  }
   const signal = scope.next()
   busy.value = 'preview'
   const out = collector()
   try {
-    const result = await readBlob(clients.documents, { address: props.address, revision: props.revision, blobId: blob.blobId, range: bounded }, out.sink, signal, track)
+    // The range as asked, ending the stream once the preview has its bytes, so
+    // a file shorter than the preview is read whole rather than refused.
+    const result = await readBlob(
+      clients.documents,
+      { address: props.address, revision: props.revision, blobId: blob.blobId, range: wanted },
+      out.sink,
+      signal,
+      track,
+      PREVIEW_BYTES,
+    )
     const bytes = out.bytes()
     outcome.value = { ...result, what: 'Preview' }
     previewView.value = isText(result.header.mimeType || blob.mimeType)
       ? { text: new TextDecoder('utf-8', { fatal: false }).decode(bytes), hex: [] }
-      : { text: null, hex: hexDump(bytes, bounded.offset) }
+      : { text: null, hex: hexDump(bytes, wanted.offset) }
   } catch (error) {
     failed(error, signal)
   } finally {
@@ -201,7 +206,8 @@ async function download() {
   } catch (error) {
     // The user closed the save dialog: nothing was read.
     if (error instanceof DOMException && error.name === 'AbortError') return
-    throw error
+    readFailure.value = rpcFailure(error)
+    return
   }
   const signal = scope.next()
   busy.value = 'download'

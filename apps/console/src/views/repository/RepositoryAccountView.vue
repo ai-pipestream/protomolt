@@ -186,6 +186,7 @@ import {
   emptyFilterForm,
   newListingQuery,
   type DocumentRow,
+  type ListingQuery,
 } from '@/repository/listingCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import { useCallScope } from '@/repository/useCallScope'
@@ -248,12 +249,29 @@ const listed = ref(false)
 const listFailure = ref<RpcFailure | null>(null)
 const inputError = ref<string | null>(null)
 
+// The query the page tokens were issued for. Paging uses it, not the form,
+// so editing the form changes nothing until List documents is clicked.
+let listedQuery: ListingQuery = structuredQuery(query)
+
+function structuredQuery(source: ListingQuery): ListingQuery {
+  return {
+    ...source,
+    filter: {
+      text: { ...source.filter.text },
+      committedAfter: source.filter.committedAfter,
+      committedBefore: source.filter.committedBefore,
+      metadata: source.filter.metadata.map((m) => ({ ...m })),
+      owner: { ...source.filter.owner },
+    },
+  }
+}
+
 async function loadPage() {
   inputError.value = null
   listFailure.value = null
   let request
   try {
-    request = buildListRequest(query, cursor.token)
+    request = buildListRequest(listedQuery, cursor.token)
   } catch (error) {
     if (error instanceof ListingInputError) {
       inputError.value = error.message
@@ -279,6 +297,7 @@ async function loadPage() {
 }
 
 function applyQuery() {
+  listedQuery = structuredQuery(query)
   cursor.reset()
   void loadPage()
 }
@@ -295,10 +314,11 @@ function previousPage() {
 }
 
 function openRow(row: DocumentRow) {
-  void router.push({
-    name: 'repository-document',
-    query: { account: accountId.value, graph: row.graphId, node: row.graphAddressId, doc: row.docId },
-  })
+  const query: Record<string, string> = { account: accountId.value, graph: row.graphId, node: row.graphAddressId, doc: row.docId }
+  // A current read of a tombstoned document is NOT_FOUND; its tombstone
+  // revision itself opens, with the history behind it.
+  if (row.tombstone) query.revision = row.revision
+  void router.push({ name: 'repository-document', query })
 }
 
 function loadAll() {
@@ -311,10 +331,21 @@ onMounted(loadAll)
 // The same view serves every account; a different account starts over.
 watch(accountId, (next) => {
   Object.assign(query, newListingQuery(next))
+  listedQuery = structuredQuery(query)
   cursor.reset()
   rows.value = []
   listed.value = false
   drives.value = []
+  drivesNext.value = ''
   loadAll()
 })
+
+// Call number order is always ascending; leaving a sort field clears Descending
+// so it cannot linger behind a disabled switch.
+watch(
+  () => query.sortField,
+  (field) => {
+    if (field === DocumentSortField.UNSPECIFIED) query.descending = false
+  },
+)
 </script>
