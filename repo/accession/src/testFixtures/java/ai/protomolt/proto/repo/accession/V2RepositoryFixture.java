@@ -75,6 +75,12 @@ public final class V2RepositoryFixture implements AutoCloseable {
     /** Default S3 object key prefix within the fixture bucket. */
     public static final String DEFAULT_OBJECT_PREFIX = "objects";
 
+    /** The second drive every fixture registers, for the corpus documents that live off the default drive. */
+    public static final String PIPELINE_DRIVE = RepositoryCorpus.PIPELINE_DRIVE;
+
+    /** S3 object key prefix of the pipeline drive within the fixture bucket. */
+    public static final String PIPELINE_OBJECT_PREFIX = "objects-pipeline";
+
     /** Default Hikari pool size for the fixture catalog. */
     public static final int DEFAULT_CATALOG_POOL_SIZE = 4;
 
@@ -109,6 +115,12 @@ public final class V2RepositoryFixture implements AutoCloseable {
     /** The S3-backed stack bound to the default drive. */
     public final BlobStoreStack stack;
 
+    /** The S3-backed stack bound to the {@link #PIPELINE_DRIVE} drive. */
+    public final BlobStoreStack pipelineStack;
+
+    /** The drive table the saves and reads resolve: the default drive and the pipeline drive. */
+    public final DocumentSaves.Drives drives;
+
     /** The S3 client connected to the LocalStack endpoint. */
     public final S3Client client;
 
@@ -122,6 +134,8 @@ public final class V2RepositoryFixture implements AutoCloseable {
     public final Server server;
 
     private final RegistrySchemaResolver ownedRegistryResolver;
+    private final DocumentSchemaAdmission.Limits limits;
+    private final DocumentSchemas schemas;
 
     /**
      * Creates and starts a baseline v2 repository fixture with an empty schema resolver
@@ -193,8 +207,28 @@ public final class V2RepositoryFixture implements AutoCloseable {
         this.stack =
                 new BlobStoreStack(
                         id, new S3BlobStore(this.client), builder.name, DEFAULT_OBJECT_PREFIX);
-        var drives = new DocumentSaves.Drives(builder.driveName, Map.of(builder.driveName, this.stack));
+        String pipelineId =
+                this.catalog.registerStack(
+                        StackRecord.newBuilder()
+                                .setStackId(builder.name + "-" + PIPELINE_DRIVE)
+                                .setProvider("s3")
+                                .setEndpoint(builder.localstack.getEndpoint().toString())
+                                .setNamespace(builder.name + "/" + PIPELINE_OBJECT_PREFIX)
+                                .build());
+        this.pipelineStack =
+                new BlobStoreStack(
+                        pipelineId, new S3BlobStore(this.client), builder.name, PIPELINE_OBJECT_PREFIX);
+        if (builder.driveName.equals(PIPELINE_DRIVE)) {
+            throw new IllegalArgumentException("The default drive may not be named " + PIPELINE_DRIVE);
+        }
+        var drives =
+                new DocumentSaves.Drives(
+                        builder.driveName,
+                        Map.of(builder.driveName, this.stack, PIPELINE_DRIVE, this.pipelineStack));
+        this.drives = drives;
         this.ownedRegistryResolver = builder.ownedRegistryResolver;
+        this.limits = builder.limits;
+        this.schemas = builder.schemas;
         this.saves =
                 new DocumentSaves(
                         this.catalog,
@@ -327,6 +361,46 @@ public final class V2RepositoryFixture implements AutoCloseable {
      */
     public S3Client client() {
         return client;
+    }
+
+    /**
+     * Returns the drive table the fixture's saves and reads resolve.
+     *
+     * @return the drives
+     */
+    public DocumentSaves.Drives drives() {
+        return drives;
+    }
+
+    /**
+     * Loads the default {@link RepositoryCorpus} into this fixture's catalog and
+     * drives through the real save path, under a stepped clock starting at
+     * {@link RepositoryCorpus#EPOCH}.
+     *
+     * @return what the loader wrote
+     */
+    public CorpusLoader.Loaded loadCorpus() {
+        return loadCorpus(RepositoryCorpus.build());
+    }
+
+    /**
+     * Loads a corpus into this fixture's catalog and drives through the real save
+     * path. The corpus's typed payloads are admitted through the built-in
+     * {@link SearchMetadata} schema whatever resolver the fixture was built with;
+     * the fixture's own {@link #saves} and {@link #reads} see the written documents.
+     *
+     * @param corpus the corpus to write
+     * @return what the loader wrote
+     */
+    public CorpusLoader.Loaded loadCorpus(RepositoryCorpus corpus) {
+        return CorpusLoader.load(
+                corpus,
+                catalog,
+                drives,
+                searchMetadataResolver(),
+                limits,
+                schemas,
+                new SteppedClock(RepositoryCorpus.EPOCH, RepositoryCorpus.STEP));
     }
 
     /**
