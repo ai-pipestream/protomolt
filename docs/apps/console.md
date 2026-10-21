@@ -401,3 +401,17 @@ Repository section. Its generated stubs live in `src/gen`; after changing a
 proto the console uses, run `scripts/proto-stubs.sh` (buf 1.70.0, after
 `npm ci`) and commit the result. CI runs `scripts/proto-stubs.sh --check`,
 which fails when the committed stubs drift from the protos.
+
+The browser leg drives the built console in Chromium against a real
+repository host. `ConsoleBrowserIT` in `repo/fixtures` starts PostgreSQL,
+LocalStack S3 and Keycloak, seeds the fixture corpus, serves `dist/` with the
+Connect gateway and sign-in routes on one port, and runs `npm run
+test:browser` (Playwright, specs in `e2e/`) against it. Every spec signs in
+through Keycloak's own login page and holds only the session cookie; the write
+specs also send the operator token, because a session carries no writer
+credential yet. Run it with:
+
+    cd apps/console && npm ci && npm run build && npx playwright install chromium
+    PROTOMOLT_CONSOLE_BROWSER_IT=1 ./gradlew :protomolt-repo-fixtures:integrationTest --tests '*ConsoleBrowserIT'
+
+A failing run leaves its report and traces in `playwright-report/`.
