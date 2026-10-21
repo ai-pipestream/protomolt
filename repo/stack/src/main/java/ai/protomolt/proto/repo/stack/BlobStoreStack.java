@@ -21,6 +21,9 @@ import java.util.UUID;
  * array, so the provider can retry it. A larger or unknown-length put is a
  * multipart upload sent from one part buffer at a time: memory stays bounded by
  * the part size and a retry resends a part, never rewinding the caller's stream.
+ * A provider without multipart takes a larger known-length body through its
+ * required streaming put instead, digest still computed while streaming, so a
+ * Redis-backed stack accepts any object its own limits allow.
  */
 public final class BlobStoreStack implements Stack {
     /** Part buffer for streamed puts: above S3's 5 MiB minimum part size. */
@@ -92,12 +95,29 @@ public final class BlobStoreStack implements Stack {
             return put(bytes);
         }
         var key = newKey();
+        var spec = new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null);
         try {
-            store.putMultipart(new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null), counted, partSize);
+            store.putMultipart(spec, counted, partSize);
         } catch (UncheckedIOException failure) {
             throw failure.getCause();
-        } catch (UnsupportedOperationException unsupported) {
-            throw unsupported;
+        } catch (UnsupportedOperationException multipartUnsupported) {
+            // A provider without multipart (Redis; the caching wrapper over such a
+            // backing) still has the required known-length streaming put, with no
+            // extra size ceiling of this stack's own. The refusal is thrown before
+            // the body is touched; a partially consumed body cannot be retried, and
+            // an unknown-length body has no known-length route, so both rethrow.
+            if (counted.count > 0 || expectedLength < 0) {
+                throw multipartUnsupported;
+            }
+            try {
+                store.put(spec, counted, expectedLength);
+            } catch (UncheckedIOException failure) {
+                throw failure.getCause();
+            } catch (UnsupportedOperationException unsupported) {
+                throw unsupported;
+            } catch (RuntimeException failure) {
+                throw new IOException("Stack write failed", failure);
+            }
         } catch (RuntimeException failure) {
             throw new IOException("Stack write failed", failure);
         }

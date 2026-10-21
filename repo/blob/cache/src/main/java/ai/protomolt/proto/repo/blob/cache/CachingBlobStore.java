@@ -90,6 +90,13 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
     }
 
     @Override
+    public PutResult putMultipart(PutSpec spec, InputStream body, int partSize) {
+        // The backing store owns multipart (or refuses it); streamed bodies are
+        // not replayable, so the next read populates the cache read-through.
+        return backing.putMultipart(spec, body, partSize);
+    }
+
+    @Override
     public GetResult getForUpdate(String bucket, String key) {
         return backing.getForUpdate(bucket, key);
     }

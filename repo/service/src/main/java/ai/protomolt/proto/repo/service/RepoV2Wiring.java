@@ -74,18 +74,9 @@ final class RepoV2Wiring {
                         config.ledger().username(), config.ledger().password(), config.ledger().maxPoolSize()),
                 catalogSchema));
         var v2Stacks = new ConcurrentHashMap<String, Stack>();
-        Function<DriveRecord, Stack> stackForDrive = record -> {
-            String prefix = RepositoryNamespaces.under(
-                    record.prefix == null ? "" : stripLeadingSlashes(record.prefix), "documents");
-            String stackId = catalog.registerStack(StackRecord.newBuilder()
-                    .setStackId("stack-" + record.driveId)
-                    .setProvider(selectedDriveProvider)
-                    .setEndpoint(config.s3Endpoint() == null ? "" : config.s3Endpoint())
-                    .setNamespace(record.bucket + "/" + prefix)
-                    .build());
-            return v2Stacks.computeIfAbsent(stackId,
-                    id -> new BlobStoreStack(id, blobStore, record.bucket, prefix));
-        };
+        Function<DriveRecord, Stack> stackForDrive = driveStacks(catalog::registerStack,
+                (id, record, prefix) -> new BlobStoreStack(id, blobStore, record.bucket, prefix),
+                selectedDriveProvider, config.s3Endpoint(), v2Stacks);
         var v2Drives = DocumentSaves.Drives.dynamic("intake",
                 (accountId, driveName) -> driveLedger.findByName(accountId, driveName)
                         .or(() -> "default".equals(driveName) ? driveLedger.findByName(accountId, "intake")
@@ -112,8 +103,13 @@ final class RepoV2Wiring {
                     // Module-contributed schemas (the fleet document model).
                     return admittedSchemas.get().get(selection.typeUrl());
                 };
+        // The save budget, sized like the read budget: a unary save reserves its
+        // admitted serialized fragments and raw blob bytes from admission until
+        // the revision commits, and a streamed upload reserves per received
+        // chunk. An over-budget save is RESOURCE_EXHAUSTED before any stack
+        // write, the same answer the read path gives.
         var v2Saves = new DocumentSaves(catalog, v2Drives, builtinSchemas,
-                limits, bytes -> () -> {}, Clock.systemUTC());
+                limits, new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC());
         var v2Uploads = new DocumentUploads(v2Saves);
         var accession = new AccessionGrpcService(v2Saves, v2Uploads,
                 new DocumentReads(catalog, v2Drives, limits,
@@ -146,6 +142,39 @@ final class RepoV2Wiring {
             relay = new OutboxRelay(catalog, publisher);
         }
         return new Wired(catalog, v2Uploads, relay, accession, v2Drives, builtinSchemas, limits);
+    }
+
+    /** Opens one stack for a resolved namespace; the composition supplies the blob store. */
+    interface StackOpener {
+        Stack open(String stackId, DriveRecord record, String prefix);
+    }
+
+    /**
+     * Resolves a drive to its stack with a per-drive cache in front of the
+     * catalog: only a drive's first resolve runs {@code registerStack} (the
+     * catalog's INSERT ON CONFLICT plus SELECT write transaction); repeated
+     * by-name resolves of a cached drive make zero catalog calls. The catalog
+     * stays the namespace authority: the returned stack id (which can differ
+     * from {@code stack-<driveId>} when two drives name one namespace) keys
+     * the shared by-id cache exactly as before. A {@code registerStack}
+     * failure propagates unchanged and caches nothing in either map.
+     */
+    static Function<DriveRecord, Stack> driveStacks(Function<StackRecord, String> registerStack,
+            StackOpener openStack, String selectedDriveProvider, String s3Endpoint,
+            ConcurrentHashMap<String, Stack> stacksById) {
+        var stacksByDrive = new ConcurrentHashMap<UUID, Stack>();
+        return record -> stacksByDrive.computeIfAbsent(record.driveId, driveId -> {
+            String prefix = RepositoryNamespaces.under(
+                    record.prefix == null ? "" : stripLeadingSlashes(record.prefix), "documents");
+            String stackId = registerStack.apply(StackRecord.newBuilder()
+                    .setStackId("stack-" + record.driveId)
+                    .setProvider(selectedDriveProvider)
+                    .setEndpoint(s3Endpoint == null ? "" : s3Endpoint)
+                    .setNamespace(record.bucket + "/" + prefix)
+                    .build());
+            return stacksById.computeIfAbsent(stackId,
+                    id -> openStack.open(id, record, prefix));
+        });
     }
 
     /**
