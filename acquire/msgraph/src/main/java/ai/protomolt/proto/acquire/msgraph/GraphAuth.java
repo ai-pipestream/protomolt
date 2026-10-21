@@ -35,7 +35,7 @@ public final class GraphAuth {
 
         public Config {
             authority = authority == null || authority.isBlank()
-                    ? "https://login.microsoftonline.com" : authority.replaceAll("/+$", "");
+                    ? "https://login.microsoftonline.com" : GraphFiles.stripTrailingSlashes(authority);
             Objects.requireNonNull(tenantId, "tenantId");
             Objects.requireNonNull(clientId, "clientId");
         }

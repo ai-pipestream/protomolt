@@ -78,7 +78,7 @@ public final class GraphClient {
 
     /** {@code baseUrl} is overridable for tests and national-cloud endpoints. */
     public GraphClient(String baseUrl, Supplier<String> bearer) {
-        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl").replaceAll("/+$", "");
+        this.baseUrl = GraphFiles.stripTrailingSlashes(Objects.requireNonNull(baseUrl, "baseUrl"));
         this.bearer = Objects.requireNonNull(bearer, "bearer");
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
     }

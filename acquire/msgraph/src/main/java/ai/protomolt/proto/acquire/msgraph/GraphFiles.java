@@ -137,17 +137,34 @@ public final class GraphFiles {
         if (!cleaned.startsWith("/")) {
             cleaned = "/" + cleaned;
         }
-        return cleaned.replaceAll("/+$", "");
+        return stripTrailingSlashes(cleaned);
+    }
+
+    /** Every trailing {@code '/'} removed; an all-slashes value becomes empty. */
+    static String stripTrailingSlashes(String value) {
+        int end = value.length();
+        while (end > 0 && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return value.substring(0, end);
     }
 
     private static String encodePath(String path) {
         StringBuilder encoded = new StringBuilder();
-        for (String segment : normalize(path).split("/")) {
-            if (segment.isEmpty()) {
-                continue;
+        String normalized = normalize(path);
+        int from = 0;
+        while (from <= normalized.length()) {
+            int slash = normalized.indexOf('/', from);
+            String segment = slash < 0
+                    ? normalized.substring(from) : normalized.substring(from, slash);
+            if (!segment.isEmpty()) {
+                encoded.append('/').append(URLEncoder.encode(segment, StandardCharsets.UTF_8)
+                        .replace("+", "%20"));
             }
-            encoded.append('/').append(URLEncoder.encode(segment, StandardCharsets.UTF_8)
-                    .replace("+", "%20"));
+            if (slash < 0) {
+                break;
+            }
+            from = slash + 1;
         }
         return encoded.toString();
     }
