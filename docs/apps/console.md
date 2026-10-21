@@ -319,6 +319,25 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   means the lookup itself could not answer. The four are shown differently:
   no outcome does not mean the save failed.
 
+- **Upload.** A file goes to the repository host's streaming route,
+  `POST /v1/documents:upload`, as an intake document's raw file: account,
+  datasource and drive are required; the document ID (blank derives it from
+  the file's SHA-256), an expected revision for an update, a connector and a
+  content type are optional. The console hashes the file in slices, picks the
+  operation ID and shows both before the first byte is sent, then reports
+  bytes sent. It asks the route for protobuf (`Accept: application/proto`):
+  success is a binary `UploadDocumentResponse` naming the committed
+  revision. An error keeps its HTTP status and comes with a binary
+  `ItemError` body (code, message and the `errors.proto` detail) plus the
+  `grpc-status` and `grpc-message` headers. A capacity error (`429`,
+  `RESOURCE_EXHAUSTED`) means no save happened, and the file can be sent
+  again under the same operation ID. When a send ends without a clear result
+  (a lost connection, a reply without an `ItemError`, or a transient status),
+  the screen polls `GetOperationOutcome` until it reports committed or
+  rejected, shows "no outcome yet" and "lookup unavailable" as two separate
+  states, and offers a resend under the same operation ID. A document detail page of an
+  intake document links here to upload its next revision.
+
 Every failed call shows its gRPC status name and the server's message; a
 response the console refuses (a stream that breaks its contract, a digest that
 does not match) shows as `CONSOLE` with the reason. A gateway `UNAUTHENTICATED`

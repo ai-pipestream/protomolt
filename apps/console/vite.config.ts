@@ -57,6 +57,11 @@ export default defineConfig({
         target: repository,
         changeOrigin: false,
       },
+      // The repository host's streaming upload route, same origin as /connect.
+      '/v1/documents:upload': {
+        target: repository,
+        changeOrigin: false,
+      },
     },
   },
   test: {

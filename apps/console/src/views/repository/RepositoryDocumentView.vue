@@ -14,6 +14,9 @@
         <v-btn v-if="requested !== null && call" size="small" variant="text" data-testid="open-current" @click="openRevision(null)">
           Open current revision
         </v-btn>
+        <v-btn v-if="uploadRoute" size="small" variant="tonal" prepend-icon="mdi-upload" data-testid="upload-revision" :to="uploadRoute">
+          Upload a new revision
+        </v-btn>
       </v-card-title>
       <v-card-text v-if="call" class="text-caption text-mono pt-0">
         account {{ call.accountId }} · graph {{ call.graphId }} · graph address {{ call.graphAddressId }}
@@ -244,6 +247,18 @@ const blobs = ref<BlobRow[]>([])
 const documentFailure = ref<RpcFailure | null>(null)
 
 const parts = computed(() => (manifest.value ? partRows(manifest.value) : []))
+
+// The upload route saves intake documents, whose call number is (doc, datasource,
+// account, "intake:<account>"); a new revision of the current one expects it.
+const uploadRoute = computed(() => {
+  const c = call.value
+  if (c === null || manifest.value === null || requested.value !== null) return null
+  if (c.graphId !== `intake:${c.accountId}`) return null
+  return {
+    name: 'repository-upload',
+    query: { account: c.accountId, datasource: c.graphAddressId, doc: c.docId, expected: manifest.value.revision.toString() },
+  }
+})
 const validationSummary = computed(() => (validation.value ? validationView(validation.value) : null))
 
 const allowOpaque = ref(false)

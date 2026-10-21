@@ -9,13 +9,10 @@
 // UNAUTHENTICATED (no session, or an expired one) starts sign-in and comes back
 // to the page that was open.
 import { provide } from 'vue'
-import { REPOSITORY_CLIENTS, repositoryClients } from '@/repository/clients'
+import { REPOSITORY_CLIENTS, REPOSITORY_SIGN_IN, repositoryClients } from '@/repository/clients'
 import { repositoryTransport, signInLocation } from '@/repository/transport'
 
-provide(
-  REPOSITORY_CLIENTS,
-  repositoryClients(
-    repositoryTransport(() => window.location.assign(signInLocation(window.location.pathname + window.location.search))),
-  ),
-)
+const signIn = () => window.location.assign(signInLocation(window.location.pathname + window.location.search))
+provide(REPOSITORY_SIGN_IN, signIn)
+provide(REPOSITORY_CLIENTS, repositoryClients(repositoryTransport(signIn)))
 </script>

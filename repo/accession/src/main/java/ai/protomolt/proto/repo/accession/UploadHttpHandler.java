@@ -10,15 +10,18 @@ import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.DocumentTarget;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.ItemError;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveOwner;
+import ai.protomolt.proto.repo.v2.UploadDocumentResponse;
 import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.WriteAction;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import io.grpc.Status;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -36,6 +39,14 @@ import java.util.function.Supplier;
  * <p>
  * Streams {@code POST /v1/documents:upload} request bodies directly into the configured stack
  * through the v2 accession pipeline without buffering the uploaded file in heap memory.
+ * <p>
+ * The answer is a JSON receipt by default. A request whose {@code Accept} header names
+ * {@code application/proto} gets protobuf instead: success is {@code 200} with the binary
+ * {@link UploadDocumentResponse}, and every refusal keeps its HTTP status, carries the gRPC status
+ * in {@code grpc-status} (the code number) and {@code grpc-message} (percent-encoded UTF-8), and
+ * has a binary {@link ItemError} body: the same code and message, plus the errors.proto detail
+ * the gRPC call would pack ({@code RevisionConflict}, {@code OperationReuse} or
+ * {@code SaveRejection}), so a protobuf client never parses JSON.
  */
 public final class UploadHttpHandler implements HttpHandler {
     /** Canonical HTTP path for raw streaming document uploads. */
@@ -73,6 +84,10 @@ public final class UploadHttpHandler implements HttpHandler {
 
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
     private static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+    private static final String PROTO_CONTENT_TYPE = "application/proto";
+    private static final String HEADER_ACCEPT = "Accept";
+    private static final String HEADER_GRPC_STATUS = "grpc-status";
+    private static final String HEADER_GRPC_MESSAGE = "grpc-message";
 
     private static final int HTTP_OK = 200;
     private static final int HTTP_BAD_REQUEST = 400;
@@ -123,17 +138,18 @@ public final class UploadHttpHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
+        boolean proto = acceptsProto(exchange.getRequestHeaders());
         try {
             if (!authenticate(exchange.getRequestHeaders())) {
-                sendError(exchange, HTTP_UNAUTHORIZED, "Unauthorized");
+                sendError(exchange, proto, HTTP_UNAUTHORIZED, Status.Code.UNAUTHENTICATED, "Unauthorized");
                 return;
             }
             if (!UPLOAD_PATH.equals(exchange.getRequestURI().getPath())) {
-                sendError(exchange, HTTP_NOT_FOUND, "Not found");
+                sendError(exchange, proto, HTTP_NOT_FOUND, Status.Code.NOT_FOUND, "Not found");
                 return;
             }
             if (!METHOD_POST.equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendError(exchange, HTTP_METHOD_NOT_ALLOWED, "Method not allowed");
+                sendError(exchange, proto, HTTP_METHOD_NOT_ALLOWED, Status.Code.UNIMPLEMENTED, "Method not allowed");
                 return;
             }
 
@@ -148,7 +164,9 @@ public final class UploadHttpHandler implements HttpHandler {
             if (isBlank(accountId) || isBlank(datasourceId) || isBlank(driveName) || isBlank(filename)) {
                 sendError(
                         exchange,
+                        proto,
                         HTTP_BAD_REQUEST,
+                        Status.Code.INVALID_ARGUMENT,
                         "Missing required parameter: account_id, datasource_id, drive, and filename are required");
                 return;
             }
@@ -203,6 +221,10 @@ public final class UploadHttpHandler implements HttpHandler {
 
             try (var body = exchange.getRequestBody()) {
                 var result = uploads.uploadResult(callerSupplier.get(), header, body);
+                if (proto) {
+                    sendProto(exchange, result.response());
+                    return;
+                }
                 var saved = result.response().getSaved();
                 var accession = saved.getAccession();
                 var json = formatSuccessJson(
@@ -215,13 +237,14 @@ public final class UploadHttpHandler implements HttpHandler {
                 sendJson(exchange, HTTP_OK, json);
             }
         } catch (LengthRequiredException missingLength) {
-            sendError(exchange, HTTP_LENGTH_REQUIRED, missingLength.getMessage());
+            sendError(exchange, proto, HTTP_LENGTH_REQUIRED, Status.Code.INVALID_ARGUMENT, missingLength.getMessage());
         } catch (BadRequestException badRequest) {
-            sendError(exchange, HTTP_BAD_REQUEST, badRequest.getMessage());
+            sendError(exchange, proto, HTTP_BAD_REQUEST, Status.Code.INVALID_ARGUMENT, badRequest.getMessage());
         } catch (AccessionException failure) {
-            sendError(exchange, mapStatusCode(failure), failure.getMessage());
+            if (proto) sendProtoError(exchange, mapStatusCode(failure), AccessionGrpcService.itemError(failure));
+            else sendError(exchange, false, mapStatusCode(failure), failure.code(), failure.getMessage());
         } catch (RuntimeException failure) {
-            sendError(exchange, HTTP_INTERNAL_ERROR, "Upload failed");
+            sendError(exchange, proto, HTTP_INTERNAL_ERROR, Status.Code.INTERNAL, "Upload failed");
         } finally {
             exchange.close();
         }
@@ -434,10 +457,79 @@ public final class UploadHttpHandler implements HttpHandler {
                 + "}";
     }
 
-    private static void sendError(HttpExchange exchange, int statusCode, String message) throws IOException {
+    private static void sendError(
+            HttpExchange exchange, boolean proto, int statusCode, Status.Code grpcCode, String message)
+            throws IOException {
         String safeMessage = message == null ? "" : message;
         exchange.getResponseHeaders().set("Connection", "close");
+        if (proto) {
+            sendProtoError(exchange, statusCode,
+                    ItemError.newBuilder().setCode(grpcCode.value()).setMessage(safeMessage).build());
+            return;
+        }
         sendJson(exchange, statusCode, "{\"error\":\"" + escapeJson(safeMessage) + "\"}");
+    }
+
+    private static void sendProtoError(HttpExchange exchange, int statusCode, ItemError error) throws IOException {
+        byte[] payload = error.toByteArray();
+        var headers = exchange.getResponseHeaders();
+        headers.set("Connection", "close");
+        headers.set(HEADER_GRPC_STATUS, Integer.toString(error.getCode()));
+        headers.set(HEADER_GRPC_MESSAGE, percentEncode(error.getMessage()));
+        headers.set(HEADER_CONTENT_TYPE, PROTO_CONTENT_TYPE);
+        exchange.sendResponseHeaders(statusCode, payload.length);
+        try (var out = exchange.getResponseBody()) {
+            out.write(payload);
+        }
+    }
+
+    private static void sendProto(HttpExchange exchange, UploadDocumentResponse response) throws IOException {
+        byte[] payload = response.toByteArray();
+        exchange.getResponseHeaders().set(HEADER_CONTENT_TYPE, PROTO_CONTENT_TYPE);
+        exchange.sendResponseHeaders(HTTP_OK, payload.length);
+        try (var out = exchange.getResponseBody()) {
+            out.write(payload);
+        }
+    }
+
+    /**
+     * True when an {@code Accept} value names {@code application/proto}, parameters and case
+     * aside. Any other or absent {@code Accept} keeps the JSON answers.
+     */
+    static boolean acceptsProto(Headers headers) {
+        var values = headers.get(HEADER_ACCEPT);
+        if (values == null) return false;
+        for (String value : values) {
+            int start = 0;
+            while (start <= value.length()) {
+                int comma = value.indexOf(',', start);
+                int end = comma < 0 ? value.length() : comma;
+                int semicolon = value.indexOf(';', start);
+                int typeEnd = semicolon >= 0 && semicolon < end ? semicolon : end;
+                if (value.substring(start, typeEnd).trim().equalsIgnoreCase(PROTO_CONTENT_TYPE)) return true;
+                if (comma < 0) break;
+                start = comma + 1;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Percent-encodes a status message the way gRPC encodes {@code grpc-message}: UTF-8 bytes
+     * outside printable ASCII, and {@code %} itself, become {@code %XX}.
+     */
+    static String percentEncode(String message) {
+        var out = new StringBuilder(message.length());
+        for (byte b : message.getBytes(StandardCharsets.UTF_8)) {
+            int c = b & 0xff;
+            if (c >= 0x20 && c < 0x7f && c != '%') {
+                out.append((char) c);
+            } else {
+                out.append('%').append(Character.toUpperCase(Character.forDigit(c >> 4, 16)))
+                        .append(Character.toUpperCase(Character.forDigit(c & 0xf, 16)));
+            }
+        }
+        return out.toString();
     }
 
     private static void sendJson(HttpExchange exchange, int statusCode, String json) throws IOException {
