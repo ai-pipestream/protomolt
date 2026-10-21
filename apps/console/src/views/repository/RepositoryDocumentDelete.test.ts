@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest'
 import {
   DeleteDocumentResponseSchema,
   DocumentService,
+  GetOperationOutcomeResponseSchema,
+  NoRecordedOutcomeSchema,
+  RecordedOutcomeSchema,
   GetDocumentResponseSchema,
   GetManifestResponseSchema,
   ListRevisionsResponseSchema,
@@ -32,8 +35,9 @@ const owner = create(SaveOwnerSchema, { owner: { case: 'intake', value: { dataso
 const CORE = create(PartSelectorSchema, { selector: { case: 'part', value: DocumentPart.CORE } })
 
 /** A document at revision 4 that the delete handler may turn into a tombstone at 5. */
-function repository(onDelete: (request: DeleteDocumentRequest) => 'commit' | Error, seen: DeleteDocumentRequest[]) {
+function repository(onDelete: (request: DeleteDocumentRequest, commit: () => void) => 'commit' | Error, seen: DeleteDocumentRequest[]) {
   let current = 4n
+  const tombstone = () => create(AccessionSchema, { address: testAddress(), revision: 5n, previousRevision: 4n, tombstone: true })
   return (router: ConnectRouter) =>
     router.service(DocumentService, {
       getManifest(request) {
@@ -66,9 +70,15 @@ function repository(onDelete: (request: DeleteDocumentRequest) => 'commit' | Err
             }),
           ),
         }),
+      getOperationOutcome: () =>
+        current === 5n
+          ? create(GetOperationOutcomeResponseSchema, {
+              state: { case: 'committed', value: create(RecordedOutcomeSchema, { result: { case: 'accession', value: tombstone() }, recordedAt: at('2026-10-21T00:00:00Z') }) },
+            })
+          : create(GetOperationOutcomeResponseSchema, { state: { case: 'none', value: create(NoRecordedOutcomeSchema) } }),
       deleteDocument(request) {
         seen.push(request)
-        const outcome = onDelete(request)
+        const outcome = onDelete(request, () => (current = 5n))
         if (outcome instanceof Error) throw outcome
         current = 5n
         return create(DeleteDocumentResponseSchema, {
@@ -81,7 +91,7 @@ function repository(onDelete: (request: DeleteDocumentRequest) => 'commit' | Err
 
 const DOC = { name: 'repository-document', query: { account: 'acct-a', graph: 'intake:acct-a', node: 'ds-files', doc: 'doc-1' } }
 
-async function openDialog(onDelete: (request: DeleteDocumentRequest) => 'commit' | Error) {
+async function openDialog(onDelete: (request: DeleteDocumentRequest, commit: () => void) => 'commit' | Error) {
   const seen: DeleteDocumentRequest[] = []
   const mounted = await mountRepositoryView(RepositoryDocumentView, DOC, repository(onDelete, seen))
   await mounted.wrapper.get('[data-testid="delete-document"]').trigger('click')
@@ -167,6 +177,60 @@ describe('Tombstone delete', () => {
   it('offers no delete on an exact older revision or on a tombstone', async () => {
     const { wrapper } = await mountRepositoryView(RepositoryDocumentView, { ...DOC, query: { ...DOC.query, revision: '3' } }, repository(() => 'commit', []))
     expect(wrapper.find('[data-testid="delete-document"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('resends exactly the first request, reason included, and freezes the reason after the first send', async () => {
+    let attempts = 0
+    const { wrapper, seen, dialog, click } = await openDialog(() =>
+      attempts++ === 0 ? new ConnectError('deadline passed', Code.DeadlineExceeded) : 'commit',
+    )
+    const reason = () => dialog()!.querySelector('[data-testid="delete-reason"] textarea') as HTMLTextAreaElement
+    reason().value = 'duplicate scan'
+    reason().dispatchEvent(new Event('input'))
+    await settle()
+    await click('delete-confirm')
+    expect(reason().readOnly).toBe(true)
+    reason().value = 'edited later'
+    reason().dispatchEvent(new Event('input'))
+    await settle()
+    await click('delete-confirm')
+    expect(seen).toHaveLength(2)
+    expect(seen.map((r) => r.reason)).toEqual(['duplicate scan', 'duplicate scan'])
+    wrapper.unmount()
+  })
+
+  it('treats a definite answer such as NOT_FOUND as final, with no resend', async () => {
+    const { wrapper, dialog, click } = await openDialog(() => new ConnectError('Document was purged', Code.NotFound))
+    await click('delete-confirm')
+    expect(dialog()!.textContent).toContain('NOT_FOUND')
+    expect(dialog()!.querySelector('[data-testid="delete-unsettled"]')).toBeNull()
+    expect((dialog()!.querySelector('[data-testid="delete-confirm"]') as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('looks up what an already-used operation ID recorded, and opens the tombstone it committed', async () => {
+    const { wrapper, router, dialog, click } = await openDialog((_request, commit) => {
+      commit()
+      return new ConnectError('Operation ID was used with a different intent', Code.AlreadyExists)
+    })
+    await click('delete-confirm')
+    expect(dialog()).toBeNull()
+    expect(router.currentRoute.value.query.revision).toBe('5')
+    wrapper.unmount()
+  })
+
+  it('closes the dialog when the route moves to another document', async () => {
+    const { wrapper, router, dialog } = await openDialog(() => 'commit')
+    expect(dialog()).not.toBeNull()
+    await router.push({ ...DOC, query: { ...DOC.query, doc: 'doc-2' } })
+    await settle()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await settle()
+    // doc-2 has loaded and is deletable; the dialog must not come back for it.
+    expect(wrapper.find('[data-testid="delete-document"]').exists()).toBe(true)
+    expect((wrapper.vm as unknown as { deleting: boolean }).deleting).toBe(false)
+    expect(dialog()).toBeNull()
     wrapper.unmount()
   })
 })

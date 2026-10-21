@@ -89,7 +89,7 @@ describe('deleteDocument', () => {
     expect(staleText(answer, 4n)).toContain('did not say which revision is (ABORTED: concurrent write)')
   })
 
-  it('answers denied with the reason, and throws every other status', async () => {
+  it('answers denied with the reason', async () => {
     const denied = await deleteDocument(
       server(() => {
         throw new ConnectError('The caller may not delete this document', Code.PermissionDenied)
@@ -98,13 +98,26 @@ describe('deleteDocument', () => {
       signal(),
     )
     expect(denied).toMatchObject({ kind: 'denied', failure: { code: 'PERMISSION_DENIED', message: 'The caller may not delete this document' } })
-    const error = await deleteDocument(
+  })
+
+  it.each([
+    [Code.Unavailable, 'unsettled'],
+    [Code.DeadlineExceeded, 'unsettled'],
+    [Code.Internal, 'unsettled'],
+    [Code.Unknown, 'unsettled'],
+    [Code.NotFound, 'refused'],
+    [Code.InvalidArgument, 'refused'],
+    [Code.FailedPrecondition, 'refused'],
+    [Code.DataLoss, 'refused'],
+    [Code.AlreadyExists, 'reused'],
+  ])('sorts status %s as %s', async (code, kind) => {
+    const answer = await deleteDocument(
       server(() => {
-        throw new ConnectError('catalog down', Code.Unavailable)
+        throw new ConnectError('answer', code)
       }),
       planDelete(testAddress(), 4n, 'op-del', ''),
       signal(),
-    ).catch((e) => e)
-    expect(ConnectError.from(error).code).toBe(Code.Unavailable)
+    )
+    expect(answer.kind).toBe(kind)
   })
 })

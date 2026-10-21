@@ -14,7 +14,12 @@ import {
   type DeleteDocumentResponse,
   type DocumentService,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { RevisionConflictSchema, type RevisionConflict } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
+import {
+  OperationReuseSchema,
+  RevisionConflictSchema,
+  type OperationReuse,
+  type RevisionConflict,
+} from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { ExpectedRevisionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { rpcFailure, type RpcFailure } from './rpcErrorCore'
 
@@ -47,18 +52,29 @@ export function planDelete(address: NodeAddress, currentRevision: bigint, operat
   })
 }
 
-/** How a delete ended, when the service answered. */
+/** How one send of a delete ended. */
 export type DeleteAnswer =
   | { kind: 'deleted'; response: DeleteDocumentResponse }
   /** ABORTED: the expected revision is no longer current. */
   | { kind: 'stale'; conflict: RevisionConflict | null; failure: RpcFailure }
   /** PERMISSION_DENIED: the caller may not write this document. */
   | { kind: 'denied'; failure: RpcFailure }
+  /** ALREADY_EXISTS: this operation ID already recorded a different intent. */
+  | { kind: 'reused'; reuse: OperationReuse | null; failure: RpcFailure }
+  /** Any other definite answer (NOT_FOUND, INVALID_ARGUMENT, DATA_LOSS...): nothing was deleted. */
+  | { kind: 'refused'; failure: RpcFailure }
+  /**
+   * No settled answer (a lost connection or a transient status): the delete
+   * may or may not have been recorded. Sending the same request again is safe.
+   */
+  | { kind: 'unsettled'; failure: RpcFailure }
+
+// Statuses after which the delete may still have been recorded.
+const UNSETTLED = new Set<Code>([Code.Unknown, Code.DeadlineExceeded, Code.Internal, Code.Unavailable, Code.Canceled])
 
 /**
- * Sends the delete once. A stale revision and a refusal are answers the
- * screen shows; every other status is thrown as a failed call. Nothing here
- * retries.
+ * Sends the delete once and sorts the answer. Nothing here retries; the
+ * caller resends the same request only when the answer is unsettled.
  */
 export async function deleteDocument(
   client: Client<typeof DocumentService>,
@@ -68,13 +84,20 @@ export async function deleteDocument(
   try {
     return { kind: 'deleted', response: await client.deleteDocument(request, { signal }) }
   } catch (error) {
-    if (!(error instanceof ConnectError)) throw error
-    if (error.code === Code.Aborted) {
-      const [conflict] = error.findDetails(RevisionConflictSchema)
-      return { kind: 'stale', conflict: conflict ?? null, failure: rpcFailure(error) }
+    const connect = ConnectError.from(error)
+    const failure = rpcFailure(error)
+    // A client-side failure says nothing about what the service recorded.
+    if (!(error instanceof ConnectError) || UNSETTLED.has(connect.code)) return { kind: 'unsettled', failure }
+    if (connect.code === Code.Aborted) {
+      const [conflict] = connect.findDetails(RevisionConflictSchema)
+      return { kind: 'stale', conflict: conflict ?? null, failure }
     }
-    if (error.code === Code.PermissionDenied) return { kind: 'denied', failure: rpcFailure(error) }
-    throw error
+    if (connect.code === Code.PermissionDenied) return { kind: 'denied', failure }
+    if (connect.code === Code.AlreadyExists) {
+      const [reuse] = connect.findDetails(OperationReuseSchema)
+      return { kind: 'reused', reuse: reuse ?? null, failure }
+    }
+    return { kind: 'refused', failure }
   }
 }
 

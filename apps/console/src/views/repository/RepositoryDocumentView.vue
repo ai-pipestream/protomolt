@@ -28,7 +28,7 @@
     </v-card>
 
     <DeleteDocumentDialog
-      v-if="deleting && address && pinned !== null"
+      v-if="deleting && deletable && address && pinned !== null"
       :address="address"
       :revision="pinned"
       @close="deleting = false"
@@ -320,6 +320,8 @@ async function load() {
   const signal = readScope.next()
   partScope.next()
   partBusy.value = null
+  // A delete dialog belongs to the document it opened on.
+  deleting.value = false
   routeError.value = null
   manifestFailure.value = null
   documentFailure.value = null
