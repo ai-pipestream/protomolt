@@ -316,6 +316,9 @@ project(':protomolt-http-json').projectDir = file('surface/http/json')
 include 'protomolt-http-rest'
 project(':protomolt-http-rest').projectDir = file('surface/http/rest')
 
+include 'protomolt-http-connect'
+project(':protomolt-http-connect').projectDir = file('surface/http/connect')
+
 include 'protomolt-http-openapi'
 project(':protomolt-http-openapi').projectDir = file('surface/http/openapi')
 

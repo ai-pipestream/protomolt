@@ -1,0 +1,49 @@
+plugins {
+    alias(libs.plugins.protobuf)
+}
+
+description = 'Connect protocol gateway with binary protobuf only, over in-process gRPC services, for the JDK HttpServer'
+
+dependencies {
+    // The request-to-caller resolver the gateway runs each call under.
+    api project(':protomolt-authz')
+    api libs.grpc.api
+    // The caller lands on the same gRPC Context keys the credential interceptor sets.
+    implementation project(':protomolt-authz-grpc')
+    // Dispatch goes through a private in-process server holding the registered services.
+    implementation libs.grpc.inprocess
+    // google.rpc.Status details on errors, carried as protobuf bytes.
+    implementation libs.grpc.protobuf
+    implementation libs.slf4j.api
+
+    testImplementation libs.grpc.stub
+    // The Connect conformance suite's service, generated from its vendored protos.
+    testCompileOnly libs.javax.annotation.api
+    testRuntimeOnly libs.slf4j.simple
+}
+
+// Only the conformance suite's test protos are compiled here; the gateway itself carries no
+// generated code and parses no message.
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        all().configureEach {
+            plugins {
+                grpc {}
+            }
+        }
+    }
+}
+
+// The conformance suite starts the server under test as a separate JVM, which needs the full
+// test runtime rather than the Gradle worker's bootstrap classpath.
+tasks.withType(Test).configureEach {
+    doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
+}
