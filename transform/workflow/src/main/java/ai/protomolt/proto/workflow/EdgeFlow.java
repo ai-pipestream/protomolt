@@ -27,7 +27,7 @@ final class EdgeFlow {
      * @throws IllegalArgumentException naming the segment that breaks the walk
      */
     static FieldDescriptor itemsField(Descriptor produceType, String path) {
-        String[] segments = path.split("\\.");
+        String[] segments = DotSegments.segments(path);
         Descriptor current = produceType;
         for (int i = 0; i < segments.length; i++) {
             FieldDescriptor field = current.findFieldByName(segments[i]);
@@ -69,7 +69,7 @@ final class EdgeFlow {
     static List<Message> items(Message produced, String path) {
         FieldDescriptor field = itemsField(produced.getDescriptorForType(), path);
         Message holder = produced;
-        String[] segments = path.split("\\.");
+        String[] segments = DotSegments.segments(path);
         for (int i = 0; i < segments.length - 1; i++) {
             holder = (Message) holder.getField(
                     holder.getDescriptorForType().findFieldByName(segments[i]));

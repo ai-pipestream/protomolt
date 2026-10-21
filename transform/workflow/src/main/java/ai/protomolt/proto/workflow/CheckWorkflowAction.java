@@ -11,8 +11,6 @@ import ai.protomolt.proto.validate.ValidationResult;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Message;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * The {@code check-workflow} verb: verify a workflow without executing anything — methods
@@ -22,8 +20,6 @@ import java.util.regex.Pattern;
  */
 public final class CheckWorkflowAction implements ProtoAction {
 
-    /** The leading {@code steps[n]} of a violation path, when it has one. */
-    private static final Pattern STEP_INDEX = Pattern.compile("steps\\[(\\d+)\\]");
 
     @Override
     public String name() {
@@ -91,8 +87,19 @@ public final class CheckWorkflowAction implements ProtoAction {
      * reports against step 2. A violation outside any step reports against the workflow.
      */
     private static String stepOf(String path) {
-        Matcher index = STEP_INDEX.matcher(path);
-        return index.lookingAt() ? "steps[" + index.group(1) + "]" : "";
+        String prefix = "steps[";
+        if (!path.startsWith(prefix)) {
+            return "";
+        }
+        int from = prefix.length();
+        int end = from;
+        while (end < path.length() && path.charAt(end) >= '0' && path.charAt(end) <= '9') {
+            end++;
+        }
+        if (end == from || end >= path.length() || path.charAt(end) != ']') {
+            return "";
+        }
+        return path.substring(0, end + 1);
     }
 
     private static void finding(Reply result, String step, String kind, String error) {
