@@ -4,6 +4,7 @@ import ai.protomolt.proto.account.v1.AccountStatus;
 
 import java.sql.Connection;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Optional;
 
 /**
@@ -64,6 +65,23 @@ public interface AccountStore {
      * @return the page plus the total across all pages
      */
     ListAccountsResult list(Connection c, AccountStatus statusFilter, int limit, long offset);
+
+    /**
+     * One page of the accounts among {@code accountIds}, in the same stable
+     * (created_at, account_id) order, status filter, and limit/offset
+     * semantics as {@link #list}. The restriction is part of the query, so
+     * the total and the continuation arithmetic count only the named
+     * accounts; an id with no row contributes nothing.
+     *
+     * @param c the caller's connection
+     * @param accountIds the accounts the page may hold; empty yields no rows
+     * @param statusFilter only rows in this status; null = every status
+     * @param limit page size
+     * @param offset rows to skip (the continuation token's payload)
+     * @return the page plus the total across all pages of the restricted set
+     */
+    ListAccountsResult listWithin(Connection c, Collection<String> accountIds,
+            AccountStatus statusFilter, int limit, long offset);
 
     /**
      * Set an account's status and {@code updated_at}. The caller is expected

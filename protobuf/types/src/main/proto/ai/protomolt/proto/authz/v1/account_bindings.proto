@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.authz.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.authz";
+option java_outer_classname = "AccountBindingsProto";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+// The account-binding config document: which accounts each authenticated
+// principal acts for, and the document ACL identities it presents there.
+// Tenancy, kept apart from the scope vocabulary
+// (docs/design/authorization-scopes.md): a credential resolver says who
+// the caller is, this document says which accounts it may reach. A
+// principal it does not name is bound to no account. The operator is
+// never bound here; process authority reaches every account. The
+// document carries no secrets.
+message AccountBindings {
+  // The bound principals; principal names must be unique across the
+  // document, refused at load otherwise.
+  repeated AccountBinding bindings = 1 [
+    (ai.protomolt.proto.validate.v1.field).repeated.min_items = 1
+  ];
+}
+
+// The accounts and ACL identities of one principal.
+message AccountBinding {
+  // The principal name exactly as the credential resolver reports it
+  // (an access-policy principal, an OIDC username or subject, a JDBC
+  // caller-store row). Not restricted to slugs: OIDC usernames are often
+  // email addresses.
+  string principal = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128}
+    }
+  ];
+  // The accounts the principal acts for; every other account refuses it
+  // by name.
+  repeated string account_ids = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {min_len: 1, max_len: 200}
+      }
+    }
+  ];
+  // The identities document access rules match for this principal inside
+  // its bound accounts. Empty means only rules open to "public" match.
+  repeated AclIdentity acl_identities = 3;
+}
+
+// One identity a document access rule can name.
+message AclIdentity {
+  // The identity's type tag, as document access rules spell it
+  // ("user-principal-name", "oauth-group", "windows-sid", "service").
+  string identity_type = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {slug: true, max_len: 64}
+    }
+  ];
+  // The identity within its type: an email, a group id, a SID.
+  string identity = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 512}
+    }
+  ];
+}

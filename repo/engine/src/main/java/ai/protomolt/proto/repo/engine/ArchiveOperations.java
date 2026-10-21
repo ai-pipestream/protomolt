@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.engine;
 
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.asset.bridge.Bridge;
 import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.asset.bridge.Bridges;
@@ -158,7 +159,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     // ------------------------------------------------------------------
 
     @Override
-    public CreateArchiveResponse createArchive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, CreateArchiveRequest request) {
+    public CreateArchiveResponse createArchive(RepositoryCaller caller, CreateArchiveRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
         return RepositoryErrors.call(() -> createArchiveImpl(request));
     }
@@ -207,13 +208,14 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public GetArchiveResponse getArchive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetArchiveRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> getArchiveImpl(request));
+    public GetArchiveResponse getArchive(RepositoryCaller caller, GetArchiveRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
+        return RepositoryErrors.call(() -> getArchiveImpl(caller, request));
     }
 
-    private GetArchiveResponse getArchiveImpl(GetArchiveRequest request) {
+    private GetArchiveResponse getArchiveImpl(RepositoryCaller caller, GetArchiveRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
+        RepositoryErrors.requireAccount(caller, request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         return GetArchiveResponse.newBuilder()
                 .setArchive(ArchiveRecordCodec.toProto(archiveOrThrow(request.getAccountId(), request.getArchive())))
@@ -221,13 +223,14 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public ListArchivesResponse listArchives(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListArchivesRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> listArchivesImpl(request));
+    public ListArchivesResponse listArchives(RepositoryCaller caller, ListArchivesRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
+        return RepositoryErrors.call(() -> listArchivesImpl(caller, request));
     }
 
-    private ListArchivesResponse listArchivesImpl(ListArchivesRequest request) {
+    private ListArchivesResponse listArchivesImpl(RepositoryCaller caller, ListArchivesRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
+        RepositoryErrors.requireAccount(caller, request.getAccountId());
         int limit = ArchiveRequests.page(request.getLimit());
         long offset = ArchiveRequests.offset(request.getContinuationToken());
         List<ArchiveRecord> page = ledger.listArchives(request.getAccountId(), limit, offset);
@@ -240,13 +243,14 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public GetArchiveStatsResponse stats(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetArchiveStatsRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
-        return RepositoryErrors.call(() -> statsImpl(request));
+    public GetArchiveStatsResponse stats(RepositoryCaller caller, GetArchiveStatsRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
+        return RepositoryErrors.call(() -> statsImpl(caller, request));
     }
 
-    private GetArchiveStatsResponse statsImpl(GetArchiveStatsRequest request) {
+    private GetArchiveStatsResponse statsImpl(RepositoryCaller caller, GetArchiveStatsRequest request) {
         ArchiveRequests.accountId(request.getAccountId());
+        RepositoryErrors.requireAccount(caller, request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         archiveOrThrow(request.getAccountId(), request.getArchive());
         ArchiveStats.Builder stats = ArchiveStats.newBuilder()
@@ -281,7 +285,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     // ------------------------------------------------------------------
 
     @Override
-    public PutEntryResponse putEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, PutEntryRequest request) {
+    public PutEntryResponse putEntry(RepositoryCaller caller, PutEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
         try (var admission = putAdmission == null ? null : putAdmission.admit(request)) {
             return RepositoryErrors.call(() -> putEntryImpl(request));
@@ -422,7 +426,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public UploadResult uploadStream(ai.protomolt.proto.repo.spi.RepositoryCaller caller,
+    public UploadResult uploadStream(RepositoryCaller caller,
             EntryAddress address, RenditionDescriptor descriptor, long size, String sha256,
             WriteAttribution attribution, String filename, FormatFact declared,
             ObjectStoreOrigin origin, InputStream body) throws IOException {
@@ -630,15 +634,17 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     // ------------------------------------------------------------------
 
     @Override
-    public GetEntryResponse getEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public GetEntryResponse getEntry(RepositoryCaller caller, GetEntryRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
-            return RepositoryErrors.call(() -> getEntryImpl(request, manifests));
+            return RepositoryErrors.call(() -> getEntryImpl(caller, request, manifests));
         }
     }
 
-    private GetEntryResponse getEntryImpl(GetEntryRequest request, ArchiveGetAdmission.ManifestScope manifests) {
+    private GetEntryResponse getEntryImpl(RepositoryCaller caller, GetEntryRequest request,
+            ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        RepositoryErrors.requireAccount(caller, address.getAccountId());
         ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
         long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
@@ -685,15 +691,17 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public GetEntryManifestResponse getManifest(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetEntryManifestRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public GetEntryManifestResponse getManifest(RepositoryCaller caller, GetEntryManifestRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
-            return RepositoryErrors.call(() -> getManifestImpl(request, manifests));
+            return RepositoryErrors.call(() -> getManifestImpl(caller, request, manifests));
         }
     }
 
-    private GetEntryManifestResponse getManifestImpl(GetEntryManifestRequest request, ArchiveGetAdmission.ManifestScope manifests) {
+    private GetEntryManifestResponse getManifestImpl(RepositoryCaller caller,
+            GetEntryManifestRequest request, ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        RepositoryErrors.requireAccount(caller, address.getAccountId());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
         long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
@@ -705,15 +713,17 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public ListEntriesResponse listEntries(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListEntriesRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public ListEntriesResponse listEntries(RepositoryCaller caller, ListEntriesRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         try (var manifests = getAdmission == null || !request.getIncludeManifests() ? null : getAdmission.manifests()) {
-            return RepositoryErrors.call(() -> listEntriesImpl(request, manifests));
+            return RepositoryErrors.call(() -> listEntriesImpl(caller, request, manifests));
         }
     }
 
-    private ListEntriesResponse listEntriesImpl(ListEntriesRequest request, ArchiveGetAdmission.ManifestScope manifests) {
+    private ListEntriesResponse listEntriesImpl(RepositoryCaller caller, ListEntriesRequest request,
+            ArchiveGetAdmission.ManifestScope manifests) {
         ArchiveRequests.accountId(request.getAccountId());
+        RepositoryErrors.requireAccount(caller, request.getAccountId());
         ArchiveRequests.archiveName(request.getArchive(), "archive");
         archiveOrThrow(request.getAccountId(), request.getArchive());
         int limit = ArchiveRequests.page(request.getLimit());
@@ -744,15 +754,17 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public ListVersionsResponse listVersions(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListVersionsRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public ListVersionsResponse listVersions(RepositoryCaller caller, ListVersionsRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
-            return RepositoryErrors.call(() -> listVersionsImpl(request, manifests));
+            return RepositoryErrors.call(() -> listVersionsImpl(caller, request, manifests));
         }
     }
 
-    private ListVersionsResponse listVersionsImpl(ListVersionsRequest request, ArchiveGetAdmission.ManifestScope manifests) {
+    private ListVersionsResponse listVersionsImpl(RepositoryCaller caller, ListVersionsRequest request,
+            ArchiveGetAdmission.ManifestScope manifests) {
         EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        RepositoryErrors.requireAccount(caller, address.getAccountId());
         archiveOrThrow(address.getAccountId(), address.getArchive());
         ArchiveEntryRecord entry = entryOrThrow(address);
         int limit = ArchiveRequests.page(request.getLimit());
@@ -786,7 +798,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     }
 
     @Override
-    public ClassifyEntryResponse classifyEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ClassifyEntryRequest request) {
+    public ClassifyEntryResponse classifyEntry(RepositoryCaller caller, ClassifyEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
         return RepositoryErrors.call(() -> classifyEntryImpl(request));
     }
@@ -831,7 +843,7 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
     // ------------------------------------------------------------------
 
     @Override
-    public BridgeEntryResponse bridgeEntry(ai.protomolt.proto.repo.spi.RepositoryCaller caller, BridgeEntryRequest request) {
+    public BridgeEntryResponse bridgeEntry(RepositoryCaller caller, BridgeEntryRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
         requireIngressEnabled("Archive bridge generation");
         return RepositoryErrors.call(() -> bridgeEntryImpl(request));

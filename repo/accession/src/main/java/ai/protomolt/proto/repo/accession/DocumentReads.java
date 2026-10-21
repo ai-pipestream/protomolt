@@ -476,7 +476,7 @@ public final class DocumentReads {
 
     static void requireAccount(RepositoryCaller caller, String accountId) {
         if (!caller.processAuthority() && !caller.accountIds().contains(accountId))
-            throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller is not bound to this account", null);
+            throw new AccessionException(Status.Code.PERMISSION_DENIED, "The caller is not bound to account '" + accountId + "'", null);
     }
 
     /** NodeAddress imports no validation rules, so every handler checks its four components. */

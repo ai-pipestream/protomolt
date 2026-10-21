@@ -13,6 +13,7 @@ import io.grpc.stub.StreamObserver;
 /** gRPC adapter for shared drive operations. */
 public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBase {
     private final DriveRepository operations;
+    private final RepoCallerBindings callers;
 
     /** Retains the existing S3 composition entry point; the supplied client remains caller-owned. */
     public DriveGrpcService(DriveLedger drives, S3Client s3, String bucketBase, String region) {
@@ -23,13 +24,19 @@ public final class DriveGrpcService extends DriveServiceGrpc.DriveServiceImplBas
         this(new DriveOperations(drives, provisioner));
     }
 
+    /** Binds no scoped caller to any account: only process authority reaches drives. */
     public DriveGrpcService(DriveRepository operations) {
-        this.operations = java.util.Objects.requireNonNull(operations);
+        this(operations, new RepoCallerBindings());
     }
 
-    private static RepositoryCaller caller() {
-        var caller = ai.protomolt.proto.authz.grpc.CallerContexts.current();
-        return new RepositoryCaller(caller.name(), caller.unrestricted());
+    /** Binds scoped callers through the host's account bindings. */
+    DriveGrpcService(DriveRepository operations, RepoCallerBindings callers) {
+        this.operations = java.util.Objects.requireNonNull(operations);
+        this.callers = java.util.Objects.requireNonNull(callers);
+    }
+
+    private RepositoryCaller caller() {
+        return callers.current();
     }
 
     @Override public void createDrive(CreateDriveRequest request, StreamObserver<CreateDriveResponse> observer) {

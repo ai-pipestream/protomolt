@@ -95,13 +95,29 @@ outbox writes, no relay, no producer, zero overhead.
 
 `AccountServiceMain` boots from the environment and serves gRPC (Netty,
 health + reflection) plus the background relay loop. To embed in-JVM
-instead, use `AccountServices.build(config)` + `startInProcess(name)`.
+instead, use `AccountServices.build(config)` + `startInProcess(name)`; the
+plain in-process transport carries no credential and its callers run with
+process authority. `startInProcess(name, apiToken, resolver)` puts the
+same credential check as the TCP listener in front of it.
+
+Every TCP call, health and reflection included, presents a credential in
+`api_token` metadata (or `authorization: Bearer`). The operator token runs
+with process authority. A credential an access policy or OIDC introspection
+resolves runs as a scoped caller: it reads and lists only the accounts
+`PROTOMOLT_ACCOUNT_BINDINGS` binds it to (PERMISSION_DENIED naming any other
+account, or "bound to no account" when unbound), and it cannot create,
+activate or deactivate accounts. A `ListAccounts` page, its `total_count`
+and its continuation token count only the caller's bound accounts.
 
 | Env var | Default | Meaning |
 |---------|---------|---------|
 | `DOCUMENT_PLATFORM_ACCOUNT_GRPC_PORT` | `9091` | gRPC listen port |
+| `PROTOMOLT_API_TOKEN` | _(required)_ | Operator token: authenticates process-authority callers on the TCP listener, and the repo channel presents it as `api_token` to a network repo target; boot refuses when unset or blank |
+| `PROTOMOLT_ACCESS_POLICY` | _(none)_ | Access policy file (`.binpb`, `.pb` or `.json`) resolving scoped credentials by SHA-256 digest |
+| `PROTOMOLT_AUTHZ_OIDC_INTROSPECTION_URL` / `_CLIENT_ID` / `_CLIENT_SECRET` | _(none)_ | OIDC token introspection, asked after the access policy |
+| `PROTOMOLT_ACCOUNT_BINDINGS` | _(none)_ | Account bindings file (`.binpb`) naming each scoped principal's accounts; refused at boot without a caller store |
 | `DOCUMENT_PLATFORM_ACCOUNT_JDBC_URL` / `_USERNAME` / `_PASSWORD` / `_POOL_SIZE` | local Postgres `accounts` db | Account store database (see `AccountStoreConfig`) |
-| `DOCUMENT_PLATFORM_REPO_GRPC_TARGET` | `localhost:9090` | repo-service's gRPC target (plaintext `host:port`) for drive provisioning; the `inprocess:<name>` prefix selects the in-process transport instead (same-JVM embedding, tests) |
+| `DOCUMENT_PLATFORM_REPO_GRPC_TARGET` | `localhost:9090` | repo-service's gRPC target (plaintext `host:port`) for drive provisioning, which requires `PROTOMOLT_API_TOKEN`; the `inprocess:<name>` prefix selects the in-process transport instead (same-JVM embedding, tests) and needs no token |
 | `DOCUMENT_PLATFORM_ACCOUNT_KAFKA_BOOTSTRAP_SERVERS` | _(none)_ | Kafka bootstrap servers; unset = eventing off (no outbox writes, no relay, no producer) |
 | `DOCUMENT_PLATFORM_ACCOUNT_KAFKA_TOPIC` | `account-events` | The account-events topic the relay publishes to |
 | `DOCUMENT_PLATFORM_ACCOUNT_SCHEMA_REGISTRY_URL` | _(none)_ | Confluent-compatible schema registry for the relay's serde; unset = registry-free (frames stamp schema id 0, which only protomolt consumers resolve) |
@@ -115,7 +131,8 @@ unary-only and grpc-web friendly:
 
 - `CreateAccount` — provisions `intake` + `pipeline` drives, then commits
   the ACTIVE row + `AccountCreated` event. Duplicate id → ALREADY_EXISTS.
-- `GetAccount` — by id; unknown → NOT_FOUND.
+- `GetAccount`: by id; unknown → NOT_FOUND (a scoped caller gets
+  PERMISSION_DENIED for any account outside its binding, existing or not).
 - `ListAccounts` — paged (`limit` + offset-style `continuation_token`,
   `total_count`), optional `status_filter`.
 - `ActivateAccount` — SUSPENDED/DEACTIVATED → ACTIVE; re-ensures the drives,

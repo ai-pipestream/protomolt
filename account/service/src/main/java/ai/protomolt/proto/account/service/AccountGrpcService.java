@@ -20,9 +20,18 @@ import ai.protomolt.proto.account.v1.GetAccountRequest;
 import ai.protomolt.proto.account.v1.GetAccountResponse;
 import ai.protomolt.proto.account.v1.ListAccountsRequest;
 import ai.protomolt.proto.account.v1.ListAccountsResponse;
+import ai.protomolt.proto.actions.Caller;
+import ai.protomolt.proto.authz.AccountBindingResolver;
+import ai.protomolt.proto.authz.AuthenticatedCaller;
+import ai.protomolt.proto.authz.grpc.CallerContexts;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 
 import java.time.Instant;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 import static ai.protomolt.proto.account.service.GrpcErrors.invalidArgument;
 
@@ -44,6 +53,14 @@ import static ai.protomolt.proto.account.service.GrpcErrors.invalidArgument;
  *   DEACTIVATED one) write nothing and fire nothing — and skip the drive
  *   calls too, so idempotent re-activation provokes no repo traffic.</li>
  * </ol>
+ * <p>
+ * Callers: process authority (the operator credential, or an in-process
+ * call no authenticating interceptor saw) reads and writes every account.
+ * A scoped caller reads and lists only the accounts its
+ * {@link AccountBindingResolver account binding} names; every other
+ * account refuses it PERMISSION_DENIED by name, and the writes
+ * (CreateAccount, ActivateAccount, DeactivateAccount) refuse it because
+ * they need process authority.
  */
 public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
 
@@ -54,6 +71,7 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
     private final AccountStore store;
     private final JdbcAccountEventOutbox outbox;
     private final DriveProvisioner provisioner;
+    private volatile AccountBindingResolver bindings = AccountBindingResolver.none();
 
     /**
      * @param database the account store's transaction wrapper
@@ -70,10 +88,16 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
         this.provisioner = provisioner;
     }
 
+    /** Replaces the binding source scoped callers resolve through; composition roots set it before serving. */
+    void useAccountBindings(AccountBindingResolver resolver) {
+        this.bindings = Objects.requireNonNull(resolver, "resolver");
+    }
+
     @Override
     public void createAccount(CreateAccountRequest request,
             StreamObserver<CreateAccountResponse> responseObserver) {
         GrpcErrors.run(responseObserver, () -> {
+            requireProcessAuthority("CreateAccount");
             String accountId = requireAccountId(request.getAccountId());
             // Provisioning precedes the commit: a repo outage fails the
             // create here and no account row lands (see class javadoc).
@@ -98,6 +122,10 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
             StreamObserver<GetAccountResponse> responseObserver) {
         GrpcErrors.run(responseObserver, () -> {
             String accountId = requireAccountId(request.getAccountId());
+            Optional<Set<String>> bound = boundAccounts();
+            if (bound.isPresent() && !bound.get().contains(accountId)) {
+                throw permissionDenied("The caller is not bound to account '" + accountId + "'");
+            }
             AccountRecord record = database.readOnly(c -> store.findById(c, accountId))
                     .orElseThrow(() -> AccountStoreException.notFound(accountId));
             return GetAccountResponse.newBuilder().setAccount(record.toProto()).build();
@@ -112,8 +140,12 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
                     : Math.min(request.getLimit(), MAX_LIST_LIMIT);
             long offset = parseContinuationToken(request.getContinuationToken());
             AccountStatus filter = request.getStatusFilter();
-            ListAccountsResult result = database.readOnly(
-                    c -> store.list(c, filter, limit, offset));
+            Optional<Set<String>> bound = boundAccounts();
+            // A scoped caller's restriction rides the query itself, so the
+            // total and the continuation offsets count only its accounts.
+            ListAccountsResult result = database.readOnly(c -> bound.isEmpty()
+                    ? store.list(c, filter, limit, offset)
+                    : store.listWithin(c, bound.get(), filter, limit, offset));
 
             ListAccountsResponse.Builder response = ListAccountsResponse.newBuilder()
                     .setTotalCount(result.totalCount());
@@ -130,6 +162,7 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
     public void activateAccount(ActivateAccountRequest request,
             StreamObserver<ActivateAccountResponse> responseObserver) {
         GrpcErrors.run(responseObserver, () -> {
+            requireProcessAuthority("ActivateAccount");
             String accountId = requireAccountId(request.getAccountId());
             // The no-op check rides the row lock inside the transaction, but
             // the drive calls are only honest when a transition actually
@@ -164,6 +197,7 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
     public void deactivateAccount(DeactivateAccountRequest request,
             StreamObserver<DeactivateAccountResponse> responseObserver) {
         GrpcErrors.run(responseObserver, () -> {
+            requireProcessAuthority("DeactivateAccount");
             String accountId = requireAccountId(request.getAccountId());
             return database.inTransaction(c -> {
                 AccountRecord locked = store.findByIdForUpdate(c, accountId)
@@ -180,6 +214,39 @@ public final class AccountGrpcService extends AccountServiceGrpc.AccountServiceI
                 return DeactivateAccountResponse.newBuilder().setAccount(updated.toProto()).build();
             });
         });
+    }
+
+    /**
+     * The accounts the current caller may read: empty for process authority
+     * (every account), otherwise its bound account ids, never an empty set.
+     * A scoped caller bound to no account is refused here.
+     */
+    private Optional<Set<String>> boundAccounts() {
+        Caller caller = CallerContexts.current();
+        if (caller.unrestricted()) {
+            return Optional.empty();
+        }
+        AuthenticatedCaller authentication = CallerContexts.authentication()
+                .orElseGet(() -> AuthenticatedCaller.unbound(caller));
+        Set<String> accountIds = bindings.bindingOf(authentication)
+                .map(binding -> Set.copyOf(binding.getAccountIdsList()))
+                .orElse(Set.of());
+        if (accountIds.isEmpty()) {
+            throw permissionDenied("The caller is bound to no account");
+        }
+        return Optional.of(accountIds);
+    }
+
+    private static void requireProcessAuthority(String operation) {
+        Caller caller = CallerContexts.current();
+        if (!caller.unrestricted()) {
+            throw permissionDenied(operation + " needs process authority; caller '"
+                    + caller.name() + "' is a scoped caller");
+        }
+    }
+
+    private static StatusRuntimeException permissionDenied(String message) {
+        return Status.PERMISSION_DENIED.withDescription(message).asRuntimeException();
     }
 
     private static String requireAccountId(String accountId) {

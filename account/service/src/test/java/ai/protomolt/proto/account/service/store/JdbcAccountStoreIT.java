@@ -10,6 +10,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -254,5 +255,44 @@ class JdbcAccountStoreIT {
                 store.list(c, AccountStatus.ACCOUNT_STATUS_DEACTIVATED, 100, 0));
         assertThat(deactivated.totalCount()).isEqualTo(1);
         assertThat(deactivated.rows().get(0).accountId).isEqualTo("acct-list-4");
+    }
+
+    @Test
+    void listWithinCountsAndPagesOnlyTheNamedAccounts() {
+        database.inTransaction(c -> {
+            for (int i = 0; i < 5; i++) {
+                store.create(c, newAccount("acct-within-" + i, "w" + i));
+            }
+            store.updateStatus(c, "acct-within-3", AccountStatus.ACCOUNT_STATUS_DEACTIVATED,
+                    Instant.now());
+            return null;
+        });
+        // Named out of order, with one id that has no row.
+        List<String> named = List.of("acct-within-3", "acct-within-0", "acct-within-1",
+                "acct-within-missing");
+
+        ListAccountsResult page1 = database.readOnly(c -> store.listWithin(c, named, null, 2, 0));
+        ListAccountsResult page2 = database.readOnly(c -> store.listWithin(c, named, null, 2, 2));
+        assertThat(page1.totalCount()).isEqualTo(3);
+        assertThat(page2.totalCount()).isEqualTo(3);
+        assertThat(page1.rows().stream().map(r -> r.accountId).toList())
+                .containsExactly("acct-within-0", "acct-within-1");
+        assertThat(page2.rows().stream().map(r -> r.accountId).toList())
+                .containsExactly("acct-within-3");
+
+        ListAccountsResult active = database.readOnly(c -> store.listWithin(c, named,
+                AccountStatus.ACCOUNT_STATUS_ACTIVE, 100, 0));
+        assertThat(active.totalCount()).isEqualTo(2);
+        assertThat(active.rows().stream().map(r -> r.accountId).toList())
+                .containsExactly("acct-within-0", "acct-within-1");
+
+        ListAccountsResult none = database.readOnly(c -> store.listWithin(c, List.of(), null,
+                100, 0));
+        assertThat(none.rows()).isEmpty();
+        assertThat(none.totalCount()).isZero();
+
+        assertThatThrownBy(() -> database.readOnly(c -> store.listWithin(c, null, null, 100, 0)))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("accountIds");
     }
 }
