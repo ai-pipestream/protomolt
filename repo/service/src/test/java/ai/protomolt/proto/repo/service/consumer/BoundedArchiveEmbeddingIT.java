@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.service.BoundedArchiveOptions;
 import ai.protomolt.proto.repo.service.ManagedStoragePolicy;
 import ai.protomolt.proto.repo.service.RepoServiceConfig;
 import ai.protomolt.proto.repo.service.RepoServices;
+import ai.protomolt.proto.repo.service.RepositoryConsole;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import com.google.protobuf.ByteString;
@@ -60,7 +61,7 @@ class BoundedArchiveEmbeddingIT {
                 channel.shutdownNow(); assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
             }
             assertThatThrownBy(host::services).isInstanceOf(UnsupportedOperationException.class);
-            assertThatThrownBy(() -> host.startHttp(0, "synthetic-operator-key")).isInstanceOf(UnsupportedOperationException.class);
+            assertThatThrownBy(() -> host.startHttp(0, "synthetic-operator-key", RepositoryConsole.notConfigured())).isInstanceOf(UnsupportedOperationException.class);
         }
         try (var restarted = RepoServices.buildBoundedArchive(config, limits)) {
             assertThat(restarted.archiveRepository().getEntry(caller,

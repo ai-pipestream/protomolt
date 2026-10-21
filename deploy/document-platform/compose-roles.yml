@@ -70,6 +70,7 @@ services:
       DOCUMENT_PLATFORM_SEED_ACCOUNT_ID: demo
     ports:
       - "9090:9090"   # repo gRPC
+      - "8080:8080"   # repo HTTP: uploads and /console
     volumes:
       - roles-repo-data:/data
 

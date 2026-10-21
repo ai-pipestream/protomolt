@@ -63,7 +63,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * opts in after building, and embedded hosts ({@link #startInProcess(String)})
  * call the method themselves when they want it. Unset/blank = no seeding.
  *
- * <p>Bulk uploads are served by {@link #startHttp(int, String)}: the streaming HTTP
+ * <p>Bulk uploads are served by {@link #startHttp(int, String, RepositoryConsole)}: the streaming HTTP
  * route whose body flows to object storage without buffering, next to the
  * unary gRPC API.
  */
@@ -474,19 +474,23 @@ public final class RepoServices implements AutoCloseable {
      * This administrative route writes into any account's drive. Scoped upload
      * authorization is a separate capability. The parts-based upload handler owns
      * the document route; the archive rendition route stays mounted alongside it.
+     * The same port serves {@code console} at {@link RepositoryConsole#PATH}.
      *
      * @param port the listen port (0 = ephemeral; read the bound port back
      *        from the returned server)
-     * @param apiToken nonblank operator credential every request must present
+     * @param apiToken nonblank operator credential every upload request must present
+     * @param console the console bundle served at {@link RepositoryConsole#PATH}
      * @return the started HTTP server (also closed by {@link #close()})
      */
-    public synchronized UploadHttpServer startHttp(int port, String apiToken) {
+    public synchronized UploadHttpServer startHttp(int port, String apiToken,
+            RepositoryConsole console) {
         requireOpen();
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (managedArchive != null) startLifecycle();
         UploadHttpServer http = new UploadHttpServer(v2Uploads,
-                () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations);
+                () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
+                console);
         httpServers.add(http);
         try {
             http.start(port);

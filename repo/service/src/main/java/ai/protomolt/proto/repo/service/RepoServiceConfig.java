@@ -30,11 +30,12 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        ({@code DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE}, default
  *        {@code "documents"}): a drive without an explicit bucket gets
  *        {@code <base>-<accountId>-<name>}, sanitized to S3 bucket rules
- * @param httpPort the HTTP upload listen port
+ * @param httpPort the HTTP listen port for the upload routes and the console
  *        ({@code DOCUMENT_PLATFORM_HTTP_PORT}, default 8080; {@code 0} or
- *        {@code "off"} disables the HTTP server — see {@link RepoServiceMain};
- *        tests that want an ephemeral port call
- *        {@code RepoServices.startHttp(0, token)} directly)
+ *        {@code "off"} disables the HTTP server, and with it every route on it;
+ *        see {@link RepoServiceMain} and {@link RepoServiceModule}; tests that want
+ *        an ephemeral port call {@code RepoServices.startHttp(0, token, console)}
+ *        directly)
  * @param blobStore which {@code BlobStore} implementation backs the services
  *        ({@code DOCUMENT_PLATFORM_BLOB_STORE}): {@code "s3"} (default; the
  *        direct object-storage path), {@code "redis"}
@@ -222,7 +223,7 @@ public record RepoServiceConfig(
     public static final String ENV_S3_SECRET_KEY = "DOCUMENT_PLATFORM_S3_SECRET_KEY";
     /** Environment variable for the provisioned-bucket name base. */
     public static final String ENV_DEFAULT_BUCKET_BASE = "DOCUMENT_PLATFORM_DEFAULT_BUCKET_BASE";
-    /** Environment variable for the HTTP upload listen port ({@code 0}/"off" disables). */
+    /** Environment variable for the HTTP listen port ({@code 0}/"off" disables). */
     public static final String ENV_HTTP_PORT = "DOCUMENT_PLATFORM_HTTP_PORT";
     /** Environment variable selecting the BlobStore implementation. */
     public static final String ENV_BLOB_STORE = "DOCUMENT_PLATFORM_BLOB_STORE";

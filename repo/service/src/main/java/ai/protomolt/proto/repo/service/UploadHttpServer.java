@@ -29,8 +29,9 @@ import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 /**
- * HTTP parsing and receipts for the parts-based document upload route and the
- * archive rendition route. The document route belongs to the parts-based
+ * The repository host's HTTP port: the parts-based document upload route, the
+ * archive rendition route and the console bundle at {@link RepositoryConsole#PATH}.
+ * HTTP parsing and receipts for the two upload routes live here. The document route belongs to the parts-based
  * {@link UploadHttpHandler}, which owns its receipts, status mapping and
  * credential check. Content-Length is required. Physical keys are immutable
  * per-attempt keys; the receipt returns the committed reference, including on
@@ -51,6 +52,7 @@ public final class UploadHttpServer implements AutoCloseable {
     private final HttpHandler documentUploads;
     private final byte[] expectedToken;
     private final ArchiveRepository archiveOperations;
+    private final RepositoryConsole console;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -60,7 +62,8 @@ public final class UploadHttpServer implements AutoCloseable {
      * over {@code uploads}; its receipts, status mapping and credential check are the
      * handler's own. {@link #ARCHIVE_UPLOAD_PATH} keeps routing to
      * {@code archiveOperations} when one is wired. Both routes demand the same
-     * operator credential.
+     * operator credential. {@link RepositoryConsole#PATH} serves {@code console}'s
+     * static bundle without a credential.
      *
      * @param uploads the parts-based streaming upload coordinator, or null to leave
      *        the document route unmounted (archive-only host)
@@ -68,14 +71,17 @@ public final class UploadHttpServer implements AutoCloseable {
      * @param apiToken the operator credential both routes require
      * @param archiveOperations the archive rendition upload port, or null to leave
      *        that route unmounted
+     * @param console the console bundle served at {@link RepositoryConsole#PATH};
+     *        {@link RepositoryConsole#notConfigured()} answers that route with 503
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
-            String apiToken, ArchiveRepository archiveOperations) {
+            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console) {
         String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         this.documentUploads = uploads == null ? null : new UploadHttpHandler(uploads, token,
                 Objects.requireNonNull(callers, "callers"));
         this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
+        this.console = Objects.requireNonNull(console, "console");
     }
 
     /**
@@ -126,6 +132,14 @@ public final class UploadHttpServer implements AutoCloseable {
             if (archiveOperations != null) {
                 created.createContext(ARCHIVE_UPLOAD_PATH, this::handleArchive);
             }
+            created.createContext(RepositoryConsole.PATH, console.handler());
+            // Connect gateway mount point (#524): the console calls DocumentService,
+            // DriveService and ArchiveService same-origin over binary protobuf Connect,
+            // one context per service path:
+            //   /ai.protomolt.proto.repo.v2.DocumentService/
+            //   /ai.protomolt.proto.repo.v1.DriveService/
+            //   /ai.protomolt.proto.repo.archive.v1.ArchiveService/
+            // No handler is mounted on those paths until the gateway module exists.
             created.setExecutor(pool);
             created.start();
         } catch (RuntimeException | Error e) {
@@ -134,7 +148,10 @@ public final class UploadHttpServer implements AutoCloseable {
             throw e;
         }
         int bound = created.getAddress().getPort();
-        LOG.info("HTTP upload route listening on port {} ({})", bound, UPLOAD_PATH);
+        LOG.info("repository HTTP port {} serving {}{}{}", bound,
+                documentUploads != null ? UPLOAD_PATH + " " : "",
+                archiveOperations != null ? ARCHIVE_UPLOAD_PATH + " " : "",
+                console.configured() ? RepositoryConsole.PATH : RepositoryConsole.PATH + " (not configured)");
         return bound;
     }
 

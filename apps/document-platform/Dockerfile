@@ -26,8 +26,12 @@ USER 10001
 ENV HOME=/home/protomolt
 WORKDIR /home/protomolt
 
-# repo gRPC; intake gRPC; parse gRPC; registry HTTP; playground HTTP.
-EXPOSE 9090 9092 9093 8081 8095 8096 9094 9095
+# repo gRPC; repo HTTP (uploads and the console); intake gRPC; parse gRPC;
+# registry HTTP; playground HTTP. The console bundle is in the image under
+# /opt/protomolt-document-platform/console when apps/console/dist was built
+# before installDist; serve it with
+#   -e DOCUMENT_PLATFORM_CONSOLE_DIR=/opt/protomolt-document-platform/console
+EXPOSE 9090 8080 9092 9093 8081 8095 8096 9094 9095
 
 # The registry HTTP port answers /health once the whole platform is up; probe
 # it with bash's /dev/tcp so the image needs no curl/wget layer.

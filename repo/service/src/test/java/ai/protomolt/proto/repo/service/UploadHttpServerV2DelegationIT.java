@@ -90,7 +90,8 @@ class UploadHttpServerV2DelegationIT {
                 Clock.systemUTC());
         uploads = new DocumentUploads(saves);
         server = new UploadHttpServer(uploads,
-                () -> new RepositoryCaller("http-upload-host", true), TOKEN, recordingArchive());
+                () -> new RepositoryCaller("http-upload-host", true), TOKEN, recordingArchive(),
+                RepositoryConsole.notConfigured());
         server.start(0);
         client = HttpClient.newHttpClient();
     }
@@ -152,9 +153,11 @@ class UploadHttpServerV2DelegationIT {
     @Test void theV2ConstructorRefusesMissingCollaboratorsByName() {
         // A null uploads mounts no document route (archive-only host); the other
         // collaborators are still validated by name.
-        assertThatThrownBy(() -> new UploadHttpServer(uploads, null, TOKEN, null))
+        assertThatThrownBy(() -> new UploadHttpServer(uploads, null, TOKEN, null,
+                RepositoryConsole.notConfigured()))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("callers");
-        assertThatThrownBy(() -> new UploadHttpServer(uploads, () -> null, " ", null))
+        assertThatThrownBy(() -> new UploadHttpServer(uploads, () -> null, " ", null,
+                RepositoryConsole.notConfigured()))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
     }
 

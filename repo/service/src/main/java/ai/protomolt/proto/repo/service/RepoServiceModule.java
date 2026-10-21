@@ -12,8 +12,10 @@ import java.util.List;
 /**
  * The document store as a mountable role. Wiring starts the in-process
  * endpoint siblings resolve through {@link Channels}; starting binds the
- * external Netty port, seeds account drives, and begins the lifecycle
- * loops.
+ * external Netty port, binds the HTTP port when
+ * {@link RepoServiceConfig#httpPort()} is positive (the upload routes and the
+ * console from {@link RepositoryConsole#ENV_CONSOLE_DIR}), seeds account
+ * drives, and begins the lifecycle loops.
  */
 public final class RepoServiceModule implements ServiceModule {
 
@@ -23,6 +25,7 @@ public final class RepoServiceModule implements ServiceModule {
     private final RepoServiceConfig config;
     private RepoServices services;
     private Server netty;
+    private UploadHttpServer http;
 
     /**
      * Creates the module.
@@ -44,6 +47,11 @@ public final class RepoServiceModule implements ServiceModule {
     @Override
     public ServiceMount wire(NodeContext context) {
         String credential = RepositoryNetworkAuthentication.requireOperatorToken(context.environment().get("PROTOMOLT_API_TOKEN"));
+        // Read before any service is built so a misconfigured bundle fails the boot,
+        // not the first browser request.
+        RepositoryConsole console = config.httpPort() > 0
+                ? RepositoryConsole.fromEnvironment(context.environment())
+                : null;
         services = RepoServices.build(config);
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
@@ -69,6 +77,11 @@ public final class RepoServiceModule implements ServiceModule {
                 // contributions (the parse module's fleet document model) are visible here.
                 services.withAdmittedSchemas(context.contributions().all(com.google.protobuf.Descriptors.FileDescriptor.class));
                 netty = services.startNetty(config.grpcPort(), credential, null);
+                // Same rule as RepoServiceMain: 0 or "off" leaves the HTTP port, and
+                // every route on it, unbound.
+                if (console != null) {
+                    http = services.startHttp(config.httpPort(), credential, console);
+                }
                 services.seedAccountDrives();
                 services.startLifecycle();
             }
@@ -86,5 +99,20 @@ public final class RepoServiceModule implements ServiceModule {
             throw new IllegalStateException("repo module has not started");
         }
         return netty.getPort();
+    }
+
+    /**
+     * The bound HTTP port.
+     *
+     * @return the port the upload routes and the console listen on
+     * @throws IllegalStateException before start, or when the HTTP port is disabled
+     */
+    public int httpPort() {
+        if (http == null) {
+            throw new IllegalStateException(netty == null
+                    ? "repo module has not started"
+                    : "repo module HTTP port is disabled (" + RepoServiceConfig.ENV_HTTP_PORT + ")");
+        }
+        return http.port();
     }
 }

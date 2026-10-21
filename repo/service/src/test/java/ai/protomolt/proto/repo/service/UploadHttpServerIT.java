@@ -65,7 +65,7 @@ class UploadHttpServerIT {
                 0, null, null, 0, 0L);
         services = RepoServices.build(config.withManagedStorage(new ManagedStoragePolicy("http-test-v1", "test-realm", true)));
         services.startInProcess("it-http");
-        http = services.startHttp(0, "synthetic-http-operator-key"); // ephemeral port
+        http = services.startHttp(0, "synthetic-http-operator-key", RepositoryConsole.notConfigured()); // ephemeral port
         channel = InProcessChannelBuilder.forName("it-http").build();
         DriveServiceGrpc.DriveServiceBlockingStub drives = DriveServiceGrpc.newBlockingStub(channel);
         drives.createDrive(CreateDriveRequest.newBuilder()
@@ -89,7 +89,7 @@ class UploadHttpServerIT {
 
     @Test void defaultProfileServesUploadsThroughTheV2Handler() throws Exception {
         try (var disabled = RepoServices.build(config)) {
-            var endpoint = disabled.startHttp(0, "synthetic-http-operator-key");
+            var endpoint = disabled.startHttp(0, "synthetic-http-operator-key", RepositoryConsole.notConfigured());
             var body = new byte[] {1};
             String sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
             var request = HttpRequest.newBuilder(URI.create("http://localhost:" + endpoint.port()

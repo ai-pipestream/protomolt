@@ -741,7 +741,7 @@ strings, so a renamed role renames them with it.
 
 | Role | Mounted by | Port | Surface |
 |---|---|---|---|
-| `repo` | `repo/service` `RepoServiceModule` | 9090 gRPC, 8080 HTTP | `DocumentService`, `DriveService`, health, reflection, `POST /v1/documents:upload` |
+| `repo` | `repo/service` `RepoServiceModule` | 9090 gRPC, 8080 HTTP | `DocumentService`, `DriveService`, health, reflection; on HTTP `POST /v1/documents:upload`, `POST /v1/archive:upload` when the archive is wired, and `/console` from `DOCUMENT_PLATFORM_CONSOLE_DIR`. `DOCUMENT_PLATFORM_HTTP_PORT=0` or `off` unbinds every HTTP route |
 | `intake` | `intake/service` `IntakeModule` | 9092 gRPC | `IntakeService`, API-key authenticated, plus the optional HTTP upload lane |
 | `parse` | `parse/service` `ParseModule` | 9093 gRPC | `ParseCoordinatorService` |
 | `parse-text` | `parse/text` `TextParserModule` | in-process | `ParserPluginService`, the reference parser |

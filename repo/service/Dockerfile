@@ -20,7 +20,11 @@ USER 10001
 ENV HOME=/home/protomolt
 WORKDIR /home/protomolt
 
-# gRPC (DocumentService, DriveService, health, reflection); HTTP upload route.
+# gRPC (DocumentService, DriveService, health, reflection); HTTP upload routes
+# and the console. The console bundle is in the image under
+# /opt/protomolt-repo-service/console when apps/console/dist was built before
+# installDist; serve it with
+#   -e DOCUMENT_PLATFORM_CONSOLE_DIR=/opt/protomolt-repo-service/console
 EXPOSE 9090 8080
 
 # There is no HTTP health route when the upload server is disabled, so probe
