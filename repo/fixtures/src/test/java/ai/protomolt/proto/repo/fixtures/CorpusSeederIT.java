@@ -45,7 +45,7 @@ import org.testcontainers.utility.DockerImageName;
  * documents and the archives, a second run finds the corpus and writes nothing,
  * and an account holding a document the corpus did not create refuses the run
  * by name. The archive entries read back with their renditions and retained
- * versions. Opt-in: {@code PROTOMOLT_CORPUS_IT=1}.
+ * versions. An integration suite: it runs in {@code integrationTest}, not {@code test}.
  */
 @Testcontainers
 class CorpusSeederIT {

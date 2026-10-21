@@ -236,7 +236,7 @@ unless disabled, the HTTP upload route. To embed in-JVM instead, use
 | Env var | Default | Meaning |
 |---------|---------|---------|
 | `DOCUMENT_PLATFORM_GRPC_PORT` | `9090` | gRPC listen port |
-| `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | HTTP upload listen port; `0` or `off` disables the HTTP server |
+| `DOCUMENT_PLATFORM_HTTP_PORT` | `8080` | HTTP listen port for the upload routes, `/console` and the console's Connect gateway at `/connect`; `0` or `off` disables all of them |
 | `DOCUMENT_PLATFORM_JDBC_URL`, `DOCUMENT_PLATFORM_USERNAME`, `DOCUMENT_PLATFORM_PASSWORD`, `DOCUMENT_PLATFORM_POOL_SIZE` | local Postgres | Ledger database (see `LedgerConfig`; only the URL carries the `JDBC_` infix) |
 | `DOCUMENT_PLATFORM_S3_ENDPOINT` | _(provider default)_ | S3 endpoint override for S3-compatible stores (LocalStack, SeaweedFS, MinIO); path-style is forced when set |
 | `DOCUMENT_PLATFORM_S3_REGION` | `us-east-1` | S3 region |

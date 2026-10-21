@@ -476,13 +476,3 @@ for the ledger and object store, plus:
 | `PROTOMOLT_CORPUS_SEED` | unset = the seeder exits with status 2 before touching the store | exactly `dev`; the compose dev profile sets it |
 | `PROTOMOLT_CORPUS_SEED_VALUE` | `542` (the default corpus) | integer; the corpus seed |
 | `PROTOMOLT_CORPUS_LARGE_BLOB_BYTES` | `3145745` (3 MiB plus 17) | integer >= 1; the length of the streamed large blob |
-
-## Opt-in test suites (`repo/accession`, `repo/fixtures`)
-
-Read by Gradle, not by any service: `optInSuite` in the root build leaves a
-suite out of the plain `test` task unless the variable is set, so a plain run
-neither runs nor skips it. CI sets it in the integration lane.
-
-| Variable | Default | Accepted |
-|---|---|---|
-| `PROTOMOLT_CORPUS_IT` | unset = the corpus suites are left out of `test` | exactly `1`; runs `RepositoryCorpusIT` and `CorpusSeederIT`, which load the fixture corpus into PostgreSQL and S3 containers |

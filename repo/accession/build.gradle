@@ -50,10 +50,6 @@ dependencies {
     testImplementation project(':protomolt-formats')
 }
 
-// The corpus loads into PostgreSQL and S3 containers, so it runs in the
-// integration lane only; the builder, digest and refusal checks stay in test.
-optInSuite('**/RepositoryCorpusIT*', ['PROTOMOLT_CORPUS_IT=1'])
-
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
         'hibernate-core', 'jedis', 'kafka-clients']
 apply from: rootProject.file('gradle/runtime-boundaries.gradle')
