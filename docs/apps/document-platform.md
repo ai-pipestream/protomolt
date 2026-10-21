@@ -9,7 +9,7 @@ in-process transport. Every environment variable the platform and its
 services read is listed in the
 [environment-variable reference](../operations/environment-variables.md).
 It is the productized form of what
-`GoldenPathSystemTest` proves. The same binary boots as specialized nodes
+`GoldenPathSystemIT` proves. The same binary boots as specialized nodes
 via `PROTOMOLT_ROLES` — see [Role nodes](role-nodes.md).
 
 ## Running it

@@ -110,7 +110,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Installed-process proof of remote authoring, independent review, signed preparation and launch. */
 @Tag("integration")
 @Testcontainers
-class AuthoringRemoteProcessTest {
+class AuthoringRemoteProcessIT {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();

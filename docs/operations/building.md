@@ -23,6 +23,12 @@ to it.
   `*IntegrationTest` run in each module's `integrationTest` task, not in
   `test`; `check`, and with it `build`, depends on `integrationTest`. A
   suite that needs Docker fails without it rather than skipping.
+  Any Java source under `src/test` that imports `org.testcontainers` and
+  declares `@Test` or `@ParameterizedTest` must be named `*IT.java` or
+  `*IntegrationTest.java`. `scripts/check-test-naming.sh`, wired into root
+  `check` as `checkTestNaming`, enforces this conservative import-based rule;
+  module checks also depend on it, so CI's `build` runs it. Helpers without
+  test methods are not suites.
 
 ## Building from a clone
 

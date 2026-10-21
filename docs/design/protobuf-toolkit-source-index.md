@@ -750,7 +750,7 @@ This is a navigation inventory, not a claim that each file was individually revi
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioProtobufParseFallbackTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioProtobufParseFallbackTest.java)
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioReferenceResolverTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioReferenceResolverTest.java)
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainer.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainer.java)
-- [java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainerLogTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainerLogTest.java)
+- [java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainerLogIT.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioRegistryContainerLogIT.java)
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherClassificationTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherClassificationTest.java)
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherIntegrationTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherIntegrationTest.java)
 - [java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherTest.java](../../schema/apicurio/runtime/src/test/java/ai/protomolt/proto/schema/apicurio/ApicurioSchemaPublisherTest.java)

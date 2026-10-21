@@ -47,7 +47,7 @@ workflow or qualify a deployed ACP/browser path.
 
 ### Installed-process acceptance test
 
-`AuthoringRemoteProcessTest` now passes locally with three installed Java
+`AuthoringRemoteProcessIT` now passes locally with three installed Java
 processes: the coordinator, external fixture, and `AuthoringWorker`. The author
 receives only its `workflow-author` token through the environment. It registers,
 reads its assigned context, accepts the task, discovers the fixture through

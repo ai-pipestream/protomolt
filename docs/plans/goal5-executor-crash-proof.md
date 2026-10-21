@@ -1,6 +1,6 @@
 # Installed workflow executor interruption
 
-`AuthoringWorkflowWorkerCrashProcessTest` qualifies a different process from the
+`AuthoringWorkflowWorkerCrashProcessIT` qualifies a different process from the
 author recovery test. The installed coordinator JVM hosts `WorkflowRunWorker`.
 The test obtains a durably accepted authored workflow, prepares a distinct input,
 and launches its exact executable source through the authenticated launch RPC.
@@ -22,6 +22,6 @@ through the default five-minute lease. The fixture provides durable idempotency;
 this does not establish exactly-once effects for arbitrary remote services.
 
 Local validation on 2026-10-01: one test, zero failures and zero skips, using
-`./gradlew :samples:test --tests '*AuthoringWorkflowWorkerCrashProcessTest'`.
+`./gradlew :samples:integrationTest --tests '*AuthoringWorkflowWorkerCrashProcessIT'`.
 Log: `/tmp/goal5-workflow-executor-crash.log`. Hosted CI, merge, published images,
 browser qualification, Kafka launch, and native platform checks remain separate.

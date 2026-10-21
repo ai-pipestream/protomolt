@@ -78,7 +78,7 @@ can support later browsing; it is neither a judge nor a replacement receipt stor
   covers corpus loading; historical court enrichment is separately recorded in
   the operation inventory. A sample asset is not a seeded production workflow.
 - **System tests: reuse for Goals 3/6 integration evidence.**
-  [GoldenPathSystemTest](../../tests/system/src/test/java/ai/protomolt/proto/systemtests/GoldenPathSystemTest.java)
+  [GoldenPathSystemIT](../../tests/system/src/test/java/ai/protomolt/proto/systemtests/GoldenPathSystemIT.java)
   composes the document pipeline;
   [CatalogInventorySystemTest](../../tests/system/src/test/java/ai/protomolt/proto/mcp/CatalogInventorySystemTest.java)
   checks the generated catalog. [Build configuration](../../tests/system/build.gradle)
