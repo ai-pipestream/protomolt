@@ -71,6 +71,13 @@ service DocumentService {
   // Manifest only. Fetches no payloads.
   rpc GetManifest(GetManifestRequest) returns (GetManifestResponse);
 
+  // The descriptor set bytes a revision retained, by their SHA-256. The digest
+  // must be referenced by the named revision's validation record, and the caller
+  // must be able to read that document; otherwise the answer is NOT_FOUND, the
+  // same as for a digest that does not exist. Bytes are verified against the
+  // digest before they are returned.
+  rpc GetSchemaDescriptor(GetSchemaDescriptorRequest) returns (GetSchemaDescriptorResponse);
+
   // Revision history, newest first, paginated.
   rpc ListRevisions(ListRevisionsRequest) returns (ListRevisionsResponse);
 
@@ -639,6 +646,41 @@ message GetManifestResponse {
   DocumentManifest manifest = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // The revision's validation record.
   RevisionValidation validation = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A retained schema read: one digest, scoped to the document revision that
+// retained it. The digest grants nothing by itself.
+message GetSchemaDescriptorRequest {
+  // The call number of the document whose revision references the digest.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Unset means current.
+  RevisionSelector revision = 2;
+  // RepositorySchemaAssetReference.descriptor_sha256, as recorded on the revision.
+  string descriptor_sha256 = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+}
+
+// The retained descriptor set.
+message GetSchemaDescriptorResponse {
+  // The revision whose validation record references the digest.
+  int64 revision = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    int64: {gt: 0}
+  }];
+  // SHA-256 of descriptor_set, verified before the response is sent.
+  string descriptor_sha256 = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {sha256_hex: true}
+  }];
+  // Serialized google.protobuf.FileDescriptorSet with its complete import
+  // closure, exactly as retained at save time. Bounded by the retained
+  // descriptor ceiling of 16 MiB.
+  bytes descriptor_set = 3 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    bytes: {min_len: 1, max_len: 16777216}
+  }];
 }
 
 // A history page request.

@@ -333,6 +333,27 @@ class RepositoryV2ContractTest {
         assertThat(bare.getMetadataMap()).isEmpty();
     }
 
+    @Test void schemaDescriptorReadsNameADocumentAndALowercaseDigest() throws Exception {
+        var request = GetSchemaDescriptorRequest.newBuilder().setAddress(ADDRESS).setDescriptorSha256(SHA);
+        check(request.build(), true);
+        check(request.clone().setRevision(RevisionSelector.newBuilder().setRevision(2)).build(), true);
+        check(request.clone().setRevision(RevisionSelector.newBuilder().setRevision(0)).build(), false);
+        check(request.clone().clearAddress().build(), false);
+        check(request.clone().clearDescriptorSha256().build(), false);
+        check(request.clone().setDescriptorSha256("A".repeat(64)).build(), false);
+        check(request.clone().setDescriptorSha256("a".repeat(63)).build(), false);
+        check(request.clone().setDescriptorSha256("g".repeat(64)).build(), false);
+
+        var response = GetSchemaDescriptorResponse.newBuilder().setRevision(1).setDescriptorSha256(SHA)
+                .setDescriptorSet(ByteString.copyFromUtf8("descriptor set"));
+        check(response.build(), true);
+        check(response.clone().setRevision(0).build(), false);
+        check(response.clone().clearDescriptorSha256().build(), false);
+        check(response.clone().setDescriptorSet(ByteString.EMPTY).build(), false);
+        check(response.clone().setDescriptorSet(ByteString.copyFrom(new byte[16 * 1024 * 1024])).build(), true);
+        check(response.clone().setDescriptorSet(ByteString.copyFrom(new byte[16 * 1024 * 1024 + 1])).build(), false);
+    }
+
     private static SaveDocumentRequest.Builder save() {
         return SaveDocumentRequest.newBuilder().setOperationId("op-1")
                 .setTarget(DocumentTarget.newBuilder().setAddress(ADDRESS))
