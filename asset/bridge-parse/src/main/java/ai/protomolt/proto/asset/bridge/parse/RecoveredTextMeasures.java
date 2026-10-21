@@ -8,7 +8,6 @@ import ai.protomolt.proto.quality.QualityReport;
 import ai.protomolt.proto.quality.QualityScorer;
 
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Measuring recovered text, and scoring what was measured.
@@ -34,14 +33,6 @@ public final class RecoveredTextMeasures {
     /** Shortest line that reads as prose rather than a fragment. */
     private static final int MIN_PROSE_LINE = 20;
 
-    /**
-     * Punctuation hanging off either end of a token. Compiled once: a page
-     * of OCR is hundreds of thousands of tokens, and compiling a pattern
-     * per token would cost more than every other measurement together.
-     */
-    private static final Pattern EDGE_PUNCTUATION =
-            Pattern.compile("^[\\p{Punct}]+|[\\p{Punct}]+$");
-
     /** The punctuation prose is made of, as opposed to symbol confetti. */
     private static final String SENTENCE_PUNCTUATION = ".,;:!?'\"()-\u2019\u201c\u201d\u2014";
 
@@ -65,24 +56,37 @@ public final class RecoveredTextMeasures {
         long textBearing = text.codePoints().filter(RecoveredTextMeasures::textBearing).count();
         long lines = 0;
         long stubLines = 0;
-        for (String line : text.split("\n", -1)) {
-            if (line.isBlank()) {
-                continue;
+        int fromLine = 0;
+        while (true) {
+            int newline = text.indexOf('\n', fromLine);
+            String line = newline < 0 ? text.substring(fromLine) : text.substring(fromLine, newline);
+            if (!line.isBlank()) {
+                lines++;
+                if (line.strip().length() < MIN_PROSE_LINE) {
+                    stubLines++;
+                }
             }
-            lines++;
-            if (line.strip().length() < MIN_PROSE_LINE) {
-                stubLines++;
+            if (newline < 0) {
+                break;
             }
+            fromLine = newline + 1;
         }
         long words = 0;
         long wellFormed = 0;
-        for (String token : text.split("\\s+")) {
-            if (token.isEmpty()) {
-                continue;
+        int fromToken = 0;
+        while (fromToken < text.length()) {
+            while (fromToken < text.length() && isRegexWhitespace(text.charAt(fromToken))) {
+                fromToken++;
             }
-            words++;
-            if (wordShaped(token)) {
-                wellFormed++;
+            int start = fromToken;
+            while (fromToken < text.length() && !isRegexWhitespace(text.charAt(fromToken))) {
+                fromToken++;
+            }
+            if (start < fromToken) {
+                words++;
+                if (wordShaped(text.substring(start, fromToken))) {
+                    wellFormed++;
+                }
             }
         }
         return RecoveredText.newBuilder()
@@ -146,9 +150,37 @@ public final class RecoveredTextMeasures {
         return SENTENCE_PUNCTUATION.indexOf(codePoint) >= 0;
     }
 
+    /**
+     * The token without punctuation hanging off either end, where punctuation
+     * is the regex ASCII punctuation set (the four symbol ranges between the
+     * alphanumerics). A plain end walk: a page of OCR is hundreds of
+     * thousands of tokens.
+     */
+    private static String stripEdgePunctuation(String token) {
+        int from = 0;
+        int to = token.length();
+        while (from < to && isAsciiPunctuation(token.charAt(from))) {
+            from++;
+        }
+        while (to > from && isAsciiPunctuation(token.charAt(to - 1))) {
+            to--;
+        }
+        return token.substring(from, to);
+    }
+
+    private static boolean isAsciiPunctuation(char c) {
+        return (c >= '!' && c <= '/') || (c >= ':' && c <= '@')
+                || (c >= '[' && c <= '`') || (c >= '{' && c <= '~');
+    }
+
+    /** The regex whitespace set: space, tab, newline, vertical tab, form feed, carriage return. */
+    private static boolean isRegexWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\013' || c == '\f' || c == '\r';
+    }
+
     /** Word-shaped: plausible length, mostly letters. */
     private static boolean wordShaped(String token) {
-        String trimmed = EDGE_PUNCTUATION.matcher(token).replaceAll("");
+        String trimmed = stripEdgePunctuation(token);
         if (trimmed.length() < MIN_WORD_LENGTH || trimmed.length() > MAX_WORD_LENGTH) {
             return false;
         }
