@@ -87,7 +87,9 @@ distributions {
     }
 }
 
-tasks.named('test') {
+// The process-host and benchmark suites are integration suites (*IT), so their
+// settings belong to the integrationTest task.
+tasks.named('integrationTest') {
     // Separate-JVM host tests need the complete test runtime, not Gradle's worker bootstrap classpath.
     doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }
     def replicaBenchmark = providers.environmentVariable('PROTOMOLT_REPLICA_BENCHMARK').map { it == 'true' }.orElse(false)

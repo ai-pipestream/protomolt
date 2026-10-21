@@ -59,8 +59,9 @@ dependencies {
 
 // ContainerSmokeIntegrationTest docker-builds apps/serve/Dockerfile, whose context COPYs the
 // installDist output. The Dockerfile is a declared input so editing it re-runs the suite;
-// dependsOn alone is ordering and would leave a Dockerfile-only change stale-green.
-tasks.named('test') {
+// dependsOn alone is ordering and would leave a Dockerfile-only change stale-green. Both
+// installDist consumers are *IntegrationTest suites, so the settings sit on integrationTest.
+tasks.named('integrationTest') {
     dependsOn 'installDist'
     inputs.file('Dockerfile')
 }

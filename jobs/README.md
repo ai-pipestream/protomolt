@@ -153,7 +153,7 @@ which is how a server without jobs configured mounts them anyway.
   against in-process gRPC services and an in-memory store;
   `WorkflowRunActionsTest` covers the four verbs' envelopes and the null-store
   `unavailable` answer.
-- Integration (`*IT`, `@Testcontainers(disabledWithoutDocker = true)`):
+- Integration (`*IT`, the `integrationTest` task, Docker required):
   `JdbcWorkflowRunStoreIT` against PostgreSQL 17 (claim under concurrency,
   lease sweep, checkpoint transactions, outbox DLQ) and `WorkflowRunKafkaIT`
   against Redpanda (request-topic submit → workflow execution on a real
