@@ -2,6 +2,10 @@ description = 'The account service: account CRUD + activation, drive provisionin
 
 dependencies {
     api project(':protomolt-account-proto')
+    // Caller authentication and account bindings: the scoped-caller seam on
+    // the public start and binding methods.
+    api project(':protomolt-authz')
+    implementation project(':protomolt-authz-grpc')
 
     // Drive provisioning rides the repo wire contract only — the
     // DriveServiceGrpc blocking stub, never repo container/service internals.
@@ -9,6 +13,8 @@ dependencies {
     implementation libs.grpc.netty.shaded
     implementation libs.grpc.services
     implementation libs.grpc.inprocess
+    // MetadataUtils attaches the operator credential to the repo channel.
+    implementation libs.grpc.stub
     // Persistence stack (framework-free): plain JDBC over HikariCP + Flyway.
     implementation libs.hikari
     implementation libs.flyway.core

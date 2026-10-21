@@ -195,7 +195,6 @@ public record AccountServiceConfig(
         }
     }
 
-    /** Boolean parse: {@code "true"/"1"/"yes"/"on"} (case-insensitive) is true, anything else false. */
     /** Strict boolean: unset/blank keeps the default, anything else must be a recognized form. */
     static boolean parseBoolOrDefault(String name, String value, boolean fallback) {
         if (value == null || value.isBlank()) {

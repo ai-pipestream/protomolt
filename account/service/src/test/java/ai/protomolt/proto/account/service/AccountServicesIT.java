@@ -12,7 +12,9 @@ import ai.protomolt.proto.repo.v1.Drive;
 import ai.protomolt.proto.repo.v1.DriveServiceGrpc;
 import com.google.protobuf.Timestamp;
 import io.grpc.BindableService;
+import io.grpc.ClientInterceptor;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -21,6 +23,7 @@ import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.health.v1.HealthGrpc;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -70,6 +73,8 @@ class AccountServicesIT {
         }
     }
 
+    private static final String OPERATOR_TOKEN = "services-it-operator-token";
+
     static FakeDriveService fakeDrives;
     static Server fakeRepoServer;
 
@@ -93,6 +98,12 @@ class AccountServicesIT {
                 POSTGRES.getPassword());
     }
 
+    private static ClientInterceptor credential(String token) {
+        Metadata headers = new Metadata();
+        headers.put(Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER), token);
+        return MetadataUtils.newAttachHeadersInterceptor(headers);
+    }
+
     private static String uniqueId(String prefix) {
         return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
@@ -103,11 +114,12 @@ class AccountServicesIT {
                 AccountServiceConfig.INPROCESS_TARGET_PREFIX + "services-it-repo",
                 null, null, null, true, -1L);
         try (AccountServices services = AccountServices.build(config)) {
-            Server server = services.startNetty(0);
+            Server server = services.startNetty(0, OPERATOR_TOKEN, null);
             assertThat(server.getPort()).isPositive();
 
             ManagedChannel channel = NettyChannelBuilder
-                    .forAddress("localhost", server.getPort()).usePlaintext().build();
+                    .forAddress("localhost", server.getPort()).usePlaintext()
+                    .intercept(credential(OPERATOR_TOKEN)).build();
             try {
                 // The health service reports SERVING for the whole server.
                 HealthCheckResponse health = HealthGrpc.newBlockingStub(channel)
@@ -185,7 +197,7 @@ class AccountServicesIT {
         // before anything commits, exactly like the in-process outage.
         AccountServiceConfig config = new AccountServiceConfig(0, storeConfig(),
                 "localhost:1", null, null, null, true, -1L);
-        try (AccountServices services = AccountServices.build(config)) {
+        try (AccountServices services = AccountServices.build(config, OPERATOR_TOKEN)) {
             services.startInProcess("services-it-netty-repo-down");
             ManagedChannel channel = io.grpc.inprocess.InProcessChannelBuilder
                     .forName("services-it-netty-repo-down").build();
@@ -219,11 +231,12 @@ class AccountServicesIT {
                 null, null, null, true, -1L);
         try (AccountServices services = AccountServices.build(config)) {
             services.startInProcess("services-it-both");
-            Server netty = services.startNetty(0);
+            Server netty = services.startNetty(0, OPERATOR_TOKEN, null);
             ManagedChannel inprocess = io.grpc.inprocess.InProcessChannelBuilder
                     .forName("services-it-both").build();
             ManagedChannel tcp = NettyChannelBuilder
-                    .forAddress("localhost", netty.getPort()).usePlaintext().build();
+                    .forAddress("localhost", netty.getPort()).usePlaintext()
+                    .intercept(credential(OPERATOR_TOKEN)).build();
             try {
                 String accountId = uniqueId("acct-both");
                 AccountServiceGrpc.newBlockingStub(inprocess).createAccount(

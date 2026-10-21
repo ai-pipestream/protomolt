@@ -4,6 +4,7 @@ import ai.protomolt.proto.account.v1.AccountStatus;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -13,8 +14,10 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -84,15 +87,39 @@ public final class JdbcAccountStore implements AccountStore {
     @Override
     public ListAccountsResult list(Connection c, AccountStatus statusFilter, int limit,
             long offset) {
-        String where = statusFilter == null || statusFilter == AccountStatus.ACCOUNT_STATUS_UNSPECIFIED
-                ? "" : " WHERE status = ?";
+        return page(c, null, statusFilter, limit, offset);
+    }
+
+    @Override
+    public ListAccountsResult listWithin(Connection c, Collection<String> accountIds,
+            AccountStatus statusFilter, int limit, long offset) {
+        Objects.requireNonNull(accountIds, "accountIds");
+        return page(c, accountIds, statusFilter, limit, offset);
+    }
+
+    /**
+     * The shared list query: {@code accountIds} null means every account,
+     * otherwise the count and the page both carry {@code account_id = ANY(?)}.
+     */
+    private static ListAccountsResult page(Connection c, Collection<String> accountIds,
+            AccountStatus statusFilter, int limit, long offset) {
+        boolean byStatus = statusFilter != null
+                && statusFilter != AccountStatus.ACCOUNT_STATUS_UNSPECIFIED;
+        List<String> conditions = new ArrayList<>();
+        if (accountIds != null) {
+            conditions.add("account_id = ANY(?)");
+        }
+        if (byStatus) {
+            conditions.add("status = ?");
+        }
+        String where = conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
         try {
+            Array ids = accountIds == null ? null
+                    : c.createArrayOf("text", accountIds.toArray(new String[0]));
             long total;
             try (PreparedStatement count = c.prepareStatement(
                     "SELECT COUNT(*) FROM accounts" + where)) {
-                if (!where.isEmpty()) {
-                    count.setString(1, statusToDb(statusFilter));
-                }
+                bindConditions(count, ids, byStatus ? statusFilter : null);
                 try (ResultSet rs = count.executeQuery()) {
                     rs.next();
                     total = rs.getLong(1);
@@ -105,10 +132,7 @@ public final class JdbcAccountStore implements AccountStore {
                             // Stable order: the offset continuation token is
                             // only meaningful against a deterministic scan.
                             + " ORDER BY created_at ASC, account_id ASC LIMIT ? OFFSET ?")) {
-                int p = 1;
-                if (!where.isEmpty()) {
-                    page.setString(p++, statusToDb(statusFilter));
-                }
+                int p = bindConditions(page, ids, byStatus ? statusFilter : null);
                 page.setInt(p++, limit);
                 page.setLong(p, offset);
                 try (ResultSet rs = page.executeQuery()) {
@@ -121,6 +145,19 @@ public final class JdbcAccountStore implements AccountStore {
         } catch (SQLException e) {
             throw AccountStoreException.wrap("list accounts failed", e);
         }
+    }
+
+    /** Binds the WHERE parameters in clause order; returns the next parameter index. */
+    private static int bindConditions(PreparedStatement ps, Array ids, AccountStatus status)
+            throws SQLException {
+        int p = 1;
+        if (ids != null) {
+            ps.setArray(p++, ids);
+        }
+        if (status != null) {
+            ps.setString(p++, statusToDb(status));
+        }
+        return p;
     }
 
     @Override
