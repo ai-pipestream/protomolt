@@ -337,6 +337,11 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   rejected, shows "no outcome yet" and "lookup unavailable" as two separate
   states, and offers a resend under the same operation ID. A document detail page of an
   intake document links here to upload its next revision.
+  On a host that mounts the Connect gateway, the upload route resolves each
+  request's caller with the same resolver as the gateway: the operator token
+  uploads with process authority, and a console session uploads as the scoped
+  caller its principal is bound as, so an account it is not bound to answers
+  403 and a request with neither credential answers 401.
 
 Every failed call shows its gRPC status name and the server's message; a
 response the console refuses (a stream that breaks its contract, a digest that
