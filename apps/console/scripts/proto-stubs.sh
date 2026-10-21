@@ -22,6 +22,7 @@ fi
 protos=(
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v2/document_service.proto
   repo/proto/src/main/proto/ai/protomolt/proto/repo/v1/drive.proto
+  repo/proto/src/main/proto/ai/protomolt/proto/repo/archive/v1/archive_service.proto
   account/proto/src/main/proto/ai/protomolt/proto/account/v1/account_service.proto
 )
 stubs=apps/console/src/gen
