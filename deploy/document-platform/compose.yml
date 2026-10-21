@@ -92,6 +92,36 @@ services:
     volumes:
       - platform-registry:/data
 
+  # Dev profile: the fixture corpus. A one-shot seeder writes the deterministic
+  # corpus (three accounts, documents with revision histories, tombstones,
+  # blobs, semantic parts and archive entries) into the platform's repository
+  # through the real save code, so the console has something to show. It runs
+  # only under --profile dev and only with PROTOMOLT_CORPUS_SEED=dev, and it
+  # refuses an account that holds documents it did not create. Build first:
+  #
+  #   ./gradlew :protomolt-repo-fixtures:installDist
+  #   docker compose -f deploy/document-platform/compose.yml --profile dev up --build
+  corpus-seeder:
+    build:
+      context: ../../repo/fixtures
+      dockerfile: Dockerfile
+    profiles: ["dev"]
+    depends_on:
+      platform:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      PROTOMOLT_CORPUS_SEED: dev
+      DOCUMENT_PLATFORM_JDBC_URL: jdbc:postgresql://postgres:5432/documents
+      DOCUMENT_PLATFORM_USERNAME: protomolt
+      DOCUMENT_PLATFORM_PASSWORD: protomolt
+      DOCUMENT_PLATFORM_S3_ENDPOINT: http://rustfs:9000
+      DOCUMENT_PLATFORM_S3_REGION: us-east-1
+      DOCUMENT_PLATFORM_S3_ACCESS_KEY: protomolt
+      DOCUMENT_PLATFORM_S3_SECRET_KEY: protomoltsecret
+      # The seeder writes; it runs no recovery loops next to the platform's.
+      DOCUMENT_PLATFORM_LIFECYCLE_ENABLED: "false"
+
 volumes:
   platform-postgres:
   platform-rustfs:

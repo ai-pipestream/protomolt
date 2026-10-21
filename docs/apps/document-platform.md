@@ -75,6 +75,15 @@ the jobs store) and RustFS for object storage. Ports:
 - With `DOCUMENT_PLATFORM_SEED_ACCOUNT_ID` set, the account's `intake` and
   `pipeline` drives provision at boot; the compose file seeds account
   `demo` with API key `demo-key`.
+- The compose `dev` profile adds the fixture corpus: `--profile dev` runs
+  the one-shot seeder (`repo/fixtures`, built with
+  `./gradlew :protomolt-repo-fixtures:installDist`), which writes the
+  deterministic corpus of accounts `corpus-alpha`, `corpus-beta` and
+  `corpus-gamma` through the repository's save code, so the console at
+  `/console` has documents with revision histories, tombstones, blobs,
+  semantic parts and archive entries to show. The seeder runs only with
+  `PROTOMOLT_CORPUS_SEED=dev` and refuses, naming the account and the
+  documents, when a corpus account holds documents it did not create.
 
 Key stores follow the intake service's convention: OIDC introspection
 (`DOCUMENT_PLATFORM_INTAKE_OIDC_INTROSPECTION_URL` + client id/secret) or
