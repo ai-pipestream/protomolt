@@ -48,7 +48,8 @@ public final class RepoServiceMain {
         // default 8080; 0 or "off" disables all of it (gRPC-only deployments).
         if (config.httpPort() > 0) {
             services.startHttp(config.httpPort(), apiToken, console,
-                    services.consoleSignInRoutes(signIn.sessions()));
+                    services.consoleSignInRoutes(signIn.sessions()),
+                    RepoServices.requestCallers(apiToken, callers.resolver(), signIn.sessions()));
         }
         // Archive mutation recovery and reconciliation, plus the v2 outbox
         // relay, run as background loops next to the servers.
