@@ -1,19 +1,36 @@
 package ai.protomolt.proto.projection;
 
 import ai.protomolt.proto.projection.test.Address;
+import ai.protomolt.proto.projection.test.ArchiveEntryView;
+import ai.protomolt.proto.projection.test.Blob;
+import ai.protomolt.proto.projection.test.BlobBag;
+import ai.protomolt.proto.projection.test.BlobChecksumType;
+import ai.protomolt.proto.projection.test.Blobs;
+import ai.protomolt.proto.projection.test.BrokenChildParent;
 import ai.protomolt.proto.projection.test.BrokenProjection;
 import ai.protomolt.proto.projection.test.Case;
 import ai.protomolt.proto.projection.test.FlatDoc;
 import ai.protomolt.proto.projection.test.Matter;
+import ai.protomolt.proto.projection.test.MisfedEntryView;
+import ai.protomolt.proto.projection.test.Note;
+import ai.protomolt.proto.projection.test.Rendition;
+import ai.protomolt.proto.projection.test.RenditionListView;
 import ai.protomolt.proto.projection.test.RuntimeErrorProjection;
 import ai.protomolt.proto.projection.test.SearchDoc;
+import ai.protomolt.proto.projection.test.StoredDocument;
+import ai.protomolt.proto.projection.test.TreeNode;
+import ai.protomolt.proto.projection.test.TreeView;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.ExtensionRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 class MessageProjectionTest {
 
@@ -252,4 +269,189 @@ class MessageProjectionTest {
         assertThat(projection.cachedEvaluatorCount()).isEqualTo(MessageProjection.MAX_CACHED_EVALUATORS);
     }
 
+    private static final SourceResolver STORED = SourceResolver.of(
+            StoredDocument.getDescriptor(), Blob.getDescriptor());
+
+    private static MessageProjection archiveView() {
+        return MessageProjection.forTarget(ArchiveEntryView.getDescriptor(), STORED).orElseThrow();
+    }
+
+    private static Blob original() {
+        return Blob.newBuilder()
+                .setBlobId("blob-1")
+                .setStorageKey("objects/blob-1")
+                .setMimeType("application/pdf")
+                .setFilename("brief.pdf")
+                .setSizeBytes(4096)
+                .setChecksum("abc123")
+                .setChecksumType(BlobChecksumType.BLOB_CHECKSUM_TYPE_SHA256)
+                .build();
+    }
+
+    /** No file name, no media type, no checksum, inline content: every fallback fires. */
+    private static Blob markdown() {
+        return Blob.newBuilder()
+                .setBlobId("blob-2")
+                .setData(ByteString.copyFromUtf8("# Brief"))
+                .setSizeBytes(7)
+                .build();
+    }
+
+    private static StoredDocument withBlobs(Blob... blobs) {
+        return StoredDocument.newBuilder()
+                .setDocId("doc-1")
+                .setBlobBag(BlobBag.newBuilder().setBlobs(Blobs.newBuilder().addAllBlob(List.of(blobs))))
+                .build();
+    }
+
+    private static ArchiveEntryView parse(DynamicMessage out) throws Exception {
+        return ArchiveEntryView.parseFrom(out.toByteString(), ExtensionRegistry.getEmptyRegistry());
+    }
+
+    @Test
+    void projectsARepeatedListOfAnotherMessageTypeElementByElement() throws Exception {
+        ArchiveEntryView view = parse(archiveView().project(withBlobs(original(), markdown())));
+
+        assertThat(view.getEntryId()).isEqualTo("doc-1");
+        assertThat(view.getRenditionsList()).containsExactly(
+                Rendition.newBuilder()
+                        .setName("brief.pdf")
+                        .setBlobId("blob-1")
+                        .setMimeType("application/pdf")
+                        .setSizeBytes(4096)
+                        .setChecksum("sha256:abc123")
+                        .build(),
+                Rendition.newBuilder()
+                        .setName("blob-2")
+                        .setBlobId("blob-2")
+                        .setMimeType("application/octet-stream")
+                        .setSizeBytes(7)
+                        .setInline(true)
+                        .build());
+        // The bag held the list arm, so the singular arm stays unset.
+        assertThat(view.hasPrimary()).isFalse();
+    }
+
+    @Test
+    void projectsASingularMessageOfAnotherType() throws Exception {
+        StoredDocument document = StoredDocument.newBuilder()
+                .setDocId("doc-2")
+                .setBlobBag(BlobBag.newBuilder().setBlob(markdown()))
+                .build();
+
+        ArchiveEntryView view = parse(archiveView().project(document));
+
+        assertThat(view.getPrimary()).isEqualTo(Rendition.newBuilder()
+                .setName("blob-2")
+                .setBlobId("blob-2")
+                .setMimeType("application/octet-stream")
+                .setSizeBytes(7)
+                .setInline(true)
+                .build());
+        assertThat(view.getRenditionsList()).isEmpty();
+    }
+
+    @Test
+    void projectsACelBuiltListElementByElement() throws Exception {
+        ArchiveEntryView view = parse(archiveView().project(withBlobs(original(), markdown())));
+
+        // The filter keeps only the 4096-byte blob, and it arrives as a rendition.
+        assertThat(view.getLargeRenditionsList())
+                .extracting(Rendition::getName, Rendition::getChecksum)
+                .containsExactly(tuple("brief.pdf", "sha256:abc123"));
+    }
+
+    @Test
+    void copiesMessagesThatAlreadyHaveTheFieldTypeUnchanged() throws Exception {
+        Rendition carried = Rendition.newBuilder()
+                .setName("kept as is")
+                .setBlobId("blob-9")
+                .build();
+        StoredDocument document = withBlobs(original()).toBuilder()
+                .addRenditions(carried)
+                .setCover(markdown())
+                .build();
+
+        ArchiveEntryView view = parse(archiveView().project(document));
+
+        // A rendition fed to a rendition field is not projected again: no
+        // fallback media type is added, no name is recomputed.
+        assertThat(view.getCarriedList()).containsExactly(carried);
+        // Blob fields declare no sources, so blobs copy into them unchanged.
+        assertThat(view.getRawBlobsList()).containsExactly(original());
+        assertThat(view.getCover()).isEqualTo(markdown());
+    }
+
+    @Test
+    void refusesAMessageThatIsNeitherTheFieldTypeNorADeclaredChildSource() {
+        MessageProjection projection =
+                MessageProjection.forTarget(MisfedEntryView.getDescriptor(), STORED).orElseThrow();
+        StoredDocument document = StoredDocument.newBuilder()
+                .setDocId("doc-3")
+                .addNotes(Note.newBuilder().setText("not a blob"))
+                .build();
+
+        assertThatThrownBy(() -> projection.project(document))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("ai.protomolt.proto.projection.test.v1.Note")
+                .hasMessageContaining("ai.protomolt.proto.projection.test.v1.MisfedEntryView.renditions")
+                .hasMessageContaining("declared: ai.protomolt.proto.projection.test.v1.Blob");
+    }
+
+    @Test
+    void validatesChildCelWhenTheParentIsBuilt() {
+        assertThatThrownBy(() -> MessageProjection.forTarget(BrokenChildParent.getDescriptor(), STORED))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("BrokenRendition.boom")
+                .hasMessageContaining("compiles against no declared source");
+    }
+
+    @Test
+    void compilesAndProjectsARecursiveTarget() throws Exception {
+        MessageProjection projection = MessageProjection.forTarget(
+                TreeView.getDescriptor(), SourceResolver.of(TreeNode.getDescriptor())).orElseThrow();
+        TreeNode tree = TreeNode.newBuilder()
+                .setLabel("root")
+                .addChildren(TreeNode.newBuilder().setLabel("left")
+                        .addChildren(TreeNode.newBuilder().setLabel("leaf")))
+                .addChildren(TreeNode.newBuilder().setLabel("right"))
+                .build();
+
+        TreeView view = TreeView.parseFrom(projection.project(tree).toByteString(),
+                ExtensionRegistry.getEmptyRegistry());
+
+        assertThat(view).isEqualTo(TreeView.newBuilder()
+                .setLabel("ROOT")
+                .addChildren(TreeView.newBuilder().setLabel("LEFT")
+                        .addChildren(TreeView.newBuilder().setLabel("LEAF")))
+                .addChildren(TreeView.newBuilder().setLabel("RIGHT"))
+                .build());
+    }
+
+    @Test
+    void keepsAChildFeedingPathWholeInTheParentSourceMask() {
+        MessageProjection projection =
+                MessageProjection.forTarget(RenditionListView.getDescriptor(), STORED).orElseThrow();
+
+        var mask = projection.sourceMask(StoredDocument.getDescriptor());
+        assertThat(mask.fieldMask().getPathsList()).containsExactly("blob_bag.blobs.blob");
+        // The path names every field below it, so the child's CEL reads are
+        // covered and the parent mask stays exact.
+        assertThat(mask.complete()).isTrue();
+
+        // The child's own mask, over its own source, is where its CEL shows.
+        var childMask = MessageProjection.forTarget(Rendition.getDescriptor(), STORED)
+                .orElseThrow().sourceMask(Blob.getDescriptor());
+        assertThat(childMask.fieldMask().getPathsList())
+                .containsExactly("blob_id", "mime_type", "size_bytes");
+        assertThat(childMask.complete()).isFalse();
+    }
+
+    @Test
+    void archiveViewMaskListsEveryResolvingPathAndIsALowerBoundUnderCel() {
+        var mask = archiveView().sourceMask(StoredDocument.getDescriptor());
+        assertThat(mask.fieldMask().getPathsList()).containsExactly(
+                "doc_id", "blob_bag.blobs.blob", "blob_bag.blob", "renditions", "cover");
+        assertThat(mask.complete()).isFalse();
+    }
 }
