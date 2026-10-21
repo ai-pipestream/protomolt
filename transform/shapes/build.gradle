@@ -1,6 +1,7 @@
 description = 'Joins, unions, and derived shapes: multi-source mapping scopes and runtime message-type synthesis'
 
 dependencies {
+    implementation project(':protomolt-formats')
     api project(':protomolt-mapper-cel')
     implementation project(':protomolt-protobuf-metadata')
     api libs.protobuf.java

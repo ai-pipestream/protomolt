@@ -5,12 +5,9 @@ import javax.crypto.spec.SecretKeySpec;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /** Resolves {@code env:VARIABLE_NAME} references containing base64-encoded AES-256 keys. */
 public final class EnvRepositoryStateKeyResolver implements RepositoryStateKeyResolver {
-
-    private static final Pattern VARIABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,127}");
 
     /** Looks up environment variables without exposing the environment API to callers. */
     private final Function<String, String> environment;
@@ -28,7 +25,7 @@ public final class EnvRepositoryStateKeyResolver implements RepositoryStateKeyRe
     @Override
     public SecretKey resolve(String keyReference) {
         if (keyReference == null || !keyReference.startsWith("env:")
-                || !VARIABLE.matcher(keyReference.substring(4)).matches()) {
+                || !KeyReferences.variable(keyReference.substring(4))) {
             throw failure("repository state key reference is malformed or uses an unsupported scheme");
         }
         String encoded = environment.apply(keyReference.substring(4));

@@ -15,7 +15,19 @@ final class Literals {
     static boolean isLiteral(String source) {
         return source.equals("null") || source.equals("true") || source.equals("false")
                 || (source.length() > 1 && source.startsWith("\"") && source.endsWith("\""))
-                || source.matches("-?\\d+(\\.\\d+)?");
+                || isNumber(source);
+    }
+
+    private static boolean isNumber(String text) {
+        int i = text.startsWith("-") ? 1 : 0;
+        int start = i;
+        while (i < text.length() && text.charAt(i) >= '0' && text.charAt(i) <= '9') i++;
+        if (i == start) return false;
+        if (i == text.length()) return true;
+        if (text.charAt(i++) != '.') return false;
+        start = i;
+        while (i < text.length() && text.charAt(i) >= '0' && text.charAt(i) <= '9') i++;
+        return i > start && i == text.length();
     }
 
     /**

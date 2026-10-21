@@ -297,11 +297,32 @@ public final class DeliverableContracts {
             return null;
         }
         String relative = pkg.isEmpty() ? fullName : fullName.substring(pkg.length() + 1);
-        String[] parts = relative.split("\\.");
+        String[] parts = splitPath(relative);
         Descriptor current = file.findMessageTypeByName(parts[0]);
         for (int i = 1; current != null && i < parts.length; i++) {
             current = current.findNestedTypeByName(parts[i]);
         }
         return current;
+    }
+    static String[] splitPath(String path) {
+        if (path.isEmpty()) {
+            return new String[]{""};
+        }
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        while (true) {
+            int dot = path.indexOf('.', start);
+            if (dot < 0) {
+                parts.add(path.substring(start));
+                break;
+            }
+            parts.add(path.substring(start, dot));
+            start = dot + 1;
+        }
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end).toArray(String[]::new);
     }
 }
