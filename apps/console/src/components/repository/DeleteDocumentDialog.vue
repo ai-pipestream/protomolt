@@ -21,7 +21,7 @@
         </v-alert>
         <v-alert v-if="stale" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="delete-stale">
           {{ stale }}
-          <div class="mt-2"><v-btn size="small" variant="tonal" data-testid="delete-reload" @click="emit('reload')">Reload the document</v-btn></div>
+          <div class="mt-2"><v-btn size="small" variant="tonal" data-testid="delete-reload" @click="emit('reload', staleTombstone)">Reload the document</v-btn></div>
         </v-alert>
         <RpcFailureAlert v-if="refused" :failure="refused" title="The repository refused the delete" class="mt-2" />
         <div v-if="reuseNote" class="text-caption mt-1" data-testid="delete-reuse">{{ reuseNote }}</div>
@@ -57,7 +57,9 @@ import { newOperationId } from '@/repository/uploadCore'
 import { useCallScope } from '@/repository/useCallScope'
 
 const props = defineProps<{ address: NodeAddress; revision: bigint }>()
-const emit = defineEmits<{ deleted: [accession: Accession]; reload: []; close: [] }>()
+// Reload names the revision to open when the conflict says the current one is a
+// tombstone: a current read of a tombstoned document is NOT_FOUND.
+const emit = defineEmits<{ deleted: [accession: Accession]; reload: [tombstone: bigint | null]; close: [] }>()
 
 const clients = useRepositoryClients()
 const scope = useCallScope()
@@ -67,6 +69,7 @@ const reason = ref('')
 const busy = ref(false)
 const inputError = ref<string | null>(null)
 const stale = ref<string | null>(null)
+const staleTombstone = ref<bigint | null>(null)
 const refused = ref<RpcFailure | null>(null)
 const reuseNote = ref<string | null>(null)
 const unsettled = ref<RpcFailure | null>(null)
@@ -113,6 +116,7 @@ async function confirm() {
         break
       case 'stale':
         stale.value = staleText(answer, props.revision)
+        staleTombstone.value = answer.conflict?.currentIsTombstone ? answer.conflict.currentRevision : null
         break
       case 'denied':
       case 'refused':

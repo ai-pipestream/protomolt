@@ -233,4 +233,42 @@ describe('Tombstone delete', () => {
     expect(dialog()).toBeNull()
     wrapper.unmount()
   })
+
+  it('opens the tombstone another tab recorded when Reload follows a stale delete', async () => {
+    const { wrapper, router, dialog, click } = await openDialog((_request, commit) => {
+      commit()
+      return new ConnectError('expected revision 4, current 5', Code.Aborted, undefined, [
+        {
+          desc: RevisionConflictSchema,
+          value: {
+            address: testAddress(),
+            expected: create(ExpectedRevisionSchema, { expected: { case: 'revision', value: 4n } }),
+            currentRevision: 5n,
+            currentIsTombstone: true,
+          },
+        },
+      ])
+    })
+    await click('delete-confirm')
+    expect(dialog()!.textContent).toContain('the current revision is 5, a tombstone')
+    await click('delete-reload')
+    expect(router.currentRoute.value.query.revision).toBe('5')
+    expect(wrapper.get('[data-testid="revision-chip"]').text()).toBe('revision 5')
+    expect(wrapper.find('[data-testid="rpc-failure"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers the tombstone when the current revision of a deleted document is NOT_FOUND', async () => {
+    const { wrapper, router, click } = await openDialog(() => 'commit')
+    await click('delete-confirm')
+    // The document is now a tombstone at 5; opening its current revision is NOT_FOUND.
+    await router.push(DOC)
+    await settle()
+    expect(wrapper.get('[data-testid="rpc-failure"]').text()).toContain('NOT_FOUND')
+    expect(wrapper.get('[data-testid="tombstone-hint"]').text()).toContain('Open revision 5')
+    await wrapper.get('[data-testid="open-tombstone"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query.revision).toBe('5')
+    wrapper.unmount()
+  })
 })

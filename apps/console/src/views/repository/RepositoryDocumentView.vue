@@ -43,6 +43,13 @@
       {{ routeError }}
     </v-alert>
     <RpcFailureAlert v-if="manifestFailure" :failure="manifestFailure" title="Reading the manifest" />
+    <RpcFailureAlert v-if="tombstoneFailure" :failure="tombstoneFailure" title="Looking for a tombstone in the history" />
+    <v-alert v-if="latestTombstone !== null" type="info" variant="tonal" density="compact" class="mb-3" data-testid="tombstone-hint">
+      This document's current revision is a tombstone.
+      <v-btn size="small" variant="tonal" class="ml-2" data-testid="open-tombstone" @click="openRevision(latestTombstone)">
+        Open revision {{ latestTombstone }}
+      </v-btn>
+    </v-alert>
     <v-progress-linear v-if="loading" indeterminate class="mb-2" />
 
     <template v-if="manifest && validation">
@@ -210,13 +217,18 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { Code, ConnectError } from '@connectrpc/connect'
 import ProtoMessageNode from '@/components/ProtoMessageNode.vue'
 import BlobFiles from '@/components/repository/BlobFiles.vue'
 import DeleteDocumentDialog from '@/components/repository/DeleteDocumentDialog.vue'
 import RevisionHistory from '@/components/repository/RevisionHistory.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
-import { GetDocumentRequestSchema, GetManifestRequestSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import {
+  GetDocumentRequestSchema,
+  GetManifestRequestSchema,
+  ListRevisionsRequestSchema,
+} from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   DocumentPart,
   PartSelectionSchema,
@@ -272,9 +284,10 @@ const deletedNotice = ref<string | null>(null)
 let deletedRevision: bigint | null = null
 const deletable = computed(() => manifest.value !== null && !manifest.value.tombstone && requested.value === null)
 
-function reloadAfterStale() {
+function reloadAfterStale(tombstone: bigint | null) {
   deleting.value = false
-  void load()
+  if (tombstone !== null) openRevision(tombstone)
+  else void load()
 }
 
 function openTombstone(accession: Accession) {
@@ -332,6 +345,8 @@ async function load() {
   pinned.value = null
   metadata.value = []
   blobs.value = []
+  latestTombstone.value = null
+  tombstoneFailure.value = null
   call.value = null
   address.value = null
   const callNumber: CallNumber = {
@@ -379,6 +394,9 @@ async function load() {
     if (signal.aborted) return
     manifestFailure.value = rpcFailure(error)
     loading.value = false
+    // A current read of a tombstoned document is NOT_FOUND; the history still
+    // names its tombstone, which opens as an exact revision.
+    if (requested.value === null && ConnectError.from(error).code === Code.NotFound) void findTombstone(target, signal)
     return
   }
   try {
@@ -401,6 +419,20 @@ async function load() {
   } finally {
     // Only the newest load owns the indicator.
     if (!signal.aborted) loading.value = false
+  }
+}
+
+const latestTombstone = ref<bigint | null>(null)
+const tombstoneFailure = ref<RpcFailure | null>(null)
+
+async function findTombstone(target: NodeAddress, signal: AbortSignal) {
+  try {
+    const page = await clients.documents.listRevisions(create(ListRevisionsRequestSchema, { address: target, pageSize: 1 }), { signal })
+    if (signal.aborted) return
+    const newest = page.revisions[0]
+    if (newest?.tombstone) latestTombstone.value = newest.revision
+  } catch (error) {
+    if (!signal.aborted) tombstoneFailure.value = rpcFailure(error)
   }
 }
 
