@@ -33,6 +33,13 @@ tasks.named('test') {
     }
 }
 
+// The TEI suite is named *IntegrationTest, so integrationTest leaves it out by tag as well.
+tasks.named('integrationTest') {
+    useJUnitPlatform {
+        excludeTags 'tei'
+    }
+}
+
 tasks.register('teiIntegrationTest', Test) {
     group = 'verification'
     description = 'Runs the self-provisioned TEI rerank lane excluded from the default test task'

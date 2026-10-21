@@ -19,9 +19,10 @@ to it.
   it exists, so `/console` serves nothing until `npm ci && npm run build`
   has run in `apps/console`. The JVM build does not need Node.
 - **Docker**, for the Testcontainers integration suites (Redpanda,
-  Apicurio, OpenSearch, Iceberg, LocalStack). They are part of the default
-  `test` task: they run wherever Docker is available and skip otherwise,
-  so a build without Docker stays green.
+  Apicurio, OpenSearch, Iceberg, LocalStack). Test classes named `*IT` or
+  `*IntegrationTest` run in each module's `integrationTest` task, not in
+  `test`; `check`, and with it `build`, depends on `integrationTest`. A
+  suite that needs Docker fails without it rather than skipping.
 
 ## Building from a clone
 
@@ -31,8 +32,8 @@ cd protomolt
 ./gradlew build
 ```
 
-`build` compiles all modules, runs every unit test (including the
-Docker-backed suites when Docker is present), and runs the in-build
+`build` compiles all modules, runs every unit test and every integration
+suite (`integrationTest`, the `*IT` and `*IntegrationTest` classes), and runs the in-build
 protovalidate conformance gate (which fails the build on any drift from the
 expected 100% pass rate). It does not run `buf lint`; that hangs off the
 root `check` task (see [Proto linting](#proto-linting)).
@@ -62,8 +63,8 @@ publishes a snapshot version. A specific version can be forced with
 
 ## Build cost and the inner loop
 
-`settings.gradle` includes 181 modules, the default `test` task includes the
-Docker-backed integration suites, and the conformance gate runs in-build, so
+`settings.gradle` includes 181 modules, `build` runs the Docker-backed
+integration suites, and the conformance gate runs in-build, so
 a full `./gradlew build` is a long operation: expect tens of minutes on a
 developer laptop, dominated by the test and container time rather than
 compilation. The Gradle daemon is capped at `-Xmx2g`
@@ -75,8 +76,11 @@ Day-to-day work targets one module by its Gradle project path (the
 name):
 
 ```shell
-# Test and javadoc one module:
+# Unit tests and javadoc for one module:
 ./gradlew :protomolt-mapper:test :protomolt-mapper:javadoc --max-workers=2
+
+# Its integration suites (*IT and *IntegrationTest classes; Docker for Testcontainers):
+./gradlew :protomolt-repo-service:integrationTest --max-workers=2
 
 # Compile without running tests:
 ./gradlew :protomolt-mapper:classes --max-workers=2
@@ -139,22 +143,22 @@ ccompat facade and a Redpanda container.
 The Confluent lanes (the `:protomolt-schema-confluent` Confluent suites and
 the `:protomolt-kafka-serde` registry suite) provision their own registry: a
 Testcontainers Redpanda, which serves the Confluent Schema Registry API.
-They run wherever Docker is available and skip otherwise.
+They need Docker; without it they fail rather than skip.
 
 The OpenSearch index lane (`:protomolt-search-index-opensearch`) also provisions
 its own engine: a Testcontainers container running the
 `opensearchproject/opensearch` image whose tag comes from `opensearch-image`
 in `gradle/libs.versions.toml` (the compose stack pins the same version),
 started through the OpenSearch project's `opensearch-testcontainers`
-module. It likewise runs wherever Docker is available and skips otherwise,
-so the compose stack's `opensearch` service is not needed for tests.
+module. It likewise needs Docker and fails without it, so the compose stack's
+`opensearch` service is not needed for tests.
 
 The Iceberg lanes self-provision the same way. The `:protomolt-iceberg`
 suites each boot an `apache/iceberg-rest-fixture` catalog (one suite uses
 `apache/gravitino-iceberg-rest` instead), the `:protomolt-iceberg-s3` suite
 pairs a fixture catalog with a Testcontainers LocalStack S3 store, and the
-`:protomolt-kafka-connect-iceberg` suite boots its own fixture catalog. They run
-wherever Docker is available and skip otherwise, so the compose stack's
+`:protomolt-kafka-connect-iceberg` suite boots its own fixture catalog. They need
+Docker and fail without it, so the compose stack's
 `iceberg-rest`, `iceberg-rest-s3`, `rustfs`, and `gravitino-iceberg-rest`
 services are not needed for tests.
 
@@ -164,13 +168,12 @@ and real S3 on AWS. The Apicurio lanes self-provision the same way: the
 `:protomolt-schema-apicurio` suites and the confluent module's two ccompat
 suites each boot an `apicurio/apicurio-registry` container whose tag comes
 from the `apicurio` version in `gradle/libs.versions.toml` (the ccompat
-suites hit its `/apis/ccompat/v7` facade). They run wherever
-Docker is available and skip otherwise, so the compose stack's `apicurio`
-service is not needed for tests:
+suites hit its `/apis/ccompat/v7` facade). They need Docker and fail
+without it, so the compose stack's `apicurio` service is not needed for tests:
 
 ```shell
-./gradlew :protomolt-schema-apicurio:test \
-          :protomolt-schema-confluent:test
+./gradlew :protomolt-schema-apicurio:integrationTest \
+          :protomolt-schema-confluent:integrationTest
 ```
 
 Test artifacts and subjects use unique per-run names, so reruns never
@@ -184,7 +187,7 @@ compose stack's, with a system property or environment variable:
 | `protomolt.it.apicurio.url` | `PROTOMOLT_IT_APICURIO_URL` | the suite's Testcontainers registry |
 
 ```shell
-./gradlew :protomolt-schema-apicurio:test \
+./gradlew :protomolt-schema-apicurio:integrationTest \
           -Dprotomolt.it.apicurio.url=http://my-registry:8080
 ```
 
@@ -228,8 +231,8 @@ scoring on every push, so the pass rate is enforced, not just documented.
 GitHub Actions (`.github/workflows/ci.yml`) runs four jobs on every push
 to `main` and on pull requests:
 
-- **build**: compiles all modules, runs the unit test suite and the
-  in-build conformance gate (`./gradlew build`), then the ACP protocol
+- **build**: compiles all modules, runs the unit and integration suites and
+  the in-build conformance gate (`./gradlew build`), then the ACP protocol
   lane, `buf lint` (buf pinned at 1.70.0), the deployment and starter
   static checks, and (for pull requests) `buf breaking` against the target
   branch. Tests run on JDK 25 (`-PtestJdk=25`), the only supported

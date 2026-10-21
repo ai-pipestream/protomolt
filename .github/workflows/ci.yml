@@ -214,22 +214,27 @@ jobs:
         env:
           PROTOMOLT_INTEGRATION_REGISTRIES: 'true'
         run: >
-          ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-confluent:test
-          :protomolt-search-index-solr:test :protomolt-search-index-opensearch:test
-          :protomolt-iceberg:test :protomolt-iceberg-s3:test :protomolt-kafka-connect-iceberg:test :protomolt-kafka-serde:test
+          ./gradlew :protomolt-schema-apicurio:test :protomolt-schema-apicurio:integrationTest
+          :protomolt-schema-confluent:test :protomolt-schema-confluent:integrationTest
+          :protomolt-search-index-solr:test :protomolt-search-index-solr:integrationTest
+          :protomolt-search-index-opensearch:test :protomolt-search-index-opensearch:integrationTest
+          :protomolt-iceberg:test :protomolt-iceberg:integrationTest
+          :protomolt-iceberg-s3:test :protomolt-iceberg-s3:integrationTest
+          :protomolt-kafka-connect-iceberg:test :protomolt-kafka-connect-iceberg:integrationTest
+          :protomolt-kafka-serde:test :protomolt-kafka-serde:integrationTest
           --rerun-tasks --console=plain
 
       - name: Fail if any integration suite skipped
         run: |
           skipped=$(grep -h -o 'skipped="[0-9]*"' \
-            schema/apicurio/runtime/build/test-results/test/TEST-*Integration*.xml \
-            schema/confluent/build/test-results/test/TEST-*Integration*.xml \
-            search/index/solr/build/test-results/test/TEST-*Integration*.xml \
-            search/index/opensearch/build/test-results/test/TEST-*Integration*.xml \
-            sink/iceberg/build/test-results/test/TEST-*Integration*.xml \
-            sink/iceberg-s3/build/test-results/test/TEST-*Integration*.xml \
-            sink/kafka/connect-iceberg/build/test-results/test/TEST-*Integration*.xml \
-            sink/kafka/serde/build/test-results/test/TEST-*Integration*.xml \
+            schema/apicurio/runtime/build/test-results/integrationTest/TEST-*Integration*.xml \
+            schema/confluent/build/test-results/integrationTest/TEST-*Integration*.xml \
+            search/index/solr/build/test-results/integrationTest/TEST-*Integration*.xml \
+            search/index/opensearch/build/test-results/integrationTest/TEST-*Integration*.xml \
+            sink/iceberg/build/test-results/integrationTest/TEST-*Integration*.xml \
+            sink/iceberg-s3/build/test-results/integrationTest/TEST-*Integration*.xml \
+            sink/kafka/connect-iceberg/build/test-results/integrationTest/TEST-*Integration*.xml \
+            sink/kafka/serde/build/test-results/integrationTest/TEST-*Integration*.xml \
             | grep -o '[0-9]*' | paste -sd+ | bc)
           echo "skipped integration tests: $skipped"
           test "$skipped" -eq 0
