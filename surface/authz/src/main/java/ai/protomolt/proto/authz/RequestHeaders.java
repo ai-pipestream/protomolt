@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 
 /**
@@ -22,6 +23,17 @@ public interface RequestHeaders {
      * @return the values, or an empty list when the request did not carry the header
      */
     List<String> values(String name);
+
+    /**
+     * The first value the request carried for a header.
+     *
+     * @param name the header name, matched case-insensitively
+     * @return the first value, or empty when the request did not carry the header
+     */
+    default Optional<String> first(String name) {
+        List<String> values = values(name);
+        return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
+    }
 
     /**
      * An immutable view over {@code headers}, with names folded case-insensitively. Values

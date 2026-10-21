@@ -138,6 +138,8 @@ class RequestCallerResolverTest {
         assertThat(view.values("x-forwarded-for")).containsExactly("a", "b");
         assertThat(view.values("X-FORWARDED-FOR")).containsExactly("a", "b");
         assertThat(view.values("cookie")).isEmpty();
+        assertThat(view.first("x-forwarded-for")).contains("a");
+        assertThat(view.first("cookie")).isEmpty();
         assertThatThrownBy(() -> view.values("x-forwarded-for").add("c"))
                 .isInstanceOf(UnsupportedOperationException.class);
     }

@@ -16,6 +16,7 @@ import ai.protomolt.proto.asset.bridge.BridgeEngine;
 import ai.protomolt.proto.repo.container.ledger.LedgerDatabase;
 import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.v1.DriveType;
+import com.sun.net.httpserver.HttpHandler;
 import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -29,6 +30,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -506,13 +508,29 @@ public final class RepoServices implements AutoCloseable {
      */
     public synchronized UploadHttpServer startHttp(int port, String apiToken,
             RepositoryConsole console) {
+        return startHttp(port, apiToken, console, Map.of());
+    }
+
+    /**
+     * {@link #startHttp(int, String, RepositoryConsole)} plus {@code routes}, extra context
+     * path to handler mounted on the same port before it starts ({@link UploadHttpServer}
+     * names the paths it refuses).
+     *
+     * @param port the listen port (0 = ephemeral)
+     * @param apiToken nonblank operator credential every upload request must present
+     * @param console the console bundle served at {@link RepositoryConsole#PATH}
+     * @param routes extra routes; each handler owns its credential check
+     * @return the started HTTP server (also closed by {@link #close()})
+     */
+    public synchronized UploadHttpServer startHttp(int port, String apiToken,
+            RepositoryConsole console, Map<String, HttpHandler> routes) {
         requireOpen();
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (managedArchive != null) startLifecycle();
         UploadHttpServer http = new UploadHttpServer(v2Uploads,
                 () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
-                console);
+                console, routes);
         httpServers.add(http);
         try {
             http.start(port);
