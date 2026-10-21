@@ -72,7 +72,7 @@
         <div v-if="listed" class="d-flex align-center ga-2 mt-3">
           <v-btn size="small" variant="text" prepend-icon="mdi-chevron-left" :disabled="!cursor.hasPrevious || listing"
                  data-testid="entries-previous" @click="previousPage">Previous</v-btn>
-          <span class="text-caption">Page {{ cursor.page }}<span v-if="totalCount !== null"> · {{ totalCount }} entries</span></span>
+          <span class="text-caption">Page {{ cursor.page }}<span v-if="totalCount !== null"> · {{ totalCount }} live entries in the archive<span v-if="classification !== ClassificationState.UNSPECIFIED">, before the filter</span></span></span>
           <v-btn size="small" variant="text" append-icon="mdi-chevron-right" :disabled="!cursor.hasNext || listing"
                  data-testid="entries-next" @click="nextPage">Next</v-btn>
         </div>
@@ -121,12 +121,12 @@ const archiveFailure = ref<RpcFailure | null>(null)
 const stats = shallowRef<ArchiveStats | null>(null)
 const statsFailure = ref<RpcFailure | null>(null)
 
-const classificationItems = [
-  { title: 'Any classification', value: ClassificationState.UNSPECIFIED },
-  { title: 'Unclassified', value: ClassificationState.UNCLASSIFIED },
-  { title: 'Declared', value: ClassificationState.DECLARED },
-  { title: 'Identified', value: ClassificationState.IDENTIFIED },
-]
+// Every state the descriptor defines, so a state added to the proto is
+// filterable without a console change. UNSPECIFIED means no filter.
+const classificationItems = ClassificationStateSchema.values.map((v) => ({
+  title: v.number === ClassificationState.UNSPECIFIED ? 'Any classification' : enumLabel(ClassificationStateSchema, v.number),
+  value: v.number as ClassificationState,
+}))
 const classification = ref<ClassificationState>(ClassificationState.UNSPECIFIED)
 const cursor = reactive(new PageCursor()) as PageCursor
 const entries = shallowRef<EntryRow[]>([])
@@ -205,6 +205,12 @@ function openEntry(entryId: string) {
 }
 
 function load() {
+  // Another archive starts from nothing: the previous one's rows must not stay clickable.
+  listScope.next()
+  entries.value = []
+  totalCount.value = null
+  listed.value = false
+  entriesFailure.value = null
   routeError.value = null
   if (accountId.value.trim() === '' || archiveName.value.trim() === '') {
     routeError.value = 'An archive needs an account ID and an archive name.'

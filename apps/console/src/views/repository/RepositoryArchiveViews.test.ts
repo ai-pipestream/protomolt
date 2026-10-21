@@ -116,6 +116,45 @@ afterEach(() => {
   delete (globalThis as Record<string, unknown>).showSaveFilePicker
 })
 
+describe('RepositoryArchiveView, review cases', () => {
+  it('offers every classification state the descriptor defines, VERIFIED and CONFLICTED included', async () => {
+    const s = seen()
+    const { wrapper } = await mountRepositoryView(RepositoryArchiveView, { name: 'repository-archive', query: { account: 'acct-a', archive: 'papers' } }, archives(s))
+    const items = (wrapper.vm as unknown as { classificationItems: { title: string; value: number }[] }).classificationItems
+    expect(items.map((i) => i.title)).toEqual(['Any classification', 'UNCLASSIFIED', 'DECLARED', 'IDENTIFIED', 'VERIFIED', 'CONFLICTED'])
+    ;(wrapper.vm as unknown as { classification: ClassificationState }).classification = ClassificationState.CONFLICTED
+    await settle()
+    expect(s.entries[s.entries.length - 1].classificationState).toBe(ClassificationState.CONFLICTED)
+    expect(wrapper.text()).toContain('live entries in the archive, before the filter')
+    wrapper.unmount()
+  })
+
+  it('drops the previous archive rows as soon as another archive opens', async () => {
+    let hold: (() => void) | null = null
+    const { wrapper, router } = await mountRepositoryView(RepositoryArchiveView, { name: 'repository-archive', query: { account: 'acct-a', archive: 'papers' } }, (router) => {
+      archives(seen())(router)
+      router.service(ArchiveService, {
+        getArchive: (r) => create(GetArchiveResponseSchema, { archive: create(ArchiveSchema, { name: r.archive, accountId: r.accountId }) }),
+        getArchiveStats: (r) => create(GetArchiveStatsResponseSchema, { stats: create(ArchiveStatsSchema, { archive: r.archive }) }),
+        async listEntries(request) {
+          if (request.archive === 'letters') await new Promise<void>((resolve) => (hold = resolve))
+          return create(ListEntriesResponseSchema, {
+            entries: [create(EntryInfoSchema, { address: create(EntryAddressSchema, { accountId: 'acct-a', archive: request.archive, entryId: `${request.archive}-1` }) })],
+          })
+        },
+      })
+    })
+    expect(wrapper.find('[data-testid="entry-papers-1"]').exists()).toBe(true)
+    await router.push({ name: 'repository-archive', query: { account: 'acct-a', archive: 'letters' } })
+    await settle()
+    expect(wrapper.find('[data-testid="entry-papers-1"]').exists()).toBe(false)
+    hold!()
+    await settle()
+    expect(wrapper.find('[data-testid="entry-letters-1"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+
 describe('RepositoryArchiveView', () => {
   it('shows the archive, its stats and its entries, filtering by classification and paging', async () => {
     const s = seen()
