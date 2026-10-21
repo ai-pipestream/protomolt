@@ -298,6 +298,33 @@ public final class RepositoryCorpus {
         return HexFormat.of().formatHex(sha.digest());
     }
 
+    /**
+     * The text's space-separated tokens, without regex: single spaces separate
+     * tokens, and consecutive, leading or trailing spaces produce no empty
+     * token. For single-spaced text the result matches {@code split(" ")};
+     * the difference is that spacing irregularities are skipped instead of
+     * becoming empty words. Package-private for direct testing.
+     *
+     * @param text the text to cut
+     * @return the non-empty tokens, in order
+     */
+    static List<String> spaceTokens(String text) {
+        var tokens = new ArrayList<String>();
+        int from = 0;
+        while (from <= text.length()) {
+            int space = text.indexOf(' ', from);
+            String token = space < 0 ? text.substring(from) : text.substring(from, space);
+            if (!token.isEmpty()) {
+                tokens.add(token);
+            }
+            if (space < 0) {
+                break;
+            }
+            from = space + 1;
+        }
+        return tokens;
+    }
+
     static MessageDigest sha256() {
         try {
             return MessageDigest.getInstance("SHA-256");
@@ -503,15 +530,19 @@ public final class RepositoryCorpus {
                     .setUtf8Length(utf8.length).build();
         }
 
-        /** Cuts the text on single spaces into windows of {@code words} words, with UTF-8 byte offsets. */
+        /**
+         * Cuts the text on single spaces into windows of {@code words} words, with UTF-8 byte
+         * offsets. The offsets assume single-spaced text, which is what the corpus generates;
+         * see {@link RepositoryCorpus#spaceTokens} for how other spacing tokenizes.
+         */
         private static void addWordWindows(Segmentation.Builder segmentation, String text, int words, String idPrefix) {
-            var tokens = text.split(" ");
+            var tokens = spaceTokens(text);
             int ordinal = 0;
             long byteOffset = 0;
             int index = 0;
-            while (index < tokens.length) {
-                int end = Math.min(index + words, tokens.length);
-                var window = String.join(" ", List.of(tokens).subList(index, end));
+            while (index < tokens.size()) {
+                int end = Math.min(index + words, tokens.size());
+                var window = String.join(" ", tokens.subList(index, end));
                 long length = window.getBytes(StandardCharsets.UTF_8).length;
                 segmentation.addSegments(Segment.newBuilder().setSegmentId(idPrefix + ordinal).setOrdinal(ordinal)
                         .setText(window).setStart(byteOffset).setEnd(byteOffset + length));

@@ -41,8 +41,14 @@ class ConnectConformanceIT {
 
     @Test
     void theGatewayPassesTheConnectConformanceSuite() throws Exception {
-        assertThat(System.getProperty("os.name")).as("the pinned runner is the Linux build").startsWith("Linux");
-        assertThat(System.getProperty("os.arch")).as("the pinned runner is the x86-64 build").isIn("amd64", "x86_64");
+        // The pinned runner is the Linux x86-64 release; any other platform
+        // skips the suite instead of failing the build. CI runs Linux amd64,
+        // so the suite always runs where it gates merges.
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                System.getProperty("os.name").startsWith("Linux")
+                        && List.of("amd64", "x86_64").contains(System.getProperty("os.arch")),
+                "connectconformance v" + VERSION + " is pinned to Linux x86-64; skipping on "
+                        + System.getProperty("os.name") + "/" + System.getProperty("os.arch"));
         Path runner = runner();
         Path config = Files.createTempFile("connect-conformance", ".yaml");
         try (InputStream in = ConnectConformanceIT.class.getResourceAsStream("server-config.yaml")) {
