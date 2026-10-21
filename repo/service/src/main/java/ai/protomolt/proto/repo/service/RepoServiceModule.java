@@ -107,7 +107,8 @@ public final class RepoServiceModule implements ServiceModule {
                 // every route on it, unbound.
                 if (console != null) {
                     http = services.startHttp(config.httpPort(), credential, console,
-                            services.consoleSignInRoutes(signIn.sessions()));
+                            services.consoleSignInRoutes(signIn.sessions()),
+                            RepoServices.requestCallers(credential, callers, signIn.sessions()));
                 }
                 services.seedAccountDrives();
                 services.startLifecycle();

@@ -7,14 +7,12 @@ import ai.protomolt.proto.authz.AccountBinding;
 import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.AccountBindings;
 import ai.protomolt.proto.authz.AclIdentity;
-import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.ConsoleSessionStatus;
 import ai.protomolt.proto.authz.MutableClock;
 import ai.protomolt.proto.authz.OidcConsoleSessions;
 import ai.protomolt.proto.authz.OidcConsoleSettings;
-import ai.protomolt.proto.authz.RequestHeaders;
-import ai.protomolt.proto.authz.grpc.CallerContexts;
 import ai.protomolt.proto.composer.Composer;
+import ai.protomolt.proto.http.connect.ConnectGateway;
 import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
 import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.AccessRule;
@@ -32,23 +30,16 @@ import ai.protomolt.proto.repo.v2.DocumentTarget;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
 import ai.protomolt.proto.repo.v2.ListDocumentsRequest;
+import ai.protomolt.proto.repo.v2.ListDocumentsResponse;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.WriteAction;
-import io.grpc.Context;
-import io.grpc.Contexts;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
-import io.grpc.Server;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
-import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.AbstractStub;
 import io.grpc.stub.MetadataUtils;
@@ -64,6 +55,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -108,8 +100,6 @@ class ConsoleSignInKeycloakIT {
     private static final String CLIENT_ID = "protomolt-console";
     private static final String CLIENT_SECRET = "console-secret";
     private static final Duration TTL = Duration.ofHours(1);
-    private static final Metadata.Key<String> COOKIE_HEADER =
-            Metadata.Key.of("cookie", Metadata.ASCII_STRING_MARSHALLER);
 
     /** The repository HTTP port, chosen before Keycloak starts: the realm pins the callback to it. */
     private static final int HTTP_PORT = freePort();
@@ -137,8 +127,6 @@ class ConsoleSignInKeycloakIT {
     static RepoServices services;
     static OidcConsoleSessions sessions;
     static ManagedChannel operatorChannel;
-    static Server gateway;
-    static ManagedChannel gatewayChannel;
     static String base;
 
     private static int freePort() {
@@ -196,17 +184,12 @@ class ConsoleSignInKeycloakIT {
                 URI.create(callback(HTTP_PORT)), TTL);
         sessions = new OidcConsoleSessions(settings, HttpClient.newHttpClient(), CLOCK);
         int grpcPort = services.startNetty(0, OPERATOR, null).getPort();
+        // The host's own composition: the operator token first, then the console session,
+        // with the Connect gateway at /connect resolving every call through it.
         services.startHttp(HTTP_PORT, OPERATOR, RepositoryConsole.notConfigured(),
-                services.consoleSignInRoutes(Optional.of(sessions)));
+                services.consoleSignInRoutes(Optional.of(sessions)),
+                RepoServices.requestCallers(OPERATOR, null, Optional.of(sessions)));
         base = "http://127.0.0.1:" + HTTP_PORT;
-
-        // The gateway's dispatch, as #524 will do it: the session resolver answers the
-        // request's cookie, and the call runs under the caller context keys.
-        var gatewayBuilder = InProcessServerBuilder.forName("console-sign-in-gateway")
-                .intercept(new SessionDispatch());
-        services.services().forEach(gatewayBuilder::addService);
-        gateway = gatewayBuilder.build().start();
-        gatewayChannel = InProcessChannelBuilder.forName("console-sign-in-gateway").build();
 
         operatorChannel = NettyChannelBuilder.forAddress("localhost", grpcPort).usePlaintext().build();
         var drives = as(OPERATOR, DriveServiceGrpc.newBlockingStub(operatorChannel));
@@ -222,28 +205,8 @@ class ConsoleSignInKeycloakIT {
 
     @AfterAll
     static void tearDown() {
-        if (gatewayChannel != null) gatewayChannel.shutdownNow();
-        if (gateway != null) gateway.shutdownNow();
         if (operatorChannel != null) operatorChannel.shutdownNow();
         if (services != null) services.close();
-    }
-
-    /** The gateway stand-in: the request's cookie resolves through the session store, or 401. */
-    private static final class SessionDispatch implements ServerInterceptor {
-        @Override
-        public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
-                                                           ServerCallHandler<Q, R> next) {
-            String cookie = headers.get(COOKIE_HEADER);
-            Optional<AuthenticatedCaller> caller = sessions.resolve(RequestHeaders.of(
-                    cookie == null ? Map.of() : Map.of("Cookie", List.of(cookie))));
-            if (caller.isEmpty()) {
-                call.close(Status.UNAUTHENTICATED.withDescription("no live console session"), new Metadata());
-                return new ServerCall.Listener<>() { };
-            }
-            return Contexts.interceptCall(Context.current()
-                    .withValues(CallerContexts.CALLER, caller.get().caller(),
-                            CallerContexts.AUTHENTICATED_CALLER, caller.get()), call, headers, next);
-        }
     }
 
     // ------------------------------------------------------------------ the browser
@@ -339,14 +302,41 @@ class ConsoleSignInKeycloakIT {
         return HttpClient.newHttpClient().send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
     }
 
-    private static DocumentServiceGrpc.DocumentServiceBlockingStub throughGateway(String sessionCookie) {
-        var stub = DocumentServiceGrpc.newBlockingStub(gatewayChannel);
-        if (sessionCookie == null) {
-            return stub;
+    /**
+     * {@code ListDocuments} over the host's Connect gateway the way the console calls it: binary
+     * protobuf, the session cookie and nothing else. A Connect error comes back as the
+     * {@link StatusRuntimeException} its code names, so the assertions read as on gRPC.
+     */
+    private static ListDocumentsResponse listThroughGateway(String sessionCookie, ListDocumentsRequest request)
+            throws Exception {
+        HttpRequest.Builder call = HttpRequest.newBuilder(URI.create(base + ConnectGateway.PATH + "/"
+                        + DocumentServiceGrpc.getListDocumentsMethod().getFullMethodName()))
+                .header("Content-Type", ConnectGateway.UNARY_CONTENT_TYPE)
+                .header("Sec-Fetch-Site", "same-origin")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(request.toByteArray()));
+        if (sessionCookie != null) {
+            call.header("Cookie", OidcConsoleSessions.COOKIE + "=" + sessionCookie);
         }
-        var headers = new Metadata();
-        headers.put(COOKIE_HEADER, OidcConsoleSessions.COOKIE + "=" + sessionCookie);
-        return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers));
+        HttpResponse<byte[]> response = HttpClient.newHttpClient().send(call.build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() == 200) {
+            return ListDocumentsResponse.parseFrom(response.body());
+        }
+        String record = new String(response.body(), StandardCharsets.UTF_8);
+        String code = field(record, "code");
+        throw Status.Code.valueOf(code.toUpperCase(Locale.ROOT)).toStatus()
+                .withDescription(field(record, "message")).asRuntimeException();
+    }
+
+    /** One string field of a Connect error record; the test records carry no escaped quotes. */
+    private static String field(String record, String name) {
+        String key = "\"" + name + "\":\"";
+        int start = record.indexOf(key);
+        if (start < 0) {
+            throw new AssertionError("no " + name + " in Connect error record " + record);
+        }
+        start += key.length();
+        return record.substring(start, record.indexOf('"', start));
     }
 
     // ------------------------------------------------------------------ the tests
@@ -370,12 +360,12 @@ class ConsoleSignInKeycloakIT {
     @Order(2)
     void theSessionCallerListsOnlyItsBoundAccountsReadableRowsAndIsRefusedElsewhere() throws Exception {
         String session = signIn("alice", "alice-password");
-        assertThat(throughGateway(session).listDocuments(list(ACCOUNT_A)).getDocumentsList())
+        assertThat(listThroughGateway(session, list(ACCOUNT_A)).getDocumentsList())
                 .extracting(summary -> summary.getAddress().getDocId())
                 .containsExactly("doc-for-alice");
-        assertDenied(() -> throughGateway(session).listDocuments(list(ACCOUNT_B)), ACCOUNT_B);
-        assertCode(() -> throughGateway(null).listDocuments(list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
-        assertCode(() -> throughGateway("never-issued").listDocuments(list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
+        assertDenied(() -> listThroughGateway(session, list(ACCOUNT_B)), ACCOUNT_B);
+        assertCode(() -> listThroughGateway(null, list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
+        assertCode(() -> listThroughGateway("never-issued", list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
     }
 
     @Test
@@ -385,7 +375,7 @@ class ConsoleSignInKeycloakIT {
         ConsoleSessionStatus parsed = ConsoleSessionStatus.parseFrom(status(session).body());
         assertThat(parsed.getPrincipal()).isEqualTo("carol");
         assertThat(parsed.getAccountIdsList()).isEmpty();
-        assertDenied(() -> throughGateway(session).listDocuments(list(ACCOUNT_A)), "bound to no account");
+        assertDenied(() -> listThroughGateway(session, list(ACCOUNT_A)), "bound to no account");
     }
 
     @Test
@@ -446,7 +436,7 @@ class ConsoleSignInKeycloakIT {
         assertThat(status(session).statusCode()).isEqualTo(200);
         CLOCK.advance(TTL);
         assertThat(status(session).statusCode()).isEqualTo(401);
-        assertCode(() -> throughGateway(session).listDocuments(list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
+        assertCode(() -> listThroughGateway(session, list(ACCOUNT_A)), Status.Code.UNAUTHENTICATED);
     }
 
     // ------------------------------------------------------------------ fixtures

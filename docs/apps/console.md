@@ -272,9 +272,12 @@ The Repository section reads the parts-based `DocumentService`, plus
 not by `protomolt-serve`: the host serves the console bundle at `/console` and
 a Connect gateway at `/connect` on the same HTTP port, and the browser calls
 the gateway with Connect-ES in binary protobuf (`application/proto` for unary
-calls, `application/connect+proto` for server streams). There is no JSON on
-this path, and every request and response shape comes from TypeScript stubs
-generated from the protos.
+calls, `application/connect+proto` for server streams). Every message is binary
+protobuf; the only JSON is the Connect error record and end-of-stream record,
+which the protocol defines that way. Every request and response shape comes
+from TypeScript stubs generated from the protos. The gateway exposes exactly
+the procedures the screens call, listed in `ConsoleProcedures` in
+`repo/service`; any other method answers `UNIMPLEMENTED` there.
 
 - **Accounts.** The accounts the session can see, or any account opened by ID.
   The repository host does not serve `AccountService`, so the list shows the

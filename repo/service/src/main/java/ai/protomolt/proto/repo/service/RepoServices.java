@@ -8,6 +8,10 @@ import ai.protomolt.proto.repo.engine.ArchiveOperations;
 
 import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.CallerResolver;
+import ai.protomolt.proto.authz.OidcConsoleSessions;
+import ai.protomolt.proto.authz.RequestCallerResolver;
+import ai.protomolt.proto.http.connect.ConnectGateway;
+import ai.protomolt.proto.http.connect.ConnectLimits;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
@@ -18,6 +22,7 @@ import ai.protomolt.proto.repo.container.ledger.Tx;
 import ai.protomolt.proto.repo.v1.DriveType;
 import com.sun.net.httpserver.HttpHandler;
 import io.grpc.BindableService;
+import io.grpc.ServerServiceDefinition;
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.inprocess.InProcessServerBuilder;
@@ -31,6 +36,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -75,6 +82,8 @@ public final class RepoServices implements AutoCloseable {
     private boolean readerHostFenced;
 
     private static final Logger LOG = LoggerFactory.getLogger(RepoServices.class);
+    /** The Connect gateway's message bound, the same as the gRPC transports' inbound limit. */
+    private static final int CONNECT_MESSAGE_BYTES = 10 * 1024 * 1024;
 
     private final RepoServiceConfig config;
     private final LedgerDatabase database;
@@ -561,9 +570,75 @@ public final class RepoServices implements AutoCloseable {
         requireFullProfile();
         RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         if (managedArchive != null) startLifecycle();
-        UploadHttpServer http = new UploadHttpServer(v2Uploads,
+        return startHttp(port, new UploadHttpServer(v2Uploads,
                 () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
-                console, routes);
+                console, routes));
+    }
+
+    /**
+     * {@link #startHttp(int, String, RepositoryConsole, Map)} plus the Connect gateway at
+     * {@link UploadHttpServer#CONNECT_PATH}: the {@link ConsoleProcedures} of this host's
+     * services, each request's caller resolved by {@code requestCallers} and run under the
+     * same caller context the gRPC transport sets. The started server exposes the same
+     * resolver through {@link UploadHttpServer#callers()} for other routes on the port.
+     *
+     * @param port the listen port (0 = ephemeral)
+     * @param apiToken nonblank operator credential every upload request must present
+     * @param console the console bundle served at {@link RepositoryConsole#PATH}
+     * @param routes extra routes; each handler owns its credential check
+     * @param requestCallers resolves the caller of every Connect request; hosts compose
+     *        {@code RequestCallerResolver.firstOf(List.of(bearer(apiToken, policy), sessions))}
+     * @return the started HTTP server (also closed by {@link #close()})
+     */
+    public synchronized UploadHttpServer startHttp(int port, String apiToken,
+            RepositoryConsole console, Map<String, HttpHandler> routes,
+            RequestCallerResolver requestCallers) {
+        requireOpen();
+        requireFullProfile();
+        RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
+        Objects.requireNonNull(requestCallers, "requestCallers");
+        if (managedArchive != null) startLifecycle();
+        List<ServerServiceDefinition> definitions = services.stream()
+                .map(BindableService::bindService)
+                .toList();
+        ConnectGateway gateway = new ConnectGateway(definitions, ConsoleProcedures.ALL, requestCallers,
+                new ConnectLimits(CONNECT_MESSAGE_BYTES, CONNECT_MESSAGE_BYTES));
+        UploadHttpServer http;
+        try {
+            http = new UploadHttpServer(v2Uploads,
+                    () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
+                    console, routes, gateway, requestCallers);
+        } catch (RuntimeException | Error failure) {
+            try { gateway.close(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+        return startHttp(port, http);
+    }
+
+    /**
+     * A host's request resolver for the HTTP port: the bearer credentials its gRPC listener
+     * accepts (the operator token, plus the credential stores when the host has any), then
+     * the console session when sign-in is configured. The bearer form is asked first: an
+     * explicit token is a deliberate per-request credential and needs no session lookup.
+     *
+     * @param apiToken the operator credential
+     * @param credentialStores resolves non-operator credentials, or null when the host
+     *        authenticates the operator token only (as {@link #startNetty} takes it)
+     * @param sessions the console session store, or empty when sign-in is not configured
+     * @return the resolver
+     */
+    public static RequestCallerResolver requestCallers(String apiToken, CallerResolver credentialStores,
+            Optional<OidcConsoleSessions> sessions) {
+        Objects.requireNonNull(sessions, "sessions");
+        RequestCallerResolver bearer = credentialStores == null
+                ? RequestCallerResolver.bearer(apiToken)
+                : RequestCallerResolver.bearer(apiToken, credentialStores);
+        return sessions.<RequestCallerResolver>map(store -> RequestCallerResolver.firstOf(List.of(bearer, store)))
+                .orElse(bearer);
+    }
+
+    private UploadHttpServer startHttp(int port, UploadHttpServer http) {
         httpServers.add(http);
         try {
             http.start(port);

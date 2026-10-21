@@ -2,6 +2,8 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.UploadHttpHandler;
+import ai.protomolt.proto.authz.RequestCallerResolver;
+import ai.protomolt.proto.http.connect.ConnectGateway;
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 
@@ -62,6 +64,8 @@ public final class UploadHttpServer implements AutoCloseable {
     private final ArchiveRepository archiveOperations;
     private final RepositoryConsole console;
     private final Map<String, HttpHandler> routes;
+    private final ConnectGateway gateway;
+    private final RequestCallerResolver requestCallers;
 
     private HttpServer server;
     private ExecutorService executor;
@@ -110,6 +114,35 @@ public final class UploadHttpServer implements AutoCloseable {
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
             Map<String, HttpHandler> routes) {
+        this(uploads, callers, apiToken, archiveOperations, console, routes, null, null);
+    }
+
+    /**
+     * Serves the routes of
+     * {@link #UploadHttpServer(DocumentUploads, Supplier, String, ArchiveRepository, RepositoryConsole, Map)}
+     * plus {@code gateway} at {@link #CONNECT_PATH}, the console's Connect calls on the same
+     * origin as the bundle. The server owns the gateway from here on and closes it with
+     * itself; {@code requestCallers} is the resolver the gateway was built with, kept so the
+     * host hands the same one to every route that resolves a request's caller.
+     *
+     * @param uploads the parts-based streaming upload coordinator, or null to leave
+     *        the document route unmounted (archive-only host)
+     * @param callers supplies the caller a request acts as once its credential matches
+     * @param apiToken the operator credential both upload routes require
+     * @param archiveOperations the archive rendition upload port, or null to leave
+     *        that route unmounted
+     * @param console the console bundle served at {@link RepositoryConsole#PATH}
+     * @param routes extra context path to handler, refused as in the six-argument form
+     * @param gateway the Connect gateway mounted at {@link #CONNECT_PATH}
+     * @param requestCallers the resolver {@code gateway} resolves callers with
+     */
+    public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
+            String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
+            Map<String, HttpHandler> routes, ConnectGateway gateway,
+            RequestCallerResolver requestCallers) {
+        if ((gateway == null) != (requestCallers == null)) {
+            throw new IllegalArgumentException("a Connect gateway and its request resolver come together");
+        }
         String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
         this.documentUploads = uploads == null ? null : new UploadHttpHandler(uploads, token,
                 Objects.requireNonNull(callers, "callers"));
@@ -117,6 +150,22 @@ public final class UploadHttpServer implements AutoCloseable {
         this.archiveOperations = archiveOperations;
         this.console = Objects.requireNonNull(console, "console");
         this.routes = extraRoutes(routes);
+        this.gateway = gateway;
+        this.requestCallers = requestCallers;
+    }
+
+    /**
+     * The request resolver the mounted Connect gateway uses, for routes that resolve a
+     * request's caller the same way.
+     *
+     * @return the resolver
+     * @throws IllegalStateException when this server mounts no gateway
+     */
+    public RequestCallerResolver callers() {
+        if (requestCallers == null) {
+            throw new IllegalStateException("this repository HTTP port mounts no Connect gateway");
+        }
+        return requestCallers;
     }
 
     private static Map<String, HttpHandler> extraRoutes(Map<String, HttpHandler> routes) {
@@ -192,13 +241,9 @@ public final class UploadHttpServer implements AutoCloseable {
             }
             created.createContext(RepositoryConsole.PATH, console.handler());
             routes.forEach(created::createContext);
-            // Connect gateway mount point (#524): the console calls DocumentService,
-            // DriveService and ArchiveService same-origin over binary protobuf Connect,
-            // one context per service path:
-            //   /ai.protomolt.proto.repo.v2.DocumentService/
-            //   /ai.protomolt.proto.repo.v1.DriveService/
-            //   /ai.protomolt.proto.repo.archive.v1.ArchiveService/
-            // No handler is mounted on those paths until the gateway module exists.
+            if (gateway != null) {
+                created.createContext(CONNECT_PATH, gateway);
+            }
             created.setExecutor(pool);
             created.start();
         } catch (RuntimeException | Error e) {
@@ -207,11 +252,12 @@ public final class UploadHttpServer implements AutoCloseable {
             throw e;
         }
         int bound = created.getAddress().getPort();
-        LOG.info("repository HTTP port {} serving {}{}{}{}", bound,
+        LOG.info("repository HTTP port {} serving {}{}{}{}{}", bound,
                 documentUploads != null ? UPLOAD_PATH + " " : "",
                 archiveOperations != null ? ARCHIVE_UPLOAD_PATH + " " : "",
                 console.configured() ? RepositoryConsole.PATH : RepositoryConsole.PATH + " (not configured)",
-                routes.isEmpty() ? "" : " " + String.join(" ", routes.keySet()));
+                routes.isEmpty() ? "" : " " + String.join(" ", routes.keySet()),
+                gateway != null ? " " + CONNECT_PATH + " (" + gateway.procedures().size() + " procedures)" : "");
         return bound;
     }
 
@@ -236,6 +282,9 @@ public final class UploadHttpServer implements AutoCloseable {
         if (server != null) {
             server.stop(1);
             server = null;
+        }
+        if (gateway != null) {
+            gateway.close();
         }
         if (executor != null) {
             try { ExecutorShutdown.stop(executor, timeout); }
