@@ -551,3 +551,242 @@ correctness and RustFS for performance measurements.
    embedders, search indexers, the Qdrant point mapper and Kafka Connect.
 
 These can wait. The storage semantics above come first.
+
+## 17. Document links and subject tags
+
+Status: specification for #537, ahead of any proto change. The concept scheme
+model these tags point into is specified in `docs/design/well-known-types.md`,
+"Concept schemes (SKOS)". This section owns the repository side: how a document
+declares links and tags, what the catalog records, and what reads return.
+
+### Links are typed fields
+
+A link is a field in the document's typed content (the CORE part, including a
+typed `structured_data` payload) whose message type is `DocumentLink` and whose
+descriptor carries the link field option. The descriptor, not the value, names the
+relation, so the catalog projection records edges by walking the retained schema
+the revision was validated with. Links live in a new file
+`repo/v2/links.proto`, because both target kinds are repository identities
+(`NodeAddress` and the #527 `DocumentFilter`):
+
+```proto
+// ai/protomolt/proto/repo/v2/links.proto
+extend google.protobuf.FieldOptions {
+  // Marks a DocumentLink field (singular or repeated) as a link.
+  LinkField link = 59100551;
+}
+
+// What a link field means.
+message LinkField {
+  // The relation, a link_relation name: a Dublin Core term ("references",
+  // "isPartOf", "replaces", "isReplacedBy", "requires", "source", ...), an IANA
+  // registered relation ("alternate", "canonical", "describedby", ...), or an
+  // absolute URI for an extension relation (RFC 8288).
+  string relation = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {link_relation: true}
+  }];
+  // Protobuf full names of the structured_data types a static target may hold.
+  // Empty means any typed document.
+  repeated string target_types = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    unique: true
+    items: {string: {protobuf_fqn: true}}
+  }];
+}
+
+// One link from the document that holds it to another document.
+message DocumentLink {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "link-target-required"
+    message: "a link names a static or a dynamic target"
+    expression: "has(this.static_target) || has(this.dynamic_target)"
+  };
+  oneof target {
+    // A fixed call number, optionally pinned to one revision.
+    StaticTarget static_target = 1;
+    // A catalog selector, resolved when the link is read.
+    DynamicTarget dynamic_target = 2;
+  }
+  // Display text for the link; not part of its identity.
+  optional string label = 3 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 1000}];
+}
+
+message StaticTarget {
+  // The target's call number. Its account_id equals the linking document's.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // A pinned revision. Absent means the target's current revision.
+  optional int64 revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+}
+
+message DynamicTarget {
+  // The #527 listing filter; at least one field set.
+  DocumentFilter filter = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The order resolved targets come back in.
+  DocumentSort sort = 2;
+}
+```
+
+The extension number `59100551` is the next free block after `metric.v1`
+(`59100541`/`59100542`). `link_relation` is a new Tier 1 named format
+(`StringRules` field 37; well-known types, "Concept schemes (SKOS)"): a linear-scan check against the
+bundled Dublin Core and IANA relation names, or a parse as an absolute URI. A
+relation is a validated string, not an enum, so a new relation is not a schema
+migration.
+
+Schema rules, checked when rules compile (registration and validator build):
+
+- A `DocumentLink` field without the `link` option fails compilation, and so does
+  a `link` option on a field of any other type. Map fields cannot be links.
+- One message may hold several link fields with the same relation; each field is a
+  separate edge source.
+- Inverse relations are not stored. A document that `isPartOf` another does not
+  make the other `hasPart` it; the inverse is a backlink query (below). The
+  bundled vocabulary pairs Dublin Core inverses (`isPartOf`/`hasPart`,
+  `replaces`/`isReplacedBy`, `references`/`isReferencedBy`, `requires`/
+  `isRequiredBy`) for display only.
+
+### Static targets
+
+A static target names a call number and optionally pins a revision.
+
+- **Same account.** The target address's `account_id` must equal the linking
+  document's account. A link is a reference, not a grant: cross-account links
+  wait for the cross-account read model and are rejected until then.
+- **Checked at save, not held.** Save validation reads the target's catalog row as
+  for a `PartSource` (decision 37): the target must exist, must not be purged, the
+  saving credential must be able to read it, and when `target_types` is non-empty
+  the target's current `structured_data` type (or, for a pinned link, that
+  revision's) must be listed. The type comes from a new `DocumentLookup` field,
+  `structured_data_type` (the full name in the payload's type URL), so the check
+  reads catalog rows and no part bytes. A failure rejects the save with the new reason
+  `LINK_TARGET_NOT_FOUND` (missing, purged and unreadable collapse to one reason,
+  as `NOT_FOUND` does for reads) or `LINK_TARGET_TYPE` (type not allowed). A pinned
+  revision must exist. A tombstoned target is accepted: the link is born dangling.
+- **No commit coupling.** The target check is a point-in-time read outside the
+  commit transaction. A target tombstoned or purged after the check makes the link
+  dangling; it does not invalidate the linking revision. No lock is taken on the
+  target and no target row is written.
+- **Carried links.** A save that carries CORE forward unchanged does not re-check
+  its links' targets; validation of the composed candidate still runs (§9), and a
+  rule that needs the target's state is not part of this design.
+
+### Dynamic targets
+
+A dynamic target is a `DocumentFilter` plus optional `DocumentSort`, resolved when
+the link is read and not materialized anywhere.
+
+- Resolution runs the #527 listing in the linking document's account, under the
+  reading credential's access, at read time. Two readers with different access see
+  different targets; the same reader sees today's matches, not the matches at save.
+- Resolution never includes tombstoned documents and pages like `ListDocuments`.
+- A dynamic link writes no edge row, so it never appears as a backlink: a backlink
+  would need every selector in the account evaluated against every save.
+- Save validation checks only the filter's own declared rules (#527 contradiction
+  rules included). The selector is not evaluated at save.
+
+### Catalog edge table
+
+Static links project into a catalog table on each accession, in the commit
+transaction, next to the lookup rows:
+
+```
+catalog_document_links (
+  document_id          bigint  -- linking document (catalog_documents)
+  field_path           text    -- descriptor path of the link field, e.g.
+                               -- "structured_data.cites"
+  ordinal              int     -- element index in a repeated field, 0 otherwise
+  relation             text
+  target_account_id    text
+  target_graph_id      text
+  target_graph_address_id text
+  target_doc_id        text
+  pinned_revision      bigint NULL
+  PRIMARY KEY (document_id, field_path, ordinal)
+)
+index on (target_account_id, target_graph_id, target_graph_address_id,
+          target_doc_id, relation)
+```
+
+- **Current revision only.** Rows describe the linking document's current revision,
+  as `catalog_document_metadata` does. A new accession replaces the document's rows;
+  its tombstone or purge clears them. Historical links are read from the historical
+  revision's CORE with its retained schema.
+- **Targets are addresses, not foreign keys.** The target columns are a call
+  number. A link row never references `catalog_documents`, so tombstoning or
+  purging a target writes nothing here and nothing cascades.
+- **Rebuildable.** Every row is derived from the current CORE part and its retained
+  schema (§7, "Catalog entries are rebuildable from stored parts"). A rebuild walks
+  current revisions and rewrites the rows; a rebuilt table equals the committed
+  one. The table is not the source of truth.
+- **Dangling is computed, not stored.** Target state comes from a join to
+  `catalog_documents` at read time.
+
+### Reads
+
+Two reads on `DocumentService`, both protobuf, both access-filtered:
+
+- **`ListLinks(address, optional revision)`** decodes the selected revision's CORE
+  with its retained schema and returns each link with its field path, relation and
+  target. For a static target it adds the target state; for a dynamic target it
+  returns the selector, and resolution is a separate paged call
+  (`ResolveLink(address, revision, field_path, ordinal, page)`).
+- **`ListBacklinks(target address, optional relation, page)`** reads
+  `catalog_document_links` for edges into the target, and returns only edges whose
+  linking document the reader can read. Order is linking call number, then field
+  path, then ordinal.
+
+Target state on a static link:
+
+| State | Meaning |
+|---|---|
+| `target_tombstoned = true` | The target's current revision is a tombstone and the reader can read it. A pinned revision stays readable, since revisions are kept until purge. |
+| `target_unavailable = true` | Missing, purged, or not readable by this reader: one state, so a link does not reveal what access hides. |
+| neither | The target is current and readable. |
+
+A link whose target is tombstoned or unavailable is **dangling**. Dangling links
+are shown, not removed: deleting a document never edits, tombstones or purges the
+documents that link to it.
+
+### Events
+
+A link change is a CORE change, announced by the linking document's normal
+`DocumentEvent` (§10). A target's tombstone emits its own `Tombstoned` event and
+nothing for its linkers; a consumer that tracks dangling links joins the event with
+`ListBacklinks`.
+
+### Attachments stay blobs
+
+A file that shares the document's lifecycle (saved, revised and deleted with it) is
+a blob in `Document.blob_bag`, behind its claim check (§6). A link is for another
+document with its own call number, revisions and owner. An attachment is not
+promoted to a linked document to give it a relation, and a link does not make its
+target an attachment.
+
+### Subject tags
+
+A document is tagged with concepts through `ConceptRef` fields (well-known types,
+"Concept schemes (SKOS)"), bound to their schemes in the schema. The repository's
+part is the catalog:
+
+- Tags project into `catalog_document_concepts (document_id, field_path, ordinal,
+  scheme_id, concept_id)` on each accession, current revision only and rebuildable,
+  as links do. Only concept ids are stored: no labels, no ancestors, no expansion.
+- `DocumentFilter` gains a concept filter (`ConceptRef` plus a `ConceptExpansion`)
+  that the catalog answers by expanding against the mounted schemes at query time,
+  then matching stored ids. A scheme change needs no catalog rewrite.
+
+### Implementation issues
+
+Filed from this section once approved; each lands proto first.
+
+1. `link_relation` format in `core/formats`, with the bundled Dublin Core and IANA
+   relation tables and NOTICE attribution.
+2. `repo/v2/links.proto`: `LinkField`, `DocumentLink`, targets; compile-time rules;
+   `LINK_TARGET_NOT_FOUND` and `LINK_TARGET_TYPE` reasons;
+   `DocumentLookup.structured_data_type`.
+3. Save-time static target check and the `catalog_document_links` projection, with
+   rebuild.
+4. `ListLinks`, `ResolveLink` and `ListBacklinks`, with target state and access
+   filtering. Dynamic resolution depends on #527.
+5. `catalog_document_concepts` and the `DocumentFilter` concept filter (depends on
+   the concept scheme mount).
