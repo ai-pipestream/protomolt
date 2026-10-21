@@ -27,6 +27,9 @@ dependencies {
     testFixturesApi libs.testcontainers.postgresql
     testFixturesApi libs.testcontainers.localstack
     testFixturesImplementation project(':protomolt-repo-blob-s3')
+    // The corpus builder fingerprints its requests and digests its segmentations.
+    testFixturesImplementation project(':protomolt-descriptors')
+    testFixturesImplementation project(':protomolt-repo-codec')
     testFixturesImplementation libs.awssdk.url.connection.client
     testFixturesImplementation libs.grpc.inprocess
 
@@ -43,7 +46,13 @@ dependencies {
     testImplementation libs.testcontainers.redpanda
     testImplementation libs.testcontainers.junit.jupiter
     testRuntimeOnly libs.slf4j.simple
+    // The corpus test checks the metadata values against the house format parsers.
+    testImplementation project(':protomolt-formats')
 }
+
+// The corpus loads into PostgreSQL and S3 containers, so it runs in the
+// integration lane only; the builder, digest and refusal checks stay in test.
+optInSuite('**/RepositoryCorpusIT*', ['PROTOMOLT_CORPUS_IT=1'])
 
 ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
         'hibernate-core', 'jedis', 'kafka-clients']

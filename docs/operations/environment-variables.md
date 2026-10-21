@@ -465,3 +465,13 @@ fast naming the variable.
 target of the `env:OPENAI_TOKEN` credential reference in the inference
 catalog (`EnvCredentialResolver`). Any variable name can be used; the
 resolver fails fast on an unset or empty variable without naming it.
+
+## Opt-in test suites (`repo/accession`)
+
+Read by Gradle, not by any service: `optInSuite` in the root build leaves a
+suite out of the plain `test` task unless the variable is set, so a plain run
+neither runs nor skips it. CI sets it in the integration lane.
+
+| Variable | Default | Accepted |
+|---|---|---|
+| `PROTOMOLT_CORPUS_IT` | unset = the suite is left out of `test` | `1`; runs `RepositoryCorpusIT`, which loads the fixture corpus into PostgreSQL and S3 containers |
