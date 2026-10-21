@@ -56,7 +56,7 @@ public final class ArchiveUploadLedger {
 
     /** Caller supplies the measured identity after complete successful provider I/O. */
     public Upload verify(UUID objectId, UUID token, long actualSize, String sha256, String providerVersion, String etag) {
-        if (sha256 == null || !sha256.matches("[0-9a-f]{64}"))
+        if (!isLowerHexSha256(sha256))
             throw new IllegalArgumentException("sha256 must be 64 lowercase hexadecimal characters");
         return tx.inTransaction(em -> {
             var upload = lock(em, objectId);
@@ -104,5 +104,16 @@ public final class ArchiveUploadLedger {
         Objects.requireNonNull(lease, "lease");
         if (lease.compareTo(Duration.ofSeconds(1)) < 0 || lease.compareTo(Duration.ofDays(1)) > 0)
             throw new IllegalArgumentException("lease must be between one second and one day");
+    }
+
+    private static boolean isLowerHexSha256(String value) {
+        if (value == null || value.length() != 64) return false;
+        for (int i = 0; i < 64; i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -63,9 +63,22 @@ public final class BlobStores {
     }
 
     private static String requireId(String id) {
-        if (id == null || !id.matches("[a-z][a-z0-9-]*")) {
+        if (!isProviderId(id)) {
             throw new IllegalArgumentException("Invalid byte storage provider ID");
         }
         return id;
+    }
+
+    private static boolean isProviderId(String id) {
+        if (id == null || id.isEmpty()) return false;
+        char first = id.charAt(0);
+        if (first < 'a' || first > 'z') return false;
+        for (int i = 1; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+                return false;
+            }
+        }
+        return true;
     }
 }

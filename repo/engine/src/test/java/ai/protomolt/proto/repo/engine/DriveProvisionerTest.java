@@ -27,6 +27,7 @@ class DriveProvisionerTest {
         assertThat(DriveProvisioner.sanitizeBucketName("my_bucket name!")).isEqualTo("my-bucket-name");
         // Runs of dashes/dots (introduced or pre-existing) collapse to one dash.
         assertThat(DriveProvisioner.sanitizeBucketName("a__b..--c")).isEqualTo("a-b-c");
+        assertThat(DriveProvisioner.sanitizeBucketName("a._b-.c..d")).isEqualTo("a-b-c-d");
     }
 
     @Test
@@ -52,6 +53,9 @@ class DriveProvisionerTest {
         String trimmed = DriveProvisioner.sanitizeBucketName(withTailDash);
         assertThat(trimmed).isEqualTo("a".repeat(62));
         assertThat(trimmed).doesNotEndWith("-").doesNotEndWith(".");
+
+        String withTailDot = "a".repeat(62) + ".bbbb";
+        assertThat(DriveProvisioner.sanitizeBucketName(withTailDot)).isEqualTo("a".repeat(62));
     }
 
     @Test

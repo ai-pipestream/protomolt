@@ -385,19 +385,26 @@ public final class UploadHttpHandler implements HttpHandler {
         return null;
     }
 
-    private static Map<String, String> parseQuery(String rawQuery) {
+    static Map<String, String> parseQuery(String rawQuery) {
         if (rawQuery == null || rawQuery.isBlank()) {
             return Map.of();
         }
         var result = new LinkedHashMap<String, String>();
-        for (String pair : rawQuery.split("&")) {
-            if (pair.isEmpty()) continue;
-            int eq = pair.indexOf('=');
-            if (eq < 0) {
-                result.putIfAbsent(decode(pair), "");
-            } else {
-                result.putIfAbsent(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
+        int start = 0;
+        while (start <= rawQuery.length()) {
+            int amp = rawQuery.indexOf('&', start);
+            int end = amp < 0 ? rawQuery.length() : amp;
+            if (end > start) {
+                String pair = rawQuery.substring(start, end);
+                int eq = pair.indexOf('=');
+                if (eq < 0) {
+                    result.putIfAbsent(decode(pair), "");
+                } else {
+                    result.putIfAbsent(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
+                }
             }
+            if (amp < 0) break;
+            start = amp + 1;
         }
         return result;
     }

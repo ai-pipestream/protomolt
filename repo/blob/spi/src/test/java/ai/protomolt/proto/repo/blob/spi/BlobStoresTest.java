@@ -67,4 +67,29 @@ class BlobStoresTest {
         assertThatThrownBy(() -> BlobStores.of(List.of(broken)).open("broken", Map.of()))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("no handle");
     }
+
+    @Test void validatesBackendIdentityAndStrongEtagGrammar() {
+        var valid = new BackendIdentity("s3-1", "s3-1/v10", Map.of("endpoint-url", "https://store.example"));
+        assertThat(valid.provider()).isEqualTo("s3-1");
+        assertThat(valid.schema()).isEqualTo("s3-1/v10");
+
+        for (String badProvider : List.of("", "1s3", "-s3", "S3", "s3_1", "a".repeat(33))) {
+            assertThatThrownBy(() -> new BackendIdentity(badProvider, badProvider + "/v1", Map.of("k", "v")))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (String badSchema : List.of("s3", "s3/", "s3/v", "s3/v0", "s3/v01", "s3/v1234567890", "other/v1", "s3/V1")) {
+            assertThatThrownBy(() -> new BackendIdentity("s3", badSchema, Map.of("k", "v")))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        for (String badKey : List.of("", "1k", "Key", "k_1", "a".repeat(65))) {
+            assertThatThrownBy(() -> new BackendIdentity("s3", "s3/v1", Map.of(badKey, "v")))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        assertThat(BlobStore.requireStrongEtag("\"abc!#~\"")).isEqualTo("\"abc!#~\"");
+        for (String badEtag : List.of("", "\"\"", "abc", "W/\"abc\"", "\"ab\"c\"", "\"ab c\"", "\"" + "a".repeat(1023) + "\"")) {
+            assertThatThrownBy(() -> BlobStore.requireStrongEtag(badEtag))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
 }

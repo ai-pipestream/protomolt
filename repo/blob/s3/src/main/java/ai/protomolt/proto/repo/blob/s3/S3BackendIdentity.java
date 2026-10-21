@@ -11,7 +11,7 @@ public final class S3BackendIdentity {
     private S3BackendIdentity() {}
 
     public static BackendIdentity of(String endpoint, String region, boolean pathStyle) {
-        if (region == null || !region.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+        if (!isValidRegion(region))
             throw new IllegalArgumentException("Invalid S3 identity region");
         if (!SDK_DEFAULT.equals(endpoint)) {
             URI uri;
@@ -29,5 +29,21 @@ public final class S3BackendIdentity {
         }
         return new BackendIdentity("s3", "s3/v1", Map.of("endpoint", endpoint, "region", region,
                 "path-style", Boolean.toString(pathStyle)));
+    }
+
+    private static boolean isValidRegion(String region) {
+        if (region == null || region.isEmpty() || region.length() > 128) return false;
+        if (!isAsciiAlphanumeric(region.charAt(0))) return false;
+        for (int i = 1; i < region.length(); i++) {
+            char c = region.charAt(i);
+            if (!isAsciiAlphanumeric(c) && c != '.' && c != '_' && c != ':' && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphanumeric(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
     }
 }

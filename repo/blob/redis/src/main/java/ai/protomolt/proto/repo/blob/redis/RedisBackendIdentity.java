@@ -22,7 +22,7 @@ public final class RedisBackendIdentity {
         String path = uri.getRawPath();
         int database = 0;
         if (path != null && !path.isEmpty() && !path.equals("/")) {
-            if (!path.matches("/[0-9]+")) throw new IllegalArgumentException("Invalid Redis database identity");
+            if (!isSlashDigits(path)) throw new IllegalArgumentException("Invalid Redis database identity");
             try { database = Integer.parseInt(path.substring(1)); }
             catch (NumberFormatException invalid) { throw new IllegalArgumentException("Invalid Redis database identity"); }
         }
@@ -30,5 +30,14 @@ public final class RedisBackendIdentity {
         return new BackendIdentity("redis", policy == RedisWritePolicy.CREATE_ONLY ? "redis/v3" : "redis/v2", Map.of("scheme", uri.getScheme(),
                 "host", uri.getHost().toLowerCase(Locale.ROOT), "port", Integer.toString(uri.getPort() < 0 ? 6379 : uri.getPort()),
                 "database", Integer.toString(database), "key-prefix", keyPrefix));
+    }
+
+    private static boolean isSlashDigits(String path) {
+        if (path.length() < 2 || path.charAt(0) != '/') return false;
+        for (int i = 1; i < path.length(); i++) {
+            char c = path.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
     }
 }
