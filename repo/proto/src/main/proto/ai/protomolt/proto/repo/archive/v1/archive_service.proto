@@ -279,7 +279,8 @@ message GetEntryRequest {
 
 // Response carrying the entry, its manifest, and the requested bytes.
 // Unary: the requested renditions transit memory — size the read
-// accordingly, or read the manifest first and fetch selectively.
+// accordingly, or read the manifest first and fetch selectively. Large
+// renditions belong on ReadRendition, which streams them.
 message GetEntryResponse {
   // Current entry metadata, even when reading an older version. Historical
   // descriptive metadata, when recorded, is manifest.metadata_snapshot.
@@ -289,6 +290,125 @@ message GetEntryResponse {
   VersionManifest manifest = 2;
   // The requested renditions' bytes (PRESENT entries matching the filter).
   repeated RenditionContent renditions = 3;
+}
+
+// Request to stream one rendition object of an entry version, whole or as a
+// byte range. Bytes flow from the object store in bounded frames; nothing
+// holds the whole rendition in memory.
+message ReadRenditionRequest {
+  // The entry's logical identity.
+  EntryAddress address = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true}
+  ];
+  // The version to read; 0 = the current version.
+  int64 version = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // The rendition name.
+  string rendition = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {path_safe_name: true, max_len: 200}
+    }
+  ];
+  // The rendition's sub-key; empty selects the single-object rendition.
+  string sub_key = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {path_safe_name: true, max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+  // First byte to send; 0 is the start. Must not pass the object's size.
+  // Offset and length are each at most 2^62 - 1, so their sum cannot overflow.
+  int64 offset = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0, lte: 4611686018427387903}
+    }
+  ];
+  // Bytes to send; 0 = through the end of the object.
+  int64 length = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0, lte: 4611686018427387903}
+    }
+  ];
+}
+
+// The first frame of a rendition read.
+message RenditionReadHeader {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "rendition-read-header-range"
+    message: "the served range lies inside the object"
+    expression: "this.offset <= this.size_bytes && this.length <= this.size_bytes - this.offset"
+  };
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "rendition-read-header-whole"
+    message: "whole_object is set exactly when the range covers every byte"
+    expression: "this.whole_object == (this.offset == 0 && this.length == this.size_bytes)"
+  };
+  // The version read.
+  int64 version = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      int64: {gt: 0}
+    }
+  ];
+  // The rendition as the version's manifest records it.
+  RenditionDescriptor rendition = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {required: true}
+  ];
+  // Size of the whole object.
+  int64 size_bytes = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // SHA-256 of the whole object, as the manifest attests it.
+  string sha256 = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {sha256_hex: true}
+    }
+  ];
+  // First byte the stream carries.
+  int64 offset = 5 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // Bytes the stream carries.
+  int64 length = 6 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
+  // The stream covers the whole object. Only then is sha256 checked before
+  // the stream completes; a mismatch ends it with DATA_LOSS. A range read is
+  // checked for its length only and proves nothing about the object's
+  // integrity.
+  bool whole_object = 7;
+}
+
+// One frame of a rendition read: the header first, then data frames of at
+// most 64 KiB. A stream that ends without OK status is not a complete read.
+message ReadRenditionResponse {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "rendition-read-frame-required"
+    message: "a frame is a header or data"
+    expression: "has(this.header) || has(this.data)"
+  };
+  // Exactly one frame kind.
+  oneof frame {
+    // First frame.
+    RenditionReadHeader header = 1;
+    // Bytes of the range, in order.
+    bytes data = 2 [
+      (ai.protomolt.proto.validate.v1.field) = {
+        bytes: {min_len: 1, max_len: 65536}
+      }
+    ];
+  }
 }
 
 // Request to inspect an entry version's manifest without fetching bytes.
@@ -564,6 +684,12 @@ service ArchiveService {
 
   // Read one entry version, whole or filtered to named renditions.
   rpc GetEntry(GetEntryRequest) returns (GetEntryResponse);
+
+  // Stream one rendition object of an entry version, whole or as a byte
+  // range: a header frame, then data frames of at most 64 KiB, paced by the
+  // client's flow control. A whole-object read is checked against the
+  // manifest's SHA-256 before the stream completes.
+  rpc ReadRendition(ReadRenditionRequest) returns (stream ReadRenditionResponse);
 
   // Inspect an entry version's manifest without fetching any bytes.
   rpc GetEntryManifest(GetEntryManifestRequest) returns (GetEntryManifestResponse);

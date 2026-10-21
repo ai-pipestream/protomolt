@@ -112,7 +112,8 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        instead), and {@code ReadBlob} reserves the blobs fragment's length while
  *        resolving blob metadata before streaming the raw blob unbuffered;
  *        {@code GetSchemaDescriptor} reserves the retained descriptor's catalog
- *        length before loading it. A
+ *        length before loading it; the archive's streamed {@code ReadRendition}
+ *        reserves a fixed two-frame window (128 KiB) for each open stream. A
  *        reservation the remaining budget does not cover fails fast with
  *        {@code RESOURCE_EXHAUSTED}, never allocating from the recorded length
  */

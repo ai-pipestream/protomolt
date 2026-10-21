@@ -127,7 +127,7 @@ class ArchiveReadLifetimeIT {
         var rendition = saved.getManifest().getRenditions(0);
         UUID object = UUID.fromString(rendition.getStorageObjectId());
         String name = "archive-read-lifetime-" + UUID.randomUUID();
-        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(repository)).build().start();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(repository, new ReadByteBudget(256L * 1024 * 1024))).build().start();
         var channel = InProcessChannelBuilder.forName(name).build();
         var context = io.grpc.Context.current().withCancellation();
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {

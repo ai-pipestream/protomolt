@@ -126,6 +126,18 @@ public final class CachingBlobStore implements BlobStore, AutoCloseable {
         return got;
     }
 
+    /** Streamed reads come from the backing store; the cache holds whole small objects only. */
+    @Override
+    public InputStream openStream(String bucket, String key, long offset, long length) {
+        return backing.openStream(bucket, key, offset, length);
+    }
+
+    /** Streamed version reads come from the backing store, which owns object versions. */
+    @Override
+    public InputStream openStream(String bucket, String key, String versionId, long offset, long length) {
+        return backing.openStream(bucket, key, versionId, offset, length);
+    }
+
     @Override
     public void copy(String srcBucket, String srcKey, String dstBucket, String dstKey) {
         backing.copy(srcBucket, srcKey, dstBucket, dstKey);

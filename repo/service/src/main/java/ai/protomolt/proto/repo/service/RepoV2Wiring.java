@@ -55,11 +55,12 @@ final class RepoV2Wiring {
      * @param catalogSchema the schema the catalog migrates into on the ledger database
      * @param admittedSchemas the module-contributed schema definitions, read per admission
      * @param bindCaller the composition's v2 caller binding
+     * @param readBudget the host read byte budget verified reads reserve on
      */
     static Wired wire(RepoServiceConfig config, OwnedResources owned, DriveLedger driveLedger,
             BlobStore blobStore, String selectedDriveProvider, String catalogSchema,
             Supplier<Map<String, DocumentSchemaAdmission.Definition>> admittedSchemas,
-            Function<AuthenticatedCaller, RepositoryCaller> bindCaller) {
+            Function<AuthenticatedCaller, RepositoryCaller> bindCaller, ReadByteBudget readBudget) {
         // The parts-based v2 document service. The catalog shares the ledger's
         // database in its own schema; the ledger's Flyway history occupies the
         // default one.
@@ -114,7 +115,7 @@ final class RepoV2Wiring {
                         // Verified reads buffer typed parts, so they draw on a real host
                         // byte budget; a read past the budget is RESOURCE_EXHAUSTED
                         // before anything is allocated.
-                        new ReadByteBudget(config.readBudgetBytes()), Clock.systemUTC()),
+                        readBudget, Clock.systemUTC()),
                 new DocumentDeletes(catalog, Clock.systemUTC()),
                 new DocumentLists(catalog),
                 new DocumentPurges(catalog, v2Drives,

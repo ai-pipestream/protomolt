@@ -213,6 +213,26 @@ public interface BlobStore {
     }
 
     /**
+     * Opens a streamed read of one exact object version, with the same range and
+     * close semantics as {@link #openStream(String, String, long, long)}. A store
+     * without object versions serves only a null {@code versionId}, which reads the
+     * current object.
+     *
+     * @param bucket the bucket
+     * @param key the object key
+     * @param versionId the provider version to read, or null for the current object
+     * @param offset first byte to read; zero for the start
+     * @param length bytes to read, or negative for the rest of the object
+     * @return the object's bytes
+     * @throws BlobNotFoundException when the object or version does not exist
+     * @throws UnsupportedOperationException when the store cannot stream that version
+     */
+    default InputStream openStream(String bucket, String key, String versionId, long offset, long length) {
+        if (versionId == null) return openStream(bucket, key, offset, length);
+        throw new UnsupportedOperationException("streamed read of an object version is unsupported");
+    }
+
+    /**
      * Server-side copy of one object within this store (the four-part partial
      * save's copy-forward: unwritten parts move between addresses without
      * their bytes ever transiting the service).

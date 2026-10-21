@@ -125,7 +125,7 @@ class ArchiveManagedUploadIT {
         var saved = repository.putEntry(CALLER, request);
         var rendition = saved.getManifest().getRenditions(0);
         String name = "archive-bounded-" + UUID.randomUUID();
-        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(repository)).build().start();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(repository, new ReadByteBudget(256L * 1024 * 1024))).build().start();
         var channel = InProcessChannelBuilder.forName(name).build();
         try {
             var readRequest = GetEntryRequest.newBuilder().setAddress(request.getAddress()).build();
@@ -160,7 +160,7 @@ class ArchiveManagedUploadIT {
     @ParameterizedTest @ValueSource(booleans = {false, true})
     void publicationReuseAndHistoricalReadsShareLibraryAndGrpcBehavior(boolean transport) throws Exception {
         String name = "archive-managed-" + UUID.randomUUID();
-        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(managed)).build().start();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(managed, new ReadByteBudget(256L * 1024 * 1024))).build().start();
         var channel = InProcessChannelBuilder.forName(name).build();
         try {
             var stub = ArchiveServiceGrpc.newBlockingStub(channel);
@@ -315,7 +315,7 @@ class ArchiveManagedUploadIT {
         var original = ArchiveManifests.fromJson(manifest.manifest).getRenditions(0);
         assertThat(original.getStorageObjectId()).isNotBlank();
         String name = "managed-stream-" + UUID.randomUUID();
-        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(managed)).build().start();
+        var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(managed, new ReadByteBudget(256L * 1024 * 1024))).build().start();
         var channel = InProcessChannelBuilder.forName(name).build();
         try {
             var result = new java.util.concurrent.CompletableFuture<UploadRenditionResponse>();

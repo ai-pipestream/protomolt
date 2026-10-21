@@ -7,6 +7,9 @@ import ai.protomolt.proto.repo.container.archive.ArchiveEntryRecord;
 import ai.protomolt.proto.repo.container.archive.ArchiveManifests;
 import ai.protomolt.proto.repo.container.archive.ArchiveReadLedger;
 import ai.protomolt.proto.repo.spi.RepositoryException;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Objects;
 import java.util.UUID;
 import static ai.protomolt.proto.repo.engine.RepositoryErrors.failedPrecondition;
@@ -52,6 +55,29 @@ public final class ArchiveObjectReader implements AutoCloseable {
     }
 
     /**
+     * Opens a streamed read of {@code length} bytes from {@code offset}, or of the
+     * whole object when {@code length} is negative, from the exact published version.
+     * The storage read pin and this reader's active-read count are held until the
+     * returned stream closes, so {@link #awaitIdle} waits for open streams. The
+     * stream is not verified here; callers check its length and digest.
+     */
+    public InputStream open(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest,
+            long offset, long length) {
+        synchronized (lifecycle) {
+            if (closed) throw new RepositoryException(RepositoryException.Code.CANCELLED, "Archive reader is closed");
+            activeReads++;
+        }
+        boolean handedOff = false;
+        try {
+            var opened = openPinned(entry, version, manifest, offset, length);
+            handedOff = true;
+            return opened;
+        } finally {
+            if (!handedOff) endRead();
+        }
+    }
+
+    /**
      * Stop local admission, then persist its fence. SQL failure leaves local
      * admission closed and must be retried before releasing borrowed resources.
      * The ledger and clients must stay open until awaitIdle succeeds.
@@ -92,30 +118,86 @@ public final class ArchiveObjectReader implements AutoCloseable {
         reads.attestLocalQuiescence();
     }
 
-    private BlobStore.GetResult readPinned(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
+    private void endRead() {
+        synchronized (lifecycle) { activeReads--; lifecycle.notifyAll(); }
+    }
+
+    private ArchiveReadLedger.Pin pin(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
         if (manifest.getState() != RenditionState.RENDITION_STATE_PRESENT)
             throw failedPrecondition("Only present archive objects may be read");
         UUID objectId;
         try { objectId = UUID.fromString(manifest.getStorageObjectId()); }
         catch (IllegalArgumentException invalid) { throw failedPrecondition("Invalid archive storage binding identity"); }
-        try (var pin = reads.acquire(entry.entryUuid, version, objectId)
-                .orElseThrow(() -> failedPrecondition("Archive version has no published storage reference"))) {
+        var pin = reads.acquire(entry.entryUuid, version, objectId)
+                .orElseThrow(() -> failedPrecondition("Archive version has no published storage reference"));
+        try {
             var readable = pin.readable();
-            var binding = readable.binding();
-            var location = binding.location();
+            var location = readable.binding().location();
             if (!location.accountId().equals(entry.accountId) || !location.archive().equals(entry.archive)
                     || !location.objectKey().equals(manifest.getObjectKey())
                     || readable.size() != manifest.getSizeBytes() || !readable.sha256().equals(manifest.getSha256()))
                 throw failedPrecondition("Archive manifest disagrees with its published storage binding");
+            return pin;
+        } catch (RuntimeException | Error failure) {
+            pin.close();
+            throw failure;
+        }
+    }
+
+    private BlobStore store(ArchiveReadLedger.Pin pin) {
+        var binding = pin.readable().binding();
+        BlobStore store;
+        try { store = backends.resolve(binding.location().backendGeneration(), binding.storageRealm()); }
+        catch (UnservedBackendGenerationException unserved) {
+            throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, BACKEND_NOT_CONFIGURED, unserved);
+        }
+        if (store == null) throw failedPrecondition("Original archive backend is not available");
+        return store;
+    }
+
+    private InputStream openPinned(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest,
+            long offset, long length) {
+        var pin = pin(entry, version, manifest);
+        try {
+            var readable = pin.readable();
+            var location = readable.binding().location();
+            var store = store(pin);
+            InputStream body;
+            try {
+                body = store.openStream(location.bucket(), location.objectKey(), readable.providerVersion(), offset, length);
+            } catch (UnsupportedOperationException unsupported) {
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Archive backend does not support streamed reads", unsupported);
+            } catch (BlobStore.BlobNotFoundException missing) {
+                throw new RepositoryException(RepositoryException.Code.DATA_LOSS,
+                        "Published archive object is missing from its original backend", missing);
+            }
+            return new FilterInputStream(body) {
+                private boolean released;
+                @Override public void close() throws IOException {
+                    if (released) return;
+                    released = true;
+                    try { super.close(); }
+                    finally {
+                        try { pin.close(); }
+                        finally { endRead(); }
+                    }
+                }
+            };
+        } catch (RuntimeException | Error failure) {
+            pin.close();
+            throw failure;
+        }
+    }
+
+    private BlobStore.GetResult readPinned(ArchiveEntryRecord entry, long version, RenditionManifestEntry manifest) {
+        try (var pin = pin(entry, version, manifest)) {
+            var readable = pin.readable();
+            var location = readable.binding().location();
             if (readable.size() > Integer.MAX_VALUE)
                 throw new RepositoryException(RepositoryException.Code.RESOURCE_EXHAUSTED,
                         "Archive object exceeds the byte-array read limit");
-            BlobStore store;
-            try { store = backends.resolve(location.backendGeneration(), binding.storageRealm()); }
-            catch (UnservedBackendGenerationException unserved) {
-                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION, BACKEND_NOT_CONFIGURED, unserved);
-            }
-            if (store == null) throw failedPrecondition("Original archive backend is not available");
+            BlobStore store = store(pin);
             BlobStore.GetResult result;
             try {
                 result = store.getBounded(location.bucket(), location.objectKey(), readable.providerVersion(), (int) readable.size());

@@ -113,7 +113,7 @@ class RedisArchiveLifecycleIT {
         try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, 4096, 4, oneManifest), budget, 1);
                 var fixture = new Fixture(opened.store(), null, opened.store(), gate)) {
             String name = "manifest-json-" + UUID.randomUUID();
-            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();
+            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
             try {
                 var stub = ArchiveServiceGrpc.newBlockingStub(channel).withDeadlineAfter(5, TimeUnit.SECONDS);
@@ -177,7 +177,7 @@ class RedisArchiveLifecycleIT {
         try (var gate = new ArchiveGetAdmission(new ArchiveGetAdmission.Limits(64, responseLimit, 4, 2048), budget, 2);
                 var fixture = new Fixture(opened.store(), null, observed, gate)) {
             String name = "bounded-get-" + UUID.randomUUID();
-            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();
+            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
             try {
                 var stub = ArchiveServiceGrpc.newBlockingStub(channel);
@@ -214,7 +214,7 @@ class RedisArchiveLifecycleIT {
         try (var admission = new ArchivePutAdmission(new ArchivePutAdmission.Limits(4, 1024, 4), budget, 2);
                 var fixture = new Fixture(observed, admission)) {
             String name = "bounded-redis-" + UUID.randomUUID();
-            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations)).build().start();
+            var server = io.grpc.inprocess.InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(fixture.operations, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
             try {
                 var stub = ArchiveServiceGrpc.newBlockingStub(channel);
@@ -392,7 +392,7 @@ class RedisArchiveLifecycleIT {
         try (var fixture = new Fixture(opened.store())) {
             String name = "redis-archive-" + UUID.randomUUID();
             var server = io.grpc.inprocess.InProcessServerBuilder.forName(name)
-                    .addService(new ArchiveGrpcService(fixture.operations)).build().start();
+                    .addService(new ArchiveGrpcService(fixture.operations, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var channel = io.grpc.inprocess.InProcessChannelBuilder.forName(name).build();
             try {
                 var stub = ArchiveServiceGrpc.newBlockingStub(channel);

@@ -40,6 +40,7 @@ import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.RenditionContent;
 import ai.protomolt.proto.repo.archive.v1.RenditionDescriptor;
 import ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry;
@@ -60,6 +61,7 @@ import ai.protomolt.proto.repo.blob.spi.BlobStore;
 import ai.protomolt.proto.repo.engine.ArchiveSlots.Slot;
 import ai.protomolt.proto.repo.container.ledger.DriveLedger;
 import ai.protomolt.proto.repo.container.ledger.DriveRecord;
+import ai.protomolt.proto.repo.spi.RepositoryException;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.util.Timestamps;
 import jakarta.persistence.PersistenceException;
@@ -688,6 +690,78 @@ public final class ArchiveOperations implements ai.protomolt.proto.repo.spi.Arch
             if (scope != null) scope.verify(result);
             return result;
         }
+    }
+
+    /**
+     * Streams one present rendition object, whole or as a byte range, with the same
+     * caller checks as {@link #getEntry}: an account binding, and the entry's account. A name and sub-key the version does not
+     * record is NOT_FOUND; a rendition whose bytes were deleted is FAILED_PRECONDITION
+     * naming the recorded reason; a range outside the object is INVALID_ARGUMENT.
+     * Bound renditions read the exact published object version under a read pin held
+     * until the body closes; legacy manifests read their drive's current object. The
+     * returned body checks length, and the manifest SHA-256 for a whole-object read.
+     */
+    @Override
+    public RenditionStream readRendition(RepositoryCaller caller, ReadRenditionRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
+        try (var manifests = getAdmission == null ? null : getAdmission.manifests()) {
+            return RepositoryErrors.call(() -> readRenditionImpl(caller, request, manifests));
+        }
+    }
+
+    private RenditionStream readRenditionImpl(RepositoryCaller caller, ReadRenditionRequest request,
+            ArchiveGetAdmission.ManifestScope manifests) {
+        EntryAddress address = ArchiveRequests.address(request.hasAddress(), request.getAddress());
+        RepositoryErrors.requireAccount(caller, address.getAccountId());
+        String name = ArchiveRequests.renditionName(request.getRendition(), "rendition");
+        if (!request.getSubKey().isEmpty()) ArchiveRequests.renditionName(request.getSubKey(), "sub_key");
+        if (request.getVersion() < 0) throw invalidArgument("version must not be negative");
+        if (request.getOffset() < 0 || request.getLength() < 0)
+            throw invalidArgument("offset and length must not be negative");
+        ArchiveRecord archive = archiveOrThrow(address.getAccountId(), address.getArchive());
+        ArchiveEntryRecord entry = entryOrThrow(address);
+        long version = request.getVersion() == 0 ? entry.currentVersion : request.getVersion();
+        VersionManifest manifest = readManifest(entry.entryUuid, version, manifests)
+                .orElseThrow(() -> notFound("entry has no retained version " + version));
+        RenditionManifestEntry item = manifest.getRenditionsList().stream()
+                .filter(candidate -> candidate.getRendition().getName().equals(name)
+                        && candidate.getRendition().getSubKey().equals(request.getSubKey()))
+                .findFirst()
+                .orElseThrow(() -> notFound("version " + version + " of entry '" + address.getEntryId()
+                        + "' records no rendition '" + name + "'"
+                        + (request.getSubKey().isEmpty() ? "" : " with sub-key '" + request.getSubKey() + "'")));
+        if (item.getState() != RenditionState.RENDITION_STATE_PRESENT)
+            throw failedPrecondition("rendition '" + name + "' of entry '" + address.getEntryId() + "' is "
+                    + item.getState().name() + (item.getDeletedReason().isEmpty() ? "" : ": " + item.getDeletedReason()));
+        long size = item.getSizeBytes();
+        if (size < 0) throw new RepositoryException(
+                RepositoryException.Code.DATA_LOSS, "Negative published archive size");
+        long offset = request.getOffset();
+        if (offset > size || request.getLength() > size - offset)
+            throw invalidArgument("Requested byte range [" + offset + ", +" + request.getLength()
+                    + ") is outside rendition size " + size);
+        long length = request.getLength() == 0 ? size - offset : request.getLength();
+        boolean whole = offset == 0 && length == size;
+        long providerLength = whole ? -1 : length;
+        InputStream body;
+        if (!item.getStorageObjectId().isEmpty()) {
+            if (objectReader == null)
+                throw failedPrecondition("Original archive backend resolution is not configured");
+            body = objectReader.open(entry, version, item, offset, providerLength);
+        } else {
+            // Legacy manifests have no recorded backend identity; read the drive's current object.
+            try {
+                body = blobStore.openStream(driveOrThrow(archive).bucket, item.getObjectKey(), offset, providerLength);
+            } catch (UnsupportedOperationException unsupported) {
+                throw new RepositoryException(RepositoryException.Code.FAILED_PRECONDITION,
+                        "Archive blob store does not support streamed reads", unsupported);
+            } catch (BlobStore.BlobNotFoundException missing) {
+                throw failedPrecondition("rendition '" + name + "' of entry '" + address.getEntryId()
+                        + "' is unavailable: object " + item.getObjectKey() + " is missing");
+            }
+        }
+        return new RenditionStream(version, item, offset, length, whole,
+                new VerifiedRenditionStream(body, length, whole ? item.getSha256() : null));
     }
 
     @Override

@@ -167,7 +167,7 @@ class ArchiveDeletionFailureIT {
         try {
             assertThat(bound.getEntry(CALLER, request).getRenditions(0).getData()).isEqualTo(bytes);
             String name = "bound-read-" + UUID.randomUUID();
-            var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(bound)).build().start();
+            var server = InProcessServerBuilder.forName(name).addService(new ArchiveGrpcService(bound, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var channel = InProcessChannelBuilder.forName(name).build();
             try {
                 assertThat(ArchiveServiceGrpc.newBlockingStub(channel).getEntry(request).getRenditions(0).getData()).isEqualTo(bytes);
@@ -182,7 +182,7 @@ class ArchiveDeletionFailureIT {
             assertThatThrownBy(() -> unavailable.getEntry(CALLER, request)).isInstanceOfSatisfying(RepositoryException.class,
                     failure -> assertThat(failure.code()).isEqualTo(RepositoryException.Code.UNAVAILABLE));
             String failedName = "bound-read-unavailable-" + UUID.randomUUID();
-            var failedServer = InProcessServerBuilder.forName(failedName).addService(new ArchiveGrpcService(unavailable)).build().start();
+            var failedServer = InProcessServerBuilder.forName(failedName).addService(new ArchiveGrpcService(unavailable, new ReadByteBudget(256L * 1024 * 1024))).build().start();
             var failedChannel = InProcessChannelBuilder.forName(failedName).build();
             try {
                 assertThatThrownBy(() -> ArchiveServiceGrpc.newBlockingStub(failedChannel).getEntry(request))

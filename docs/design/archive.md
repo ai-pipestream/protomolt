@@ -165,6 +165,26 @@ object is best-effort deleted. Success returns a JSON receipt: entry UUID,
 version, rendition, size, SHA-256, object key. A producer that must know
 nothing about protomolt uses this door and still gets every guarantee.
 
+## Reads
+
+**Unary `GetEntry`.** One version's manifest plus the selected renditions'
+bytes in one response. The bytes transit memory, so this read suits small
+renditions.
+
+**Server-streaming `ReadRendition`.** One rendition object (name and
+sub-key) of one version, whole or as a byte range (`offset`, `length`). The
+first frame is a header with the version, the manifest's descriptor, the
+whole object's size and SHA-256, the served range and `whole_object`; data
+frames of at most 64 KiB follow, sent only while the client's flow control
+allows, so a slow client stalls the provider read instead of queueing the
+object. A whole-object read is hashed as it streams and the stream ends in
+`DATA_LOSS`, not success, when the digest or length disagrees with the
+manifest. A range read is checked for its length only and is never integrity
+proof for the object. Bound objects read their exact published version under
+a read pin held until the stream ends; each open stream reserves a two-frame
+window on the host read byte budget. The bounded unary profile does not
+serve it.
+
 ## Metadata
 
 An entry carries typed first-class fields — `title`, `filename`,
@@ -274,9 +294,6 @@ unforced.
 
 - **Archive mutation events** — the outbox vocabulary above, once the
   relay generalizes beyond the document store's event type.
-- **Streaming reads** — a server-streaming download door, once the blob
-  port grows a streaming get; today reads are unary and inline, sized
-  accordingly.
 - **Async purge queue for archives** — the tombstone lifecycle, when bulk
   deletion under load demands it.
 - **Azure blob store** — the `BlobStore` port's next provider, landing with
