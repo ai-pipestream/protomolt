@@ -279,9 +279,9 @@ from TypeScript stubs generated from the protos. The gateway exposes exactly
 the procedures the screens call, listed in `ConsoleProcedures` in
 `repo/service`; any other method answers `UNIMPLEMENTED` there.
 
-- **Accounts.** The accounts the session can see, or any account opened by ID.
-  The repository host does not serve `AccountService`, so the list shows the
-  gateway's `UNIMPLEMENTED` there and the ID entry is the way in.
+- **Accounts.** The accounts the signed-in session is bound to, read from
+  `/console/session` (the `account_ids` of `ConsoleSessionStatus`), or any
+  account opened by ID. A signed-out visitor gets a Sign in button.
 - **Documents.** One account's drives, then its documents from `ListDocuments`:
   graph scope, the exact-match lookup filters (title, type, source, language,
   author, category, ownership, metadata pairs, commit time range, save owner),
