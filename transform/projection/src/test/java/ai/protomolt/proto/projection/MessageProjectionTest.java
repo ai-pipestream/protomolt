@@ -16,6 +16,7 @@ import ai.protomolt.proto.projection.test.Note;
 import ai.protomolt.proto.projection.test.Rendition;
 import ai.protomolt.proto.projection.test.RenditionListView;
 import ai.protomolt.proto.projection.test.RuntimeErrorProjection;
+import ai.protomolt.proto.projection.test.ScalarZoo;
 import ai.protomolt.proto.projection.test.SearchDoc;
 import ai.protomolt.proto.projection.test.StoredDocument;
 import ai.protomolt.proto.projection.test.TreeNode;
@@ -453,5 +454,37 @@ class MessageProjectionTest {
         assertThat(mask.fieldMask().getPathsList()).containsExactly(
                 "doc_id", "blob_bag.blobs.blob", "blob_bag.blob", "renditions", "cover");
         assertThat(mask.complete()).isFalse();
+    }
+
+    @Test
+    void resolvesWalksDottedPathsWithoutRegex() {
+        var zoo = ScalarZoo.getDescriptor();
+        assertThat(MessageProjection.resolves(zoo, "name")).isTrue();
+        assertThat(MessageProjection.resolves(zoo, "nested.leaf")).isTrue();
+        assertThat(MessageProjection.resolves(zoo, "  nested.leaf  ")).isTrue();
+        // Anything below a map counts, because map keys are dynamic.
+        assertThat(MessageProjection.resolves(zoo, "counts")).isTrue();
+        assertThat(MessageProjection.resolves(zoo, "counts.any_key")).isTrue();
+        assertThat(MessageProjection.resolves(StoredDocument.getDescriptor(), "blob_bag.blobs.blob.blob_id"))
+                .isTrue();
+    }
+
+    @Test
+    void resolvesRejectsEmptySegmentsUnknownFieldsAndPathsBelowScalars() {
+        var zoo = ScalarZoo.getDescriptor();
+        assertThat(MessageProjection.resolves(zoo, "")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, "   ")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, ".")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, ".name")).isFalse();
+        // A trailing dot is an empty segment, not something to ignore.
+        assertThat(MessageProjection.resolves(zoo, "name.")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, "nested.leaf.")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, "nested..leaf")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, "nested.missing")).isFalse();
+        assertThat(MessageProjection.resolves(zoo, "no_such_field")).isFalse();
+        // A scalar has no fields below it.
+        assertThat(MessageProjection.resolves(zoo, "name.length")).isFalse();
+        // Segments are not trimmed individually.
+        assertThat(MessageProjection.resolves(zoo, "nested . leaf")).isFalse();
     }
 }

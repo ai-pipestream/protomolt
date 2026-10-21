@@ -395,14 +395,19 @@ public final class MessageProjection {
     }
 
     /**
-     * Whether a dotted path resolves against {@code type}. Map fields end the
-     * check: their keys are dynamic, so anything below a map counts as
-     * resolvable.
+     * Whether a dotted path resolves against {@code type}. Surrounding
+     * whitespace is ignored; an empty segment (a leading, trailing or doubled
+     * dot) does not resolve. Map fields end the check: their keys are dynamic,
+     * so anything below a map counts as resolvable.
      */
-    private static boolean resolves(Descriptor type, String path) {
+    static boolean resolves(Descriptor type, String path) {
+        String trimmed = path.trim();
         Descriptor current = type;
-        for (String segment : path.trim().split("\\.")) {
-            if (current == null) {
+        int start = 0;
+        while (true) {
+            int dot = trimmed.indexOf('.', start);
+            String segment = dot < 0 ? trimmed.substring(start) : trimmed.substring(start, dot);
+            if (current == null || segment.isEmpty()) {
                 return false;
             }
             FieldDescriptor field = current.findFieldByName(segment);
@@ -412,10 +417,13 @@ public final class MessageProjection {
             if (field.isMapField()) {
                 return true;
             }
+            if (dot < 0) {
+                return true;
+            }
             current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
                     ? field.getMessageType() : null;
+            start = dot + 1;
         }
-        return true;
     }
 
     /**

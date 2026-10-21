@@ -193,6 +193,9 @@ request-time field-selection APIs where FieldMask is the right mechanism.
 
 ## Limits and sharp edges (v1)
 
+- **Source masks take plain dotted names.** `sourceMask` ignores whitespace
+  around a path and leaves out a path with an empty segment (a leading,
+  trailing or doubled dot), since it names no field.
 - **Map fields are not supported.** Projection fails with a deliberate error
   naming the field rather than guessing at generated-vs-dynamic runtime shapes.
 - **Proto3 implicit defaults count as absent.** A source field at its default
