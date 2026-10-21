@@ -607,7 +607,7 @@ public final class RepoServices implements AutoCloseable {
         try {
             http = new UploadHttpServer(v2Uploads,
                     () -> new RepositoryCaller("http-upload", true), apiToken, archiveOperations,
-                    console, routes, gateway, requestCallers);
+                    console, routes, gateway, requestCallers, callerBindings::bind);
         } catch (RuntimeException | Error failure) {
             try { gateway.close(); }
             catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }

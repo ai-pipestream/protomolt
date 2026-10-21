@@ -49,11 +49,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -820,6 +822,53 @@ class StreamingUploadAndReadIT {
                         assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.DATA_LOSS));
         assertThat(frames).noneMatch(ReadDocumentResponse::hasPartData);
         assertThat(frames).noneMatch(ReadDocumentResponse::hasComplete);
+    }
+
+    @Test
+    void httpUploadHandlerResolvesEachRequestsCallerAndAnswersAnOutageAsUnavailable() throws Exception {
+        var outage = new AtomicBoolean();
+        var seen = new ArrayList<String>();
+        UploadHttpHandler.Callers callers = headers -> {
+            if (outage.get()) throw new IllegalStateException("identity provider unreachable");
+            String credential = headers.getFirst("x-test-credential");
+            if (credential == null) return Optional.empty();
+            seen.add(credential);
+            return Optional.of(new RepositoryCaller("resolved-" + credential, true));
+        };
+        var httpServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        httpServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        httpServer.createContext(UploadHttpHandler.UPLOAD_PATH, new UploadHttpHandler(f.uploads, callers));
+        httpServer.start();
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        String uri = "http://127.0.0.1:" + httpServer.getAddress().getPort() + UploadHttpHandler.UPLOAD_PATH
+                + "?account_id=" + account + "&datasource_id=ds-1&drive=default&filename=resolved.bin"
+                + "&operation_id=resolved-op&doc_id=resolved-doc";
+        byte[] payload = "resolved per request".getBytes(StandardCharsets.UTF_8);
+        try {
+            var none = client.send(HttpRequest.newBuilder(URI.create(uri)).header("Accept", "application/proto")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(payload)).build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(none.statusCode()).isEqualTo(401);
+            assertThat(ItemError.parseFrom(none.body()).getCode()).isEqualTo(16);
+
+            outage.set(true);
+            var down = client.send(HttpRequest.newBuilder(URI.create(uri)).header("Accept", "application/proto")
+                    .header("x-test-credential", "alice").POST(HttpRequest.BodyPublishers.ofByteArray(payload)).build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(down.statusCode()).isEqualTo(503);
+            var unavailable = ItemError.parseFrom(down.body());
+            assertThat(unavailable.getCode()).isEqualTo(14);
+            assertThat(unavailable.getMessage()).contains("identity provider unreachable");
+            assertThat(f.catalog.outcome(account, "resolved-op")).isEmpty();
+
+            outage.set(false);
+            var saved = client.send(HttpRequest.newBuilder(URI.create(uri)).header("Accept", "application/proto")
+                    .header("x-test-credential", "alice").POST(HttpRequest.BodyPublishers.ofByteArray(payload)).build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(saved.statusCode()).isEqualTo(200);
+            assertThat(seen).containsExactly("alice");
+        } finally {
+            httpServer.stop(0);
+        }
     }
 
     @Test

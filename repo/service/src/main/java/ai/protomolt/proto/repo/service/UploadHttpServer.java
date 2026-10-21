@@ -2,7 +2,9 @@ package ai.protomolt.proto.repo.service;
 
 import ai.protomolt.proto.repo.accession.DocumentUploads;
 import ai.protomolt.proto.repo.accession.UploadHttpHandler;
+import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.RequestCallerResolver;
+import ai.protomolt.proto.authz.RequestHeaders;
 import ai.protomolt.proto.http.connect.ConnectGateway;
 import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
@@ -30,6 +32,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -114,7 +117,7 @@ public final class UploadHttpServer implements AutoCloseable {
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
             Map<String, HttpHandler> routes) {
-        this(uploads, callers, apiToken, archiveOperations, console, routes, null, null);
+        this(uploads, callers, apiToken, archiveOperations, console, routes, null, null, null);
     }
 
     /**
@@ -134,18 +137,26 @@ public final class UploadHttpServer implements AutoCloseable {
      * @param console the console bundle served at {@link RepositoryConsole#PATH}
      * @param routes extra context path to handler, refused as in the six-argument form
      * @param gateway the Connect gateway mounted at {@link #CONNECT_PATH}
-     * @param requestCallers the resolver {@code gateway} resolves callers with
+     * @param requestCallers the resolver {@code gateway} resolves callers with; the document
+     *        upload route resolves its callers with it too, so a console session uploads as
+     *        the scoped caller it is, and the operator token still uploads with process authority
+     * @param bindCaller maps a resolved caller to the repository caller it saves as, the
+     *        host's one binding from principal to accounts; required with a gateway
      */
     public UploadHttpServer(DocumentUploads uploads, Supplier<RepositoryCaller> callers,
             String apiToken, ArchiveRepository archiveOperations, RepositoryConsole console,
             Map<String, HttpHandler> routes, ConnectGateway gateway,
-            RequestCallerResolver requestCallers) {
+            RequestCallerResolver requestCallers, Function<AuthenticatedCaller, RepositoryCaller> bindCaller) {
         if ((gateway == null) != (requestCallers == null)) {
             throw new IllegalArgumentException("a Connect gateway and its request resolver come together");
         }
+        if (gateway != null) Objects.requireNonNull(bindCaller, "bindCaller");
         String token = RepositoryNetworkAuthentication.requireOperatorToken(apiToken);
-        this.documentUploads = uploads == null ? null : new UploadHttpHandler(uploads, token,
-                Objects.requireNonNull(callers, "callers"));
+        this.documentUploads = uploads == null ? null
+                : requestCallers == null
+                        ? new UploadHttpHandler(uploads, token, Objects.requireNonNull(callers, "callers"))
+                        : new UploadHttpHandler(uploads,
+                                headers -> requestCallers.resolve(RequestHeaders.of(headers)).map(bindCaller));
         this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
         this.archiveOperations = archiveOperations;
         this.console = Objects.requireNonNull(console, "console");
