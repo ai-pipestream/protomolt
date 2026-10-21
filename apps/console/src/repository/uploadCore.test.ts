@@ -11,7 +11,8 @@ import {
   SaveDocumentResponseSchema,
   UploadDocumentResponseSchema,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
-import { AccessionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
+import { ItemErrorSchema, RevisionConflictSchema, type ItemError } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
+import { AccessionSchema, ExpectedRevisionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { FakeUploadRequest, at, routerClients, testAddress, type FakeAnswer } from './repositoryTestKit'
 import {
   HASH_SLICE_BYTES,
@@ -30,6 +31,15 @@ const file = () => new File([BYTES], 'report.pdf', { type: 'application/pdf' })
 
 function form(overrides: Partial<UploadForm> = {}): UploadForm {
   return { ...emptyUploadForm('acct-a'), datasourceId: 'ds-files', drive: 'intake', ...overrides }
+}
+
+/** The route's protobuf refusal: its HTTP status and a binary ItemError body. */
+function itemError(status: number, code: Code, message: string, detail?: ItemError['detail']): FakeAnswer {
+  return {
+    status,
+    headers: { 'content-type': 'application/proto', 'grpc-status': String(code), 'grpc-message': encodeURIComponent(message) },
+    body: toBinary(ItemErrorSchema, create(ItemErrorSchema, { code, message, detail })),
+  }
 }
 
 const saved = toBinary(
@@ -103,8 +113,9 @@ describe('planUpload', () => {
     [{ datasourceId: '' }, 'Datasource ID: is blank'],
     [{ drive: ' ' }, 'Drive: is blank'],
     [{ docId: '  ' }, 'Document ID: is only whitespace'],
-    [{ expectedRevision: '0' }, 'Expected revision: must be greater than zero'],
-    [{ expectedRevision: 'two' }, 'Expected revision: "two" is not a revision number'],
+    [{ docId: 'doc-1', expectedRevision: '0' }, 'Expected revision: must be greater than zero'],
+    [{ docId: 'doc-1', expectedRevision: 'two' }, 'Expected revision: "two" is not a revision number'],
+    [{ expectedRevision: '3' }, 'Expected revision: needs a Document ID'],
   ])('refuses %o by name', (overrides, message) => {
     expect(() => planUpload(form(overrides), file(), 'op-1', SHA)).toThrow(UploadInputError)
     expect(() => planUpload(form(overrides), file(), 'op-1', SHA)).toThrow(message)
@@ -129,7 +140,7 @@ describe('sendUpload', () => {
   })
 
   it('treats HTTP 429 as a capacity refusal with the route status and message', async () => {
-    const answer = await send({ status: 429, headers: { 'grpc-status': '8', 'grpc-message': 'stack%20write%20budget%20exhausted' } }).result
+    const answer = await send(itemError(429, Code.ResourceExhausted, 'stack write budget exhausted')).result
     expect(answer).toEqual({
       kind: 'capacity',
       httpStatus: 429,
@@ -137,31 +148,59 @@ describe('sendUpload', () => {
     })
   })
 
-  it('treats a 401 as a sign-in, and any other status as a refusal', async () => {
-    expect((await send({ status: 401, headers: { 'grpc-status': '16', 'grpc-message': 'session%20expired' } }).result).kind).toBe('unauthenticated')
-    const conflict = await send({ status: 409, headers: { 'grpc-status': '10', 'grpc-message': 'expected%20revision%203%2C%20current%204' } }).result
+  it('reports a 401 as unauthenticated, and a definite status as a refusal with its errors.proto detail', async () => {
+    expect((await send(itemError(401, Code.Unauthenticated, 'Unauthorized')).result).kind).toBe('unauthenticated')
+    const conflict = await send(
+      itemError(409, Code.Aborted, 'expected revision 3, current 4', {
+        case: 'conflict',
+        value: create(RevisionConflictSchema, {
+          address: testAddress(),
+          expected: create(ExpectedRevisionSchema, { expected: { case: 'revision', value: 3n } }),
+          currentRevision: 4n,
+        }),
+      }),
+    ).result
     expect(conflict).toMatchObject({ kind: 'refused', httpStatus: 409, failure: { code: 'ABORTED', message: 'expected revision 3, current 4' } })
+    if (conflict.kind !== 'refused') throw new Error('unreachable')
+    expect(conflict.error?.detail.case).toBe('conflict')
+    if (conflict.error?.detail.case !== 'conflict') throw new Error('unreachable')
+    expect(conflict.error.detail.value.currentRevision).toBe(4n)
   })
 
-  it('reports a refusal without grpc-status by its HTTP status, never parsing the body', async () => {
-    const answer = await send({ status: 400, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: new TextEncoder().encode('{"error":"x"}') }).result
-    expect(answer).toMatchObject({ kind: 'refused', failure: { code: 'HTTP 400', codeNumber: null } })
-    if (answer.kind !== 'refused') throw new Error('unreachable')
-    expect(answer.failure.message).toContain('application/json')
+  it.each([
+    [Code.Unavailable, 503],
+    [Code.Internal, 500],
+    [Code.DeadlineExceeded, 504],
+    [Code.Unknown, 500],
+  ])('reports status %s as unsettled, since the save may still have committed', async (code, status) => {
+    const answer = await send(itemError(status, code, 'transient')).result
+    expect(answer).toMatchObject({ kind: 'unsettled', failure: { codeNumber: code } })
   })
 
-  it('refuses a 200 that is not protobuf', async () => {
-    await expect(send({ status: 200, headers: { 'Content-Type': 'application/json' }, body: new Uint8Array([1]) }).result).rejects.toThrow(
-      'reads only application/proto',
-    )
+  it('reports an answer without a protobuf error by its HTTP status as unsettled, never parsing the body', async () => {
+    const answer = await send({ status: 502, headers: { 'Content-Type': 'text/html' }, body: new TextEncoder().encode('<html>bad gateway</html>') }).result
+    expect(answer).toMatchObject({ kind: 'unsettled', failure: { code: 'HTTP 502', codeNumber: null } })
+    if (answer.kind !== 'unsettled') throw new Error('unreachable')
+    expect(answer.failure?.message).toContain('text/html')
   })
 
-  it('reports a lost connection and a cancel as no answer, since the save may still commit', async () => {
-    expect(await send('network-error').result).toMatchObject({ kind: 'no-answer', reason: expect.stringContaining('connection failed') })
+  it('reports a 200 it cannot read as unsettled rather than failed, since the route committed', async () => {
+    expect(await send({ status: 200, headers: { 'Content-Type': 'application/json' }, body: new Uint8Array([1]) }).result).toMatchObject({
+      kind: 'unsettled',
+      reason: expect.stringContaining('application/json'),
+    })
+    expect(await send({ status: 200, headers: { 'Content-Type': 'application/proto' }, body: new Uint8Array([0xff, 0xff]) }).result).toMatchObject({
+      kind: 'unsettled',
+      reason: expect.stringContaining('does not decode'),
+    })
+  })
+
+  it('reports a lost connection and a cancel as unsettled', async () => {
+    expect(await send('network-error').result).toMatchObject({ kind: 'unsettled', reason: expect.stringContaining('connection failed') })
     const controller = new AbortController()
     const pending = send('hang', controller.signal)
     controller.abort()
-    expect(await pending.result).toMatchObject({ kind: 'no-answer', reason: expect.stringContaining('cancelled') })
+    expect(await pending.result).toMatchObject({ kind: 'unsettled', reason: expect.stringContaining('cancelled') })
     expect(pending.request().aborted).toBe(true)
   })
 })

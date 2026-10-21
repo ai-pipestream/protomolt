@@ -845,7 +845,11 @@ class StreamingUploadAndReadIT {
             assertThat(unauth.statusCode()).isEqualTo(401);
             assertThat(unauth.headers().firstValue("grpc-status")).hasValue("16");
             assertThat(unauth.headers().firstValue("grpc-message")).hasValue("Unauthorized");
-            assertThat(unauth.body()).isEmpty();
+            assertThat(unauth.headers().firstValue("Content-Type")).hasValue("application/proto");
+            var unauthError = ItemError.parseFrom(unauth.body());
+            assertThat(unauthError.getCode()).isEqualTo(16);
+            assertThat(unauthError.getMessage()).isEqualTo("Unauthorized");
+            assertThat(unauthError.getDetailCase()).isEqualTo(ItemError.DetailCase.DETAIL_NOT_SET);
 
             var badDigest = client.send(
                     HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH
@@ -860,8 +864,26 @@ class StreamingUploadAndReadIT {
             assertThat(badDigest.statusCode()).isEqualTo(400);
             assertThat(badDigest.headers().firstValue("grpc-status")).hasValue("3");
             assertThat(badDigest.headers().firstValue("grpc-message")).isPresent().get().asString().isNotBlank();
-            assertThat(badDigest.headers().firstValue("Content-Type")).isEmpty();
-            assertThat(badDigest.body()).isEmpty();
+            var mismatch = ItemError.parseFrom(badDigest.body());
+            assertThat(mismatch.getCode()).isEqualTo(3);
+            assertThat(mismatch.getRejection().getReason()).isEqualTo(RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH);
+
+            // A stale expected revision answers ABORTED with the RevisionConflict detail.
+            var stale = client.send(
+                    HttpRequest.newBuilder(URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH
+                                    + "?account_id=" + account + "&datasource_id=ds-1&drive=default"
+                                    + "&filename=stale.bin&operation_id=proto-op-stale&doc_id=proto-doc-stale&expected_revision=5"))
+                            .header("Accept", "application/proto")
+                            .header("api_token", token)
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(stale.statusCode()).isEqualTo(409);
+            assertThat(stale.headers().firstValue("grpc-status")).hasValue("10");
+            var conflict = ItemError.parseFrom(stale.body()).getConflict();
+            assertThat(conflict.getExpected().getRevision()).isEqualTo(5);
+            assertThat(conflict.getCurrentRevision()).isEqualTo(0);
+            assertThat(conflict.getAddress().getDocId()).isEqualTo("proto-doc-stale");
 
             var uploadUri = URI.create(baseUrl + UploadHttpHandler.UPLOAD_PATH
                     + "?account_id=" + account + "&datasource_id=ds-1&drive=default&filename=proto.pdf"

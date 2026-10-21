@@ -10,6 +10,7 @@ import ai.protomolt.proto.repo.v2.DocumentPart;
 import ai.protomolt.proto.repo.v2.DocumentTarget;
 import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.IntakeOrigin;
+import ai.protomolt.proto.repo.v2.ItemError;
 import ai.protomolt.proto.repo.v2.PartSelector;
 import ai.protomolt.proto.repo.v2.PartWrite;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
@@ -43,7 +44,9 @@ import java.util.function.Supplier;
  * {@code application/proto} gets protobuf instead: success is {@code 200} with the binary
  * {@link UploadDocumentResponse}, and every refusal keeps its HTTP status, carries the gRPC status
  * in {@code grpc-status} (the code number) and {@code grpc-message} (percent-encoded UTF-8), and
- * has an empty body, so a protobuf client never parses JSON.
+ * has a binary {@link ItemError} body: the same code and message, plus the errors.proto detail
+ * the gRPC call would pack ({@code RevisionConflict}, {@code OperationReuse} or
+ * {@code SaveRejection}), so a protobuf client never parses JSON.
  */
 public final class UploadHttpHandler implements HttpHandler {
     /** Canonical HTTP path for raw streaming document uploads. */
@@ -238,7 +241,8 @@ public final class UploadHttpHandler implements HttpHandler {
         } catch (BadRequestException badRequest) {
             sendError(exchange, proto, HTTP_BAD_REQUEST, Status.Code.INVALID_ARGUMENT, badRequest.getMessage());
         } catch (AccessionException failure) {
-            sendError(exchange, proto, mapStatusCode(failure), failure.code(), failure.getMessage());
+            if (proto) sendProtoError(exchange, mapStatusCode(failure), AccessionGrpcService.itemError(failure));
+            else sendError(exchange, false, mapStatusCode(failure), failure.code(), failure.getMessage());
         } catch (RuntimeException failure) {
             sendError(exchange, proto, HTTP_INTERNAL_ERROR, Status.Code.INTERNAL, "Upload failed");
         } finally {
@@ -452,12 +456,24 @@ public final class UploadHttpHandler implements HttpHandler {
         String safeMessage = message == null ? "" : message;
         exchange.getResponseHeaders().set("Connection", "close");
         if (proto) {
-            exchange.getResponseHeaders().set(HEADER_GRPC_STATUS, Integer.toString(grpcCode.value()));
-            exchange.getResponseHeaders().set(HEADER_GRPC_MESSAGE, percentEncode(safeMessage));
-            exchange.sendResponseHeaders(statusCode, -1);
+            sendProtoError(exchange, statusCode,
+                    ItemError.newBuilder().setCode(grpcCode.value()).setMessage(safeMessage).build());
             return;
         }
         sendJson(exchange, statusCode, "{\"error\":\"" + escapeJson(safeMessage) + "\"}");
+    }
+
+    private static void sendProtoError(HttpExchange exchange, int statusCode, ItemError error) throws IOException {
+        byte[] payload = error.toByteArray();
+        var headers = exchange.getResponseHeaders();
+        headers.set("Connection", "close");
+        headers.set(HEADER_GRPC_STATUS, Integer.toString(error.getCode()));
+        headers.set(HEADER_GRPC_MESSAGE, percentEncode(error.getMessage()));
+        headers.set(HEADER_CONTENT_TYPE, PROTO_CONTENT_TYPE);
+        exchange.sendResponseHeaders(statusCode, payload.length);
+        try (var out = exchange.getResponseBody()) {
+            out.write(payload);
+        }
     }
 
     private static void sendProto(HttpExchange exchange, UploadDocumentResponse response) throws IOException {

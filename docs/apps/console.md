@@ -323,13 +323,16 @@ generated from the protos.
   content type are optional. The console hashes the file in slices, picks the
   operation ID and shows both before the first byte is sent, then reports
   bytes sent. It asks the route for protobuf (`Accept: application/proto`):
-  success is a binary `UploadDocumentResponse`, and a refusal keeps its HTTP
-  status with the gRPC status in `grpc-status` and `grpc-message` headers and
-  an empty body. A capacity refusal (`429`, `RESOURCE_EXHAUSTED`) means
-  nothing was saved and can be sent again under the same operation ID. After a
-  send that saved, or one whose answer was lost, the screen asks
-  `GetOperationOutcome` until it answers committed or rejected, and keeps "no
-  outcome yet" and "lookup unavailable" separate. A document detail page of an
+  success is a binary `UploadDocumentResponse` naming the committed
+  revision. An error keeps its HTTP status and comes with a binary
+  `ItemError` body (code, message and the `errors.proto` detail) plus the
+  `grpc-status` and `grpc-message` headers. A capacity error (`429`,
+  `RESOURCE_EXHAUSTED`) means no save happened, and the file can be sent
+  again under the same operation ID. When a send ends without a clear result
+  (a lost connection, a reply without an `ItemError`, or a transient status),
+  the screen polls `GetOperationOutcome` until it reports committed or
+  rejected, shows "no outcome yet" and "lookup unavailable" as two separate
+  states, and offers a resend under the same operation ID. A document detail page of an
   intake document links here to upload its next revision.
 
 Every failed call shows its gRPC status name and the server's message; a

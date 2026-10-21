@@ -5,9 +5,12 @@
  * looked up. The browser sets Content-Length from the file (the route answers
  * 411 without one), progress counts bytes sent, and the route is asked for a
  * binary UploadDocumentResponse (Accept: application/proto) instead of its
- * JSON receipt; a refusal carries grpc-status and grpc-message headers. A
- * capacity refusal (HTTP 429, RESOURCE_EXHAUSTED) is not a failed save: it is
- * retried with the same operation ID.
+ * JSON receipt; a refusal is a binary ItemError (code, message and the
+ * errors.proto detail). A capacity refusal (HTTP 429, RESOURCE_EXHAUSTED) is
+ * not a failed save: it is retried with the same operation ID. An answer that
+ * settles nothing (a lost connection, a gateway error without an ItemError,
+ * UNAVAILABLE or another transient status) is followed by an outcome lookup
+ * and can be sent again under the same operation ID.
  */
 import { fromBinary } from '@bufbuild/protobuf'
 import { Code, type Client } from '@connectrpc/connect'
@@ -16,6 +19,7 @@ import {
   type DocumentService,
   type UploadDocumentResponse,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import { ItemErrorSchema, type ItemError } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { lookupOutcome, type OutcomeAnswer } from './lookupCore'
 import { codeName, type RpcFailure } from './rpcErrorCore'
 import { Sha256 } from './sha256'
@@ -90,9 +94,12 @@ export async function fileSha256(file: Blob, signal: AbortSignal, onProgress?: (
   for (let at = 0; at < file.size; at += HASH_SLICE_BYTES) {
     if (signal.aborted) throw signal.reason
     const end = Math.min(file.size, at + HASH_SLICE_BYTES)
-    hash.update(new Uint8Array(await file.slice(at, end).arrayBuffer()))
+    const slice = new Uint8Array(await file.slice(at, end).arrayBuffer())
+    if (signal.aborted) throw signal.reason
+    hash.update(slice)
     onProgress?.(end)
   }
+  if (signal.aborted) throw signal.reason
   return hash.hex()
 }
 
@@ -120,6 +127,11 @@ export function planUpload(form: UploadForm, file: File, operationId: string, sh
   const contentType = optional('Content type', form.contentType) ?? file.type
   if (contentType !== '') params.set('content_type', contentType)
   const expected = form.expectedRevision.trim()
+  if (expected !== '' && docId === null) {
+    // Without a document ID the route derives one from the new file's digest,
+    // a document that almost never exists, so the update could only conflict.
+    throw new UploadInputError('Expected revision', 'needs a Document ID: an update names the document it advances')
+  }
   if (expected !== '') {
     let revision: bigint
     try {
@@ -138,12 +150,18 @@ export type UploadSendResult =
   | { kind: 'saved'; response: UploadDocumentResponse }
   /** HTTP 429 or RESOURCE_EXHAUSTED: nothing was saved; send again with the same operation ID. */
   | { kind: 'capacity'; httpStatus: number; failure: RpcFailure }
-  /** HTTP 401: no session, or an expired one; the screen starts sign-in. */
+  /** HTTP 401: the route did not accept the caller's credential. */
   | { kind: 'unauthenticated'; failure: RpcFailure }
-  /** The route answered with a refusal. */
-  | { kind: 'refused'; httpStatus: number; failure: RpcFailure }
-  /** No answer arrived (network loss or cancel): the save may or may not have committed. */
-  | { kind: 'no-answer'; reason: string }
+  /** A definite refusal, with the errors.proto detail when the route sent one. */
+  | { kind: 'refused'; httpStatus: number; failure: RpcFailure; error: ItemError | null }
+  /**
+   * Nothing settled: no answer arrived, the answer could not be read, or it was
+   * a transient status. The save may or may not have committed.
+   */
+  | { kind: 'unsettled'; reason: string; failure: RpcFailure | null }
+
+// Statuses after which a save may still have committed.
+const UNSETTLED = new Set<number>([Code.Unknown, Code.DeadlineExceeded, Code.Internal, Code.Unavailable])
 
 /** The part of XMLHttpRequest a send uses; tests supply a fake. */
 export type UploadRequest = Pick<
@@ -162,23 +180,28 @@ export type UploadRequest = Pick<
   | 'onabort'
 > & { readonly upload: Pick<XMLHttpRequestUpload, 'onprogress'> }
 
-// The route's refusal in protobuf mode: the HTTP status plus grpc-status and
-// grpc-message headers, with no body to parse. A route that answers in any
-// other content type is reported as such, never parsed.
-function refusal(request: UploadRequest): RpcFailure {
-  const header = request.getResponseHeader('grpc-status')
-  const message = request.getResponseHeader('grpc-message')
-  if (header !== null) {
-    const number = Number(header)
-    if (Number.isInteger(number) && number >= 1 && number <= 16) {
-      return { code: codeName(number as Code), codeNumber: number, message: message === null ? '' : decodeURIComponent(message) }
+// The route's refusal in protobuf mode: the HTTP status and a binary
+// ItemError body. Anything else (a proxy's error page, an old host's JSON) is
+// reported by its HTTP status and content type, never parsed.
+function refusal(request: UploadRequest): { failure: RpcFailure; error: ItemError | null } {
+  const type = request.getResponseHeader('content-type') ?? ''
+  if (type.startsWith(PROTO)) {
+    try {
+      const error = fromBinary(ItemErrorSchema, new Uint8Array(request.response as ArrayBuffer))
+      if (error.code >= 1 && error.code <= 16) {
+        return { failure: { code: codeName(error.code as Code), codeNumber: error.code, message: error.message }, error }
+      }
+    } catch {
+      // Not an ItemError: reported below by status and content type.
     }
   }
-  const type = request.getResponseHeader('content-type') ?? '(none)'
   return {
-    code: `HTTP ${request.status}`,
-    codeNumber: null,
-    message: `The route answered without a grpc-status header (content type ${type}); the console reads only protobuf answers.`,
+    failure: {
+      code: `HTTP ${request.status}`,
+      codeNumber: null,
+      message: `The route answered without a protobuf error (content type ${type || '(none)'}); the console reads only protobuf answers.`,
+    },
+    error: null,
   }
 }
 
@@ -189,7 +212,7 @@ export function sendUpload(
   onProgress: (sent: number, total: number) => void,
   signal: AbortSignal,
 ): Promise<UploadSendResult> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const request = newRequest()
     request.open('POST', plan.url)
     request.withCredentials = true
@@ -206,27 +229,29 @@ export function sendUpload(
     request.onload = () => {
       if (request.status === 200) {
         const type = request.getResponseHeader('content-type') ?? ''
+        // A 200 means the route committed; an answer the console cannot read
+        // leaves only the outcome lookup to say what was saved.
         if (!type.startsWith(PROTO)) {
-          signal.removeEventListener('abort', onAbort)
-          reject(new Error(`The upload route answered 200 as ${type || '(no content type)'}; the console reads only ${PROTO}.`))
+          done({ kind: 'unsettled', reason: `The route answered 200 as ${type || '(no content type)'}, which the console does not read.`, failure: null })
           return
         }
         try {
           done({ kind: 'saved', response: fromBinary(UploadDocumentResponseSchema, new Uint8Array(request.response as ArrayBuffer)) })
         } catch (error) {
-          signal.removeEventListener('abort', onAbort)
-          reject(new Error(`The upload route's answer does not decode as UploadDocumentResponse: ${(error as Error).message}`))
+          done({ kind: 'unsettled', reason: `The route's 200 answer does not decode as UploadDocumentResponse: ${(error as Error).message}`, failure: null })
         }
         return
       }
-      const failure = refusal(request)
+      const { failure, error } = refusal(request)
       if (request.status === 401 || failure.codeNumber === Code.Unauthenticated) done({ kind: 'unauthenticated', failure })
       else if (request.status === 429 || failure.codeNumber === Code.ResourceExhausted)
         done({ kind: 'capacity', httpStatus: request.status, failure })
-      else done({ kind: 'refused', httpStatus: request.status, failure })
+      else if (error === null || UNSETTLED.has(error.code))
+        done({ kind: 'unsettled', reason: `The route answered HTTP ${request.status}, which does not settle the save.`, failure })
+      else done({ kind: 'refused', httpStatus: request.status, failure, error })
     }
-    request.onerror = () => done({ kind: 'no-answer', reason: 'The connection failed before the route answered.' })
-    request.onabort = () => done({ kind: 'no-answer', reason: 'The upload was cancelled before the route answered.' })
+    request.onerror = () => done({ kind: 'unsettled', reason: 'The connection failed before the route answered.', failure: null })
+    request.onabort = () => done({ kind: 'unsettled', reason: 'The upload was cancelled before the route answered.', failure: null })
     request.send(plan.file)
   })
 }
@@ -274,6 +299,7 @@ export async function followOutcome(
   const sleep = polling.sleep ?? abortableSleep
   let answer: OutcomeAnswer | null = null
   for (let attempt = 1; attempt <= polling.attempts; attempt++) {
+    if (signal.aborted) throw signal.reason
     answer = await lookupOutcome(client, accountId, operationId, signal)
     onAnswer(answer, attempt)
     if (answer.state === 'committed' || answer.state === 'rejected') return answer

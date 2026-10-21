@@ -64,9 +64,29 @@
             Retry with the same operation ID
           </v-btn>
         </v-alert>
-        <RpcFailureAlert v-if="result?.kind === 'refused'" :failure="result.failure" :title="`The upload route refused the file (HTTP ${result.httpStatus})`" class="mt-3" />
-        <v-alert v-if="result?.kind === 'no-answer'" type="info" variant="tonal" density="compact" class="mt-3" data-testid="up-no-answer">
-          {{ result.reason }} The save may still commit; its outcome is below.
+        <template v-if="result?.kind === 'refused'">
+          <RpcFailureAlert :failure="result.failure" :title="`The upload route refused the file (HTTP ${result.httpStatus})`" class="mt-3" />
+          <div v-if="result.error?.detail.case === 'conflict'" class="text-body-2" data-testid="up-conflict">
+            Revision {{ result.error.detail.value.expected?.expected.value ?? '(none)' }} was expected; the current revision is
+            {{ result.error.detail.value.currentRevision === 0n ? 'none (no such document)' : result.error.detail.value.currentRevision }}.
+          </div>
+          <div v-if="result.error?.detail.case === 'rejection'" class="text-body-2" data-testid="up-rejection">
+            {{ rejectionReason(result.error.detail.value.reason) }}: {{ result.error.detail.value.message }}
+            <div v-for="(v, i) in result.error.detail.value.violations" :key="i" class="text-caption text-mono">
+              {{ v.ruleId }} {{ v.fieldPath }} {{ v.message }}
+            </div>
+          </div>
+        </template>
+        <template v-if="result?.kind === 'unauthenticated'">
+          <RpcFailureAlert :failure="result.failure" title="The upload route did not accept your credential" class="mt-3" />
+          <v-btn size="small" variant="tonal" data-testid="up-sign-in" @click="signIn">Sign in</v-btn>
+        </template>
+        <v-alert v-if="result?.kind === 'unsettled'" type="info" variant="tonal" density="compact" class="mt-3" data-testid="up-unsettled">
+          {{ result.reason }} The save may or may not have committed; its outcome is below.
+          <div v-if="result.failure" class="text-caption text-mono">{{ result.failure.code }}: {{ result.failure.message }}</div>
+          <v-btn size="small" variant="tonal" class="mt-2" :disabled="busy" data-testid="up-resend" @click="send">
+            Send again with the same operation ID
+          </v-btn>
         </v-alert>
         <RpcFailureAlert v-if="failure" :failure="failure" title="Uploading" class="mt-3" />
 
@@ -109,7 +129,7 @@ import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
 import { ListDrivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { RejectionReasonSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { REPOSITORY_UPLOAD_REQUEST, useRepositoryClients, useSignIn } from '@/repository/clients'
-import { byteSize, enumLabel } from '@/repository/formatCore'
+import { byteSize, enumLabel, instant } from '@/repository/formatCore'
 import type { OutcomeAnswer } from '@/repository/lookupCore'
 import { isOwnCancellation, rpcFailure, type RpcFailure } from '@/repository/rpcErrorCore'
 import {
@@ -206,10 +226,13 @@ async function start() {
   hashed.value = 0
   try {
     const sha256 = await fileSha256(chosen, signal, (n) => (hashed.value = n))
+    if (signal.aborted) return
     plan.value = planUpload(form, chosen, operationId, sha256)
   } catch (error) {
-    phase.value = 'idle'
-    if (!signal.aborted) failure.value = rpcFailure(error)
+    if (!signal.aborted) {
+      phase.value = 'idle'
+      failure.value = rpcFailure(error)
+    }
     return
   }
   await send()
@@ -234,18 +257,27 @@ async function send() {
   }
   result.value = answer
   phase.value = 'idle'
-  if (answer.kind === 'unauthenticated') {
-    signIn()
+  // The screen went away while the send ran: nothing more to show or ask.
+  if (signal.aborted && answer.kind !== 'unsettled') return
+  if (answer.kind === 'saved') {
+    const saved = answer.response.saved
+    const accession = saved?.accession
+    if (saved === undefined || accession === undefined) {
+      failure.value = rpcFailure(new Error('The upload route answered 200 without the saved accession.'))
+      return
+    }
+    // The route's own answer is the committed revision; no lookup is needed.
+    replayed.value = saved.replayed
+    outcome.value = { state: 'committed', accession, recordedAt: instant(accession.committedAt) }
     return
   }
-  if (answer.kind === 'saved') replayed.value = answer.response.saved?.replayed ?? false
-  // A send that saved, or whose answer was lost, has an outcome to look up.
-  if (answer.kind === 'saved' || answer.kind === 'no-answer') await follow()
+  // An unsettled send may still have committed: ask what was recorded.
+  if (answer.kind === 'unsettled') await follow()
 }
 
 async function follow() {
   const current = plan.value
-  if (current === null) return
+  if (current === null || scope.closed) return
   const signal = scope.next()
   phase.value = 'following'
   try {
