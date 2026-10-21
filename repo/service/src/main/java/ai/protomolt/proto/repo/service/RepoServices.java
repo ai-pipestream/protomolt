@@ -99,6 +99,9 @@ public final class RepoServices implements AutoCloseable {
     // through the drive ledger onto this host's blob store.
     private final ai.protomolt.proto.repo.catalog.PostgresCatalog catalog;
     private final ai.protomolt.proto.repo.accession.DocumentUploads v2Uploads;
+    private final ai.protomolt.proto.repo.accession.DocumentSaves.Drives v2Drives;
+    private final ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolver v2Resolver;
+    private final ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits v2Limits;
     private final ai.protomolt.proto.repo.accession.OutboxRelay v2OutboxRelay;
     // One caller mapping for the document, drive and archive services; account
     // bindings are set before serving (withAccountBindings).
@@ -262,6 +265,9 @@ public final class RepoServices implements AutoCloseable {
                     : null;
             this.catalog = v2 == null ? null : v2.catalog();
             this.v2Uploads = v2 == null ? null : v2.uploads();
+            this.v2Drives = v2 == null ? null : v2.drives();
+            this.v2Resolver = v2 == null ? null : v2.resolver();
+            this.v2Limits = v2 == null ? null : v2.limits();
             this.v2OutboxRelay = v2 == null ? null : v2.relay();
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
                     new ArchiveGrpcService(archiveOperations, callerBindings, readBudget),
@@ -363,6 +369,33 @@ public final class RepoServices implements AutoCloseable {
         if (managedArchive == null) throw new IllegalStateException("Managed archive storage is not configured");
         startLifecycle();
         return managedArchive.mutations;
+    }
+
+    /**
+     * The parts-based v2 store as the saves run over it: the catalog, the
+     * per-account drive resolution, and the schema admission the host applies.
+     */
+    public record V2Composition(ai.protomolt.proto.repo.catalog.PostgresCatalog catalog,
+            ai.protomolt.proto.repo.accession.DocumentSaves.Drives drives,
+            ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Resolver resolver,
+            ai.protomolt.proto.repo.admission.DocumentSchemaAdmission.Limits limits,
+            ai.protomolt.proto.repo.admission.DocumentSchemas schemas) {
+    }
+
+    /**
+     * The v2 composition for a host that writes through its own
+     * {@link ai.protomolt.proto.repo.accession.DocumentSaves} over this store,
+     * such as the dev corpus seeder, which commits under a stepped clock. The
+     * saves it builds see the same catalog, drives and admission as this host's
+     * transports; nothing is copied.
+     *
+     * @return the catalog, drives and admission of this composition
+     */
+    public V2Composition v2Composition() {
+        requireOpen();
+        requireFullProfile();
+        return new V2Composition(catalog, v2Drives, v2Resolver, v2Limits,
+                ai.protomolt.proto.repo.admission.DocumentSchemas.compiled());
     }
 
     /** Drive operations sharing this composition's storage lifetime. */

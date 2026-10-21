@@ -44,9 +44,14 @@ final class RepoV2Wiring {
     private RepoV2Wiring() {
     }
 
-    /** What the v2 wiring produced; {@code relay} is null without Kafka eventing. */
+    /**
+     * What the v2 wiring produced; {@code relay} is null without Kafka eventing.
+     * The drives, resolver and limits are the ones the saves run with, for a
+     * host that writes through its own {@link DocumentSaves} over the same store.
+     */
     record Wired(PostgresCatalog catalog, DocumentUploads uploads, OutboxRelay relay,
-            AccessionGrpcService accession) {
+            AccessionGrpcService accession, DocumentSaves.Drives drives,
+            DocumentSchemaAdmission.Resolver resolver, DocumentSchemaAdmission.Limits limits) {
     }
 
     /**
@@ -140,7 +145,7 @@ final class RepoV2Wiring {
                     config.kafkaTopic(), config.schemaRegistryUrl()));
             relay = new OutboxRelay(catalog, publisher);
         }
-        return new Wired(catalog, v2Uploads, relay, accession);
+        return new Wired(catalog, v2Uploads, relay, accession, v2Drives, builtinSchemas, limits);
     }
 
     /**
