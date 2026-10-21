@@ -72,7 +72,78 @@ does not silently disappear.
 Values are coerced to the target field type with the usual rules
 (`TypeConverter`): exact types pass through, scalars widen, messages re-parse
 across descriptor instances of the same type, repeated fields copy
-element-wise.
+element-wise. A message of a different type goes through a nested projection,
+described next.
+
+## Nested projections
+
+A mapped message field whose own type declares `(sources)` gets a child
+projection, compiled together with the parent. A source value of a declared
+child source type is projected through the child: a singular value once, a
+repeated value element by element. This is how a list of one message type
+builds a list of another:
+
+```proto
+message Rendition {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "acme.store.v1.Blob"
+  };
+
+  string name = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "has(source.filename) ? source.filename : source.blob_id"
+  }];
+  string mime_type = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "mime_type"}},
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      literal: {string_value: "application/octet-stream"}
+    }
+  ];
+  int64 size_bytes = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "size_bytes"}
+  }];
+}
+
+message EntryView {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "acme.store.v1.StoredDocument"
+  };
+
+  // Each Blob of the list becomes one Rendition.
+  repeated Rendition renditions = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blobs.blob"}
+  }];
+  // A CEL list feeds the child the same way.
+  repeated Rendition large = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.blob_bag.blobs.blob.filter(b, b.size_bytes > 1024)"
+  }];
+  // The singular arm becomes one Rendition.
+  Rendition primary = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "blob_bag.blob"}
+  }];
+}
+```
+
+For each message value the field receives:
+
+- **The field's own type** (by full name) is copied as is. It is not
+  projected again, so a value already in view shape keeps its fields.
+- **A declared source of the child** is projected through the child, with
+  the child's own `from` and `default_from` rules and its CEL bound to that
+  element as `source`.
+- **Any other message type** fails the projection, naming the field, the
+  value's type and the child's declared sources.
+
+A field whose message type declares no `(sources)` keeps the coercion rules
+above. Child CEL rules are validated when the parent is built, so a child
+typo fails `forTarget` for the parent. Recursive types work: a target that
+contains itself reuses its own projection as the child.
+
+In `sourceMask`, a path that feeds a child stays as written (here
+`blob_bag.blobs.blob`). A FieldMask path names the whole subtree below it, and
+a path ending in a repeated field cannot be extended, so the parent path
+already covers every field the child reads; child CEL never makes the parent
+mask incomplete. The child's own `sourceMask` over its source type reports
+its reads in detail.
 
 ## Usage
 

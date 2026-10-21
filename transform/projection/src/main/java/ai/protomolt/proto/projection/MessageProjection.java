@@ -21,13 +21,15 @@ import com.google.protobuf.Message;
 import com.google.protobuf.Value;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.LinkedHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A compiled projection: builds instances of one message type (the target) from
@@ -53,6 +55,14 @@ import java.util.LinkedHashMap;
  *   <li>A CEL expression that compiles but fails at evaluation fails the
  *       projection; guard presence-dependent logic with {@code has()}.</li>
  * </ul>
+ *
+ * <p>A mapped message field whose own type declares {@code (sources)} gets a
+ * child projection, compiled with this one. A source value of another message
+ * type, singular or element by element for a repeated field, is projected
+ * through the child when the child declares that type; a value of the field's
+ * own type is copied as is; any other message type fails the projection. This
+ * is how a list of one message type (stored blobs, say) builds a list of
+ * another (renditions). Child CEL rules are validated with the parent.</p>
  *
  * <p>The mapping also derives {@link FieldMask}s: {@link #targetMask()} names
  * every populated target field (partial-response/update masks), and
@@ -110,6 +120,10 @@ public final class MessageProjection {
     private final List<String> declaredSources;
     private final List<FieldRule> rules;
     private final ProtoFieldMapper fieldMapper;
+    // Child projections per mapped message field. Filled while the projection is
+    // compiled (a recursive type needs this instance before its children exist) and
+    // never changed after; the concurrent map makes those entries safely visible.
+    private final Map<FieldDescriptor, MessageProjection> children = new ConcurrentHashMap<>();
     private final TypeConverter typeConverter = new TypeConverter();
     // A retention budget for compiled evaluators, not a limit on accepted source schemas.
     static final int MAX_CACHED_EVALUATORS = 128;
@@ -154,8 +168,8 @@ public final class MessageProjection {
      *
      * @return the projection, or empty when the target carries no
      *         {@code (sources)} option
-     * @throws ProjectionException when a CEL rule compiles against no
-     *         resolvable declared source
+     * @throws ProjectionException when a CEL rule, of this target or of a child
+     *         projection, compiles against no resolvable declared source
      */
     public static Optional<MessageProjection> forTarget(Descriptor target, SourceResolver sources) {
         return forTarget(target, sources, new ProtoFieldMapperImpl(DescriptorRegistry.create(false)));
@@ -165,9 +179,29 @@ public final class MessageProjection {
             Descriptor target, SourceResolver sources, ProtoFieldMapper fieldMapper) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(sources, "sources");
+        return Optional.ofNullable(compile(target, sources, fieldMapper, new HashMap<>()));
+    }
+
+    /**
+     * Compiles {@code target} and, recursively, a child projection for every
+     * mapped message field whose type declares sources. {@code compiled} holds
+     * the projections of this compilation by target type, so a recursive type
+     * reuses its own instance instead of compiling forever.
+     *
+     * @return the projection, or {@code null} when {@code target} declares no sources
+     */
+    private static MessageProjection compile(
+            Descriptor target,
+            SourceResolver sources,
+            ProtoFieldMapper fieldMapper,
+            Map<Descriptor, MessageProjection> compiled) {
+        MessageProjection existing = compiled.get(target);
+        if (existing != null) {
+            return existing;
+        }
         var messageOptions = messageOptions(target);
         if (!messageOptions.hasExtension(ProjectionProto.sources)) {
-            return Optional.empty();
+            return null;
         }
         List<String> declared = messageOptions.getExtension(ProjectionProto.sources).getSourceList();
         if (declared.isEmpty()) {
@@ -194,8 +228,19 @@ public final class MessageProjection {
         }
 
         MessageProjection projection = new MessageProjection(target, declared, rules, fieldMapper);
+        compiled.put(target, projection);
+        for (FieldRule rule : rules) {
+            FieldDescriptor field = rule.field();
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE || field.isMapField()) {
+                continue;
+            }
+            MessageProjection child = compile(field.getMessageType(), sources, fieldMapper, compiled);
+            if (child != null) {
+                projection.children.put(field, child);
+            }
+        }
         projection.validateCel(sources);
-        return Optional.of(projection);
+        return projection;
     }
 
     private static Rule toRule(
@@ -304,6 +349,12 @@ public final class MessageProjection {
      * against this source type the mask is a lower bound and
      * {@link SourceMask#complete()} is {@code false} — do not prune on it.</p>
      *
+     * <p>A path that feeds a child projection stays in the mask as written,
+     * not narrowed to the child's reads. A {@link FieldMask} path names the
+     * whole subtree below it, and a path ending in a repeated field cannot be
+     * extended, so the parent path already covers every field the child reads,
+     * CEL included; child rules never make the parent mask incomplete.</p>
+     *
      * @throws ProjectionException when {@code sourceType} is not a declared source
      */
     public SourceMask sourceMask(Descriptor sourceType) {
@@ -371,8 +422,9 @@ public final class MessageProjection {
      * Projects one source message into a new target instance.
      *
      * @throws ProjectionException when the source type is not declared, when a
-     *         CEL rule fails at evaluation, or when a value cannot be coerced
-     *         to its target field type
+     *         CEL rule fails at evaluation, when a value cannot be coerced
+     *         to its target field type, or when a message value is neither its
+     *         field's type nor a declared source of that field's child projection
      */
     public DynamicMessage project(Message source) {
         Objects.requireNonNull(source, "source");
@@ -449,19 +501,43 @@ public final class MessageProjection {
                             + field.getFullName() + " is not a list: " + value.getClass().getName());
                 }
                 for (Object element : elements) {
-                    out.addRepeatedField(field, typeConverter.convertToFieldType(element, field));
+                    out.addRepeatedField(field, convert(field, element));
                 }
             } else {
                 if (value instanceof List<?>) {
                     throw new ProjectionException("Value for singular projection field "
                             + field.getFullName() + " is a list");
                 }
-                out.setField(field, typeConverter.convertToFieldType(value, field));
+                out.setField(field, convert(field, value));
             }
         } catch (IllegalArgumentException e) {
             throw new ProjectionException(
                     "Cannot coerce value for projection field " + field.getFullName(), e);
         }
+    }
+
+    /**
+     * Converts one value (a singular value or one element of a list) for
+     * {@code field}. A message of another type goes through the field's child
+     * projection; everything else, including a message of the field's own type,
+     * follows {@link TypeConverter}.
+     */
+    private Object convert(FieldDescriptor field, Object value) {
+        MessageProjection child = children.get(field);
+        if (child != null && value instanceof Message message) {
+            Descriptor valueType = message.getDescriptorForType();
+            if (!valueType.getFullName().equals(field.getMessageType().getFullName())) {
+                if (!child.supports(valueType)) {
+                    throw new ProjectionException("Value of type " + valueType.getFullName()
+                            + " for projection field " + field.getFullName() + " is neither "
+                            + field.getMessageType().getFullName()
+                            + " nor a declared source of its projection (declared: "
+                            + String.join(", ", child.declaredSources()) + ")");
+                }
+                return child.project(message);
+            }
+        }
+        return typeConverter.convertToFieldType(value, field);
     }
 
     private synchronized CelEvaluator evaluatorFor(Descriptor sourceType) {
