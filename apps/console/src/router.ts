@@ -6,6 +6,8 @@ export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/tasks' },
+    // The repository console's sign-in page; a failed login lands here with its reason.
+    { path: '/sign-in', name: 'sign-in', component: () => import('./views/SignInView.vue') },
     { path: '/start', name: 'starter', component: () => import('./views/CorrectionStarterView.vue') },
     {
       path: '/tasks',
