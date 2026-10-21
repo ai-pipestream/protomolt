@@ -8,6 +8,7 @@ import { AccountService } from '@/gen/ai/protomolt/proto/account/v1/account_serv
 import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
 import { DriveService } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
 import { DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
+import type { UploadRequest } from './uploadCore'
 
 /** One client per service the screens call. */
 export interface RepositoryClients {
@@ -37,3 +38,17 @@ export function useRepositoryClients(): RepositoryClients {
   }
   return clients
 }
+
+/** Starts sign-in for a call answered UNAUTHENTICATED outside the Connect transport. */
+export const REPOSITORY_SIGN_IN: InjectionKey<() => void> = Symbol('repository-sign-in')
+
+export function useSignIn(): () => void {
+  const signIn = inject(REPOSITORY_SIGN_IN)
+  if (signIn === undefined) {
+    throw new Error('Repository sign-in was not provided: provide REPOSITORY_SIGN_IN at the app root.')
+  }
+  return signIn
+}
+
+/** Makes the HTTP request an upload sends; the browser's XMLHttpRequest unless a test provides one. */
+export const REPOSITORY_UPLOAD_REQUEST: InjectionKey<() => UploadRequest> = Symbol('repository-upload-request')

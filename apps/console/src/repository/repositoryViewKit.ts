@@ -8,7 +8,7 @@ import type { ConnectRouter } from '@connectrpc/connect'
 import { createMemoryHistory, createRouter, type RouteLocationRaw, type Router } from 'vue-router'
 import type { Component } from 'vue'
 import { installDomStubs, vuetifyForTests } from '@/componentTestKit'
-import { REPOSITORY_CLIENTS } from './clients'
+import { REPOSITORY_CLIENTS, REPOSITORY_SIGN_IN } from './clients'
 import { routerClients } from './repositoryTestKit'
 
 const stub = { template: '<div />' }
@@ -21,6 +21,7 @@ export function repositoryRouter(): Router {
       { path: '/repository/accounts/:accountId', name: 'repository-account', component: stub },
       { path: '/repository/document', name: 'repository-document', component: stub },
       { path: '/repository/lookup', name: 'repository-lookup', component: stub },
+      { path: '/repository/upload', name: 'repository-upload', component: stub },
       { path: '/repository/archive', name: 'repository-archive', component: stub },
       { path: '/repository/archive-entry', name: 'repository-archive-entry', component: stub },
     ],
@@ -32,6 +33,7 @@ export async function mountRepositoryView(
   view: Component,
   location: RouteLocationRaw,
   routes: (router: ConnectRouter) => void,
+  provide: Record<symbol, unknown> = {},
 ) {
   installDomStubs()
   const router = repositoryRouter()
@@ -40,7 +42,13 @@ export async function mountRepositoryView(
   const wrapper = mount(view, {
     global: {
       plugins: [vuetifyForTests(), router],
-      provide: { [REPOSITORY_CLIENTS as symbol]: routerClients(routes) },
+      provide: {
+        [REPOSITORY_CLIENTS as symbol]: routerClients(routes),
+        [REPOSITORY_SIGN_IN as symbol]: () => {
+          throw new Error('This test did not expect a sign-in.')
+        },
+        ...provide,
+      },
     },
     attachTo: document.body,
   })

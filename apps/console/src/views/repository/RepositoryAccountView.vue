@@ -6,6 +6,10 @@
         <v-icon size="small">mdi-domain</v-icon>
         <span class="text-mono">{{ accountId }}</span>
         <v-spacer />
+        <v-btn size="small" variant="tonal" prepend-icon="mdi-upload" data-testid="account-upload"
+               :to="{ name: 'repository-upload', query: { account: accountId } }">
+          Upload
+        </v-btn>
         <v-btn size="small" variant="tonal" prepend-icon="mdi-magnify" :to="{ name: 'repository-lookup', query: { account: accountId } }">
           Look up
         </v-btn>

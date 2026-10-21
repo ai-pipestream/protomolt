@@ -66,6 +66,11 @@ export const router = createRouter({
           component: () => import('./views/repository/RepositoryDocumentView.vue'),
         },
         {
+          path: 'upload',
+          name: 'repository-upload',
+          component: () => import('./views/repository/RepositoryUploadView.vue'),
+        },
+        {
           path: 'archive',
           name: 'repository-archive',
           component: () => import('./views/repository/RepositoryArchiveView.vue'),
