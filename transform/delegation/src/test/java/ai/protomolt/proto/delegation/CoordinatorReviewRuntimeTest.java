@@ -322,6 +322,67 @@ class CoordinatorReviewRuntimeTest {
         }
     }
 
+    @Test
+    void theReducedReviewIsReusedWhileTheTranscriptIsUnchangedAndRecomputedAfterAnAppend()
+            throws Exception {
+        Transcript beforeCancel;
+        Transcript afterCancel;
+        try (Harness harness = new Harness(new SnapshotRepository(new AtomicReference<>(
+                Transcript.getDefaultInstance())), new MutableClock(START),
+                context -> CandidateReviewer.ReviewDecision.pending())) {
+            harness.start();
+            harness.coordinator.offer(WORKER, TASK, DelegationFixtures.spec("build"),
+                    Duration.ofMinutes(2));
+            harness.releaseCandidate();
+            harness.await(entry -> entry.hasCoordinatorFrame()
+                    && entry.getCoordinatorFrame().hasReviewDeferred());
+            beforeCancel = harness.coordinator.transcript();
+            harness.coordinator.cancel(TASK, "no longer needed");
+            afterCancel = harness.coordinator.transcript();
+        }
+        assertThat(afterCancel.getEntriesCount()).isEqualTo(beforeCancel.getEntriesCount() + 1);
+        TranscriptEntry cancelEntry = afterCancel.getEntries(afterCancel.getEntriesCount() - 1);
+
+        DelegationCoordinatorState state = new DelegationCoordinatorState();
+        DelegationReplay.restore(new DelegationReducer(), state, beforeCancel);
+        assertThat(state.transcriptVersion).isEqualTo(beforeCancel.getEntriesCount());
+        DelegationReducer.ReviewState authoritative = new DelegationReducer()
+                .reduce(afterCancel).tasks().get(TASK).review();
+
+        Object lock = new Object();
+        java.util.concurrent.ExecutorService executor =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            CoordinatorReviewRuntime runtime = new CoordinatorReviewRuntime(lock, state,
+                    CandidateReviewer.manual(), new MutableClock(START), REVIEW_WINDOW, false,
+                    executor, new DelegationReducer(), new NoopFrames());
+            DelegationCoordinatorState.TaskRuntime task = state.tasks.get(TASK);
+            synchronized (lock) {
+                DelegationReducer.ReviewState first = runtime.currentReview(task);
+                assertThat(first.status()).isEqualTo(DelegationReducer.ReviewStatus.DEFERRED);
+                // Nothing appended: the cached projection answers, instance-identical.
+                assertThat(runtime.currentReview(task)).isSameAs(first);
+
+                state.record(cancelEntry);
+                assertThat(state.transcriptVersion).isEqualTo(afterCancel.getEntriesCount());
+                DelegationReducer.ReviewState afterAppend = runtime.currentReview(task);
+                assertThat(afterAppend).isNotSameAs(first);
+                assertThat(afterAppend).isEqualTo(authoritative);
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static final class NoopFrames implements CoordinatorFrames {
+        @Override public void emit(DelegationCoordinatorState.Session session, String taskId,
+                int attempt, DelegateResponse.Builder payload) { }
+        @Override public void emit(DelegationCoordinatorState.Session session, String taskId,
+                int attempt, DelegateResponse.Builder payload, Runnable afterPersist) { }
+        @Override public void applyReview(DelegationCoordinatorState.TaskRuntime task,
+                CandidateReviewer.ReviewDecision decision, String invocationId) { }
+    }
+
     private static CompletionCandidate candidate(WorkerRunner.WorkerTask task) {
         CompletionCandidate.Builder candidate = CompletionCandidate.newBuilder()
                 .setAttempt(task.offer().getAttempt()).setRevision(task.expectedRevision())

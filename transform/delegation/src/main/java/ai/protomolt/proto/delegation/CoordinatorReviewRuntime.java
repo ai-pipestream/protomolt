@@ -43,6 +43,15 @@ final class CoordinatorReviewRuntime {
     private final DelegationReducer reducer;
     private final CoordinatorFrames frames;
 
+    /**
+     * The last reduced transcript projection and the {@code state.transcriptVersion} it was
+     * reduced at. The transcript is append-only through {@code state.record}, so a matching
+     * version means the reduction is still exact; both fields are touched only under the
+     * coordinator monitor.
+     */
+    private DelegationReducer.Result reduced;
+    private long reducedVersion = -1;
+
     CoordinatorReviewRuntime(Object lock, DelegationCoordinatorState state,
             CandidateReviewer reviewer, Clock clock, java.time.Duration reviewWindow,
             boolean scheduleReviewDeadlines, ExecutorService runtimeTasks,
@@ -123,12 +132,26 @@ final class CoordinatorReviewRuntime {
      * coordinator monitor.
      */
     DelegationReducer.ReviewState currentReview(TaskRuntime task) {
-        DelegationReducer.Result result = reducer.reduce(
-                Transcript.newBuilder().addAllEntries(state.entries).build());
+        DelegationReducer.Result result = reduction();
         if (!result.clean() || !result.tasks().containsKey(task.taskId)) {
             throw new IllegalStateException("current review projection is unavailable");
         }
         return result.tasks().get(task.taskId).review();
+    }
+
+    /**
+     * The transcript reduction at the current transcript version: when no entry has been
+     * appended since the last reduction the cached {@link DelegationReducer.Result} (an
+     * immutable value) is reused instead of copying and re-reducing the full history.
+     * Callers hold the coordinator monitor.
+     */
+    private DelegationReducer.Result reduction() {
+        if (reduced == null || reducedVersion != state.transcriptVersion) {
+            reduced = reducer.reduce(
+                    Transcript.newBuilder().addAllEntries(state.entries).build());
+            reducedVersion = state.transcriptVersion;
+        }
+        return reduced;
     }
 
     /**
@@ -170,8 +193,7 @@ final class CoordinatorReviewRuntime {
      * at coordinator construction, under the coordinator monitor, after replay.
      */
     void recordInterruptedReviews() {
-        DelegationReducer.Result result = reducer.reduce(
-                Transcript.newBuilder().addAllEntries(state.entries).build());
+        DelegationReducer.Result result = reduction();
         for (var snapshot : result.tasks().values()) {
             if (snapshot.phase() != DelegationReducer.Phase.CANDIDATE
                     || snapshot.review().status() != DelegationReducer.ReviewStatus.RUNNING)

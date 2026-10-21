@@ -9,6 +9,7 @@ import com.google.protobuf.util.JsonFormat.TypeRegistry;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Type resolution against the descriptors a recorded run was checked against. Replay
@@ -72,6 +73,25 @@ final class ReplaySchema {
             collectFileTypes(file, builder, seen);
         }
         return builder.build();
+    }
+
+    /**
+     * A memoized supplier of the replay schema's {@link TypeRegistry}: the registry is
+     * built on the first {@code get()} and the same instance answers every later call,
+     * so one replay traverses the descriptor graph at most once no matter how many
+     * grounded structured steps it carries. Not thread-safe; replay is sequential.
+     */
+    static Supplier<TypeRegistry> lazyTypeRegistry(List<FileDescriptor> schema) {
+        return new Supplier<>() {
+            private TypeRegistry registry;
+
+            @Override public TypeRegistry get() {
+                if (registry == null) {
+                    registry = typeRegistry(schema);
+                }
+                return registry;
+            }
+        };
     }
 
     private static void collectFileTypes(FileDescriptor file, TypeRegistry.Builder out,

@@ -24,6 +24,7 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import com.google.protobuf.util.JsonFormat.TypeRegistry;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import static ai.protomolt.proto.workflow.ReplayFixtures.buildMessage;
 import static ai.protomolt.proto.workflow.ReplayFixtures.mask;
@@ -119,6 +121,7 @@ public final class WorkflowReplay {
             registry.registerFile(file);
         }
         ScopedProtoMapper mapper = new ScopedProtoMapper(registry);
+        Supplier<TypeRegistry> typeRegistry = ReplaySchema.lazyTypeRegistry(schema);
 
         Descriptor inputType = findMessage(schema, workflow.getInputType());
         if (inputType == null) {
@@ -178,7 +181,7 @@ public final class WorkflowReplay {
             }
             if (step.hasEdge()) {
                 ReplayResult edge = replayEdge(workflow, evidence, i, step, recorded, schema,
-                        artifacts, scope, steps, mapper, registry);
+                        artifacts, scope, steps, mapper, registry, typeRegistry);
                 if (edge != null) {
                     return edge;
                 }
@@ -404,7 +407,9 @@ public final class WorkflowReplay {
                                            Map<String, Message> scope,
                                            List<StepReplay> steps,
                                            ScopedProtoMapper mapper,
-                                           DescriptorRegistry registry) throws IOException {
+                                           DescriptorRegistry registry,
+                                           Supplier<TypeRegistry> typeRegistry)
+            throws IOException {
         String name = step.getName();
         if (!recorded.hasEdge()) {
             return fail(steps, name, recorded.getStatus(),
@@ -513,7 +518,7 @@ public final class WorkflowReplay {
         }
         if (step.hasStructured()) {
             return replayEdgeStructured(step, recorded, schema, artifacts, scope, steps,
-                    delivered);
+                    delivered, typeRegistry);
         }
         if (!recorded.hasResponseArtifact()) {
             return fail(steps, name, recorded.getStatus(),
@@ -546,7 +551,8 @@ public final class WorkflowReplay {
     private static ReplayResult replayEdgeStructured(
             WorkflowStep step, StepEvidence recorded,
             List<FileDescriptor> schema, ArtifactRepository artifacts,
-            Map<String, Message> scope, List<StepReplay> steps, Message delivered)
+            Map<String, Message> scope, List<StepReplay> steps, Message delivered,
+            Supplier<TypeRegistry> typeRegistry)
             throws IOException {
         String name = step.getName();
         if (!recorded.hasStructured()) {
@@ -565,7 +571,7 @@ public final class WorkflowReplay {
                     "target type " + spec.getTargetType() + " not in the replay schema");
         }
         String promptFingerprint = StructuredProvenance.promptFingerprint(target,
-                Any.pack(delivered), ReplaySchema.typeRegistry(schema), spec.getMode());
+                Any.pack(delivered), typeRegistry.get(), spec.getMode());
         if (!promptFingerprint.equals(provenance.getPromptFingerprint())) {
             return fail(steps, name, recorded.getStatus(),
                     "recorded prompt fingerprint does not match the replay schema's "
