@@ -42,6 +42,15 @@ class CatalogContractCauseTest {
         assertCause("internal-error", () -> CatalogContract.as(incompatible, StringValue.getDefaultInstance(), "probe"));
     }
 
+    @Test
+    void dotSegmentsMatchesRegexDotSplitAcrossEdgeCases() {
+        for (String path : new String[] {"", "a", "a.b", "a.b.", "a..b", ".a", ".", "..", "items[0].name."}) {
+            assertThat(CatalogContract.dotSegments(path))
+                    .as("path '%s'", path)
+                    .containsExactly(path.split("\\."));
+        }
+    }
+
     private static void assertCause(String code, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
         assertThatThrownBy(action).isInstanceOfSatisfying(ActionException.class, failure -> {
             assertThat(failure.code()).isEqualTo(code);

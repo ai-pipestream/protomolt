@@ -203,12 +203,19 @@ public final class ConsoleSessions {
         if (header == null) {
             return null;
         }
-        for (String part : header.split(";")) {
+        int start = 0;
+        while (start <= header.length()) {
+            int semi = header.indexOf(';', start);
+            String part = semi < 0 ? header.substring(start) : header.substring(start, semi);
             String value = part.trim();
             int equals = value.indexOf('=');
             if (equals > 0 && cookieName.equals(value.substring(0, equals))) {
                 return value.substring(equals + 1);
             }
+            if (semi < 0) {
+                break;
+            }
+            start = semi + 1;
         }
         return null;
     }
