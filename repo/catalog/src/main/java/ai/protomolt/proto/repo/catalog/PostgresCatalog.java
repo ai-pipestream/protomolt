@@ -28,6 +28,7 @@ import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.WriterGrant;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.UnsafeByteOperations;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.security.MessageDigest;
@@ -42,6 +43,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -245,7 +247,20 @@ public final class PostgresCatalog implements Catalog {
                     var raw = rows.getBytes(1);
                     if (!sha256Hex(raw).equals(sha256))
                         throw new CatalogDataLoss("Retained schema artifact differs from its digest");
-                    return Optional.of(ByteString.copyFrom(raw));
+                    return Optional.of(UnsafeByteOperations.unsafeWrap(raw));
+                }
+            }
+        });
+    }
+
+    /** Retained schema artifact length by SHA-256, without reading its content. */
+    @Override public OptionalLong artifactLength(String sha256) {
+        return inTransaction("Schema artifact length lookup", connection -> {
+            try (var select = connection.prepareStatement(
+                    "SELECT octet_length(content) FROM catalog_schema_artifacts WHERE sha256 = ?")) {
+                select.setString(1, sha256);
+                try (var rows = select.executeQuery()) {
+                    return rows.next() ? OptionalLong.of(rows.getLong(1)) : OptionalLong.empty();
                 }
             }
         });

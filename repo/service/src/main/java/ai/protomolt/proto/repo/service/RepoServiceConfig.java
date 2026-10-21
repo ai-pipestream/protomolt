@@ -110,7 +110,9 @@ import ai.protomolt.proto.repo.container.ledger.LedgerConfig;
  *        and streamed {@code ReadDocument} reserve each part's catalog length before
  *        buffering it (a streamed opaque part reserves a fixed two-chunk window
  *        instead), and {@code ReadBlob} reserves the blobs fragment's length while
- *        resolving blob metadata before streaming the raw blob unbuffered. A
+ *        resolving blob metadata before streaming the raw blob unbuffered;
+ *        {@code GetSchemaDescriptor} reserves the retained descriptor's catalog
+ *        length before loading it. A
  *        reservation the remaining budget does not cover fails fast with
  *        {@code RESOURCE_EXHAUSTED}, never allocating from the recorded length
  */

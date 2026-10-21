@@ -7,6 +7,7 @@ import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
 import ai.protomolt.proto.repo.admission.DocumentRetainedDefinitions;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.catalog.Catalog;
+import ai.protomolt.proto.repo.codec.DocumentPartCodec;
 import ai.protomolt.proto.repo.spi.DocumentAccessPolicy;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
@@ -15,9 +16,12 @@ import ai.protomolt.proto.repo.v1.Access;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
+import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v2.*;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import com.google.protobuf.UnsafeByteOperations;
 import io.grpc.Status;
 import java.io.IOException;
@@ -26,6 +30,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -224,6 +229,93 @@ public final class DocumentReads {
             frames.accept(ReadDocumentResponse.newBuilder().setComplete(ReadComplete.getDefaultInstance()).build());
             return null;
         });
+    }
+
+    /**
+     * Returns the descriptor set bytes a revision retained, by their SHA-256
+     * (requirements §8, §9). The digest grants nothing: the caller must be able to
+     * read the named document, and the resolved revision's validation record must
+     * reference the digest as a retained descriptor. A document the caller cannot
+     * read, a revision that does not exist and a digest the revision does not
+     * reference all answer the same {@code NOT_FOUND}, so the call cannot probe
+     * which digests exist. Metadata and source digests are not descriptors and are
+     * not served.
+     * <p>
+     * The artifact's catalog length is checked against the retained descriptor
+     * ceiling and reserved against the read byte budget before its bytes are
+     * loaded; the reservation is held until the response is built. The bytes are
+     * hashed again here before they are returned, independent of the catalog's own
+     * check. A referenced artifact absent from a reachable catalog, or whose bytes
+     * differ from the digest or from the recorded length, is {@code DATA_LOSS}.
+     *
+     * @param caller the authenticated repository caller
+     * @param request the retained schema read request
+     * @return the resolved revision, the digest and the verified descriptor set bytes
+     */
+    public GetSchemaDescriptorResponse getSchemaDescriptor(RepositoryCaller caller, GetSchemaDescriptorRequest request) {
+        return guarded(() -> {
+            valid(request);
+            requireBinding(caller);
+            var digest = request.getDescriptorSha256();
+            StoredManifest stored;
+            try {
+                stored = resolve(caller, request.getAddress(), request.getRevision());
+            } catch (AccessionException refused) {
+                if (refused.code() != Status.Code.NOT_FOUND && refused.code() != Status.Code.PERMISSION_DENIED) throw refused;
+                throw schemaNotFound();
+            }
+            if (!retainedDescriptors(stored.getValidation()).contains(digest)) throw schemaNotFound();
+            long length = catalog.artifactLength(digest).orElseThrow(() -> lost(
+                    "Retained schema descriptor " + digest + " is referenced but absent from the catalog", null));
+            if (length < 1)
+                throw lost("Retained schema descriptor " + digest + " records an empty length", null);
+            if (length > DocumentRetainedDefinitions.MAX_DESCRIPTOR_BYTES)
+                throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED, "Retained schema descriptor records "
+                        + length + " bytes, above the " + DocumentRetainedDefinitions.MAX_DESCRIPTOR_BYTES
+                        + " byte descriptor ceiling", null);
+            try (var ignored = Objects.requireNonNull(reservations.reserve(length), "reservation lease")) {
+                var bytes = catalog.artifact(digest).orElseThrow(() -> lost(
+                        "Retained schema descriptor " + digest + " is referenced but absent from the catalog", null));
+                if (bytes.size() != length)
+                    throw lost("Retained schema descriptor " + digest + " differs from its recorded length", null);
+                if (!DocumentPartCodec.sha256Hex(bytes).equals(digest))
+                    throw lost("Retained schema descriptor " + digest + " differs from its digest", null);
+                return GetSchemaDescriptorResponse.newBuilder().setRevision(stored.getRevision())
+                        .setDescriptorSha256(digest).setDescriptorSet(bytes).build();
+            }
+        });
+    }
+
+    /**
+     * Every descriptor digest a validation record references, wherever a
+     * {@link RepositorySchemaAssetReference} sits in it: part fragment schemas, Any
+     * occurrence schemas and grant snapshot schemas. The walk follows the record's
+     * descriptor, so a reference added to the record later is covered without a
+     * change here.
+     */
+    static Set<String> retainedDescriptors(RevisionValidation validation) {
+        var digests = new HashSet<String>();
+        collectDescriptors(validation, digests);
+        return digests;
+    }
+
+    private static void collectDescriptors(Message message, Set<String> digests) {
+        if (message instanceof RepositorySchemaAssetReference reference) {
+            digests.add(reference.getDescriptorSha256());
+            return;
+        }
+        for (var field : message.getAllFields().entrySet()) {
+            if (field.getKey().getJavaType() != Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getKey().isRepeated()) {
+                for (var element : (List<?>) field.getValue()) collectDescriptors((Message) element, digests);
+            } else {
+                collectDescriptors((Message) field.getValue(), digests);
+            }
+        }
+    }
+
+    private static AccessionException schemaNotFound() {
+        return notFound("Schema descriptor not found");
     }
 
     /**

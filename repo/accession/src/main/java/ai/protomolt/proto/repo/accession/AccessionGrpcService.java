@@ -11,6 +11,8 @@ import ai.protomolt.proto.repo.v2.GetManifestRequest;
 import ai.protomolt.proto.repo.v2.GetManifestResponse;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeResponse;
+import ai.protomolt.proto.repo.v2.GetSchemaDescriptorRequest;
+import ai.protomolt.proto.repo.v2.GetSchemaDescriptorResponse;
 import ai.protomolt.proto.repo.v2.ItemError;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsResponse;
@@ -48,9 +50,9 @@ import java.util.function.Supplier;
 
 /**
  * gRPC adapter for the implemented v2 DocumentService RPCs: unary saves and
- * reads, streamed upload/read, delete, purge, listing, and the slice 6 bulk
- * streams. Refusals carry the errors.proto detail message in the status
- * details; on a bulk stream the same refusal is one item's {@link ItemError},
+ * reads, retained schema descriptor reads, streamed upload/read, delete, purge,
+ * listing, and the slice 6 bulk streams. Refusals carry the errors.proto detail
+ * message in the status details; on a bulk stream the same refusal is one item's {@link ItemError},
  * so a failed item never aborts the stream for the others. Bulk items are
  * answered in request order, one at a time, under a synchronized observer:
  * in-flight concurrency is bounded at one per stream and responses correlate
@@ -187,6 +189,11 @@ public final class AccessionGrpcService extends DocumentServiceGrpc.DocumentServ
 
     @Override public void getManifest(GetManifestRequest request, StreamObserver<GetManifestResponse> observer) {
         respond(observer, () -> reads.getManifest(caller(), request));
+    }
+
+    @Override public void getSchemaDescriptor(GetSchemaDescriptorRequest request,
+            StreamObserver<GetSchemaDescriptorResponse> observer) {
+        respond(observer, () -> reads.getSchemaDescriptor(caller(), request));
     }
 
     @Override public void listRevisions(ListRevisionsRequest request, StreamObserver<ListRevisionsResponse> observer) {

@@ -19,6 +19,7 @@ import ai.protomolt.proto.repo.v2.WriterGrant;
 import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.function.Predicate;
 
@@ -68,6 +69,15 @@ public interface Catalog extends AutoCloseable {
      * artifact; bytes that differ from their digest are {@link CatalogDataLoss}.
      */
     Optional<ByteString> artifact(String sha256);
+
+    /**
+     * The stored length of a retained schema artifact, read without loading its
+     * bytes, so a reader can reserve that length before it buffers them.
+     *
+     * @param sha256 the artifact's SHA-256
+     * @return the length in bytes, or empty when the catalog holds no such artifact
+     */
+    OptionalLong artifactLength(String sha256);
 
     /**
      * Current metadata rows matching the listing, in its order, strictly after the
