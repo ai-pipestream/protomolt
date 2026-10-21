@@ -42,11 +42,19 @@ final class DelegationCoordinatorState {
     boolean publicationFailed;
 
     /**
+     * Monotonic version of {@link #entries}, bumped by every {@link #record} call. Readers
+     * that derive a projection from the full transcript (such as the review runtime's
+     * reduction cache) compare versions instead of re-deriving when nothing was appended.
+     */
+    long transcriptVersion;
+
+    /**
      * Records one committed entry and its cursor-addressable event. Call only after the
      * transcript carrying the entry has been validated, reduced clean, and persisted.
      */
     void record(TranscriptEntry entry) {
         entries.add(entry);
+        transcriptVersion++;
         events.add(new InProcessDelegationCoordinator.Event(++cursor, entry));
     }
 

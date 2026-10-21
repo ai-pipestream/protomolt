@@ -16,6 +16,7 @@ import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
 import com.google.protobuf.util.JsonFormat.TypeRegistry;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +31,33 @@ final class AgentCommandValidation {
 
     /** One validator per request type, so CEL programs are compiled once. */
     private static final Map<String, ProtoValidator> VALIDATORS = new ConcurrentHashMap<>();
+
+    /**
+     * The shared proto3 JSON parser. {@code JsonFormat.Parser} instances are immutable
+     * configuration holders, so one instance serves every call; the candidate path derives
+     * its per-task parser with {@code usingTypeRegistry}, which returns a new immutable
+     * parser and leaves this one untouched.
+     */
+    private static final JsonFormat.Parser PARSER = JsonFormat.parser();
+
+    /**
+     * One deliverable {@link TypeRegistry} per distinct contract, so the descriptor graph
+     * behind a contract is walked once per contract rather than once per candidate command.
+     * Registries are immutable and never mutated after the build; a contract whose
+     * descriptors do not link memoizes the empty registry, exactly the fallback the
+     * uncached path returned.
+     *
+     * <p>This is a retention budget, not a limit on accepted contracts: at most
+     * {@value #MAX_DELIVERABLE_REGISTRIES} distinct contracts keep a built registry, and
+     * the least recently accessed entry is evicted at the cap (the
+     * {@code MessageProjection} evaluator-cache idiom), so a long-running host does not
+     * retain every descriptor closure it has ever seen. An evicted contract rebuilds on
+     * its next candidate; per-contract identity isolation is unchanged because eviction
+     * only ever drops an entry, never reassigns one. All access synchronizes on the map.
+     */
+    static final int MAX_DELIVERABLE_REGISTRIES = 256;
+    private static final Map<DeliverableContract, TypeRegistry> DELIVERABLE_TYPES =
+            new LinkedHashMap<>(16, 0.75f, true);
 
     private AgentCommandValidation() {
     }
@@ -64,7 +92,7 @@ final class AgentCommandValidation {
         }
         DynamicMessage.Builder builder = DynamicMessage.newBuilder(descriptor);
         try {
-            JsonFormat.parser().merge(arguments.toString(), builder);
+            PARSER.merge(arguments.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
             throw new ModelReplyException(where + " is not a " + descriptor.getName()
                     + ": " + e.getMessage());
@@ -91,7 +119,7 @@ final class AgentCommandValidation {
                                           Map<String, DeliverableContract> contracts) {
         SubmitCandidateRequest.Builder builder = SubmitCandidateRequest.newBuilder();
         try {
-            JsonFormat.parser().usingTypeRegistry(deliverableTypes(
+            PARSER.usingTypeRegistry(deliverableTypes(
                             contracts.get(arguments.path("taskId").asText())))
                     .merge(arguments.toString(), builder);
         } catch (InvalidProtocolBufferException e) {
@@ -134,12 +162,32 @@ final class AgentCommandValidation {
     }
 
     /** Parse only against the addressed task's offer, never another task's same-named type. */
-    private static TypeRegistry deliverableTypes(DeliverableContract contract) {
+    static TypeRegistry deliverableTypes(DeliverableContract contract) {
         if (contract == null) return TypeRegistry.getEmptyTypeRegistry();
+        synchronized (DELIVERABLE_TYPES) {
+            TypeRegistry cached = DELIVERABLE_TYPES.get(contract);
+            if (cached != null) return cached;
+            TypeRegistry built = buildTypes(contract);
+            if (DELIVERABLE_TYPES.size() == MAX_DELIVERABLE_REGISTRIES) {
+                DELIVERABLE_TYPES.remove(DELIVERABLE_TYPES.keySet().iterator().next());
+            }
+            DELIVERABLE_TYPES.put(contract, built);
+            return built;
+        }
+    }
+
+    private static TypeRegistry buildTypes(DeliverableContract contract) {
         try {
             return DeliverableContracts.typeRegistry(contract);
         } catch (IllegalArgumentException unlinkable) {
             return TypeRegistry.getEmptyTypeRegistry();
+        }
+    }
+
+    /** The cache's current occupancy, for tests. */
+    static int cachedDeliverableRegistries() {
+        synchronized (DELIVERABLE_TYPES) {
+            return DELIVERABLE_TYPES.size();
         }
     }
 

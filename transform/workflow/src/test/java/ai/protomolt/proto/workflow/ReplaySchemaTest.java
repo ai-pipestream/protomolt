@@ -8,6 +8,7 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
+import com.google.protobuf.util.JsonFormat.TypeRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -65,5 +66,16 @@ class ReplaySchemaTest {
 
         assertThat(registry.find("google.protobuf.Struct")).isEqualTo(Struct.getDescriptor());
         assertThat(registry.find("google.protobuf.ListValue")).isNotNull();
+    }
+
+    @Test
+    void theLazyGroundingRegistryBuildsOnceThenReusesTheSameInstance() {
+        var supplier = ReplaySchema.lazyTypeRegistry(STRUCT);
+
+        TypeRegistry built = supplier.get();
+
+        assertThat(built.find("google.protobuf.Struct")).isEqualTo(Struct.getDescriptor());
+        assertThat(supplier.get()).isSameAs(built);
+        assertThat(supplier.get()).isSameAs(built);
     }
 }
