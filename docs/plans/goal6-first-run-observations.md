@@ -163,7 +163,7 @@ fixture and demonstration trust, not a live model or independently trusted issue
 
 The commands in [Optional Kafka and JDBC inputs](../tutorials/optional-inputs.md)
 passed on 2026-10-01: `WorkflowRunKafkaIT` 2 tests, `JdbcPullIT` 6 tests, and
-`AcceptedWorkflowKafkaBridgeTest` 3 tests, all with zero skips and failures.
+`AcceptedWorkflowKafkaBridgeIT` 3 tests, all with zero skips and failures.
 Raw log: `/tmp/protomolt-goal6-optional-integrations.log`. JUnit reports reside
 under the corresponding module's `build/test-results/test/`.
 

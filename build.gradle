@@ -49,9 +49,16 @@ tasks.register('bufLint', Exec) {
     })
 }
 
+tasks.register('checkTestNaming', Exec) {
+    group = 'verification'
+    description = 'Require Testcontainers test suites to use integration-test names'
+    workingDir = rootDir
+    commandLine 'bash', 'scripts/check-test-naming.sh'
+}
+
 tasks.register('check') {
     group = 'verification'
-    dependsOn('bufLint')
+    dependsOn('bufLint', 'checkTestNaming')
 }
 
 // Central Portal validates license, developers, and scm on every pom.
@@ -184,6 +191,7 @@ subprojects {
         }
         tasks.named('check') {
             dependsOn integrationTest
+            dependsOn rootProject.tasks.named('checkTestNaming')
         }
 
         // Generated protobuf sources have no javadoc tags; keep doclint useful but quiet.

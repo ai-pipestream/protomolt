@@ -53,7 +53,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** Installed coordinator proof for the opt-in, signed, authenticated preparation mount. */
 @Tag("integration")
 @Testcontainers
-class AuthoringCoordinatorPreparationProcessTest {
+class AuthoringCoordinatorPreparationProcessIT {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();

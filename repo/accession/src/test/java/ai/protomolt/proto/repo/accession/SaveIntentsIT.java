@@ -29,7 +29,7 @@ import org.testcontainers.utility.MountableFile;
  * writes and sources, attestation normalization and ordering, and the
  * save/delete domain separation.
  */
-class SaveIntentsTest {
+class SaveIntentsIT {
     private static final NodeAddress ADDRESS = NodeAddress.newBuilder().setAccountId("account")
             .setGraphId("graph").setGraphAddressId("address").setDocId("document").build();
     private static final WriteProvenance STEP = WriteProvenance.newBuilder().setModuleId("module")

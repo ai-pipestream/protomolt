@@ -137,7 +137,7 @@ isolates repository reads and publication calls from caller cancellation, retain
 the repository deadline and fail-closed handling of genuinely uncertain writes.
 Do not replace this test with a coordinator restart or remove the submission gate.
 
-Evidence: before the fix, `AuthoringWorkerDiscoveryProcessTest` ran one test with
+Evidence: before the fix, `AuthoringWorkerDiscoveryProcessIT` ran one test with
 one failure and no skips (`/tmp/goal5-submission-recovery-test.log`). After the fix,
 the same test passed with no skips (`/tmp/goal5-cancel-isolation-tests.log`,
 2026-10-01T15:20:38Z). After correcting the repository test harness, the complete

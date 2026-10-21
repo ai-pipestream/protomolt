@@ -10,7 +10,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class ApicurioRegistryContainerLogTest {
+class ApicurioRegistryContainerLogIT {
 
     @TempDir
     Path tempDir;

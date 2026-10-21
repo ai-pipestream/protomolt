@@ -59,9 +59,9 @@ The original named requirements have these executable checks:
 - `restart_preserves_completed_steps`: installed-process and packaged crash tests
   check persisted checkpoints and stable remote operation keys after restart.
 
-`AcceptedWorkflowKafkaBridgeTest` covers accepted source/input/job identity,
+`AcceptedWorkflowKafkaBridgeIT` covers accepted source/input/job identity,
 duplicates, conflicts and mutable resolver changes through a real broker.
-`AuthoringRemoteProcessTest` exercises the installed coordinator. These local
+`AuthoringRemoteProcessIT` exercises the installed coordinator. These local
 checks passed without skips before publication. The jobs suite passed 122 tests;
 the final authoring suite passed 192, plus the worker discovery recovery process
 test. Buf lint and compatibility passed. Contract tests use the native validator;

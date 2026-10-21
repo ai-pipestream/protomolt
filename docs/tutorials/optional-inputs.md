@@ -42,7 +42,7 @@ credential. Do not send this request to the named-workflow topic above.
 Run its broker-level behavior checks:
 
 ```sh
-./gradlew :samples:test --tests '*AcceptedWorkflowKafkaBridgeTest'
+./gradlew :samples:integrationTest --tests '*AcceptedWorkflowKafkaBridgeIT'
 ```
 
 The broker is real; this test's launch ledger is simulated. It checks offset
@@ -88,7 +88,7 @@ and decides when to request another pull. Connectors do not schedule themselves.
 
 Check the JUnit XML under each module's `build/test-results/test/`, not just
 Gradle's exit status. The expected test counts are 2 for `WorkflowRunKafkaIT`,
-3 for `AcceptedWorkflowKafkaBridgeTest`, and 6 for `JdbcPullIT`, with zero skipped
+3 for `AcceptedWorkflowKafkaBridgeIT`, and 6 for `JdbcPullIT`, with zero skipped
 and zero failed tests. These classes can skip when Docker is unavailable.
 
 These examples use fixed fixtures and no model-provider calls. They demonstrate

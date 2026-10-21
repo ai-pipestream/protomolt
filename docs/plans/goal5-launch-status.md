@@ -54,7 +54,7 @@ Local evidence for the runtime slice:
 - Native contract, action, generated gRPC, reviewer and HTTP route tests pass.
   Coverage includes all six job states, absent authorization without job reads,
   conflicting intent, corrupt ledger bytes, storage failure and job binding.
-- The installed AuthoringRemoteProcessTest reads not_authorized before launch,
+- The installed AuthoringRemoteProcessIT reads not_authorized before launch,
   then COMPLETED through generated gRPC and the authenticated HTTP status route.
   The ordinary console session is denied; the named scoped session succeeds.
 - Console tests and the production build pass. Saved-intent status tests

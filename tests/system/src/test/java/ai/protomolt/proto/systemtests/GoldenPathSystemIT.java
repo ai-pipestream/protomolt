@@ -137,7 +137,7 @@ import org.testcontainers.utility.DockerImageName;
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class GoldenPathSystemTest {
+class GoldenPathSystemIT {
 
     static final String ACCOUNT = "acct-golden";
     static final String API_KEY = "golden-key";
@@ -268,7 +268,7 @@ class GoldenPathSystemTest {
 
         // The court corpus fixture (from the samples jar).
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                GoldenPathSystemTest.class.getClassLoader()
+                GoldenPathSystemIT.class.getClassLoader()
                         .getResourceAsStream("fixtures/court/opinions_sample.jsonl"),
                 StandardCharsets.UTF_8))) {
             JsonNode opinion = MAPPER.readTree(reader.readLine());
