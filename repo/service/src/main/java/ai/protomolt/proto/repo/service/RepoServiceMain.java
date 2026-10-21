@@ -32,6 +32,11 @@ public final class RepoServiceMain {
         RepositoryConsole console = config.httpPort() > 0
                 ? RepositoryConsole.fromEnvironment(System.getenv())
                 : null;
+        // The sign-in settings are read and the provider discovered before serving too, so
+        // a wrong issuer fails the boot and not the first login.
+        ConsoleSignIn signIn = config.httpPort() > 0
+                ? ConsoleSignIn.fromEnvironment(System.getenv())
+                : ConsoleSignIn.none();
         RepoCallerConfiguration callers = RepoCallerConfiguration.fromEnvironment(System.getenv());
         RepoServices services = RepoServices.build(config).withAccountBindings(callers.bindings());
         // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
@@ -42,7 +47,8 @@ public final class RepoServiceMain {
         // HTTP port (upload routes and the console): DOCUMENT_PLATFORM_HTTP_PORT,
         // default 8080; 0 or "off" disables all of it (gRPC-only deployments).
         if (config.httpPort() > 0) {
-            services.startHttp(config.httpPort(), apiToken, console);
+            services.startHttp(config.httpPort(), apiToken, console,
+                    services.consoleSignInRoutes(signIn.sessions()));
         }
         // Archive mutation recovery and reconciliation, plus the v2 outbox
         // relay, run as background loops next to the servers.

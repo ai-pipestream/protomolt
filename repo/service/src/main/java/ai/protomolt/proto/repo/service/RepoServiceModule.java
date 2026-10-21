@@ -15,8 +15,9 @@ import java.util.List;
  * The document store as a mountable role. Wiring starts the in-process
  * endpoint siblings resolve through {@link Channels}; starting binds the
  * external Netty port, binds the HTTP port when
- * {@link RepoServiceConfig#httpPort()} is positive (the upload routes and the
- * console from {@link RepositoryConsole#ENV_CONSOLE_DIR}), seeds account
+ * {@link RepoServiceConfig#httpPort()} is positive (the upload routes, the
+ * console from {@link RepositoryConsole#ENV_CONSOLE_DIR} and its sign-in from the
+ * {@link ai.protomolt.proto.authz.OidcConsoleSettings} variables), seeds account
  * drives, and begins the lifecycle loops.
  */
 public final class RepoServiceModule implements ServiceModule {
@@ -74,6 +75,9 @@ public final class RepoServiceModule implements ServiceModule {
         RepositoryConsole console = config.httpPort() > 0
                 ? RepositoryConsole.fromEnvironment(context.environment())
                 : null;
+        ConsoleSignIn signIn = config.httpPort() > 0
+                ? ConsoleSignIn.fromEnvironment(context.environment())
+                : ConsoleSignIn.none();
         services = RepoServices.build(config).withAccountBindings(accounts);
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
@@ -102,7 +106,8 @@ public final class RepoServiceModule implements ServiceModule {
                 // Same rule as RepoServiceMain: 0 or "off" leaves the HTTP port, and
                 // every route on it, unbound.
                 if (console != null) {
-                    http = services.startHttp(config.httpPort(), credential, console);
+                    http = services.startHttp(config.httpPort(), credential, console,
+                            services.consoleSignInRoutes(signIn.sessions()));
                 }
                 services.seedAccountDrives();
                 services.startLifecycle();

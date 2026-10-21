@@ -334,6 +334,20 @@ task routes work behind it — the registry and action bridges the other section
 depend on stay disabled. [Task console](task-console.md) documents that session
 boundary.
 
+## Repository sign-in
+
+The repository screens are served by the repository host, which has no open
+form: a browser signs in at the organisation's OpenID provider through
+`/console/session/login` and comes back to the page it was on. The session is
+an HttpOnly cookie the host maps to a scoped principal and, through its
+account bindings, to the accounts that principal may reach; the page reads
+`/console/session` (binary protobuf) for its principal and accounts and never
+holds a token. The host's five `PROTOMOLT_CONSOLE_*` variables name the
+provider, client and session lifetime
+([environment variables](../operations/environment-variables.md)); without
+them the sign-in routes answer 503 naming the variables, and a partial set
+fails the boot.
+
 ## Working on the console
 
 The application lives at `apps/console`. `npm run dev` starts a dev server that

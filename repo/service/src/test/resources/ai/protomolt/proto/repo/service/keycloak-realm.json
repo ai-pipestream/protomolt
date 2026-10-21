@@ -1,0 +1,56 @@
+{
+  "realm": "protomolt",
+  "enabled": true,
+  "sslRequired": "none",
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Example",
+      "credentials": [{"type": "password", "value": "alice-password", "temporary": false}]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.com",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Example",
+      "credentials": [{"type": "password", "value": "carol-password", "temporary": false}]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "protomolt-console",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "console-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["${CALLBACK}"],
+      "webOrigins": [],
+      "protocolMappers": [
+        {
+          "name": "protomolt scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "protomolt_scopes",
+            "claim.value": "search-query",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

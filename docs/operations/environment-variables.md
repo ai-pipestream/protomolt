@@ -28,7 +28,10 @@ Reading conventions, stated once:
 Read by `RepoServiceConfig.fromEnvironment` through
 `RepositoryEnvironment`: defaults apply only to omitted variables; a present
 but blank text value, an out-of-range or non-integer number, and a
-non-strict-flag boolean all fail fast naming the variable.
+non-strict-flag boolean all fail fast naming the variable. The console
+sign-in variables (`PROTOMOLT_CONSOLE_*`) are read by `OidcConsoleSettings`
+when the HTTP port is on: all five or none, and a subset fails the boot
+naming the missing ones.
 
 | Variable | Default | Accepted |
 |---|---|---|
@@ -57,6 +60,11 @@ non-strict-flag boolean all fail fast naming the variable.
 | `DOCUMENT_PLATFORM_READ_BUDGET_BYTES` | `268435456` (256 MiB) | integer >= 1 |
 | `DOCUMENT_PLATFORM_PURGE_QUEUE` | `jdbc` | `jdbc` or `kafka`; `kafka` requires the bootstrap servers or the config fails fast |
 | `DOCUMENT_PLATFORM_KAFKA_PURGE_TOPIC` | `document-purges` | non-blank text; used only with the kafka purge queue |
+| `PROTOMOLT_CONSOLE_OIDC_ISSUER` | unset = console sign-in off | the OpenID provider's issuer URL; discovered at `/.well-known/openid-configuration` at boot, and a wrong one fails the boot |
+| `PROTOMOLT_CONSOLE_OIDC_CLIENT_ID` | required with the issuer | text |
+| `PROTOMOLT_CONSOLE_OIDC_CLIENT_SECRET` | required with the issuer | text |
+| `PROTOMOLT_CONSOLE_OIDC_REDIRECT_URI` | required with the issuer | the host's `/console/session/callback` as the provider reaches it, registered at the provider exactly |
+| `PROTOMOLT_CONSOLE_SESSION_TTL` | required with the issuer | ISO-8601 duration, one second to seven days (`PT8H`) |
 
 The ledger (read by `LedgerConfig.fromEnvironment` in `repo/container`;
 `DOCUMENT_PLATFORM_POOL_SIZE` fails fast on a non-positive or non-integer

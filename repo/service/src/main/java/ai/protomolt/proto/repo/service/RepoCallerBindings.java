@@ -9,6 +9,7 @@ import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryCredentialBinding;
 import ai.protomolt.proto.repo.v1.Principal;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -34,6 +35,17 @@ final class RepoCallerBindings {
     RepositoryCaller current() {
         var caller = CallerContexts.current();
         return bind(CallerContexts.authentication().orElseGet(() -> AuthenticatedCaller.unbound(caller)));
+    }
+
+    /**
+     * The accounts one authenticated caller is bound to, in binding order; empty for a
+     * principal the bindings do not name. Process authority is bound to every account and
+     * answers empty here too, because the console never signs the operator in.
+     */
+    List<String> boundAccountIds(AuthenticatedCaller authentication) {
+        Objects.requireNonNull(authentication, "authentication");
+        if (authentication.caller().unrestricted()) return List.of();
+        return accounts.bindingOf(authentication).map(found -> List.copyOf(found.getAccountIdsList())).orElse(List.of());
     }
 
     /** The repository caller of one authenticated caller. */

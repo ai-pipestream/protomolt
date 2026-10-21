@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.authz.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.authz";
+option java_outer_classname = "ConsoleSessionProto";
+
+import "google/protobuf/timestamp.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+// A host's record of one signed-in browser session: the principal an OIDC
+// login resolved, the scopes it holds, and the lifetime the host granted.
+// The session's accounts are not recorded here; the host binds the
+// principal through its account bindings on every request, so a binding
+// change applies to live sessions. The record carries no credential: the
+// cookie value is the key the host looks the record up by, and the IdP's
+// tokens are discarded once the login resolved.
+message ConsoleSession {
+  // The principal name exactly as the credential resolver reports it; the
+  // name the account bindings key on.
+  string principal = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 128}
+    }
+  ];
+  // The scopes the principal holds, each from the closed vocabulary.
+  repeated string scopes = 2 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        string: {min_len: 1, max_len: 64}
+      }
+    }
+  ];
+  // The OIDC issuer that authenticated the principal.
+  string issuer = 3 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {uri: true}
+    }
+  ];
+  // The issuer's subject identifier for the principal.
+  string subject = 4 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 255}
+    }
+  ];
+  // When the login completed.
+  google.protobuf.Timestamp issued_at = 5 [
+    (ai.protomolt.proto.validate.v1.field).required = true
+  ];
+  // When the session stops authenticating, fixed at login.
+  google.protobuf.Timestamp expires_at = 6 [
+    (ai.protomolt.proto.validate.v1.field).required = true
+  ];
+}
+
+// What the console page may know about its own session: the answer of the
+// session status route, as binary protobuf. An unauthenticated answer
+// carries only authenticated = false.
+message ConsoleSessionStatus {
+  // Whether the request carried a live session.
+  bool authenticated = 1;
+  // The session's principal name; empty when unauthenticated.
+  string principal = 2 [
+    (ai.protomolt.proto.validate.v1.field).string.max_len = 128
+  ];
+  // The accounts the principal is bound to, in binding order; empty when
+  // unauthenticated or when the bindings do not name the principal.
+  repeated string account_ids = 3 [
+    (ai.protomolt.proto.validate.v1.field).repeated = {
+      unique: true
+      items: {
+        string: {min_len: 1, max_len: 200}
+      }
+    }
+  ];
+  // When the session expires; absent when unauthenticated.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// Why a sign-in did not complete; the callback route sends the browser back
+// to the console's sign-in page naming one of these.
+enum SignInFailure {
+  SIGN_IN_FAILURE_UNSPECIFIED = 0;
+  // The callback's state matched no pending login of this browser.
+  SIGN_IN_FAILURE_STATE_MISMATCH = 1;
+  // The pending login expired before the callback arrived.
+  SIGN_IN_FAILURE_LOGIN_EXPIRED = 2;
+  // The identity provider answered the authorization request with an error.
+  SIGN_IN_FAILURE_PROVIDER_DENIED = 3;
+  // The code exchange at the token endpoint did not return tokens.
+  SIGN_IN_FAILURE_TOKEN_EXCHANGE_FAILED = 4;
+  // The ID token named another issuer or audience, had expired, or carried
+  // the wrong nonce.
+  SIGN_IN_FAILURE_ID_TOKEN_INVALID = 5;
+  // The identity provider authenticated a user the caller store does not
+  // resolve to a principal with scopes.
+  SIGN_IN_FAILURE_UNKNOWN_PRINCIPAL = 6;
+}

@@ -56,6 +56,8 @@ dependencies {
 
     runtimeOnly libs.slf4j.simple
 
+    // The console sign-in tests drive a fake OpenID provider before the Keycloak one.
+    testImplementation testFixtures(project(':protomolt-authz'))
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.localstack
     testImplementation libs.testcontainers.redpanda
