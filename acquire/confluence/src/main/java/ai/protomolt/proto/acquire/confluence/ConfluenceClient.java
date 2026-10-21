@@ -87,7 +87,7 @@ public final class ConfluenceClient {
     /** {@code minRequestInterval} is overridable for tests (zero disables politeness). */
     public ConfluenceClient(String baseUrl, String email, String apiToken,
             Duration minRequestInterval) {
-        String normalized = Objects.requireNonNull(baseUrl, "baseUrl").replaceAll("/+$", "");
+        String normalized = stripTrailingSlashes(Objects.requireNonNull(baseUrl, "baseUrl"));
         this.baseUrl = normalized;
         URI uri = URI.create(normalized);
         this.origin = uri.getScheme() + "://" + uri.getAuthority();
@@ -172,17 +172,44 @@ public final class ConfluenceClient {
      */
     static Optional<String> nextFromLinkHeader(HttpResponse<?> response) {
         return response.headers().firstValue("Link").flatMap(header -> {
-            for (String part : header.split(",")) {
-                String[] segments = part.split(";");
-                if (segments.length == 2 && segments[1].trim().equals("rel=\"next\"")) {
-                    String url = segments[0].trim();
-                    if (url.startsWith("<") && url.endsWith(">")) {
+            int start = 0;
+            while (start <= header.length()) {
+                int comma = header.indexOf(',', start);
+                int end = comma < 0 ? header.length() : comma;
+                String part = header.substring(start, end);
+                int semi = part.indexOf(';');
+                if (semi >= 0) {
+                    int nextSemi = part.indexOf(';', semi + 1);
+                    String url = part.substring(0, semi).trim();
+                    String rel = (nextSemi < 0 ? part.substring(semi + 1) : part.substring(semi + 1, nextSemi)).trim();
+                    boolean hasMore = nextSemi >= 0 && !onlySemicolons(part, nextSemi + 1);
+                    if (!hasMore && rel.equals("rel=\"next\"")
+                            && url.length() >= 2 && url.startsWith("<") && url.endsWith(">")) {
                         return Optional.of(url.substring(1, url.length() - 1));
                     }
                 }
+                if (comma < 0) break;
+                start = comma + 1;
             }
             return Optional.empty();
         });
+    }
+
+    static String stripTrailingSlashes(String value) {
+        int end = value.length();
+        while (end > 0 && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return end == value.length() ? value : value.substring(0, end);
+    }
+
+    private static boolean onlySemicolons(String value, int fromIndex) {
+        for (int i = fromIndex; i < value.length(); i++) {
+            if (value.charAt(i) != ';') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private String url(String pathOrUrl, Map<String, String> query) {

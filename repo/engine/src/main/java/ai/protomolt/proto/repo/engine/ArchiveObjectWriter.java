@@ -24,7 +24,7 @@ public final class ArchiveObjectWriter {
             Set<BlobCapability> capabilities, Duration lease) {
         this.uploads = Objects.requireNonNull(uploads);
         this.store = Objects.requireNonNull(store);
-        if (generation == null || !generation.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+        if (!isValidGeneration(generation))
             throw new IllegalArgumentException("Invalid archive backend generation");
         if (!Set.copyOf(capabilities).containsAll(Set.of(BlobCapability.NON_EXPIRING_WRITES, BlobCapability.PHYSICAL_RECLAMATION)))
             throw new UnsupportedOperationException("Managed archive writes require retention and physical reclamation");
@@ -73,7 +73,7 @@ public final class ArchiveObjectWriter {
                 || rendition.getSizeBytes() <= 0)
             throw new IllegalArgumentException("Invalid streamed archive candidate");
         String expected = rendition.getSha256();
-        if (!expected.isEmpty() && !expected.matches("[0-9a-f]{64}"))
+        if (!expected.isEmpty() && !isLowerHexSha256(expected))
             throw new IllegalArgumentException("Invalid expected archive checksum");
         if (Thread.currentThread().isInterrupted())
             throw new ai.protomolt.proto.repo.spi.RepositoryException(ai.protomolt.proto.repo.spi.RepositoryException.Code.CANCELLED,
@@ -101,5 +101,32 @@ public final class ArchiveObjectWriter {
         uploads.verify(upload.objectId(), upload.leaseToken(), rendition.getSizeBytes(), sha, result.versionId(), result.eTag());
         return new Staged(rendition.toBuilder().setStorageObjectId(upload.objectId().toString()).setSha256(sha).build(),
                 upload.objectId(), upload.leaseToken());
+    }
+
+    private static boolean isValidGeneration(String value) {
+        if (value == null || value.isEmpty() || value.length() > 128) return false;
+        if (!isAsciiAlphanumeric(value.charAt(0))) return false;
+        for (int i = 1; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!isAsciiAlphanumeric(c) && c != '.' && c != '_' && c != ':' && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphanumeric(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    }
+
+    private static boolean isLowerHexSha256(String value) {
+        if (value == null || value.length() != 64) return false;
+        for (int i = 0; i < 64; i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

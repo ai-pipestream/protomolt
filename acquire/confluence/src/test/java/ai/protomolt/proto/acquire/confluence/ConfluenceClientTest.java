@@ -133,4 +133,15 @@ class ConfluenceClientTest {
         assertThat(new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1))
                 .isEqualTo(new String(png, java.nio.charset.StandardCharsets.ISO_8859_1));
     }
+
+    @Test
+    void fallsBackToLinkHeaderWhenBodyLinksNextIsAbsent() throws Exception {
+        fake.stub("/wiki/api/v2/pages", new FakeConfluenceServer.Stub(
+                200,
+                "{\"results\":[{\"id\":\"1\"}]}",
+                Map.of("Link", "</wiki/api/v2/pages?cursor=prev>; rel=\"prev\", </wiki/api/v2/pages?cursor=c2>; rel=\"next\"")));
+
+        ConfluenceClient.ResultPage page = client.getPage("/api/v2/pages", Map.of());
+        assertThat(page.nextUrl()).endsWith("/wiki/api/v2/pages?cursor=c2");
+    }
 }

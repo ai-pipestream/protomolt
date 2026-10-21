@@ -172,16 +172,36 @@ public final class DriveProvisioner {
      * Anything else collapses to a dash; edges are trimmed.
      */
     static String sanitizeBucketName(String raw) {
-        String s = raw.toLowerCase(java.util.Locale.ROOT)
-                .replaceAll("[^a-z0-9.-]", "-")
-                .replaceAll("[-.]{2,}", "-")
-                .replaceAll("^[-.]+", "")
-                .replaceAll("[-.]+$", "");
+        String lower = raw.toLowerCase(java.util.Locale.ROOT);
+        StringBuilder sb = new StringBuilder(lower.length());
+        int sepCount = 0;
+        char firstSep = 0;
+        for (int i = 0; i < lower.length(); i++) {
+            char c = lower.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                if (sb.length() > 0 && sepCount > 0) {
+                    sb.append(sepCount == 1 ? firstSep : '-');
+                }
+                sepCount = 0;
+                sb.append(c);
+            } else {
+                char mapped = (c == '.') ? '.' : '-';
+                if (sepCount == 0) {
+                    firstSep = mapped;
+                }
+                sepCount++;
+            }
+        }
+        String s = sb.toString();
         if (s.length() > 63) {
-            s = s.substring(0, 63).replaceAll("[-.]+$", "");
+            int end = 63;
+            while (end > 0 && (s.charAt(end - 1) == '-' || s.charAt(end - 1) == '.')) {
+                end--;
+            }
+            s = s.substring(0, end);
         }
         if (s.length() < 3) {
-            s = (s + "-bucket").replaceAll("^[-.]+", "");
+            s = s.isEmpty() ? "bucket" : s + "-bucket";
         }
         return s;
     }

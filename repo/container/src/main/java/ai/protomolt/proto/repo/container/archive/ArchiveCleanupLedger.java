@@ -51,9 +51,22 @@ public final class ArchiveCleanupLedger {
 
     public boolean succeeded(UUID objectId, UUID token) { return finish(objectId, token, null); }
     public boolean failed(UUID objectId, UUID token, String error) {
-        if (error == null || !error.matches("[A-Z][A-Z0-9_]{0,127}"))
+        if (!isDiagnosticCode(error))
             throw new IllegalArgumentException("Cleanup error must be a bounded diagnostic code");
         return finish(objectId, token, error);
+    }
+
+    private static boolean isDiagnosticCode(String error) {
+        if (error == null || error.isEmpty() || error.length() > 128) return false;
+        char first = error.charAt(0);
+        if (first < 'A' || first > 'Z') return false;
+        for (int i = 1; i < error.length(); i++) {
+            char c = error.charAt(i);
+            if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean finish(UUID objectId, UUID token, String error) {

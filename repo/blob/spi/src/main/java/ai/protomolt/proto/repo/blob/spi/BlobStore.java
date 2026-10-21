@@ -3,7 +3,6 @@ package ai.protomolt.proto.repo.blob.spi;
 import java.io.InputStream;
 import java.util.Map;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /**
  * Object-storage port: the ONLY surface business code and transport handlers use to touch
@@ -28,14 +27,27 @@ public interface BlobStore {
     /** Maximum byte count of the bounded authoritative snapshot operation. */
     int MAX_CONDITIONAL_BYTES = 9 * 1024 * 1024;
 
-    /** A single strong quoted backing ETag, suitable for an exact If-Match condition. */
-    Pattern STRONG_ETAG = Pattern.compile("\"[!#-~]+\"");
-
     static String requireStrongEtag(String etag) {
-        if (etag == null || etag.length() > 1024 || !STRONG_ETAG.matcher(etag).matches()) {
+        if (!isStrongEtag(etag)) {
             throw new IllegalArgumentException("one strong quoted ETag is required");
         }
         return etag;
+    }
+
+    private static boolean isStrongEtag(String etag) {
+        if (etag == null || etag.length() < 3 || etag.length() > 1024) {
+            return false;
+        }
+        if (etag.charAt(0) != '"' || etag.charAt(etag.length() - 1) != '"') {
+            return false;
+        }
+        for (int i = 1; i < etag.length() - 1; i++) {
+            char c = etag.charAt(i);
+            if (c != '!' && (c < '#' || c > '~')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Explicit atomic write condition; exactly one alternative is required. */

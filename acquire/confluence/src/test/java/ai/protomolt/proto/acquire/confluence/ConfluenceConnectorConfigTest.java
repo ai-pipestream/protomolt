@@ -102,6 +102,14 @@ class ConfluenceConnectorConfigTest {
         ConfluenceConnectorConfig config = valid().spaces(List.of("ENG", "DOCS")).build();
         assertThat(config.hasSpaceAllowlist()).isTrue();
         assertThat(config.spaces()).containsExactly("ENG", "DOCS");
+
+        ConfluenceConnectorConfig fromEnv = ConfluenceConnectorConfig.fromEnvironment(Map.of(
+                "CONFLUENCE_BASE_URL", "https://pipestreamai.atlassian.net/wiki///",
+                "CONFLUENCE_EMAIL", "bot@protomolt.ai",
+                "CONFLUENCE_API_TOKEN", "token",
+                "CONFLUENCE_SPACES", " ENG , , DOCS , "));
+        assertThat(fromEnv.baseUrl()).isEqualTo("https://pipestreamai.atlassian.net/wiki");
+        assertThat(fromEnv.spaces()).containsExactly("ENG", "DOCS");
     }
 
     @Test

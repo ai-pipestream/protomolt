@@ -124,7 +124,7 @@ public record ConfluenceConnectorConfig(
             throw new IllegalArgumentException(ENV_BASE_URL + " is required"
                     + " (e.g. https://example.atlassian.net/wiki)");
         }
-        baseUrl = baseUrl.trim().replaceAll("/+$", "");
+        baseUrl = ConfluenceClient.stripTrailingSlashes(baseUrl.trim());
         if (email == null || email.isBlank()) {
             throw new IllegalArgumentException(ENV_EMAIL + " is required");
         }
@@ -240,10 +240,19 @@ public record ConfluenceConnectorConfig(
         if (value == null || value.isBlank()) {
             return List.of();
         }
-        return java.util.Arrays.stream(value.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
+        var spaces = new java.util.ArrayList<String>();
+        int start = 0;
+        while (start <= value.length()) {
+            int comma = value.indexOf(',', start);
+            int end = comma < 0 ? value.length() : comma;
+            String trimmed = value.substring(start, end).trim();
+            if (!trimmed.isEmpty()) {
+                spaces.add(trimmed);
+            }
+            if (comma < 0) break;
+            start = comma + 1;
+        }
+        return List.copyOf(spaces);
     }
 
     private static String firstNonBlank(String canonical, String alias) {

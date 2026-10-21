@@ -121,7 +121,23 @@ public final class ManagedBackendLedger {
     }
 
     private static void requireIdentifier(String value, String field) {
-        if (value == null || !value.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+        if (!isIdentifier(value))
             throw new IllegalArgumentException("Invalid " + field);
+    }
+
+    private static boolean isIdentifier(String value) {
+        if (value == null || value.isEmpty() || value.length() > 128) return false;
+        if (!isAsciiAlphanumeric(value.charAt(0))) return false;
+        for (int i = 1; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!isAsciiAlphanumeric(c) && c != '.' && c != '_' && c != ':' && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphanumeric(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
     }
 }
