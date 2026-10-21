@@ -7,7 +7,8 @@ and runs stored workflows with findings attributed to their steps; Services
 registers gRPC services and calls every reflected method through generated
 forms; Search and Metrics query a platform node found by its contract through
 a registered service profile; Receipts verifies and evaluates signed work
-records.
+records; Repository reads a repository host's accounts, documents, revisions
+and files over binary Connect.
 
 ## Running it
 
@@ -15,6 +16,7 @@ records.
 npm install
 npm run dev          # against protomolt-serve's registry on localhost:8081
 PROTOMOLT_REGISTRY_URL=http://host:port npm run dev   # any Confluent-compatible registry
+PROTOMOLT_REPOSITORY_URL=http://host:port npm run dev # a repository host, for /connect
 npm test             # vitest (jsdom for the component and view suites)
 npm run build        # static bundle in dist/
 ```

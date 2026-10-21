@@ -1,0 +1,11 @@
+# The console's generated TypeScript stubs. Run through
+# scripts/proto-stubs.sh, never by hand: it pins the buf CLI and the
+# generated file set, and `--check` fails CI when the committed stubs drift
+# from the protos.
+version: v2
+plugins:
+  - local: apps/console/node_modules/.bin/protoc-gen-es
+    out: apps/console/src/gen
+    include_imports: true
+    opt:
+      - target=ts

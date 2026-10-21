@@ -265,6 +265,54 @@ decisions a console session makes as the external reviewer. It also carries its
 own browser login boundary, separate from the operator API token. It has its
 own chapter: [Task console](task-console.md).
 
+## Repository
+
+The Repository section reads the parts-based `DocumentService`, plus
+`DriveService` for an account's drives. It is served by the repository host,
+not by `protomolt-serve`: the host serves the console bundle at `/console` and
+a Connect gateway at `/connect` on the same HTTP port, and the browser calls
+the gateway with Connect-ES in binary protobuf (`application/proto` for unary
+calls, `application/connect+proto` for server streams). There is no JSON on
+this path, and every request and response shape comes from TypeScript stubs
+generated from the protos.
+
+- **Accounts.** The accounts the session can see, or any account opened by ID.
+  The repository host does not serve `AccountService`, so the list shows the
+  gateway's `UNIMPLEMENTED` there and the ID entry is the way in.
+- **Documents.** One account's drives, then its documents from `ListDocuments`:
+  graph scope, the exact-match lookup filters (title, type, source, language,
+  author, category, ownership, metadata pairs, commit time range, save owner),
+  sort by commit time or title, the tombstone toggle and paging by page token.
+  A form value the server would refuse (whitespace only, a metadata key required
+  to equal two values, an unordered time range) is refused by name before any
+  call.
+- **Document detail.** The manifest's parts with state, size, SHA-256, the
+  revision that wrote each one and its owner; the revision's request metadata;
+  the validation record with every schema artifact it binds; revision history
+  with per-part changes; and the raw files. The screen pins the revision the
+  manifest answered for, so a save that lands while it is open cannot mix into
+  what it shows. Reading a part decodes it with the descriptor set the revision
+  retained, fetched by digest through `GetSchemaDescriptor` and hashed again in
+  the browser; unknown fields are listed, not dropped.
+- **Files.** Previews read the first 64 KiB of a byte range. Downloads stream
+  `ReadBlob` frames: in browsers with the File System Access API each frame is
+  written to the chosen file as it arrives; elsewhere the frames are assembled
+  in memory, and the screen says which. A whole-file read is hashed
+  incrementally and must match the stored SHA-256; a byte range is shown as
+  unverified against the whole-file digest.
+- **Look up.** Open a document by its call number (account, graph, graph
+  address and document IDs, with an optional exact revision), or ask what
+  happened to an operation ID. `GetOperationOutcome` answers committed,
+  committed as a rejection, or no outcome yet, and an `UNAVAILABLE` status
+  means the lookup itself could not answer. The four are shown differently:
+  no outcome does not mean the save failed.
+
+Every failed call shows its gRPC status name and the server's message; a
+response the console refuses (a stream that breaks its contract, a digest that
+does not match) shows as `CONSOLE` with the reason. A gateway `UNAUTHENTICATED`
+sends the browser to `/console/sign-in` with the open page as its return path.
+Leaving a screen aborts its calls, which ends server streams at the gateway.
+
 ## Locking it down
 
 By default every surface is open, which suits a laptop or a trusted network.
@@ -287,3 +335,10 @@ component and view suites. `npm run build` produces the static bundle in
 `dist/`, which the `protomolt-serve` build bundles onto the classpath and
 `ConsoleHandler` serves at `/console`. Any reverse proxy that mirrors
 `/console`, `/api/protomolt`, and `/api/serve` works equally well.
+
+The dev server also proxies `/connect` to a repository host
+(`PROTOMOLT_REPOSITORY_URL`, default `http://localhost:8080`) for the
+Repository section. Its generated stubs live in `src/gen`; after changing a
+proto the console uses, run `scripts/proto-stubs.sh` (buf 1.70.0, after
+`npm ci`) and commit the result. CI runs `scripts/proto-stubs.sh --check`,
+which fails when the committed stubs drift from the protos.
