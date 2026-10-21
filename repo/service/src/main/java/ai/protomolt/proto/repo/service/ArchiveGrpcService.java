@@ -54,14 +54,21 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     private static final int CHUNK_QUEUE_DEPTH = 64;
 
     private final ArchiveRepository operations;
+    private final RepoCallerBindings callers;
 
+    /** Binds no scoped caller to any account: only process authority reaches archives. */
     ArchiveGrpcService(ArchiveRepository operations) {
-        this.operations = operations;
+        this(operations, new RepoCallerBindings());
     }
 
-    private static RepositoryCaller caller() {
-        var context = ai.protomolt.proto.authz.grpc.CallerContexts.current();
-        return new RepositoryCaller(context.name(), context.unrestricted());
+    /** Binds scoped callers through the host's account bindings. */
+    ArchiveGrpcService(ArchiveRepository operations, RepoCallerBindings callers) {
+        this.operations = operations;
+        this.callers = java.util.Objects.requireNonNull(callers);
+    }
+
+    private RepositoryCaller caller() {
+        return callers.current();
     }
 
     @Override

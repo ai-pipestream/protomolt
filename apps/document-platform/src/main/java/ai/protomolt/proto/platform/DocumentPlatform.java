@@ -54,6 +54,8 @@ import ai.protomolt.proto.sources.ProtoSourceSet;
 import ai.protomolt.proto.sources.publish.PublishOptions;
 import ai.protomolt.proto.authz.AccessPolicies;
 import ai.protomolt.proto.authz.AccessPolicyCallers;
+import ai.protomolt.proto.authz.AccountBindingPolicies;
+import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.OidcCallerResolver;
 import ai.protomolt.proto.authz.jdbc.CallerStoreConfig;
@@ -69,6 +71,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -214,8 +217,21 @@ public final class DocumentPlatform implements AutoCloseable {
                     return builder.build();
                 });
 
+        // The repo listener takes the same credential stores; account bindings say
+        // which accounts each scoped principal reaches there.
+        Optional<AccountBindingResolver> accountBindings = config.mounts(RepoServiceModule.ROLE)
+                ? AccountBindingPolicies.fromEnvironment(config.environment()) : Optional.empty();
+        if (accountBindings.isPresent() && callerResolver == null) {
+            throw new IllegalArgumentException(AccountBindingPolicies.ENV_ACCOUNT_BINDINGS
+                    + " is set but no caller store is: account bindings need "
+                    + DocumentPlatformConfig.ENV_ACCESS_POLICY + ", "
+                    + OidcCallerResolver.ENV_INTROSPECTION_URL + " or "
+                    + CallerStoreConfig.ENV_JDBC_URL);
+        }
         this.repo = config.mounts(RepoServiceModule.ROLE)
-                ? new RepoServiceModule(config.repo()) : null;
+                ? new RepoServiceModule(config.repo(), callerResolver,
+                        accountBindings.orElseGet(AccountBindingResolver::none))
+                : null;
         this.registry = config.mounts(RegistryModule.ROLE)
                 ? new RegistryModule(
                         config.registryGit(),

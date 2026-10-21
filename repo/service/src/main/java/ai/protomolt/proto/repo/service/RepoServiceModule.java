@@ -1,5 +1,7 @@
 package ai.protomolt.proto.repo.service;
 
+import ai.protomolt.proto.authz.AccountBindingResolver;
+import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.composer.Channels;
 import ai.protomolt.proto.composer.NodeContext;
 import ai.protomolt.proto.composer.ServiceModule;
@@ -23,20 +25,40 @@ public final class RepoServiceModule implements ServiceModule {
     public static final String ROLE = "repo";
 
     private final RepoServiceConfig config;
+    private final CallerResolver callers;
+    private final AccountBindingResolver accounts;
     private RepoServices services;
     private Server netty;
     private UploadHttpServer http;
 
     /**
-     * Creates the module.
+     * Creates the module with only the operator token authenticating its TCP listener.
      *
      * @param config the repo service configuration
      */
     public RepoServiceModule(RepoServiceConfig config) {
+        this(config, null, AccountBindingResolver.none());
+    }
+
+    /**
+     * Creates the module with scoped callers on its TCP listener.
+     *
+     * @param config the repo service configuration
+     * @param callers resolves non-operator credentials to their principals; null when only
+     *        the operator token authenticates
+     * @param accounts binds scoped principals to the accounts they act for
+     */
+    public RepoServiceModule(RepoServiceConfig config, CallerResolver callers,
+            AccountBindingResolver accounts) {
         if (config == null) {
             throw new IllegalArgumentException("config must not be null");
         }
+        if (accounts == null) {
+            throw new IllegalArgumentException("accounts must not be null");
+        }
         this.config = config;
+        this.callers = callers;
+        this.accounts = accounts;
     }
 
     @Override
@@ -52,7 +74,7 @@ public final class RepoServiceModule implements ServiceModule {
         RepositoryConsole console = config.httpPort() > 0
                 ? RepositoryConsole.fromEnvironment(context.environment())
                 : null;
-        services = RepoServices.build(config);
+        services = RepoServices.build(config).withAccountBindings(accounts);
         String name = ROLE + "-" + context.nodeId();
         services.startInProcess(name);
         context.channels().publishInProcess(ROLE, name);
@@ -76,7 +98,7 @@ public final class RepoServiceModule implements ServiceModule {
                 // All modules are wired by the time any mount starts, so co-mounted
                 // contributions (the parse module's fleet document model) are visible here.
                 services.withAdmittedSchemas(context.contributions().all(com.google.protobuf.Descriptors.FileDescriptor.class));
-                netty = services.startNetty(config.grpcPort(), credential, null);
+                netty = services.startNetty(config.grpcPort(), credential, callers);
                 // Same rule as RepoServiceMain: 0 or "off" leaves the HTTP port, and
                 // every route on it, unbound.
                 if (console != null) {

@@ -32,12 +32,13 @@ public final class RepoServiceMain {
         RepositoryConsole console = config.httpPort() > 0
                 ? RepositoryConsole.fromEnvironment(System.getenv())
                 : null;
-        RepoServices services = RepoServices.build(config);
+        RepoCallerConfiguration callers = RepoCallerConfiguration.fromEnvironment(System.getenv());
+        RepoServices services = RepoServices.build(config).withAccountBindings(callers.bindings());
         // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
         // the account's intake/pipeline drives exist before serving. No-op
         // when unset; embedded hosts opt in by calling it themselves.
         services.seedAccountDrives();
-        Server server = services.startNetty(config.grpcPort(), apiToken, null);
+        Server server = services.startNetty(config.grpcPort(), apiToken, callers.resolver());
         // HTTP port (upload routes and the console): DOCUMENT_PLATFORM_HTTP_PORT,
         // default 8080; 0 or "off" disables all of it (gRPC-only deployments).
         if (config.httpPort() > 0) {

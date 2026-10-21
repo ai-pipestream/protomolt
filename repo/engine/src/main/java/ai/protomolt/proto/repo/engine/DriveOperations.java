@@ -1,5 +1,6 @@
 package ai.protomolt.proto.repo.engine;
 
+import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.v1.CreateDriveRequest;
 import ai.protomolt.proto.repo.v1.CreateDriveResponse;
 import ai.protomolt.proto.repo.v1.Drive;
@@ -39,7 +40,7 @@ public final class DriveOperations implements ai.protomolt.proto.repo.spi.DriveR
     }
 
     @Override
-    public CreateDriveResponse createDrive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, CreateDriveRequest request) {
+    public CreateDriveResponse createDrive(RepositoryCaller caller, CreateDriveRequest request) {
         RepositoryErrors.requireProcessAuthority(caller);
         return RepositoryErrors.call(() -> {
             if (request.getName().isBlank()) {
@@ -58,19 +59,25 @@ public final class DriveOperations implements ai.protomolt.proto.repo.spi.DriveR
     }
 
     @Override
-    public GetDriveResponse getDrive(ai.protomolt.proto.repo.spi.RepositoryCaller caller, GetDriveRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public GetDriveResponse getDrive(RepositoryCaller caller, GetDriveRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         return RepositoryErrors.call(() -> {
             DriveRecord record = switch (request.getCoordinateCase()) {
                 case DRIVE_ID -> {
                     UUID driveId = parseUuid(request.getDriveId());
+                    // A drive outside the caller's accounts answers exactly as a missing
+                    // one: the request named no account, so refusing by account would
+                    // reveal which account owns the drive.
                     yield drives.findById(driveId)
+                            .filter(found -> caller.processAuthority()
+                                    || caller.accountIds().contains(found.accountId))
                             .orElseThrow(() -> notFound("no drive for drive_id " + driveId));
                 }
                 case NAME -> {
                     if (request.getAccountId().isBlank()) {
                         throw invalidArgument("account_id is required with the name coordinate");
                     }
+                    RepositoryErrors.requireAccount(caller, request.getAccountId());
                     yield drives.findByName(request.getAccountId(), request.getName())
                             .orElseThrow(() -> notFound("no drive '" + request.getName()
                                     + "' for account '" + request.getAccountId() + "'"));
@@ -83,12 +90,13 @@ public final class DriveOperations implements ai.protomolt.proto.repo.spi.DriveR
     }
 
     @Override
-    public ListDrivesResponse listDrives(ai.protomolt.proto.repo.spi.RepositoryCaller caller, ListDrivesRequest request) {
-        RepositoryErrors.requireProcessAuthority(caller);
+    public ListDrivesResponse listDrives(RepositoryCaller caller, ListDrivesRequest request) {
+        RepositoryErrors.requireAccountBinding(caller);
         return RepositoryErrors.call(() -> {
             if (request.getAccountId().isBlank()) {
                 throw invalidArgument("account_id is required");
             }
+            RepositoryErrors.requireAccount(caller, request.getAccountId());
             int limit = request.getLimit() <= 0 ? 100 : request.getLimit();
             // Keyset continuation: the token is the LAST name of the previous
             // page (names are unique per account), so pages are stable under

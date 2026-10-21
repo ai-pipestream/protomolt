@@ -23,6 +23,21 @@ final class RepositoryErrors {
         if (caller == null || !caller.processAuthority())
             throw new RepositoryException(PERMISSION_DENIED, "Repository account policy is not configured for this principal");
     }
+    /**
+     * Read-path gate: process authority, or a scoped caller bound to at least one account.
+     * The per-account check follows once the request's account is validated.
+     */
+    static void requireAccountBinding(RepositoryCaller caller) {
+        if (caller == null)
+            throw new RepositoryException(PERMISSION_DENIED, "Repository account policy is not configured for this principal");
+        if (!caller.processAuthority() && caller.accountIds().isEmpty())
+            throw new RepositoryException(PERMISSION_DENIED, "The caller is bound to no account");
+    }
+    /** Refuses a scoped caller on an account it is not bound to, naming the requested account. */
+    static void requireAccount(RepositoryCaller caller, String accountId) {
+        if (!caller.processAuthority() && !caller.accountIds().contains(accountId))
+            throw new RepositoryException(PERMISSION_DENIED, "The caller is not bound to account '" + accountId + "'");
+    }
     static RepositoryException invalidArgument(String message) { return new RepositoryException(INVALID_ARGUMENT, message); }
     static RepositoryException notFound(String message) { return new RepositoryException(NOT_FOUND, message); }
     static RepositoryException failedPrecondition(String message) { return new RepositoryException(FAILED_PRECONDITION, message); }

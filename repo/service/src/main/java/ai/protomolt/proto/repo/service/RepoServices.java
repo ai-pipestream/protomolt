@@ -6,6 +6,7 @@ import ai.protomolt.proto.repo.spi.ArchiveRepository;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.engine.ArchiveOperations;
 
+import ai.protomolt.proto.authz.AccountBindingResolver;
 import ai.protomolt.proto.authz.CallerResolver;
 import ai.protomolt.proto.authz.grpc.ApiTokenServerInterceptor;
 import ai.protomolt.proto.repo.blob.spi.BlobStore;
@@ -95,9 +96,12 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.catalog.PostgresCatalog catalog;
     private final ai.protomolt.proto.repo.accession.DocumentUploads v2Uploads;
     private final ai.protomolt.proto.repo.accession.OutboxRelay v2OutboxRelay;
+    // One caller mapping for the document, drive and archive services; account
+    // bindings are set before serving (withAccountBindings).
+    private final RepoCallerBindings callerBindings = new RepoCallerBindings();
     // The catalog supplier reads the field this constructor assigns later; the
     // rebinding touches the catalog only once the services are serving.
-    private final RepoStepSaveRebinding stepSave = new RepoStepSaveRebinding(this::stepGrantCatalog);
+    private final RepoStepSaveRebinding stepSave = new RepoStepSaveRebinding(this::stepGrantCatalog, callerBindings);
 
     private ai.protomolt.proto.repo.catalog.PostgresCatalog stepGrantCatalog() {
         return catalog;
@@ -130,6 +134,21 @@ public final class RepoServices implements AutoCloseable {
             }
         }
         this.admittedSchemas = java.util.Map.copyOf(byTypeUrl);
+        return this;
+    }
+
+    /**
+     * Binds scoped callers to the accounts and ACL identities {@code resolver} names. The
+     * document, drive and archive services all read the same binding. Until a composition
+     * root calls this, a scoped caller is bound to no account and every account-addressed
+     * call refuses it; process authority is unaffected. Composition roots call this after
+     * {@code build} and before any transport starts serving.
+     *
+     * @param resolver the account-binding source
+     * @return this instance, for chaining
+     */
+    public RepoServices withAccountBindings(AccountBindingResolver resolver) {
+        callerBindings.use(resolver);
         return this;
     }
 
@@ -240,8 +259,8 @@ public final class RepoServices implements AutoCloseable {
             this.v2Uploads = v2 == null ? null : v2.uploads();
             this.v2OutboxRelay = v2 == null ? null : v2.relay();
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
-                    new ArchiveGrpcService(archiveOperations),
-                    new DriveGrpcService(driveOperations)));
+                    new ArchiveGrpcService(archiveOperations, callerBindings),
+                    new DriveGrpcService(driveOperations, callerBindings)));
             if (v2 != null) {
                 var accessionImpl = v2.accession();
                 var stepSaveInterceptor = stepSave.interceptor();

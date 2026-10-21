@@ -46,11 +46,13 @@ final class RepoStepSaveRebinding {
             Context.key("repo-service-step-save-module");
 
     private final Supplier<PostgresCatalog> catalog;
+    private final RepoCallerBindings callers;
     private final Set<String> stepGrantsInstalled =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    RepoStepSaveRebinding(Supplier<PostgresCatalog> catalog) {
+    RepoStepSaveRebinding(Supplier<PostgresCatalog> catalog, RepoCallerBindings callers) {
         this.catalog = catalog;
+        this.callers = callers;
     }
 
     /**
@@ -98,10 +100,10 @@ final class RepoStepSaveRebinding {
     }
 
     /**
-     * v2 caller binding: the general case preserves the authenticated principal exactly
-     * (process authority stays process authority, scoped callers stay scoped to no
-     * repository accounts); the internal step credential rebinds to the account the
-     * step-save interceptor recorded for this call.
+     * v2 caller binding: the general case is the host's {@link RepoCallerBindings} (process
+     * authority stays process authority, scoped callers carry the accounts and ACL
+     * identities their account binding names); the internal step credential rebinds to the
+     * account the step-save interceptor recorded for this call.
      */
     RepositoryCaller bindCaller(AuthenticatedCaller auth) {
         var binding = auth.binding();
@@ -119,10 +121,7 @@ final class RepoStepSaveRebinding {
                     Optional.of(new RepositoryCredentialBinding(
                             "repo-service", INTERNAL_STEP_CREDENTIAL_ID, 1)));
         }
-        return new RepositoryCaller(auth.caller().name(), auth.caller().unrestricted(),
-                Set.of(), Set.of(),
-                binding.map(b -> new RepositoryCredentialBinding(
-                        b.issuer(), b.credentialId(), b.generation())));
+        return callers.bind(auth);
     }
 
     /** Installs the built-in step-writer grant for (account, module) once per process. */
