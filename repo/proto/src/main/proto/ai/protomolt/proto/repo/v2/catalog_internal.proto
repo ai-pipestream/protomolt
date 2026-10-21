@@ -330,6 +330,11 @@ message CatalogEntry {
   ai.protomolt.proto.repo.v1.OwnershipContext ownership = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "ownership"}}];
   // Exact commit timestamp supplied by the catalog; SQL timestamps can lose nanoseconds.
   google.protobuf.Timestamp committed_at = 3;
+  // Lookup fields projected from the current CORE part; carried forward when a
+  // commit does not rewrite CORE. Unset for a tombstone.
+  DocumentLookup lookup = 4;
+  // The save owner of the current revision. Unset for a tombstone.
+  SaveOwner owner = 5;
 }
 
 // Internal binary continuation token, bound to the listing filters.
@@ -346,6 +351,16 @@ message CatalogPageToken {
   bool include_tombstoned = 5;
   // Last returned address.
   ai.protomolt.proto.repo.v1.NodeAddress after = 6;
+  // Exact filter the page was computed under.
+  DocumentFilter filter = 7;
+  // Exact sort the page was computed under.
+  DocumentSort sort = 8;
+  // The sort field value of the last returned row, when the sort is by
+  // committed_at.
+  google.protobuf.Timestamp after_committed_at = 9;
+  // The sort field value of the last returned row, when the sort is by title;
+  // the empty string for a document without one.
+  optional string after_title = 10;
 }
 
 // Durable purge targets recorded before any provider deletion.

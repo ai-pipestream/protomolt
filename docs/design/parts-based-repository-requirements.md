@@ -311,6 +311,7 @@ Shared database indexes, connections and storage still contend, and are measured
 - The returned manifest distinguishes parts not requested from empty or deleted parts.
 - Manifest inspection fetches no payloads.
 - History is paginated with defined ordering.
+- A listing returns each document's lookup fields (`DocumentLookup`, projected from the CORE part and kept on the catalog entry) with its save owner, accepts typed exact-match filters on those fields, the save owner and the commit time, and orders by call number, commit time or title with the call number as tie-break. Filters are protobuf fields, never a query language.
 - Large reads stream a pinned manifest and the selected content.
 
 ## 9. Validation
