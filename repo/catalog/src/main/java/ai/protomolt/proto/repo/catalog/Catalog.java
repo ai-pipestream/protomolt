@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.catalog.CatalogRecords.RejectionResult;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.Outcome;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
+import ai.protomolt.proto.repo.v2.DocumentLookup;
 import ai.protomolt.proto.repo.v2.RecordedOutcome;
 import ai.protomolt.proto.repo.v2.StackRecord;
 import ai.protomolt.proto.repo.v2.StoredManifest;
@@ -68,9 +69,29 @@ public interface Catalog extends AutoCloseable {
      */
     Optional<ByteString> artifact(String sha256);
 
-    /** Current metadata rows in unsigned UTF-8 address order, strictly after the cursor. */
-    List<CatalogRecords.ListedDocument> documents(String accountId, String graphId, String graphAddressId,
-            boolean includeTombstoned, Optional<NodeAddress> after, int limit);
+    /**
+     * Current metadata rows matching the listing, in its order, strictly after the
+     * cursor. The order is the sort field, then the address in unsigned UTF-8 order.
+     *
+     * @param listing the scope, filter and sort
+     * @param after the last row of the previous page; empty for the first page
+     * @param limit the most rows to return
+     * @return the rows, with each row's cursor
+     */
+    List<CatalogRecords.ListedDocument> documents(CatalogRecords.Listing listing, Optional<CatalogRecords.Cursor> after, int limit);
+
+    /**
+     * Rewrites a document's catalog entry and its derived lookup columns from the
+     * stored manifest of {@code revision} and the given lookup (requirements §7:
+     * entries are rebuildable from stored parts). Nothing changes when the current
+     * revision is no longer {@code revision}.
+     *
+     * @param address the document
+     * @param revision the current revision the lookup was read for
+     * @param lookup the lookup of that revision's CORE part; empty for a tombstone
+     * @return whether the entry was rewritten
+     */
+    boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup);
 
     // ------------------------------------------------------------------ commit
 

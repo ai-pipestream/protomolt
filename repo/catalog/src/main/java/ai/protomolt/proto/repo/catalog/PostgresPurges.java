@@ -58,8 +58,28 @@ final class PostgresPurges {
                 update.setLong(1, documentId); references += update.executeLargeUpdate();
             }
         }
-        try (var update = connection.prepareStatement("UPDATE catalog_documents SET purged = true WHERE document_id = ?")) {
-            update.setLong(1, documentId); update.executeUpdate();
+        // A purge retires the content: the lookup, derived from the CORE part, goes with it.
+        // The entry keeps identity, ownership, commit time and save owner.
+        final byte[] entry;
+        try (var select = connection.prepareStatement(
+                "SELECT catalog_entry, catalog_entry_sha256 FROM catalog_documents WHERE document_id = ?")) {
+            select.setLong(1, documentId);
+            try (var rows = select.executeQuery()) {
+                if (!rows.next()) throw new IllegalStateException("Locked document row vanished");
+                entry = PostgresCatalog.parseEntry(rows.getBytes(1), rows.getString(2), request.getAddress())
+                        .toBuilder().clearLookup().build().toByteArray();
+            }
+        }
+        try (var update = connection.prepareStatement("""
+                UPDATE catalog_documents SET purged = true, catalog_entry = ?, catalog_entry_sha256 = ?, lookup_title = NULL,
+                    lookup_document_type = NULL, lookup_source_uri = NULL, lookup_source_mime_type = NULL, lookup_language = NULL,
+                    lookup_author = NULL, lookup_category = NULL, lookup_datasource_id = NULL, lookup_connector_id = NULL
+                WHERE document_id = ?""")) {
+            update.setBytes(1, entry); update.setString(2, PostgresCatalog.sha256Hex(entry)); update.setLong(3, documentId);
+            update.executeUpdate();
+        }
+        try (var delete = connection.prepareStatement("DELETE FROM catalog_document_metadata WHERE document_id = ?")) {
+            delete.setLong(1, documentId); delete.executeUpdate();
         }
         var record = CatalogPurge.newBuilder().setRequest(request).setMarkedAt(now).setReferencesPurged(references);
         long shared = 0;

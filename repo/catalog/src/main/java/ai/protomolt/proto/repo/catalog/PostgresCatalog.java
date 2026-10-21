@@ -15,9 +15,13 @@ import ai.protomolt.proto.repo.catalog.CatalogRecords.RejectionResult;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.SourcePurged;
 import ai.protomolt.proto.repo.catalog.CatalogRecords.WriteDenied;
 import ai.protomolt.proto.repo.v1.NodeAddress;
+import ai.protomolt.proto.repo.v2.CatalogEntry;
 import ai.protomolt.proto.repo.v2.DocumentEvent;
+import ai.protomolt.proto.repo.v2.DocumentLookup;
+import ai.protomolt.proto.repo.v2.DocumentSortField;
 import ai.protomolt.proto.repo.v2.PartState;
 import ai.protomolt.proto.repo.v2.RecordedOutcome;
+import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.StackRecord;
 import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
@@ -249,65 +253,184 @@ public final class PostgresCatalog implements Catalog {
 
     // ------------------------------------------------------------------ commit
 
-    private static final ai.protomolt.proto.projection.MessageProjection ENTRY_PROJECTION =
-            ai.protomolt.proto.projection.MessageProjection.forTarget(
-                    ai.protomolt.proto.repo.v2.CatalogEntry.getDescriptor(),
-                    name -> name.equals(ai.protomolt.proto.repo.v1.Document.getDescriptor().getFullName())
-                            ? java.util.Optional.of(ai.protomolt.proto.repo.v1.Document.getDescriptor()) : java.util.Optional.empty()).orElseThrow();
-
-    /** Project only committed document metadata; no content fetch or JSON conversion. */
-    private static byte[] entryBytes(StoredManifest manifest) {
-        var projected = ENTRY_PROJECTION.project(ai.protomolt.proto.repo.v1.Document.newBuilder()
-                .setDocId(manifest.getAddress().getDocId()).setOwnership(manifest.getOwnership()).build());
-        return ai.protomolt.proto.repo.v2.CatalogEntry.newBuilder().mergeFrom(projected)
-                .setCommittedAt(manifest.getCommittedAt()).build().toByteArray();
+    /** The entry bytes of a revision, with the lookup of its CORE part. */
+    private static byte[] entryBytes(StoredManifest manifest, Optional<DocumentLookup> lookup) {
+        return CatalogEntries.entry(manifest, lookup).toByteArray();
     }
 
-    @Override public List<CatalogRecords.ListedDocument> documents(String accountId, String graphId, String graphAddressId,
-            boolean includeTombstoned, Optional<NodeAddress> after, int limit) {
+    private static final String LISTED_COLUMNS = "graph_id, graph_address_id, doc_id, current_revision, tombstone, "
+            + "catalog_entry, catalog_entry_sha256, committed_nanos, COALESCE(lookup_title, '')";
+
+    @Override public List<CatalogRecords.ListedDocument> documents(CatalogRecords.Listing listing,
+            Optional<CatalogRecords.Cursor> after, int limit) {
         if (limit < 1 || limit > 1001) throw new IllegalArgumentException("Invalid catalog page size");
-        if (after.isPresent() && !after.get().getAccountId().equals(accountId))
+        if (after.isPresent() && !after.get().after().getAccountId().equals(listing.accountId()))
             throw new IllegalArgumentException("Cursor belongs to another account");
+        if (listing.sort().getField() == DocumentSortField.UNRECOGNIZED)
+            throw new IllegalArgumentException("Unknown sort field");
+        var filter = listing.filter();
+        var where = new StringBuilder("NOT purged AND account_id = ?");
+        var binds = new ArrayList<Object>();
+        binds.add(listing.accountId());
+        if (!listing.graphId().isEmpty()) { where.append(" AND graph_id = ?"); binds.add(listing.graphId()); }
+        if (!listing.graphAddressId().isEmpty()) { where.append(" AND graph_address_id = ?"); binds.add(listing.graphAddressId()); }
+        if (!listing.includeTombstoned()) where.append(" AND NOT tombstone");
+        if (filter.hasDocId()) { where.append(" AND doc_id = ?"); binds.add(filter.getDocId()); }
+        if (filter.hasTitle()) { where.append(" AND lookup_title = ?"); binds.add(filter.getTitle()); }
+        if (filter.hasDocumentType()) { where.append(" AND lookup_document_type = ?"); binds.add(filter.getDocumentType()); }
+        if (filter.hasSourceUri()) { where.append(" AND lookup_source_uri = ?"); binds.add(filter.getSourceUri()); }
+        if (filter.hasSourceMimeType()) { where.append(" AND lookup_source_mime_type = ?"); binds.add(filter.getSourceMimeType()); }
+        if (filter.hasLanguage()) { where.append(" AND lookup_language = ?"); binds.add(filter.getLanguage()); }
+        if (filter.hasAuthor()) { where.append(" AND lookup_author = ?"); binds.add(filter.getAuthor()); }
+        if (filter.hasCategory()) { where.append(" AND lookup_category = ?"); binds.add(filter.getCategory()); }
+        if (filter.hasDatasourceId()) { where.append(" AND lookup_datasource_id = ?"); binds.add(filter.getDatasourceId()); }
+        if (filter.hasConnectorId()) { where.append(" AND lookup_connector_id = ?"); binds.add(filter.getConnectorId()); }
+        if (filter.hasCommittedAfter()) { where.append(" AND committed_nanos >= ?"); binds.add(CatalogEntries.nanos(filter.getCommittedAfter())); }
+        if (filter.hasCommittedBefore()) { where.append(" AND committed_nanos < ?"); binds.add(CatalogEntries.nanos(filter.getCommittedBefore())); }
+        for (var match : filter.getMetadataList()) {
+            where.append(" AND EXISTS (SELECT 1 FROM catalog_document_metadata m WHERE m.document_id = d.document_id"
+                    + " AND m.key = ? AND m.value = ?)");
+            binds.add(match.getKey()); binds.add(match.getValue());
+        }
+        switch (filter.getOwnerCase()) {
+            case OWNER_DATASOURCE_ID -> { where.append(" AND owner_datasource_id = ?"); binds.add(filter.getOwnerDatasourceId()); }
+            case OWNER_MODULE_ID -> { where.append(" AND owner_module_id = ?"); binds.add(filter.getOwnerModuleId()); }
+            case OWNER_NOT_SET -> {}
+        }
+        // The sort key, then the address: the same columns in the same order as the index.
+        var address = "(graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\")";
+        var key = switch (listing.sort().getField()) {
+            case DOCUMENT_SORT_FIELD_COMMITTED_AT -> "committed_nanos";
+            case DOCUMENT_SORT_FIELD_TITLE -> "(COALESCE(lookup_title, '') COLLATE \"C\")";
+            default -> null;
+        };
+        boolean descending = key != null && listing.sort().getDescending();
+        if (after.isPresent()) {
+            var cursor = after.get();
+            if (key == null) {
+                where.append(" AND ").append(address).append(" > (?, ?, ?)");
+            } else {
+                where.append(" AND (").append(key).append(descending ? " < ?" : " > ?").append(" OR (")
+                        .append(key).append(" = ? AND ").append(address).append(" > (?, ?, ?)))");
+                Object value = key.equals("committed_nanos") ? CatalogEntries.nanos(cursor.committedAt()) : cursor.title();
+                binds.add(value); binds.add(value);
+            }
+            binds.add(cursor.after().getGraphId()); binds.add(cursor.after().getGraphAddressId()); binds.add(cursor.after().getDocId());
+        }
+        var order = (key == null ? "" : key + (descending ? " DESC, " : ", "))
+                + "graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\"";
+        var sql = "SELECT " + LISTED_COLUMNS + " FROM catalog_documents d WHERE " + where + " ORDER BY " + order + " LIMIT ?";
+        binds.add(limit);
         return inTransaction("Document listing", connection -> {
-            String sql = "SELECT graph_id, graph_address_id, doc_id, current_revision, tombstone, catalog_entry, catalog_entry_sha256 "
-                    + "FROM catalog_documents WHERE NOT purged AND account_id = ?"
-                    + (graphId.isEmpty() ? "" : " AND graph_id = ?")
-                    + (graphAddressId.isEmpty() ? "" : " AND graph_address_id = ?")
-                    + (includeTombstoned ? "" : " AND NOT tombstone")
-                    + (after.isEmpty() ? "" : " AND (graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\") > (?, ?, ?)")
-                    + " ORDER BY graph_id COLLATE \"C\", graph_address_id COLLATE \"C\", doc_id COLLATE \"C\" LIMIT ?";
             try (var select = connection.prepareStatement(sql)) {
-                int i = 1;
-                select.setString(i++, accountId);
-                if (!graphId.isEmpty()) select.setString(i++, graphId);
-                if (!graphAddressId.isEmpty()) select.setString(i++, graphAddressId);
-                if (after.isPresent()) {
-                    select.setString(i++, after.get().getGraphId());
-                    select.setString(i++, after.get().getGraphAddressId());
-                    select.setString(i++, after.get().getDocId());
-                }
-                select.setInt(i, limit);
+                for (int i = 0; i < binds.size(); i++) select.setObject(i + 1, binds.get(i));
                 var result = new ArrayList<CatalogRecords.ListedDocument>();
                 try (var rows = select.executeQuery()) {
                     while (rows.next()) {
-                        var address = NodeAddress.newBuilder().setAccountId(accountId).setGraphId(rows.getString(1))
+                        var found = NodeAddress.newBuilder().setAccountId(listing.accountId()).setGraphId(rows.getString(1))
                                 .setGraphAddressId(rows.getString(2)).setDocId(rows.getString(3)).build();
-                        var bytes = rows.getBytes(6);
-                        if (bytes == null || !sha256Hex(bytes).equals(rows.getString(7)))
-                            throw new CatalogDataLoss("Catalog entry digest mismatch");
-                        final ai.protomolt.proto.repo.v2.CatalogEntry entry;
-                        try { entry = ai.protomolt.proto.repo.v2.CatalogEntry.parseFrom(bytes); }
-                        catch (com.google.protobuf.InvalidProtocolBufferException bad) { throw new CatalogDataLoss("Catalog entry does not decode", bad); }
-                        if (!entry.getDocId().equals(address.getDocId()) || !entry.hasOwnership()
-                                || !entry.getOwnership().getAccountId().equals(accountId) || !entry.hasCommittedAt())
-                            throw new CatalogDataLoss("Catalog entry identity mismatch");
-                        result.add(new CatalogRecords.ListedDocument(address, rows.getLong(4), rows.getBoolean(5),
-                                entry.getCommittedAt(), entry));
+                        var entry = parseEntry(rows.getBytes(6), rows.getString(7), found);
+                        var cursor = new CatalogRecords.Cursor(found, CatalogEntries.timestamp(rows.getLong(8)), rows.getString(9));
+                        result.add(new CatalogRecords.ListedDocument(found, rows.getLong(4), rows.getBoolean(5),
+                                entry.getCommittedAt(), entry, cursor));
                     }
                 }
                 return List.copyOf(result);
             }
         });
+    }
+
+    static CatalogEntry parseEntry(byte[] bytes, String sha256, NodeAddress address) {
+        if (bytes == null || !sha256Hex(bytes).equals(sha256)) throw new CatalogDataLoss("Catalog entry digest mismatch");
+        final CatalogEntry entry;
+        try { entry = CatalogEntry.parseFrom(bytes); }
+        catch (InvalidProtocolBufferException bad) { throw new CatalogDataLoss("Catalog entry does not decode", bad); }
+        if (!entry.getDocId().equals(address.getDocId()) || !entry.hasOwnership()
+                || !entry.getOwnership().getAccountId().equals(address.getAccountId()) || !entry.hasCommittedAt())
+            throw new CatalogDataLoss("Catalog entry identity mismatch");
+        return entry;
+    }
+
+    @Override public boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup) {
+        return inTransaction("Catalog entry rebuild", connection -> {
+            final long documentId;
+            try (var select = connection.prepareStatement("""
+                    SELECT document_id FROM catalog_documents
+                    WHERE NOT purged AND account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?
+                    AND current_revision = ? FOR UPDATE""")) {
+                bindAddress(select, 1, address);
+                select.setLong(5, revision);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) return false;
+                    documentId = rows.getLong(1);
+                }
+            }
+            final StoredManifest manifest;
+            try (var select = connection.prepareStatement(
+                    "SELECT manifest, manifest_sha256 FROM catalog_revisions WHERE document_id = ? AND revision = ?")) {
+                select.setLong(1, documentId);
+                select.setLong(2, revision);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) throw new CatalogDataLoss("Current revision has no manifest");
+                    manifest = parseManifest(rows.getBytes(1), rows.getString(2), address, revision);
+                }
+            }
+            var entry = entryBytes(manifest, lookup);
+            try (var update = connection.prepareStatement("UPDATE catalog_documents SET catalog_entry = ?, catalog_entry_sha256 = ?, "
+                    + LOOKUP_ASSIGNMENTS + " WHERE document_id = ?")) {
+                update.setBytes(1, entry);
+                update.setString(2, sha256Hex(entry));
+                bindLookup(update, 3, manifest, lookup);
+                update.setLong(3 + LOOKUP_COLUMNS, documentId);
+                update.executeUpdate();
+            }
+            writeMetadata(connection, documentId, lookup);
+            return true;
+        });
+    }
+
+    /** The derived columns of a revision, in the order {@link #bindLookup} binds them. */
+    private static final String LOOKUP_ASSIGNMENTS = "committed_nanos = ?, lookup_title = ?, lookup_document_type = ?, lookup_source_uri = ?, "
+            + "lookup_source_mime_type = ?, lookup_language = ?, lookup_author = ?, lookup_category = ?, "
+            + "lookup_datasource_id = ?, lookup_connector_id = ?, owner_datasource_id = ?, owner_module_id = ?";
+    private static final int LOOKUP_COLUMNS = 12;
+
+    private static void bindLookup(PreparedStatement statement, int first, StoredManifest manifest, Optional<DocumentLookup> lookup)
+            throws SQLException {
+        var l = lookup.orElse(DocumentLookup.getDefaultInstance());
+        statement.setLong(first++, CatalogEntries.nanos(manifest.getCommittedAt()));
+        statement.setString(first, l.hasTitle() ? l.getTitle() : null);
+        statement.setString(first + 1, l.hasDocumentType() ? l.getDocumentType() : null);
+        statement.setString(first + 2, l.hasSourceUri() ? l.getSourceUri() : null);
+        statement.setString(first + 3, l.hasSourceMimeType() ? l.getSourceMimeType() : null);
+        statement.setString(first + 4, l.hasLanguage() ? l.getLanguage() : null);
+        statement.setString(first + 5, l.hasAuthor() ? l.getAuthor() : null);
+        statement.setString(first + 6, l.hasCategory() ? l.getCategory() : null);
+        statement.setString(first + 7, lookup.isPresent() ? manifest.getOwnership().getDatasourceId() : null);
+        statement.setString(first + 8, lookup.isPresent() && manifest.getOwnership().hasConnectorId()
+                ? manifest.getOwnership().getConnectorId() : null);
+        var owner = manifest.getTombstone() ? SaveOwner.getDefaultInstance() : manifest.getOwner();
+        statement.setString(first + 9, owner.hasIntake() ? owner.getIntake().getDatasourceId() : null);
+        statement.setString(first + 10, owner.hasStep() ? owner.getStep().getModuleId() : null);
+    }
+
+    /** Replaces the document's metadata rows with the lookup's; a tombstone clears them. */
+    private static void writeMetadata(Connection connection, long documentId, Optional<DocumentLookup> lookup) throws SQLException {
+        try (var delete = connection.prepareStatement("DELETE FROM catalog_document_metadata WHERE document_id = ?")) {
+            delete.setLong(1, documentId);
+            delete.executeUpdate();
+        }
+        if (lookup.isEmpty() || lookup.get().getMetadataCount() == 0) return;
+        try (var insert = connection.prepareStatement(
+                "INSERT INTO catalog_document_metadata (document_id, key, value) VALUES (?, ?, ?)")) {
+            for (var pair : lookup.get().getMetadataMap().entrySet()) {
+                insert.setLong(1, documentId);
+                insert.setString(2, pair.getKey());
+                insert.setString(3, pair.getValue());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
     }
 
     @Override public Optional<CatalogRecords.PurgeState> markPurged(ai.protomolt.proto.repo.v2.PurgeDocumentRequest request,
@@ -347,7 +470,7 @@ public final class PostgresCatalog implements Catalog {
                     connection.rollback();
                     return denied.get();
                 }
-                var documentId = compareAndSet(connection, commit.address(), commit.expected().hasNone(), next - 1,
+                var documentId = compareAndSet(connection, commit, commit.expected().hasNone(), next - 1,
                         manifest.getTombstone(), manifest);
                 if (documentId.isEmpty()) {
                     connection.rollback();
@@ -456,36 +579,79 @@ public final class PostgresCatalog implements Catalog {
         return Optional.empty();
     }
 
-    /** Moves the pointer from {@code expectedRevision}; empty when the document is elsewhere. */
-    private static Optional<Long> compareAndSet(Connection connection, NodeAddress address, boolean create,
+    /**
+     * Moves the pointer from {@code expectedRevision}; empty when the document is
+     * elsewhere. The entry and its lookup columns follow: a create or a CORE write
+     * sets them from the commit's lookup, a tombstone clears them, and a commit
+     * that carries CORE keeps the row's current lookup.
+     */
+    private static Optional<Long> compareAndSet(Connection connection, Commit commit, boolean create,
             long expectedRevision, boolean tombstone, StoredManifest manifest) throws SQLException {
+        var address = commit.address();
         var now = toTimestamp(manifest.getCommittedAt());
-        var entry = entryBytes(manifest);
         if (create) {
+            var lookup = commit.lookup();
+            var entry = entryBytes(manifest, lookup);
             try (var insert = connection.prepareStatement("""
                     INSERT INTO catalog_documents (account_id, graph_id, graph_address_id, doc_id, current_revision,
-                        tombstone, updated_at, catalog_entry, catalog_entry_sha256)
-                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING document_id""")) {
+                        tombstone, updated_at, catalog_entry, catalog_entry_sha256, committed_nanos, lookup_title, lookup_document_type,
+                        lookup_source_uri, lookup_source_mime_type, lookup_language, lookup_author, lookup_category,
+                        lookup_datasource_id, lookup_connector_id, owner_datasource_id, owner_module_id)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING document_id""")) {
                 bindAddress(insert, 1, address);
                 insert.setBoolean(5, tombstone);
                 insert.setTimestamp(6, now);
                 insert.setBytes(7, entry);
                 insert.setString(8, sha256Hex(entry));
-                try (var rows = insert.executeQuery()) { return rows.next() ? Optional.of(rows.getLong(1)) : Optional.empty(); }
+                bindLookup(insert, 9, manifest, lookup);
+                try (var rows = insert.executeQuery()) {
+                    if (!rows.next()) return Optional.empty();
+                    long documentId = rows.getLong(1);
+                    writeMetadata(connection, documentId, lookup);
+                    return Optional.of(documentId);
+                }
             }
         }
+        Optional<DocumentLookup> lookup = commit.lookup();
+        boolean carried = !tombstone && lookup.isEmpty();
+        if (carried) {
+            // CORE is unchanged: the current row's lookup stays, under the row lock the update takes next.
+            try (var select = connection.prepareStatement("""
+                    SELECT catalog_entry, catalog_entry_sha256 FROM catalog_documents
+                    WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ?
+                    AND NOT purged FOR UPDATE""")) {
+                bindAddress(select, 1, address);
+                select.setLong(5, expectedRevision);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) return Optional.empty();
+                    var current = parseEntry(rows.getBytes(1), rows.getString(2), address);
+                    if (!current.hasLookup()) throw new CatalogDataLoss("Current catalog entry has no lookup to carry");
+                    lookup = Optional.of(current.getLookup());
+                }
+            }
+        }
+        var entry = entryBytes(manifest, lookup);
         try (var update = connection.prepareStatement("""
-                UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?, catalog_entry = ?, catalog_entry_sha256 = ?
+                UPDATE catalog_documents SET current_revision = current_revision + 1, tombstone = ?, updated_at = ?, catalog_entry = ?, catalog_entry_sha256 = ?, """
+                + LOOKUP_ASSIGNMENTS + """
+
                 WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? AND current_revision = ? AND NOT purged AND (NOT ? OR NOT tombstone)
                 RETURNING document_id""")) {
             update.setBoolean(1, tombstone);
             update.setTimestamp(2, now);
             update.setBytes(3, entry);
             update.setString(4, sha256Hex(entry));
-            bindAddress(update, 5, address);
-            update.setLong(9, expectedRevision);
-            update.setBoolean(10, tombstone);
-            try (var rows = update.executeQuery()) { return rows.next() ? Optional.of(rows.getLong(1)) : Optional.empty(); }
+            bindLookup(update, 5, manifest, lookup);
+            int next = 5 + LOOKUP_COLUMNS;
+            bindAddress(update, next, address);
+            update.setLong(next + 4, expectedRevision);
+            update.setBoolean(next + 5, tombstone);
+            try (var rows = update.executeQuery()) {
+                if (!rows.next()) return Optional.empty();
+                long documentId = rows.getLong(1);
+                if (!carried) writeMetadata(connection, documentId, lookup);
+                return Optional.of(documentId);
+            }
         }
     }
 
@@ -964,6 +1130,7 @@ public final class PostgresCatalog implements Catalog {
     private static Timestamp toTimestamp(com.google.protobuf.Timestamp value) {
         return Timestamp.from(Instant.ofEpochSecond(value.getSeconds(), value.getNanos()));
     }
+
 
     static int compareUtf8(String left, String right) { return CatalogRecords.compareUtf8(left, right); }
 

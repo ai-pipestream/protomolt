@@ -12,6 +12,7 @@ import ai.protomolt.proto.repo.v2.*;
 import io.grpc.Status;
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 import java.util.Objects;
 
 /** Tombstones use the same atomic revision, receipt and outbox commit as saves. */
@@ -84,7 +85,8 @@ public final class DocumentDeletes {
                 || !DocumentSaves.VALIDATOR.validate(event).valid())
             throw new IllegalStateException("Invalid tombstone record");
         var result = catalog.commit(new CatalogRecords.Commit(address, request.getOperationId(), digest, request.getExpected(),
-                stored, outcome, event, List.of(), List.of(), authority.grantSchema().artifacts(), authorized.grantIds(), authorized.credential()));
+                stored, outcome, event, List.of(), List.of(), authority.grantSchema().artifacts(), authorized.grantIds(), authorized.credential(),
+                Optional.empty()));
         return switch (result) {
             case CatalogRecords.Committed ignored -> response;
             case CatalogRecords.Recorded existing -> replay(caller, request, digest, existing.outcome());
