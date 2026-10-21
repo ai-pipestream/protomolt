@@ -64,8 +64,13 @@ public final class S3BlobStore implements BlobStore {
 
     @Override
     public InputStream openStream(String bucket, String key, long offset, long length) {
+        return openStream(bucket, key, null, offset, length);
+    }
+
+    @Override
+    public InputStream openStream(String bucket, String key, String versionId, long offset, long length) {
         if (offset < 0) throw new IllegalArgumentException("Read offset must not be negative");
-        var request = GetObjectRequest.builder().bucket(bucket).key(key);
+        var request = GetObjectRequest.builder().bucket(bucket).key(key).versionId(versionId);
         if (length == 0) return InputStream.nullInputStream();
         if (length > 0) request.range("bytes=" + offset + "-" + Math.addExact(offset, length - 1));
         else if (offset > 0) request.range("bytes=" + offset + "-");

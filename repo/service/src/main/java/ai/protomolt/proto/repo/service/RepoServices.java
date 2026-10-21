@@ -85,6 +85,8 @@ public final class RepoServices implements AutoCloseable {
     private final ai.protomolt.proto.repo.engine.ArchivePutAdmission archiveAdmission;
     private final ai.protomolt.proto.repo.engine.ArchiveGetAdmission archiveReadAdmission;
     private final ArchiveOperations archiveOperations;
+    /** The host read byte budget shared by v2 document reads and streamed rendition reads. */
+    private final ReadByteBudget readBudget;
     private final ManagedArchiveServices managedArchive;
     private final DriveProvisioner driveProvisioner;
     private final ai.protomolt.proto.repo.spi.DriveRepository driveOperations;
@@ -215,6 +217,7 @@ public final class RepoServices implements AutoCloseable {
         if (readerHost != null && !config.managedStorage().retentionQualified())
             throw new IllegalArgumentException("Host-bound readers require qualified managed storage");
         Tx registeredHostTx = null;
+        this.readBudget = new ReadByteBudget(config.readBudgetBytes());
         this.archiveAdmission = bounded == null ? null : bounded.openAdmission(config);
         this.archiveReadAdmission = bounded == null ? null : new ai.protomolt.proto.repo.engine.ArchiveGetAdmission(
                 bounded.readLimits(), bounded.budget(), bounded.maxActive());
@@ -253,13 +256,13 @@ public final class RepoServices implements AutoCloseable {
             this.driveOperations = new ai.protomolt.proto.repo.engine.DriveOperations(driveLedger, driveProvisioner);
             RepoV2Wiring.Wired v2 = bounded == null
                     ? RepoV2Wiring.wire(config, owned, driveLedger, blobStore, selectedDriveProvider,
-                            V2_CATALOG_SCHEMA, () -> admittedSchemas, stepSave::bindCaller)
+                            V2_CATALOG_SCHEMA, () -> admittedSchemas, stepSave::bindCaller, readBudget)
                     : null;
             this.catalog = v2 == null ? null : v2.catalog();
             this.v2Uploads = v2 == null ? null : v2.uploads();
             this.v2OutboxRelay = v2 == null ? null : v2.relay();
             var configuredServices = new java.util.ArrayList<BindableService>(List.of(
-                    new ArchiveGrpcService(archiveOperations, callerBindings),
+                    new ArchiveGrpcService(archiveOperations, callerBindings, readBudget),
                     new DriveGrpcService(driveOperations, callerBindings)));
             if (v2 != null) {
                 var accessionImpl = v2.accession();
@@ -454,7 +457,7 @@ public final class RepoServices implements AutoCloseable {
         if (apiToken == null || apiToken.isBlank()) throw new IllegalArgumentException("Bounded archive transport requires an API token");
         try {
             startLifecycle();
-            var builder = NettyServerBuilder.forPort(port).addService(new ArchiveGrpcService(archiveOperations));
+            var builder = NettyServerBuilder.forPort(port).addService(new ArchiveGrpcService(archiveOperations, readBudget));
             archiveIngress.configure(builder);
             // Last registered runs first: authentication precedes request admission.
             builder.intercept(new ApiTokenServerInterceptor(apiToken, null));

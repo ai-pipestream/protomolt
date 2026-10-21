@@ -27,13 +27,23 @@ import ai.protomolt.proto.repo.archive.v1.ListVersionsRequest;
 import ai.protomolt.proto.repo.archive.v1.ListVersionsResponse;
 import ai.protomolt.proto.repo.archive.v1.PutEntryRequest;
 import ai.protomolt.proto.repo.archive.v1.PutEntryResponse;
+import ai.protomolt.proto.repo.archive.v1.ReadRenditionRequest;
+import ai.protomolt.proto.repo.archive.v1.ReadRenditionResponse;
+import ai.protomolt.proto.repo.archive.v1.RenditionReadHeader;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionHeader;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionRequest;
 import ai.protomolt.proto.repo.archive.v1.UploadRenditionResponse;
+import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
+import com.google.protobuf.ByteString;
+import io.grpc.Status;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -49,22 +59,46 @@ import static ai.protomolt.proto.repo.service.GrpcErrors.invalidArgument;
  * the same verified, content-addressed landing as every other door.
  */
 final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase {
+    private static final Logger LOG = LoggerFactory.getLogger(ArchiveGrpcService.class);
 
     /** Bounded chunk buffer between the transport and the store writer. */
     private static final int CHUNK_QUEUE_DEPTH = 64;
 
+    /** Largest data frame of a streamed rendition read (64 KiB). */
+    static final int READ_FRAME_BYTES = 64 * 1024;
+
+    /**
+     * What one open rendition read reserves on the host read budget: the frame it
+     * fills plus one frame the transport may still hold while it reads the next.
+     */
+    static final long READ_WINDOW_BYTES = 2L * READ_FRAME_BYTES;
+
     private final ArchiveRepository operations;
     private final RepoCallerBindings callers;
+    private final DocumentAdmissionReservations readBudget;
 
-    /** Binds no scoped caller to any account: only process authority reaches archives. */
-    ArchiveGrpcService(ArchiveRepository operations) {
-        this(operations, new RepoCallerBindings());
+    /**
+     * Binds no scoped caller to any account: only process authority reaches archives.
+     *
+     * @param operations the archive port
+     * @param readBudget the host read byte budget streamed rendition reads reserve their window on
+     */
+    ArchiveGrpcService(ArchiveRepository operations, DocumentAdmissionReservations readBudget) {
+        this(operations, new RepoCallerBindings(), readBudget);
     }
 
-    /** Binds scoped callers through the host's account bindings. */
-    ArchiveGrpcService(ArchiveRepository operations, RepoCallerBindings callers) {
-        this.operations = operations;
-        this.callers = java.util.Objects.requireNonNull(callers);
+    /**
+     * Binds scoped callers through the host's account bindings.
+     *
+     * @param operations the archive port
+     * @param callers the host's account bindings
+     * @param readBudget the host read byte budget streamed rendition reads reserve their window on
+     */
+    ArchiveGrpcService(ArchiveRepository operations, RepoCallerBindings callers,
+            DocumentAdmissionReservations readBudget) {
+        this.operations = Objects.requireNonNull(operations, "operations");
+        this.callers = Objects.requireNonNull(callers, "callers");
+        this.readBudget = Objects.requireNonNull(readBudget, "readBudget");
     }
 
     private RepositoryCaller caller() {
@@ -99,6 +133,144 @@ final class ArchiveGrpcService extends ArchiveServiceGrpc.ArchiveServiceImplBase
     public void getEntry(GetEntryRequest request,
                          StreamObserver<GetEntryResponse> observer) {
         GrpcErrors.run(observer, () -> operations.getEntry(caller(), request));
+    }
+
+    /**
+     * Streams one rendition: a header frame, then data frames of at most
+     * {@link #READ_FRAME_BYTES}, sent only while the transport is ready, so a slow
+     * client stalls the provider read instead of queueing the object in memory. The
+     * read reserves {@link #READ_WINDOW_BYTES} on the host read budget before the
+     * store is touched and releases it when the stream ends on any path.
+     */
+    @Override
+    public void readRendition(ReadRenditionRequest request, StreamObserver<ReadRenditionResponse> observer) {
+        final DocumentAdmissionReservations.Lease lease;
+        final ArchiveRepository.RenditionStream opened;
+        try {
+            lease = Objects.requireNonNull(readBudget.reserve(READ_WINDOW_BYTES), "reservation lease");
+        } catch (Throwable failure) {
+            observer.onError(GrpcErrors.map(failure));
+            return;
+        }
+        try {
+            opened = operations.readRendition(caller(), request);
+        } catch (Throwable failure) {
+            lease.close();
+            observer.onError(GrpcErrors.map(failure));
+            return;
+        }
+        var header = RenditionReadHeader.newBuilder().setVersion(opened.version())
+                .setRendition(opened.rendition().getRendition()).setSizeBytes(opened.rendition().getSizeBytes())
+                .setSha256(opened.rendition().getSha256()).setOffset(opened.offset()).setLength(opened.length())
+                .setWholeObject(opened.wholeObject()).build();
+        var server = observer instanceof ServerCallStreamObserver<ReadRenditionResponse> call ? call : null;
+        var session = new RenditionReadSession(observer, server, header, opened.body(), lease);
+        if (server != null) {
+            server.setOnCancelHandler(session::cancel);
+            server.setOnReadyHandler(session::pump);
+        }
+        session.pump();
+    }
+
+    /**
+     * One rendition read's frames, pumped while the transport is ready. Cancellation
+     * stops the pump after the frame in flight; the provider stream, its read pin and
+     * the budget window are released once, by whichever side finishes last, so the
+     * pin is never released under a provider read still in progress.
+     */
+    private static final class RenditionReadSession {
+        private final StreamObserver<ReadRenditionResponse> observer;
+        private final ServerCallStreamObserver<ReadRenditionResponse> server;
+        private final RenditionReadHeader header;
+        private final InputStream body;
+        private final DocumentAdmissionReservations.Lease lease;
+        private final byte[] frame = new byte[READ_FRAME_BYTES];
+        private final Object state = new Object();
+        private volatile boolean cancelled;
+        private boolean finished;
+        private boolean pumping;
+        private boolean headerSent;
+
+        RenditionReadSession(StreamObserver<ReadRenditionResponse> observer,
+                ServerCallStreamObserver<ReadRenditionResponse> server, RenditionReadHeader header,
+                InputStream body, DocumentAdmissionReservations.Lease lease) {
+            this.observer = observer;
+            this.server = server;
+            this.header = header;
+            this.body = body;
+            this.lease = lease;
+        }
+
+        void cancel() {
+            cancelled = true;
+            synchronized (state) {
+                if (!pumping) release(null);
+            }
+        }
+
+        void pump() {
+            synchronized (state) {
+                if (pumping || finished) return;
+                pumping = true;
+            }
+            try {
+                while (!cancelled && (server == null || server.isReady())) {
+                    if (!headerSent) {
+                        headerSent = true;
+                        observer.onNext(ReadRenditionResponse.newBuilder().setHeader(header).build());
+                        continue;
+                    }
+                    int read = fill();
+                    if (read < 0) {
+                        synchronized (state) { release(null); }
+                        observer.onCompleted();
+                        return;
+                    }
+                    observer.onNext(ReadRenditionResponse.newBuilder()
+                            .setData(ByteString.copyFrom(frame, 0, read)).build());
+                }
+            } catch (IOException failure) {
+                fail(failure, Status.UNAVAILABLE.withDescription("Archive object read failed")
+                        .withCause(failure).asRuntimeException());
+            } catch (RuntimeException failure) {
+                fail(failure, GrpcErrors.map(failure));
+            } finally {
+                synchronized (state) {
+                    pumping = false;
+                    if (cancelled) release(null);
+                }
+            }
+        }
+
+        /** Reads up to one full frame; -1 only at a verified end with nothing read. */
+        private int fill() throws IOException {
+            int total = 0;
+            while (total < frame.length) {
+                int read = body.read(frame, total, frame.length - total);
+                if (read < 0) return total == 0 ? -1 : total;
+                total += read;
+            }
+            return total;
+        }
+
+        private void fail(Throwable failure, Throwable status) {
+            synchronized (state) { release(failure); }
+            if (!cancelled) observer.onError(status);
+        }
+
+        /** Closes the provider stream and returns the window, once; the caller holds {@code state}. */
+        private void release(Throwable primary) {
+            if (finished) return;
+            finished = true;
+            try {
+                body.close();
+            } catch (IOException | RuntimeException closeFailure) {
+                if (primary != null) primary.addSuppressed(closeFailure);
+                else LOG.warn("Closing a rendition read failed", closeFailure);
+            } finally {
+                lease.close();
+            }
+        }
     }
 
     @Override
