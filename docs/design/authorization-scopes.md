@@ -167,6 +167,7 @@ never a thread-local guessed at later.
 | Registry server | Route-table split before dispatch: reads, writes, and action execution each name their scope |
 | Search and metric services | An identity interceptor beside the validating one, mounted only when the service is started with a resolver; a service without one stays an open, trusted-network surface, as today |
 | Console sessions | A console login issues an HttpOnly session bound to a principal's scopes, never to the operator token, through the shared `ConsoleSessions` mechanism: serve's task console and the search console both use it, and a session retains the credential it presented so a console can hand it to guarded peers |
+| Repository console sign-in | The repository host signs a browser in at an OpenID provider (authorization code with PKCE, `OidcConsoleSessions`); the session's principal and scopes are what introspecting the provider's access token answers, so the account bindings key on the same name a bearer token would carry. The session rides a Strict, HttpOnly cookie; the Connect gateway resolves it through the `RequestCallerResolver` seam beside the bearer rule and runs each call under the same context keys as the gRPC interceptor |
 
 The refusal is uniform everywhere: error code `permission-denied`,
 gRPC `PERMISSION_DENIED`, HTTP `403`, message naming the principal,

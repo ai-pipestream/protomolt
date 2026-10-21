@@ -543,6 +543,23 @@ public final class RepoServices implements AutoCloseable {
     }
 
     /**
+     * The console's sign-in routes over {@code sessions}, for {@link #startHttp(int, String,
+     * RepositoryConsole, java.util.Map)}: the status answer names the accounts this host's
+     * bindings map the session's principal to. A host without sign-in mounts the
+     * not-configured handler, which answers 503 naming the variables.
+     *
+     * @param sessions the session store, or empty when sign-in is not configured
+     * @return the route map, one entry at {@link ConsoleSignInHandler#PATH}
+     */
+    public java.util.Map<String, com.sun.net.httpserver.HttpHandler> consoleSignInRoutes(
+            java.util.Optional<ai.protomolt.proto.authz.OidcConsoleSessions> sessions) {
+        ConsoleSignInHandler handler = sessions
+                .map(store -> ConsoleSignInHandler.over(store, callerBindings::boundAccountIds))
+                .orElseGet(ConsoleSignInHandler::notConfigured);
+        return java.util.Map.of(ConsoleSignInHandler.PATH, handler);
+    }
+
+    /**
      * Seeded default account ({@code DOCUMENT_PLATFORM_SEED_ACCOUNT_ID}):
      * idempotently ensures the seed account's two provisioning-time drives
      * exist — {@code intake} ({@code INTAKE}) and {@code pipeline}

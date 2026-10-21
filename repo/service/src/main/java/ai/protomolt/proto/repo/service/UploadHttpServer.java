@@ -207,10 +207,11 @@ public final class UploadHttpServer implements AutoCloseable {
             throw e;
         }
         int bound = created.getAddress().getPort();
-        LOG.info("repository HTTP port {} serving {}{}{}", bound,
+        LOG.info("repository HTTP port {} serving {}{}{}{}", bound,
                 documentUploads != null ? UPLOAD_PATH + " " : "",
                 archiveOperations != null ? ARCHIVE_UPLOAD_PATH + " " : "",
-                console.configured() ? RepositoryConsole.PATH : RepositoryConsole.PATH + " (not configured)");
+                console.configured() ? RepositoryConsole.PATH : RepositoryConsole.PATH + " (not configured)",
+                routes.isEmpty() ? "" : " " + String.join(" ", routes.keySet()));
         return bound;
     }
 
