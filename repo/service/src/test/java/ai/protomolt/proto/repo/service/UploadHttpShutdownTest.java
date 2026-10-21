@@ -32,7 +32,8 @@ class UploadHttpShutdownTest {
                     }
                     throw new UnsupportedOperationException(method.getName());
                 });
-        var server = new UploadHttpServer(null, null, "synthetic-http-operator-key", archive);
+        var server = new UploadHttpServer(null, null, "synthetic-http-operator-key", archive,
+                RepositoryConsole.notConfigured());
         var client = HttpClient.newHttpClient();
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.start(0)
                 + UploadHttpServer.ARCHIVE_UPLOAD_PATH + "?account_id=a&archive=ar&entry_id=e"))

@@ -103,7 +103,7 @@ class ArchiveClassificationIT {
                         .setDriveName("classify-drive")
                         .setVersioning(VersioningPolicy.VERSIONING_POLICY_RETAINED))
                 .build());
-        http = services.startHttp(0, "synthetic-http-operator-key");
+        http = services.startHttp(0, "synthetic-http-operator-key", RepositoryConsole.notConfigured());
     }
 
     @AfterAll

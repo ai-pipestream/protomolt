@@ -124,7 +124,7 @@ class ArchiveServiceIT {
         mutations = ArchiveMutationServiceGrpc.newBlockingStub(channel);
         archivesAsync = ArchiveServiceGrpc.newStub(channel);
         drives = DriveServiceGrpc.newBlockingStub(channel);
-        http = services.startHttp(0, "synthetic-http-operator-key");
+        http = services.startHttp(0, "synthetic-http-operator-key", RepositoryConsole.notConfigured());
     }
 
     private static ArchiveMutationReceipt mutate(ArchiveMutationRequest.Builder command) {

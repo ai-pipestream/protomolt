@@ -28,7 +28,8 @@ class UploadHttpServerCredentialTest {
 
     @BeforeEach
     void start() {
-        server = new UploadHttpServer(null, null, TOKEN, unimplementedArchive());
+        server = new UploadHttpServer(null, null, TOKEN, unimplementedArchive(),
+                RepositoryConsole.notConfigured());
         base = "http://127.0.0.1:" + server.start(0);
         client = HttpClient.newHttpClient();
     }
@@ -92,7 +93,8 @@ class UploadHttpServerCredentialTest {
     void missingOrBlankOperatorCredentialCannotOpenAListener() {
         for (String token : new String[]{null, "", "  "}) {
             assertThatThrownBy(() -> {
-                try (var open = new UploadHttpServer(null, null, token, null)) { open.start(0); }
+                try (var open = new UploadHttpServer(null, null, token, null,
+                        RepositoryConsole.notConfigured())) { open.start(0); }
             }).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("API token");
         }
     }

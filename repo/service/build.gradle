@@ -71,6 +71,20 @@ application {
     mainClass = 'ai.protomolt.proto.repo.service.RepoServiceMain'
 }
 
+// The console bundle is copied into the distribution under console/ when apps/console/dist
+// was built first (npm ci && npm run build in apps/console; Gradle never runs npm).
+// The repo HTTP port serves it once DOCUMENT_PLATFORM_CONSOLE_DIR names that
+// directory, and a directory without index.html fails the boot.
+distributions {
+    main {
+        contents {
+            from("${rootDir}/apps/console/dist") {
+                into 'console'
+            }
+        }
+    }
+}
+
 tasks.named('test') {
     // Separate-JVM host tests need the complete test runtime, not Gradle's worker bootstrap classpath.
     doFirst { systemProperty 'protomolt.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath }

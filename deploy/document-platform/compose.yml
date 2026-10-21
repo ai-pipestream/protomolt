@@ -81,6 +81,7 @@ services:
       DOCUMENT_PLATFORM_SEARCH_INDEX_DIR: /data/search-index
     ports:
       - "9090:9090"   # repo gRPC
+      - "8080:8080"   # repo HTTP: uploads and /console
       - "9092:9092"   # intake gRPC
       - "9093:9093"   # parse gRPC
       - "9094:9094"   # search gRPC

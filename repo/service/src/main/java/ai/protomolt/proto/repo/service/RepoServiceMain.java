@@ -27,16 +27,21 @@ public final class RepoServiceMain {
     public static void main(String[] args) throws Exception {
         String apiToken = RepositoryNetworkAuthentication.requireOperatorToken(System.getenv("PROTOMOLT_API_TOKEN"));
         RepoServiceConfig config = RepoServiceConfig.fromEnvironment();
+        // Read before any service is built so a misconfigured bundle fails the boot,
+        // not the first browser request.
+        RepositoryConsole console = config.httpPort() > 0
+                ? RepositoryConsole.fromEnvironment(System.getenv())
+                : null;
         RepoServices services = RepoServices.build(config);
         // Seeded default account (DOCUMENT_PLATFORM_SEED_ACCOUNT_ID): ensure
         // the account's intake/pipeline drives exist before serving. No-op
         // when unset; embedded hosts opt in by calling it themselves.
         services.seedAccountDrives();
         Server server = services.startNetty(config.grpcPort(), apiToken, null);
-        // HTTP upload route: DOCUMENT_PLATFORM_HTTP_PORT, default 8080; 0 or
-        // "off" disables it (gRPC-only deployments).
+        // HTTP port (upload routes and the console): DOCUMENT_PLATFORM_HTTP_PORT,
+        // default 8080; 0 or "off" disables all of it (gRPC-only deployments).
         if (config.httpPort() > 0) {
-            services.startHttp(config.httpPort(), apiToken);
+            services.startHttp(config.httpPort(), apiToken, console);
         }
         // Archive mutation recovery and reconciliation, plus the v2 outbox
         // relay, run as background loops next to the servers.

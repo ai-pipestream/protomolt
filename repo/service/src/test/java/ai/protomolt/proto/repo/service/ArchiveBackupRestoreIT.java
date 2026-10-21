@@ -329,7 +329,7 @@ class ArchiveBackupRestoreIT {
                 ArchiveMutationServiceGrpc.newBlockingStub(channel),
                 DriveServiceGrpc.newBlockingStub(channel),
                 DocumentServiceGrpc.newBlockingStub(channel),
-                services.startHttp(0, HTTP_TOKEN));
+                services.startHttp(0, HTTP_TOKEN, RepositoryConsole.notConfigured()));
     }
 
     /** A raw provider handle for backup-side object verification and damage injection. */
