@@ -23,6 +23,7 @@ import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.stack.Stack;
 import ai.protomolt.proto.repo.stack.StackDataLoss;
 import ai.protomolt.proto.repo.v1.Access;
+import ai.protomolt.proto.repo.v1.BlobWrite;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
@@ -48,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -503,6 +505,16 @@ public final class DocumentSaves {
                             "Uploaded SHA-256 " + uploadedRef.getSha256() + " differs from expected "
                                     + p.header().getExpectedSha256(), List.of()));
                 }
+                var declared = RawBlobs.stored(p.storedFragments().get(BLOBS_SELECTOR), p.header().getBlobId())
+                        .orElseThrow(() -> new IllegalStateException("Uploaded blob is absent from its checked BLOBS fragment"));
+                var declaredMismatch = RawBlobs.declaredMismatch(declared, uploadedRef.getLength(), uploadedRef::getSha256);
+                if (declaredMismatch.isPresent()) {
+                    var cleanupFailure = deleteUnreferenced(p.stack(), uploadedRef);
+                    var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
+                    withCleanupSuppressed(cleanupFailure, () -> reject(
+                            p.caller(), p.request(), p.address(), intentSha, p.authorized(),
+                            RejectionReason.REJECTION_REASON_UPLOAD_MISMATCH, declaredMismatch.get(), List.of()));
+                }
                 var intentSha = uploadIntentSha(p, uploadedRef.getSha256(), uploadedRef.getLength());
                 var concurrent = catalog.outcome(p.address().getAccountId(), p.request().getOperationId());
                 if (concurrent.isPresent()) {
@@ -745,6 +757,7 @@ public final class DocumentSaves {
         long currentRevision = current.map(CatalogRecords.Current::revision).orElse(0L);
         if (creating ? current.isPresent() : currentRevision != request.getExpected().getRevision())
             return conflict(caller, request, intentSha, address);
+        var carriedBlobs = carriedBlobs(storedFragments, rawBlobs, preUploadedBlobs, base);
         boolean opaqueMode = request.getValidationMode() == ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED;
         if (opaqueMode && !opaqueAllowed)
             return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_OPAQUE_NOT_ALLOWED,
@@ -776,6 +789,8 @@ public final class DocumentSaves {
         var carried = new HashSet<>(parts.keySet());
         var kinds = new LinkedHashMap<PartSelector, ChangeKind>();
         var sourced = new LinkedHashMap<PartSelector, StackRef>();
+        // The raw blob bindings this save makes; only these take its BlobWrite.
+        var newBindings = new HashSet<BindingKey>();
         for (var source : request.getSourcesList()) {
             var selector = source.getSelector();
             var from = readableSource(caller, account, source.getFromAddress(), source.getFromRevision());
@@ -808,7 +823,14 @@ public final class DocumentSaves {
                         original.getOwner(), original.getWriterGrant(), Optional.of(original)));
             }
             var copied = entry.get().toBuilder();
-            copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded();
+            copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded()
+                    .clearWrittenAt();
+            // A sourced part is written in this revision, so it and its raw blob bindings take
+            // this revision's stamp below; only carry-forward keeps an earlier one.
+            for (int index = 0; index < copied.getBlobRefsCount(); index++) {
+                copied.getBlobRefsBuilder(index).clearWritten();
+                newBindings.add(new BindingKey(selector, copied.getBlobRefs(index).getBlobId()));
+            }
             parts.put(selector, copied.build());
             carried.remove(selector);
             if (entry.get().hasRef()) sourced.put(selector, entry.get().getRef());
@@ -1019,6 +1041,10 @@ public final class DocumentSaves {
             var ref = putOrReuse(stack, raw.data(), reusable, newObjects);
             blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
         }
+        for (var ref : blobRefs) newBindings.add(new BindingKey(BLOBS_SELECTOR, ref.getBlobId()));
+        // Blob-level carry-forward: the expected revision's binding, stamp included, with
+        // no bytes sent and no copy; its object joins the carried-object purge check below.
+        blobRefs.addAll(carriedBlobs);
         if (!blobRefs.isEmpty() && storedFragments.containsKey(BLOBS_SELECTOR))
             blobRefs = new ArrayList<>(RawBlobs.orderRefs(storedFragments.get(BLOBS_SELECTOR), blobRefs));
         for (var write : request.getWritesList()) {
@@ -1066,8 +1092,12 @@ public final class DocumentSaves {
         authorized.grant().ifPresent(validation::setWriterGrant);
         authorized.process().ifPresent(validation::setProcessAuthority);
         var committedAt = timestamp(clock.instant());
+        // Every part and binding this revision wrote takes its commit time; carried ones keep theirs.
+        var written = BlobWrite.newBuilder().setRevision(revision).setCommittedAt(committedAt);
+        if (request.getOwner().hasStep()) written.setStep(request.getOwner().getStep());
+        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written.build(), newBindings)).toList();
         var stored = StoredManifest.newBuilder().setAddress(address).setRevision(revision)
-                .setPreviousRevision(currentRevision).addAllParts(ordered).setValidation(validation)
+                .setPreviousRevision(currentRevision).addAllParts(stamped).setValidation(validation)
                 .setOperationId(request.getOperationId()).setIntentSha256(intentSha).setOwner(request.getOwner())
                 .addAllDerivedFrom(request.getDerivedFromList()).setOwnership(ownership).setCommittedAt(committedAt)
                 .putAllMetadata(request.getMetadataMap()).build();
@@ -1115,6 +1145,61 @@ public final class DocumentSaves {
                     RejectionReason.REJECTION_REASON_SOURCE_PURGED, "The destination document was purged", List.of());
             case CatalogRecords.WriteDenied denied -> throw WriterAuthority.denied(denied.reason());
         };
+    }
+
+    /**
+     * The expected revision's bindings for the blobs of a BLOBS PUT that carry
+     * neither inline data nor a streamed upload. Each must name a raw blob of the
+     * expected revision, and any size or SHA-256 it declares must match that blob's
+     * object; anything else is a malformed request.
+     */
+    private static List<BlobObjectRef> carriedBlobs(Map<PartSelector, ByteString> storedFragments,
+            List<RawBlobs.Raw> rawBlobs, List<BlobObjectRef> preUploadedBlobs, Optional<StoredManifest> base) {
+        var fragment = storedFragments.get(BLOBS_SELECTOR);
+        if (fragment == null) return List.of();
+        var bound = new HashSet<String>();
+        rawBlobs.forEach(raw -> bound.add(raw.blobId()));
+        preUploadedBlobs.forEach(ref -> bound.add(ref.getBlobId()));
+        var unbound = RawBlobs.unbound(fragment, bound);
+        if (unbound.isEmpty()) return List.of();
+        var previous = new HashMap<String, BlobObjectRef>();
+        base.ifPresent(stored -> stored.getPartsList().stream()
+                .filter(part -> part.getEntry().getSelector().equals(BLOBS_SELECTOR))
+                .forEach(part -> part.getBlobRefsList().forEach(ref -> previous.put(ref.getBlobId(), ref))));
+        var carried = new ArrayList<BlobObjectRef>(unbound.size());
+        for (var blob : unbound) {
+            var ref = previous.get(blob.getBlobId());
+            if (ref == null)
+                throw malformedException("Blob " + blob.getBlobId() + " has no inline data and names no raw blob of the "
+                        + "expected revision; a raw file is sent inline, uploaded, or carried forward by its blob_id");
+            RawBlobs.requireDeclaredFacts(blob, ref.getRef().getLength(), ref.getRef()::getSha256);
+            carried.add(ref);
+        }
+        return carried;
+    }
+
+    /** One raw blob binding of one part. */
+    private record BindingKey(PartSelector part, String blobId) {}
+
+    /**
+     * The part with this revision's write recorded: {@code written_at} on an entry
+     * written or sourced in this revision, and the {@link BlobWrite} on each raw blob
+     * binding this revision made. Carried entries and bindings are left as they were,
+     * stamped or not: a binding without a stamp is never given this revision's.
+     */
+    private static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written,
+            Set<BindingKey> newBindings) {
+        var selector = part.getEntry().getSelector();
+        boolean entryWritten = part.getEntry().getWrittenInRevision() == revision && !part.getEntry().hasWrittenAt();
+        boolean bindingsWritten = part.getBlobRefsList().stream()
+                .anyMatch(ref -> newBindings.contains(new BindingKey(selector, ref.getBlobId())));
+        if (!entryWritten && !bindingsWritten) return part;
+        var stamped = part.toBuilder();
+        if (entryWritten) stamped.getEntryBuilder().setWrittenAt(written.getCommittedAt());
+        for (int index = 0; index < stamped.getBlobRefsCount(); index++)
+            if (newBindings.contains(new BindingKey(selector, stamped.getBlobRefs(index).getBlobId())))
+                stamped.getBlobRefsBuilder(index).setWritten(written);
+        return stamped.build();
     }
 
     private static String uploadIntentSha(PreparedUpload p, String payloadSha256, long payloadLength) {

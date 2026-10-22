@@ -3,6 +3,7 @@ syntax = "proto3";
 package ai.protomolt.proto.repo.v1;
 
 import "ai/protomolt/proto/meta/v1/metadata.proto";
+import "ai/protomolt/proto/repo/v1/manifest.proto";
 import "ai/protomolt/proto/repo/v1/security.proto";
 import "ai/protomolt/proto/repo/semantic/v1/semantic.proto";
 import "google/protobuf/any.proto";
@@ -278,6 +279,25 @@ message Blob {
   ChecksumType checksum_type = 10;
   // Additional blob metadata.
   optional google.protobuf.Struct metadata = 11;
+  // For protobuf content: the schema-registry subject that names which message
+  // the bytes decode as. Recorded, not enforced; registry enforcement is a gate
+  // composed in front of the repository.
+  optional string schema_subject = 12;
+  // The write that bound this blob's stored object. Read-only: the repository
+  // fills it on read from the blob's binding and refuses it on save.
+  BlobWrite written = 13;
+}
+
+// The accession that bound a raw blob's stored object. A blob carried forward
+// by its blob_id keeps the stamp of the write that first bound it.
+message BlobWrite {
+  // The revision whose commit bound the object.
+  int64 revision = 1;
+  // When that revision committed.
+  google.protobuf.Timestamp committed_at = 2;
+  // The producing step, when a step owner wrote the blob; unset for an intake
+  // write.
+  WriteProvenance step = 3;
 }
 
 // One embedding vector for a chunk.
