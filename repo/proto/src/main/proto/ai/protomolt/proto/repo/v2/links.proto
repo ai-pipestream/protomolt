@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.repo.v2;
+
+import "ai/protomolt/proto/repo/v1/address.proto";
+import "ai/protomolt/proto/repo/v2/document_service.proto";
+import "ai/protomolt/proto/validate/v1/validate.proto";
+import "google/protobuf/descriptor.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "LinksProto";
+option java_package = "ai.protomolt.proto.repo.v2";
+
+// ============================================================================
+// DOCUMENT LINKS (requirements §17)
+//
+// A link is a DocumentLink field in a document's typed CORE content, the typed
+// structured_data payload included, whose descriptor carries the link option.
+// The descriptor names the relation; the value names the target. A static
+// target is checked at save and projected into the catalog edge table; a
+// dynamic target is a catalog selector resolved when the link is read.
+//
+// Schema rules, checked when the repository admits a schema: a DocumentLink
+// field without the link option is refused, a link option on a field of any
+// other type is refused, and a map field is never a link.
+// ============================================================================
+
+extend google.protobuf.FieldOptions {
+  // Marks a DocumentLink field (singular or repeated) as a link.
+  LinkField link = 59100551;
+}
+
+// What a link field means.
+message LinkField {
+  // The relation, a link_relation name: a Dublin Core term ("references",
+  // "isPartOf", "replaces", "isReplacedBy", "requires", "source", ...), an
+  // IANA registered relation ("alternate", "canonical", "describedby", ...),
+  // or an absolute URI for an extension relation (RFC 8288).
+  string relation = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {link_relation: true}
+  }];
+  // Protobuf full names of the structured_data types a static target may
+  // hold. Empty means any typed document.
+  repeated string target_types = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
+    unique: true
+    items: {
+      string: {protobuf_fqn: true}
+    }
+  }];
+}
+
+// One link from the document that holds it to another document.
+message DocumentLink {
+  option (ai.protomolt.proto.validate.v1.message).cel = {
+    id: "link-target-required"
+    message: "a link names a static or a dynamic target"
+    expression: "has(this.static_target) || has(this.dynamic_target)"
+  };
+  // Exactly one target kind.
+  oneof target {
+    // A fixed call number, optionally pinned to one revision.
+    StaticTarget static_target = 1;
+    // A catalog selector, resolved when the link is read.
+    DynamicTarget dynamic_target = 2;
+  }
+  // Display text for the link; not part of its identity.
+  optional string label = 3 [(ai.protomolt.proto.validate.v1.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// A fixed target.
+message StaticTarget {
+  // The target's call number. Its account_id equals the linking document's.
+  ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // A pinned revision. Absent means the target's current revision.
+  optional int64 revision = 2 [(ai.protomolt.proto.validate.v1.field).int64.gt = 0];
+}
+
+// A selector resolved at read time in the linking document's account, under
+// the reader's access. It writes no catalog edge, so it is never a backlink.
+message DynamicTarget {
+  // The #527 listing filter.
+  DocumentFilter filter = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The order resolved targets come back in.
+  DocumentSort sort = 2;
+}
