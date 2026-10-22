@@ -252,6 +252,510 @@ or deletion through that API, including drive aliases. Administrative reads
 remain available. Direct provider SPI access stays trusted; the guard is a
 repository API boundary, not a storage-provider permission system.
 
+## The archive over v2 documents (specification, #535)
+
+This section answers requirements §16 question 1 and is the design of record
+for the archive's storage. `ArchiveService` stays its own service with its own
+read budget and contract. Its entries, renditions and versions are stored as
+v2 documents through `DocumentService`; the `ArchiveLedger` storage model, its
+migrations and its separate backup and purge paths are retired once the
+implementation passes the requirements' §15 acceptance on archive traffic.
+Until then the sections above describe the running service. Provider object
+versioning is never used: stack keys are write-once (requirements §6).
+
+The archive keeps three layers apart:
+
+| Layer | Mechanism | Where the mapping lives |
+|---|---|---|
+| Reads | protomolt projection of v2 read responses | `(sources)`, `(from)`, `(default_from)` on the archive view messages |
+| Writes | thin command translator into one v2 save | Java, one class per archive command |
+| Gate | v2 save validation (§9) and `validate.v1` on the projected view | the v2 contract and the archive view `.proto` |
+
+### 1. Identity: archive coordinates onto call numbers
+
+An entry address maps onto one `NodeAddress`, field by field, with no hashing:
+
+| `NodeAddress` | Value | Why |
+|---|---|---|
+| `account_id` | `EntryAddress.account_id` | the tenant root, as everywhere |
+| `graph_id` | `"archive:" + account_id` | a reserved graph namespace, parallel to `intake:<account>` |
+| `graph_address_id` | `EntryAddress.archive` | the archive name, a slug |
+| `doc_id` | `EntryAddress.entry_id`, verbatim | `Document.doc_id_derivation.method = CALLER_PROVIDED` |
+
+The archive host writes only under `archive:<account>` graphs, and a save from
+any other surface naming an `archive:` graph is refused by name, exactly as a
+pipeline save naming an `intake:` graph is. The mapping is a pure field copy,
+so every archive view field that names the entry is a `(from)` path and a read
+needs no lookup table. Event IDs, outcome keys and partitions already derive
+from the call number through deterministic protobuf encoding (§10), which
+holds whatever characters `entry_id` carries.
+
+`EntryInfo.entry_uuid` was the ledger's primary key and object-key prefix.
+Under v2 neither exists: the call number is the identity and stack keys are
+server-allocated. The implementation reserves the field (and
+`PutEntryResponse.entry_uuid`, `UploadRenditionResponse.entry_uuid`) rather
+than keep a second identity alive, and the `archive.snapshot_identity` rule on
+`VersionManifest` drops its `entry_uuid` clause.
+
+Ownership: each archive is bound at creation to one intake datasource of its
+account (a new required `Archive.datasource_id`). Entries carry
+`OwnershipContext{account_id, datasource_id}` and archive saves name
+`SaveOwner.intake{datasource_id}`, so v2's writer-grant and process-authority
+rules (§5) authorize archive writes with no archive-specific authority model.
+A `WriteAttribution.module` maps to `SaveOwner.step{module_id}` and then needs
+a step `WriterGrant`, as any step save does. `WriteAttribution.actor` has no v2
+counterpart: the authenticated caller is already recorded as grant or
+process-authority evidence, so the implementation removes `actor` from the
+write contract instead of storing a self-declared name beside it.
+
+### 2. Renditions onto blobs and parts
+
+Every rendition is one stored object of one revision. The mapping from
+`(name, sub_key)` is deterministic and total:
+
+| Rendition | v2 storage | `blob_id` / selector |
+|---|---|---|
+| `parsed`, no sub-key | the PARSED part | `PartSelector{part: DOCUMENT_PART_PARSED}` |
+| any other name, no sub-key | one raw blob in `blob_bag.blobs.blob` (BLOBS part) | `blob_id = name` |
+| any other name with a sub-key | one raw blob in `blob_bag.blobs.blob` | `blob_id = name + "/" + sub_key` |
+
+- `name` and `sub_key` are `path_safe_name`, which admits no `/`, so the
+  separator is unambiguous and `blob_id` stays within the catalog's 1024-byte
+  bound (two 200-byte halves plus one byte).
+- The archive always writes the `blobs` arm of `BlobBag`, even for one blob,
+  so readers have one shape. A document whose BLOBS part uses the singular
+  `blob` arm was not written by the archive and is refused as an archive entry
+  by name.
+- `media_type` maps to `Blob.mime_type`; the `original` rendition's
+  `filename` maps to `Blob.filename`. `PutEntryRequest.filename` describes
+  the original file, so a request that sets it with no `original` rendition
+  written or carried is `INVALID_ARGUMENT` naming `filename`.
+- `parsed` is the PARSED part, not an opaque blob. Its bytes are the encoded
+  PARSED fragment (a `Document` carrying only `parser_results`), typed-validated
+  by v2 like any parser output. `parsed` with a sub-key, or `parsed` bytes
+  carrying any field outside `parser_results`, is `INVALID_ARGUMENT` naming
+  the rendition. Every other rendition stays opaque bytes the archive never
+  interprets.
+- `schema_subject` maps to a new optional `Blob.schema_subject`, recorded and
+  not enforced, as today. Registry enforcement stays a gate composed in front
+  of the service.
+
+Entry metadata maps onto CORE:
+
+| Entry field | CORE field |
+|---|---|
+| `title` | `search_metadata.title` |
+| `content_type` | `search_metadata.source_mime_type` |
+| `source_uri` | `search_metadata.source_uri` |
+| `source_modified_at` | `search_metadata.last_modified_date` |
+| `created_at` | `search_metadata.creation_date`, stamped on the creating save and carried forward |
+| `metadata` (field 99) | `search_metadata.metadata` |
+| `declared`, `origin` | `structured_data`, an `Any` of a registered archive message, typed-validated |
+
+**v2 prerequisites.** The archive's existing guarantees need four additive
+changes to the v2 contract, specified here so the implementation issues can
+cite them:
+
+1. **Blob-level carry-forward.** In a BLOBS PUT, a blob with no `data` and no
+   `storage_ref` whose `blob_id` names a blob of the expected revision keeps
+   that blob's existing binding: no bytes sent, no copy, the reference enters
+   the commit's carried-object purge check (§6, §7). Today every non-uploaded
+   blob in a BLOBS PUT needs inline data, so adding a markdown rendition beside
+   a 600 MB original would resend the original. This is a fourth reuse
+   mechanism beside upload, `PartSource` and unchanged-part carry-forward.
+2. **Server-filled blob facts.** On read the server fills `Blob.size_bytes`,
+   `Blob.checksum` and `checksum_type = SHA256` from the claim-check binding,
+   as it fills `storage_ref`. On save, a declared size or SHA-256 that
+   disagrees with the bound object is refused. The binding also records the
+   revision and commit time that bound it and the step provenance when a step
+   wrote it, exposed read-only on a new `Blob.written`
+   (`BlobWrite{revision, committed_at, ai.protomolt.proto.repo.v1.WriteProvenance step}`)
+   and kept across carry-forward, so a re-referenced rendition keeps its
+   original stamp. A client-supplied `Blob.written` is refused like
+   `storage_ref`.
+3. **`Blob.schema_subject`**, above.
+4. **`DocumentManifest.committed_at`**, the accession's commit time, so a
+   manifest read can say when its revision landed without a history read.
+
+### 3. Read side: projections over v2 reads
+
+Each archive read is one v2 read, then one projection into the archive view.
+Nested projections (#568) let a list of one message type build a list of
+another: a field whose message type declares `(sources)` gets a child
+projection, applied element by element. The view messages declare their
+sources and mappings on the `.proto`:
+
+```proto
+// Rows of VersionManifest.renditions: one per raw blob and one for PARSED.
+message RenditionManifestEntry {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
+  RenditionDescriptor rendition = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source"  // the child RenditionDescriptor projects from the same element
+  }];
+  // PartState and RenditionState share numbers; a blob in the document is PRESENT.
+  RenditionState state = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "state"}},
+    (ai.protomolt.proto.projection.v1.default_from) = {literal: {number_value: 1}}
+  ];
+  int64 size_bytes = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "size_bytes"}
+  }];
+  string sha256 = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "checksum" path: "sha256"}
+  }];
+  google.protobuf.Timestamp written_at = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "written.committed_at"}
+  }];
+  string deleted_reason = 7 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "deleted_reason"}
+  }];
+  WriteAttribution written_by = 8 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source"
+  }];
+}
+
+message RenditionDescriptor {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
+  string name = 1 [
+    (ai.protomolt.proto.projection.v1.from) = {cel: "source.blob_id.split('/')[0]"},
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      cel: "source.selector.part == 4 ? 'parsed' : ''"
+    }
+  ];
+  string sub_key = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.blob_id.contains('/') ? source.blob_id.split('/')[1] : ''"
+  }];
+  string media_type = 3 [
+    (ai.protomolt.proto.projection.v1.from) = {paths: {path: "mime_type"}},
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      cel: "source.selector.part == 4 ? 'application/x-protobuf' : ''"
+    }
+  ];
+  string schema_subject = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "schema_subject"}
+  }];
+}
+
+message WriteAttribution {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.Blob"
+    source: "ai.protomolt.proto.repo.v2.PartManifestEntry"
+  };
+  string module = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "written.step.module_id" path: "owner.step.module_id"}
+  }];
+}
+
+message VersionManifest {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.GetDocumentResponse"
+  };
+  EntryAddress address = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.address"}
+  }];
+  int64 version = 2 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.revision"}
+  }];
+  string root_checksum = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "validation.candidate_sha256"}
+  }];
+  // total_bytes = 4 is host-filled: a sum over the rows, and CEL has no fold.
+  google.protobuf.Timestamp created_at = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.committed_at"}
+  }];
+  // Raw blobs first, in stored order, then the PARSED part when present.
+  repeated RenditionManifestEntry renditions = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "dyn(source.document.blob_bag.blobs.blob) + dyn(source.manifest.parts.filter(p, has(p.selector.part) && p.selector.part == 4))"
+  }];
+  EntryInfo metadata_snapshot = 7 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source"
+  }];
+}
+
+message EntryAddress {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v1.NodeAddress"
+  };
+  string account_id = 1 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "account_id"}}];
+  string archive = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "graph_address_id"}}];
+  string entry_id = 3 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "doc_id"}}];
+}
+
+message EntryInfo {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.GetDocumentResponse"
+    source: "ai.protomolt.proto.repo.v2.DocumentSummary"
+  };
+  EntryAddress address = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.address" path: "address"}
+  }];
+  int64 current_version = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.revision" path: "revision"}
+  }];
+  string title = 4 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "document.search_metadata.title" path: "lookup.title"}
+  }];
+  string filename = 5 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.document.blob_bag.blobs.blob.filter(b, b.blob_id == 'original').map(b, b.filename).join('')"
+  }];
+  string content_type = 6 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "document.search_metadata.source_mime_type" path: "lookup.source_mime_type"}
+  }];
+  string source_uri = 7 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "document.search_metadata.source_uri" path: "lookup.source_uri"}
+  }];
+  google.protobuf.Timestamp source_modified_at = 8 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "document.search_metadata.last_modified_date" path: "lookup.last_modified_date"}
+  }];
+  google.protobuf.Timestamp created_at = 9 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "document.search_metadata.creation_date" path: "lookup.creation_date"}
+  }];
+  google.protobuf.Timestamp updated_at = 10 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "manifest.committed_at" path: "committed_at"}
+  }];
+}
+
+// ListVersions rows: one per revision, projected from history.
+message VersionSummary {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.repo.v2.RevisionSummary"
+  };
+  int64 version = 1 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "revision"}}];
+  int64 previous_version = 2 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "previous_revision"}}];
+  google.protobuf.Timestamp created_at = 3 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "committed_at"}}];
+  string module = 4 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "owner.step.module_id"}}];
+  bool deleted = 5 [(ai.protomolt.proto.projection.v1.from) = {paths: {path: "tombstone"}}];
+}
+```
+
+The snippet shows the mappings only; the implementation keeps every existing
+`validate.v1` annotation on these messages and every field comment.
+
+Calls, each one v2 read pinned to one revision (§8):
+
+| Archive call | v2 call | Projection |
+|---|---|---|
+| `GetEntryManifest(v)` | `GetDocument` at revision `v`, selection CORE + BLOBS, PARSED manifest only | `GetDocumentResponse` to `VersionManifest`; `info` from the current revision, the same read when `v` is current |
+| `GetEntry(v)` | as above, then `ReadBlob` per selected PRESENT rendition (PARSED part bytes for `parsed`) | the same projection; bytes are attached, never projected |
+| `ReadRendition` | `ReadBlob` (or the PARSED part frames from `ReadDocument`) | header projected from the manifest row; bytes stream through unchanged |
+| `ListVersions` | `ListRevisions` | each `RevisionSummary` to `VersionSummary` |
+| `ListEntries` | `ListDocuments(account_id, graph_id = "archive:<account>", graph_address_id = archive)` | each `DocumentSummary` to `EntryInfo` through its `DocumentLookup` (#527) |
+
+- A BLOBS fragment holds blob metadata only, so reading it fetches no raw
+  bytes and `GetEntryManifest` stays a manifest inspection.
+- `ListVersions` returns `VersionSummary` rows, not full manifests. A revision
+  summary carries no rendition rows, and building them would read every
+  revision's BLOBS fragment. A caller that wants a version's manifest asks
+  `GetEntryManifest(v)`. This replaces `ListVersionsResponse.versions`
+  (`repeated VersionManifest`) and needs the buf breaking waiver in the
+  contract PR.
+- `ListEntries` filters and sorts through the typed `DocumentFilter` and
+  `DocumentSort`, not a query language. `ListEntriesRequest.include_manifests`
+  is served by `GetEntryManifest` per row until the catalog listing returns
+  BLOBS rows itself.
+- `root_checksum` becomes the revision's `candidate_sha256`: one digest of
+  the composed candidate, computed by v2, rather than a second digest the
+  archive maintains. `RenditionManifestEntry.object_key`,
+  `storage_object_id` and `UploadRenditionResponse.object_key` are not
+  populated: stack references are internal (§5, §6).
+- Four fields stay host-filled, each named in the view `.proto` with its
+  reason: `EntryInfo.metadata` (projection v1 refuses map fields;
+  `DocumentLookup.metadata` is filled the same way);
+  `VersionManifest.total_bytes` (a sum over the rows, and CEL has no fold);
+  `EntryInfo.classification` and `RenditionManifestEntry.content_profile`,
+  which are the asset classification layer's output, not stored document
+  fields.
+- `ListEntries` rows have no `filename`: `DocumentLookup` projects CORE only,
+  and the filename is on the `original` blob. A listing that needs it adds a
+  BLOBS-derived lookup field to `DocumentLookup`, which is #527's contract.
+
+**Validation of the view.** Every projected message is validated against its
+own `validate.v1` annotations (`path_safe_name`, `mime_type`, `sha256_hex`,
+`slug`, length bounds, the CEL rules on `VersionManifest` and
+`RenditionReadHeader`) before it is returned. A projection that produces an
+invalid view is `DATA_LOSS` naming the field and the rule, because the stored
+revision passed v2 validation and the view must not invent a different truth.
+No protovalidate, buf.validate or hand-written regex is involved.
+
+**What the implementation pins first.** The `renditions` rule concatenates two
+lists of different message types under `dyn`. The implementation's first test
+projects a revision with two blobs and a PARSED part through the real view
+`.proto` and asserts every row. If the CEL runtime refuses the heterogeneous
+list, the PARSED row moves to its own `parsed` field on `VersionManifest`
+(still a projection), not into code.
+
+### 4. Write side: translator into one v2 save
+
+Projections are one-way and whole-message; `UploadRendition` is a client
+stream of bytes. A write projection would cover only `PutEntry`'s header and
+leave the stream in code, two mechanisms for one write path. Each archive
+write is instead one small hand-written translator that builds exactly one v2
+command, and v2 save validation (§9: structure, then the composed candidate
+with descriptor validation and CEL) is the only gate. Nothing bypasses it, and
+the translator holds no rules v2 does not also enforce.
+
+`PutEntry` becomes one `SaveDocument`:
+
+| `SaveDocumentRequest` | From |
+|---|---|
+| `operation_id` | `PutEntryRequest.operation_id`, or derived (section 5) |
+| `target.address` | the call number of section 1 |
+| `expected` | `expected_version > 0`: `revision = expected_version`; `0`: the current revision read by the translator, or `none` when the entry does not exist |
+| `document` | CORE fields of section 2; `blob_bag.blobs.blob` with every written rendition inline and every other current blob listed by `blob_id` only (prerequisite 1); `parser_results` from `parsed` |
+| `writes` | `PUT` CORE; `PUT` BLOBS when any blob rendition is written; `PUT` PARSED when `parsed` is written |
+| `owner` | `SaveOwner` of section 1 |
+| `validation_mode` | `TYPED` |
+
+`UploadRendition` becomes one `UploadDocument`: the header frame carries the
+same `SaveDocumentRequest` with `UploadHeader.blob_id` naming the streamed
+blob (or `encoded_part{selector: PARSED}` for `parsed`), `declared_length =
+size_bytes` and `expected_sha256` unchanged; chunks become data frames. v2
+already streams through a digest, refuses length and digest mismatches and
+leaves an uncommitted object unreferenced, so the archive's staging key and
+settle copy are retired.
+
+- **Last write wins** (`expected_version = 0`) is the translator reading the
+  current revision once and saving against it. A concurrent writer that
+  commits first makes the save `ABORTED`, returned as it is; the translator
+  never retries on the caller's behalf.
+- **Deduplication.** When the translated save would change nothing (every
+  written rendition's SHA-256, length and media type equal the current row,
+  and CORE is unchanged), the translator returns `deduplicated = true` with
+  the current coordinates and saves nothing. v2 itself records a new revision
+  for every PUT (§6), so this check is the archive's, done against the
+  revision it read for `expected`.
+- **`VersionManifest.metadata_snapshot`** is the CORE of that revision,
+  projected, so every version keeps the metadata it was saved with.
+
+### 5. Deterministic `operation_id`
+
+v2 saves need an operation ID for idempotency (§7) and archive writes have
+none. Both write requests gain an optional field, and both responses echo it:
+
+```proto
+message PutEntryRequest {
+  // ... fields 1 to 11 and 99 unchanged ...
+  // Retry identity. Blank: derived deterministically (UUIDv5) from the entry
+  // address, the expected revision and the request content; never random.
+  string operation_id = 12 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {min_len: 1, max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+}
+
+message UploadRenditionHeader {
+  // ... fields 1 to 7 unchanged ...
+  // Retry identity, as on PutEntryRequest. Blank requires expected_sha256.
+  string operation_id = 8 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      string: {min_len: 1, max_len: 200}
+      ignore_if_zero: true
+    }
+  ];
+}
+
+// PutEntryResponse and UploadRenditionResponse gain:
+//   string operation_id = 7;  the operation the save was recorded under
+//   bool replayed = 8;        the recorded outcome of an earlier identical save
+
+// The UUIDv5 name. Binary protobuf, fields in number order (§7).
+message ArchiveOperationKey {
+  string operation_kind = 1;        // "archive.put-entry" or "archive.upload-rendition"
+  EntryAddress address = 2;         // account_id, archive, entry_id
+  int64 expected_revision = 3;      // the revision sent to v2; 0 for none
+  string content_sha256 = 4;        // the request content digest below
+}
+```
+
+- **Derivation.** `operation_id = UUIDv5(ARCHIVE_OPERATION_NAMESPACE,
+  encode(ArchiveOperationKey))` per RFC 9562: SHA-1 over the namespace bytes
+  followed by the key's binary encoding. The namespace is one fixed UUID
+  constant in the contract, never configuration. The key is protobuf, not a
+  joined string, so no character in an `entry_id` can make two keys encode
+  alike, and `operation_kind` gives the domain separation §7 requires.
+- **`expected_revision` is the revision actually sent to v2**, after the
+  last-write-wins read. v2 binds the expected revision into the save's intent
+  (`SaveIntents`), so a key built from the caller's `0` would collide with a
+  different intent after the entry moved on. A retried last-write-wins
+  `PutEntry` after a lost response therefore derives a new ID, and the
+  deduplication check above answers it with the version it already landed.
+- **`content_sha256`** for `PutEntry` is the SHA-256 of the binary encoding of
+  the request with `operation_id` and `expected_version` cleared, renditions
+  sorted by `(name, sub_key)` and metadata sorted by unsigned UTF-8 key (§7
+  canonicalization). For `UploadRendition` it is the same digest of the header
+  with `expected_sha256` kept, since the header frame must carry the operation
+  ID before any byte arrives. A blank `operation_id` with a blank
+  `expected_sha256` is `INVALID_ARGUMENT` naming both fields: without either,
+  the content is unknown when the ID is needed, and a random ID is never the
+  fallback.
+- **Cross-language fixtures** pin the encoding and three derived IDs before the
+  implementation is approved, as §7 requires for canonical intent encoding.
+- A supplied `operation_id` shares the account's v2 operation namespace with
+  `DocumentService` saves. Reusing one for a different intent fails loudly, as
+  any v2 save does.
+
+### 6. `VERSIONING_NONE`, history and events
+
+**`VERSIONING_NONE` is a view policy.** Under §6 every revision is kept until
+an administrator purge, so no archive policy can drop old revisions. An
+archive with `VERSIONING_NONE` shows the current revision only:
+`ListVersions` returns one row, and `GetEntry`, `GetEntryManifest` and
+`ReadRendition` at a version other than the current one are
+`FAILED_PRECONDITION` naming the archive's policy (rule 6: the version exists,
+the archive does not serve it). Historical revisions stay in the v2 catalog,
+readable through `DocumentService` by a caller with read access, and they
+count toward stored bytes. A save deletes no superseded object.
+`VERSIONING_RETAINED` serves every revision. Changing the policy changes what
+the archive shows, never what is stored. Deleting old bytes is §13 retention,
+an offline job, and arrives for documents and archives together.
+
+**Events are document events.** The archive keeps no outbox of its own. Each
+archive save is one accession and writes the one v2 `DocumentEvent` (§10) in
+its commit transaction, keyed by the call number, deduplicated by
+`(address, revision)` and by `event_id`. Archive consumers read the repository
+event topic, select `graph_id` starting `archive:`, and project each event
+into an archive event view whose `(sources)` is `DocumentEvent`:
+
+| Archive event | `DocumentEvent` kind | Carries |
+|---|---|---|
+| `EntrySaved` | `accessioned` | address (section 1), `version = revision`, `previous_version`, changed parts |
+| `EntryDeleted` | `tombstoned` | address, version, reason |
+| `EntryPurged` | `purge_marked`, `purge_completed` | address, `purge_id` |
+| `RenditionDeleted`, `VersionPruned` | none yet | arrive with per-blob deletion and §13 retention |
+
+Events carry identifiers and state transitions, never bodies. An accession
+names the BLOBS part as changed, not the individual rendition; the
+per-rendition change is the difference between the manifests of `version` and
+`previous_version`, both named in the event. This retires the "generalize the
+relay" item under Events above: there is one relay and one event type.
+
+### Not settled here
+
+Each needs its own follow-up issue under #535 before the ledger retires:
+
+- **Archive definitions.** Where `CreateArchive` records an archive (name,
+  drive, datasource, versioning policy) once the ledger is gone.
+- **`ArchiveMutationService`.** `DeleteEntry` maps to `DeleteDocument` (a
+  tombstone). `DeleteRendition` (RTBF bytes removal across versions) and
+  `PruneVersions` have no v2 counterpart under keep-forever; they need either
+  per-blob purge or §13 retention, and until then are refused by name.
+- **`GetArchiveStats`.** The exact counters become catalog queries over
+  `archive:` documents or an outbox-fed projection; which one is measured, not
+  assumed.
+- **Classification and bridging** (`ClassifyEntry`, `BridgeEntry`, content
+  profiles) run over renditions read through this section and write their
+  derived renditions through it.
+- **The HTTP upload route** for archives becomes the v2 HTTP upload route with
+  the section 1 call number and the section 5 operation ID.
+
 ## Rules of the house
 
 The archive's standing rules, stated once here:
@@ -286,9 +790,9 @@ remains what it is: a specialized store whose parts, partial saves, and
 copy-forward semantics are load-bearing for the document pipeline. The
 archive is its generic sibling on the same engine, not its replacement.
 The two share drives, blob stores, the outbox machinery, the reconciler,
-and one process. A future in which the document store's parts are
-re-expressed as well-known archive renditions is plausible and deliberately
-unforced.
+and one process. The direction runs the other way: archive entries are
+stored as v2 documents and archive renditions are views of their blobs and
+PARSED part, as "The archive over v2 documents" specifies.
 
 ## Future work
 
