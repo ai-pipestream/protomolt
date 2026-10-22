@@ -20,9 +20,9 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.Value;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -451,18 +451,22 @@ public final class MessageProjection {
      */
     public DynamicMessage project(Message source) {
         Objects.requireNonNull(source, "source");
-        return project(source, new HashSet<>());
+        return project(source, new ArrayDeque<>());
     }
 
     /**
      * Projects {@code source} with {@code open} holding the (target, source)
-     * pairs of the projections this call is inside. Projection is deterministic,
-     * so meeting an open pair again means the recursion would never end. Source
-     * values compare by protobuf equality, so a CEL-built copy of an open source
-     * counts as the same value. A pair leaves the set when its projection
-     * returns, so siblings may project equal values.
+     * pairs of the projections this call is inside, innermost first. Projection
+     * is deterministic, so meeting an open pair again means the recursion would
+     * never end. Source values compare by protobuf field equality, so a
+     * CEL-built copy of an open source counts as the same value. A pair leaves
+     * the stack when its projection returns, so siblings may project equal
+     * values. The depth bound is checked before any source is compared, and
+     * comparison never hashes or recursively compares a source, so a source
+     * nested far deeper than the bound fails with a {@link ProjectionException}
+     * rather than overflowing the stack.
      */
-    private DynamicMessage project(Message source, Set<OpenProjection> open) {
+    private DynamicMessage project(Message source, ArrayDeque<OpenProjection> open) {
         Descriptor sourceType = source.getDescriptorForType();
         if (!supports(sourceType)) {
             throw new ProjectionException("Type " + sourceType.getFullName()
@@ -474,12 +478,14 @@ public final class MessageProjection {
                     + " would open more than " + MAX_NESTING_DEPTH
                     + " nested projections; a child mapping does not descend");
         }
-        OpenProjection pair = new OpenProjection(targetType, source);
-        if (!open.add(pair)) {
-            throw new ProjectionException("Projection " + targetType.getFullName()
-                    + " re-enters itself with an equal " + sourceType.getFullName()
-                    + " source; a child mapping does not descend");
+        for (OpenProjection pair : open) {
+            if (pair.target() == targetType && sameValue(pair.source(), source)) {
+                throw new ProjectionException("Projection " + targetType.getFullName()
+                        + " re-enters itself with an equal " + sourceType.getFullName()
+                        + " source; a child mapping does not descend");
+            }
         }
+        open.push(new OpenProjection(targetType, source));
         try {
             DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
             for (FieldRule rule : rules) {
@@ -493,8 +499,62 @@ public final class MessageProjection {
             }
             return out.build();
         } finally {
-            open.remove(pair);
+            open.pop();
         }
+    }
+
+    /**
+     * Whether two messages are equal field by field, as {@link Message#equals}
+     * decides, but walked with an explicit work list: {@code equals} and
+     * {@code hashCode} recurse once per nesting level, so a deeply nested
+     * source would overflow the stack before the depth bound could refuse it.
+     * Map fields compare as their entry lists in order, so a reordered map
+     * reads as a different value and only the depth bound stops that cycle.
+     */
+    private static boolean sameValue(Message left, Message right) {
+        ArrayDeque<Message> pending = new ArrayDeque<>();
+        pending.push(left);
+        pending.push(right);
+        while (!pending.isEmpty()) {
+            Message b = pending.pop();
+            Message a = pending.pop();
+            if (a == b) {
+                continue;
+            }
+            if (a.getDescriptorForType() != b.getDescriptorForType()
+                    || !a.getUnknownFields().equals(b.getUnknownFields())) {
+                return false;
+            }
+            Map<FieldDescriptor, Object> aFields = a.getAllFields();
+            Map<FieldDescriptor, Object> bFields = b.getAllFields();
+            if (!aFields.keySet().equals(bFields.keySet())) {
+                return false;
+            }
+            for (Map.Entry<FieldDescriptor, Object> entry : aFields.entrySet()) {
+                FieldDescriptor field = entry.getKey();
+                Object aValue = entry.getValue();
+                Object bValue = bFields.get(field);
+                if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+                    if (!aValue.equals(bValue)) {
+                        return false;
+                    }
+                } else if (field.isRepeated()) {
+                    List<?> aList = (List<?>) aValue;
+                    List<?> bList = (List<?>) bValue;
+                    if (aList.size() != bList.size()) {
+                        return false;
+                    }
+                    for (int i = 0; i < aList.size(); i++) {
+                        pending.push((Message) aList.get(i));
+                        pending.push((Message) bList.get(i));
+                    }
+                } else {
+                    pending.push((Message) aValue);
+                    pending.push((Message) bValue);
+                }
+            }
+        }
+        return true;
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
@@ -538,7 +598,7 @@ public final class MessageProjection {
     }
 
     private void assign(
-            DynamicMessage.Builder out, FieldDescriptor field, Object value, Set<OpenProjection> open) {
+            DynamicMessage.Builder out, FieldDescriptor field, Object value, ArrayDeque<OpenProjection> open) {
         if (field.isMapField()) {
             // Map values arrive as java.util.Map from generated sources but as MapEntry
             // lists from DynamicMessage sources; support them deliberately, not by accident.
@@ -573,7 +633,7 @@ public final class MessageProjection {
      * projection; everything else, including a message of the field's own type,
      * follows {@link TypeConverter}.
      */
-    private Object convert(FieldDescriptor field, Object value, Set<OpenProjection> open) {
+    private Object convert(FieldDescriptor field, Object value, ArrayDeque<OpenProjection> open) {
         MessageProjection child = children.get(field);
         if (child != null && value instanceof Message message) {
             Descriptor valueType = message.getDescriptorForType();
@@ -630,7 +690,8 @@ public final class MessageProjection {
 
     /**
      * A projection in progress: its target type (descriptors compare by
-     * identity) and its source value (messages compare by content).
+     * identity) and its source value (compared by {@link #sameValue}, never by
+     * the record's own {@code equals} or {@code hashCode}).
      */
     private record OpenProjection(Descriptor target, Message source) {
     }
