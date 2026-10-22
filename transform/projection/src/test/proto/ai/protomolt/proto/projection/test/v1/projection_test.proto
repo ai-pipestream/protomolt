@@ -606,3 +606,69 @@ message TreeView {
     paths: {path: "children"}
   }];
 }
+
+// Part states as a stored manifest records them.
+enum PartState {
+  // Unset.
+  PART_STATE_UNSPECIFIED = 0;
+  // Written in this revision.
+  PART_STATE_WRITTEN = 1;
+  // Carried forward from an earlier revision.
+  PART_STATE_CARRIED = 2;
+}
+
+// Rendition states as a view reports them. The numbers match PartState and
+// the names do not, so a match proves conversion by number.
+enum RenditionState {
+  // Unset.
+  RENDITION_STATE_UNSPECIFIED = 0;
+  // Stored by this version.
+  RENDITION_STATE_STORED = 1;
+  // Inherited from an earlier version.
+  RENDITION_STATE_INHERITED = 2;
+}
+
+// A stored part with a state, and a state that may be absent.
+message StoredPart {
+  // Always set in the tests.
+  PartState state = 1;
+  // Left unset to exercise the numeric fallback.
+  optional PartState maybe_state = 2;
+}
+
+// Rendition states projected from part states of another enum type.
+message RenditionStatus {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredPart"
+  };
+
+  // PartState read by path, converted by number.
+  RenditionState state = 1 [(ai.protomolt.proto.projection.v1.from) = {
+    paths: {path: "state"}
+  }];
+  // The optional state, or the numeric literal 1 when it is absent.
+  RenditionState state_or_stored = 2 [
+    (ai.protomolt.proto.projection.v1.from) = {
+      paths: {path: "maybe_state"}
+    },
+    (ai.protomolt.proto.projection.v1.default_from) = {
+      literal: {number_value: 1}
+    }
+  ];
+  // PartState read by CEL, which yields the enum's number.
+  RenditionState via_cel = 3 [(ai.protomolt.proto.projection.v1.from) = {
+    cel: "source.state"
+  }];
+}
+
+// A numeric literal that is not a RenditionState number.
+message BadEnumLiteral {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "ai.protomolt.proto.projection.test.v1.StoredPart"
+  };
+
+  // 9 names no value, so projection must fail naming this field.
+  RenditionState state = 1 [(ai.protomolt.proto.projection.v1.default_from) = {
+    literal: {number_value: 9}
+  }];
+}

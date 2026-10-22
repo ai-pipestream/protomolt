@@ -72,8 +72,10 @@ does not silently disappear.
 Values are coerced to the target field type with the usual rules
 (`TypeConverter`): exact types pass through, scalars widen, messages re-parse
 across descriptor instances of the same type, repeated fields copy
-element-wise. A message of a different type goes through a nested projection,
-described next.
+element-wise. An enum value of another enum type converts by number, then by
+name, and a number (a CEL enum, or a `number_value` literal) converts to the
+enum value with that number; a value the target enum lacks fails. A message
+of a different type goes through a nested projection, described next.
 
 ## Nested projections
 
