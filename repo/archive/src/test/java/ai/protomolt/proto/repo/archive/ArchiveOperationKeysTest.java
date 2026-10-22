@@ -144,4 +144,20 @@ class ArchiveOperationKeysTest {
         assertThat(ArchiveOperationKeys.uploadContentSha256(declared.toBuilder().setOperationId("x").build()))
                 .isEqualTo(declaredDigest);
     }
+
+    @Test
+    void anUploadKeyHoldsTheHeadersExpectedVersionOutsideItsContentDigest() {
+        UploadRenditionHeader header = UploadRenditionHeader.newBuilder()
+                .setAddress(EntryAddress.newBuilder().setAccountId("acct").setArchive("reports").setEntryId("e1"))
+                .setRendition(RenditionDescriptor.newBuilder().setName("original"))
+                .setSizeBytes(10)
+                .setExpectedSha256("a".repeat(64))
+                .build();
+        UploadRenditionHeader pinned = header.toBuilder().setExpectedVersion(4).build();
+        String digest = ArchiveOperationKeys.uploadContentSha256(header);
+        assertThat(ArchiveOperationKeys.uploadContentSha256(pinned)).isEqualTo(digest);
+        assertThat(ArchiveOperationKeys.uploadKey(pinned, digest).getExpectedVersion()).isEqualTo(4);
+        assertThat(ArchiveOperationKeys.operationId(pinned, digest))
+                .isNotEqualTo(ArchiveOperationKeys.operationId(header, digest));
+    }
 }

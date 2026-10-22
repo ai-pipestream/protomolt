@@ -63,13 +63,9 @@ public final class ArchiveOperationKeys {
         return key(PUT_ENTRY, request.getAddress(), request.getExpectedVersion(), contentSha256);
     }
 
-    /**
-     * The key of an {@code UploadRendition}. An upload has no
-     * {@code expected_version}: it always saves against the current revision,
-     * so the key holds 0.
-     */
+    /** The key of an {@code UploadRendition}: the header's requested {@code expected_version}, 0 for last write wins. */
     public static ArchiveOperationKey uploadKey(UploadRenditionHeader header, String contentSha256) {
-        return key(UPLOAD_RENDITION, header.getAddress(), 0, contentSha256);
+        return key(UPLOAD_RENDITION, header.getAddress(), header.getExpectedVersion(), contentSha256);
     }
 
     private static ArchiveOperationKey key(
@@ -115,12 +111,13 @@ public final class ArchiveOperationKeys {
 
     /**
      * The content digest of an {@code UploadRendition}: SHA-256 of the header's
-     * deterministic encoding with {@code operation_id} cleared. The header keeps
-     * {@code expected_sha256}, because the ID must exist before any byte arrives.
+     * deterministic encoding with {@code operation_id} and {@code expected_version}
+     * cleared, as for a {@code PutEntry}. The header keeps {@code expected_sha256},
+     * because the ID must exist before any byte arrives.
      */
     public static String uploadContentSha256(UploadRenditionHeader header) {
-        return HexFormat.of().formatHex(digest("SHA-256").digest(
-                MessageFingerprints.deterministicBytes(header.toBuilder().clearOperationId().build())));
+        return HexFormat.of().formatHex(digest("SHA-256").digest(MessageFingerprints.deterministicBytes(
+                header.toBuilder().clearOperationId().clearExpectedVersion().build())));
     }
 
     /** The operation ID of a {@code PutEntry}: the supplied one, or the derived one. */

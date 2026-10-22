@@ -39,7 +39,9 @@ import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.ParseStatus;
 import ai.protomolt.proto.repo.v1.ParserResult;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
+import ai.protomolt.proto.repo.v2.DeleteDocumentRequest;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
+import ai.protomolt.proto.repo.v2.ExpectedRevision;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
 import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
@@ -63,6 +65,7 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -382,12 +385,15 @@ class DocumentArchiveIT {
     }
 
     /**
-     * Writer A saves revision 1 and loses its response; writer B saves revision 2;
-     * A's retry replays revision 1 and leaves revision 2 current. Pinned for a
-     * derived and a caller-supplied operation ID.
+     * Writer A saves revision 1 and loses its response; writer B saves revision 2.
+     * With a supplied operation ID, A's retry replays revision 1 and leaves
+     * revision 2 current. With a derived ID and last write wins, the retry is
+     * indistinguishable from writing A's content again, so it is refused
+     * FAILED_PRECONDITION naming both versions, and naming the current version as
+     * expected_version writes it as revision 3.
      */
     @Test
-    void aLostResponseRetryReplaysItsOwnRevisionAfterAnotherWriter() {
+    void aLostResponseRetryAfterAnotherWriterReplaysOnlyUnderASuppliedId() {
         for (boolean supplied : new boolean[] {false, true}) {
             EntryAddress address = entry(RETAINED);
             PutEntryRequest a = supplied
@@ -399,6 +405,16 @@ class DocumentArchiveIT {
                     .setTitle("Writer B").build());
             assertThat(b.getVersion()).isEqualTo(2);
 
+            if (!supplied) {
+                assertSuperseded(() -> archive.putEntry(a), landed.getOperationId(), 1, "version 2", 2);
+                assertThat(revisions(address)).isEqualTo(2);
+                PutEntryResponse rewritten = archive.putEntry(a.toBuilder().setExpectedVersion(2).build());
+                assertThat(rewritten.getReplayed()).isFalse();
+                assertThat(rewritten.getVersion()).isEqualTo(3);
+                assertThat(archive.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(address).build())
+                        .getInfo().getTitle()).isEqualTo(a.getTitle());
+                continue;
+            }
             PutEntryResponse retry = archive.putEntry(a);
             assertThat(retry.getReplayed()).isTrue();
             assertThat(retry.getVersion()).isEqualTo(1);
@@ -412,12 +428,13 @@ class DocumentArchiveIT {
 
     /**
      * Codex #15035: writer A's put matches revision 1 and is deduplicated; its
-     * response is lost; writer B lands revision 2; A's retry must answer
-     * revision 1 with replayed set and leave revision 2 current, never save A's
-     * content again as revision 3. Pinned for a derived and a supplied ID.
+     * response is lost; writer B lands revision 2; A's retry must never save A's
+     * content again as revision 3. Under a supplied ID it answers revision 1 with
+     * replayed set; under a derived ID it is FAILED_PRECONDITION naming both
+     * versions. Either way revision 2 stays current.
      */
     @Test
-    void aDeduplicatedPutRetriedAfterAnotherWriterReplaysItsRevision() {
+    void aDeduplicatedPutRetriedAfterAnotherWriterNeverSavesAgain() {
         for (boolean supplied : new boolean[] {false, true}) {
             EntryAddress address = entry(RETAINED);
             archive.putEntry(firstPut(address).setOperationId("first-writer-" + address.getEntryId()).build());
@@ -432,6 +449,13 @@ class DocumentArchiveIT {
                     .setTitle("Writer B").build());
             assertThat(b.getVersion()).isEqualTo(2);
 
+            if (!supplied) {
+                assertSuperseded(() -> archive.putEntry(a), deduplicated.getOperationId(), 1, "version 2", 2);
+                assertThat(revisions(address)).isEqualTo(2);
+                assertThat(archive.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(address).build())
+                        .getInfo().getTitle()).isEqualTo("Writer B");
+                continue;
+            }
             PutEntryResponse retry = archive.putEntry(a);
             assertThat(retry.getReplayed()).isTrue();
             assertThat(retry.getDeduplicated()).isTrue();
@@ -448,6 +472,35 @@ class DocumentArchiveIT {
                 assertThat(revisions(address)).isEqualTo(2);
             }
         }
+    }
+
+    /**
+     * A derived last-write-wins write of content the entry held before, after a
+     * deletion replaced it, is refused naming the deletion; naming the
+     * tombstone's version as expected_version writes the content again.
+     */
+    @Test
+    void aDerivedRewriteAfterADeletionNamesTheDeletion() {
+        EntryAddress address = entry(RETAINED);
+        PutEntryRequest a = firstPut(address).build();
+        PutEntryResponse landed = archive.putEntry(a);
+        documents.deleteDocument(DeleteDocumentRequest.newBuilder().setAddress(ArchiveCoordinates.address(address))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(1)).setOperationId("delete-" + address.getEntryId())
+                .build());
+        assertSuperseded(() -> archive.putEntry(a), landed.getOperationId(), 1, "a deletion at version 2", 2);
+        assertThat(archive.putEntry(a.toBuilder().setExpectedVersion(2).build()).getVersion()).isEqualTo(3);
+    }
+
+    /** The FAILED_PRECONDITION of a derived ID whose recorded version was replaced, naming the remedy. */
+    static void assertSuperseded(ThrowingCallable call, String operationId, long recorded, String replacedBy,
+            long current) {
+        StatusRuntimeException failure = catchThrowableOfType(StatusRuntimeException.class, call);
+        assertThat(failure).as("the call is refused").isNotNull();
+        assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(failure.getStatus().getDescription()).isEqualTo("operation_id " + operationId
+                + " was derived from this content, which was written as version " + recorded
+                + " and has since been replaced by " + replacedBy + ". To write it again, send expected_version = "
+                + current + " or a new operation_id.");
     }
 
     @Test
@@ -750,6 +803,41 @@ class DocumentArchiveIT {
         GetEntryResponse entry = archive.getEntry(GetEntryRequest.newBuilder().setAddress(address).build());
         assertThat(entry.getRenditionsList()).extracting(RenditionContent::getData).containsExactly(original, parsed);
         assertThat(entry.getInfo().hasCreatedAt()).isTrue();
+    }
+
+    /**
+     * An upload's derived ID holds its header's expected_version: re-uploading
+     * bytes the rendition held before is refused naming both versions under last
+     * write wins, lands when the header names the current version, and a stale
+     * expected_version is ABORTED.
+     */
+    @Test
+    void anUploadRewriteNamesTheCurrentVersion() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        ByteString x = randomBytes(5_000, 11);
+        ByteString y = randomBytes(5_000, 12);
+        UploadRenditionHeader headerX = UploadRenditionHeader.newBuilder().setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder().setName("scan").setSubKey("0001").setMediaType("image/tiff"))
+                .setSizeBytes(x.size()).setExpectedSha256(RenditionReads.sha256Hex(x)).build();
+        UploadRenditionHeader headerY = headerX.toBuilder().setExpectedSha256(RenditionReads.sha256Hex(y)).build();
+        UploadRenditionResponse first = upload(headerX, x, 1_000);
+        assertThat(upload(headerY, y, 1_000).getVersion()).isEqualTo(2);
+
+        assertSuperseded(() -> upload(headerX, x, 1_000), first.getOperationId(), 1, "version 2", 2);
+        assertThat(code(() -> {
+            try {
+                upload(headerX.toBuilder().setExpectedVersion(1).build(), x, 1_000);
+            } catch (Exception failure) {
+                throw failure instanceof StatusRuntimeException status ? status : new IllegalStateException(failure);
+            }
+        })).isEqualTo(Status.Code.ABORTED);
+        UploadRenditionResponse rewritten = upload(headerX.toBuilder().setExpectedVersion(2).build(), x, 1_000);
+        assertThat(rewritten.getReplayed()).isFalse();
+        assertThat(rewritten.getVersion()).isEqualTo(3);
+        assertThat(rewritten.getOperationId()).isNotEqualTo(first.getOperationId());
+        VersionManifest current = archive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address).build()).getManifest();
+        assertThat(row(current, "scan", "0001").getSha256()).isEqualTo(RenditionReads.sha256Hex(x));
     }
 
     @Test

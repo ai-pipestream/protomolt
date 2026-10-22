@@ -56,6 +56,7 @@ import ai.protomolt.proto.repo.v2.ReadDocumentRequest;
 import ai.protomolt.proto.repo.v2.ReadDocumentResponse;
 import ai.protomolt.proto.repo.v2.RecordedOutcome;
 import ai.protomolt.proto.repo.v2.RevisionSelector;
+import ai.protomolt.proto.repo.v2.RevisionSummary;
 import ai.protomolt.proto.repo.v2.SaveDocumentRequest;
 import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
@@ -98,8 +99,9 @@ import java.util.stream.Collectors;
  * <p>Every read is one v2 read per revision it serves. Every write resolves its
  * operation ID, asks {@code GetOperationOutcome} before reading anything else,
  * and replays a recorded outcome whose {@code archive.content_sha256} request
- * metadata matches; only with no recorded outcome does it read the current
- * revision and save. Every save asks v2 to record an unchanged outcome
+ * metadata matches, unless the ID was derived for a last-write-wins request and
+ * the recorded version is no longer current; only with no recorded outcome does
+ * it read the current revision and save. Every save asks v2 to record an unchanged outcome
  * ({@code UNCHANGED_POLICY_RECORD_OUTCOME}) instead of a new revision when it
  * changes nothing, which is what {@code deduplicated} reports: the archive does
  * no dedup of its own. v2 save validation is the only write gate: the translator
@@ -310,7 +312,8 @@ public final class DocumentArchive {
         String contentSha256 = ArchiveOperationKeys.putEntryContentSha256(request);
         String operationId = ArchiveOperationKeys.operationId(request, contentSha256);
 
-        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256);
+        boolean derivedLastWriteWins = request.getOperationId().isEmpty() && request.getExpectedVersion() == 0;
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, derivedLastWriteWins);
         if (recorded.isPresent()) {
             return putResponse(recorded.get().revision(), operationId, recorded.get().unchanged(), true);
         }
@@ -595,9 +598,12 @@ public final class DocumentArchive {
      *         {@code operation_id} when the recorded digest differs or is absent, on
      *         any arm, or the outcome names another entry; the recorded rejection's
      *         status, with its {@code SaveRejection} detail, when this request was
-     *         rejected before
+     *         rejected before; {@code FAILED_PRECONDITION} when
+     *         {@code derivedLastWriteWins} and the recorded version is no longer
+     *         current (see {@link #requireStillCurrent})
      */
-    Optional<Recorded> recordedOutcome(NodeAddress address, String operationId, String contentSha256) {
+    Optional<Recorded> recordedOutcome(NodeAddress address, String operationId, String contentSha256,
+            boolean derivedLastWriteWins) {
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
                 .setAccountId(address.getAccountId())
                 .setOperationId(operationId)
@@ -620,8 +626,36 @@ public final class DocumentArchive {
                     + accession.getAddress().getGraphId() + "/" + accession.getAddress().getGraphAddressId()
                     + "/" + accession.getAddress().getDocId() + ", not this entry");
         }
+        if (derivedLastWriteWins) {
+            requireStillCurrent(address, operationId, accession.getRevision());
+        }
         return Optional.of(new Recorded(read(address, revision(accession.getRevision()), CORE_AND_BLOBS),
                 recorded.hasUnchanged()));
+    }
+
+    /**
+     * Refuses to replay a derived last-write-wins ID whose recorded version has
+     * been replaced. A derived ID cannot tell a retry from a second write of the
+     * same content: replaying would report a write that is not current, and
+     * saving again would let a stale retry overwrite a later writer. The caller
+     * resolves it by naming the current version or a new operation ID.
+     *
+     * @throws StatusRuntimeException {@code FAILED_PRECONDITION} naming the
+     *         recorded version, the current one and both remedies
+     */
+    private void requireStillCurrent(NodeAddress address, String operationId, long recordedVersion) {
+        RevisionSummary newest = documents.listRevisions(ListRevisionsRequest.newBuilder()
+                        .setAddress(address).setPageSize(1).build())
+                .getRevisionsList().stream().findFirst()
+                .orElseThrow(() -> ArchiveErrors.dataLoss("Entry " + address.getDocId()
+                        + " has a recorded outcome but no revisions", null));
+        if (newest.getRevision() == recordedVersion) {
+            return;
+        }
+        throw ArchiveErrors.failedPrecondition("operation_id " + operationId + " was derived from this content,"
+                + " which was written as version " + recordedVersion + " and has since been replaced by "
+                + (newest.getTombstone() ? "a deletion at " : "") + "version " + newest.getRevision()
+                + ". To write it again, send expected_version = " + newest.getRevision() + " or a new operation_id.");
     }
 
     /**
@@ -637,7 +671,8 @@ public final class DocumentArchive {
         }
         Optional<Recorded> winner;
         try {
-            winner = recordedOutcome(address, operationId, contentSha256);
+            // Two attempts of one operation raced: the winner has just committed.
+            winner = recordedOutcome(address, operationId, contentSha256, false);
         } catch (StatusRuntimeException lookupFailure) {
             failure.addSuppressed(lookupFailure);
             throw failure;
@@ -825,7 +860,8 @@ public final class DocumentArchive {
         }
         String contentSha256 = ArchiveOperationKeys.uploadContentSha256(header);
         String operationId = ArchiveOperationKeys.operationId(header, contentSha256);
-        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256);
+        boolean derivedLastWriteWins = header.getOperationId().isEmpty() && header.getExpectedVersion() == 0;
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, derivedLastWriteWins);
         if (recorded.isPresent()) {
             return new Replay(uploadResponse(recorded.get().revision(), rendition, operationId, true));
         }
@@ -837,9 +873,10 @@ public final class DocumentArchive {
         SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
                 .setOperationId(operationId)
                 .setTarget(DocumentTarget.newBuilder().setAddress(address))
-                .setExpected(current
-                        .map(read -> ExpectedRevision.newBuilder().setRevision(read.getManifest().getRevision()).build())
-                        .orElse(ExpectedRevision.newBuilder().setNone(true).build()))
+                .setExpected(header.getExpectedVersion() > 0
+                        ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
+                        : current.map(read -> ExpectedRevision.newBuilder().setRevision(read.getManifest().getRevision()).build())
+                                .orElse(ExpectedRevision.newBuilder().setNone(true).build()))
                 .addWrites(put(ArchiveCoordinates.CORE))
                 .setOwner(owner(binding, header.getWrittenBy()))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
