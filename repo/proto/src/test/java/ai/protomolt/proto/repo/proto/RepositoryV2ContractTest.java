@@ -238,9 +238,13 @@ class RepositoryV2ContractTest {
                 .setCommittedAt(Timestamp.newBuilder().setSeconds(1))
                 .addParts(StoredPartEntry.newBuilder().setEntry(PartManifestEntry.newBuilder()
                         .setSelector(part(DocumentPart.DOCUMENT_PART_CORE)).setState(PartState.PART_STATE_PRESENT)
-                        .setSha256(SHA).setSizeBytes(10).setWrittenInRevision(1).setOwner(intakeOwner()))
+                        .setSha256(SHA).setSizeBytes(10).setWrittenInRevision(1).setOwner(intakeOwner())
+                        .setWrittenAt(Timestamp.newBuilder().setSeconds(1)))
                         .setRef(StackRef.newBuilder().setStackId("s1").setKey("k").setSha256(SHA).setLength(10)));
         check(stored.build(), true);
+        var untimed = stored.clone();
+        untimed.getPartsBuilder(0).getEntryBuilder().clearWrittenAt();
+        check(untimed.build(), false);
         check(stored.clone().clearOwnership().build(), false);
         check(stored.clone().clearOwner().build(), false);
 

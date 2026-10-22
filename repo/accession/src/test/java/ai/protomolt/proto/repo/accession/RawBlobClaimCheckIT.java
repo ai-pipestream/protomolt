@@ -128,6 +128,8 @@ class RawBlobClaimCheckIT {
         // The same objects, bound in the sourcing revision: a sourced part is written in
         // that revision, so its bindings carry that revision's stamp.
         var otherStored = f.catalog.manifest(other, 1).orElseThrow();
+        assertThat(sourced.getEntry().getWrittenAt()).as("a sourced part is written in the sourcing revision")
+                .isEqualTo(otherStored.getCommittedAt());
         assertThat(sourced.getBlobRefsList()).extracting(BlobObjectRef::getBlobId, BlobObjectRef::getRef)
                 .containsExactlyElementsOf(first.getBlobRefsList().stream()
                         .map(ref -> tuple(ref.getBlobId(), ref.getRef())).toList());

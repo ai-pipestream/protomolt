@@ -196,8 +196,9 @@ marking what the selection actually returned.
   filename; a full read ends with a SHA-256 check, and a mismatch ends the
   stream with `DATA_LOSS`.
 - **`GetManifest`** — manifest + validation record only; fetches no
-  payloads (`content_included` false throughout). Every manifest carries
-  the accession's `committed_at`.
+  payloads (`content_included` false throughout). Each manifest has the
+  accession's `committed_at`, and each part entry has `written_at`, the
+  commit time of the revision in `written_in_revision`.
 - **`ListRevisions`** — history newest-first, `page_size` 1–1000 with
   opaque page tokens; each summary names revision, predecessor, commit
   time, committing operation, owner, tombstone flag, validation verdict,

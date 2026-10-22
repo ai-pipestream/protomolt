@@ -221,6 +221,9 @@ message PartManifestEntry {
   bool opaque = 9;
   // False when the content was not requested, independent of state.
   bool content_included = 10;
+  // When the accession named by written_in_revision committed; carried parts
+  // keep it with written_in_revision.
+  google.protobuf.Timestamp written_at = 11 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // The public map of one accession.

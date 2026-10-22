@@ -67,6 +67,12 @@ class BlobBindingFactsIT {
         assertThat(binding(second, "markdown").getWritten()).isEqualTo(BlobWrite.newBuilder().setRevision(2)
                 .setCommittedAt(second.getCommittedAt()).build());
         assertThat(saved.getAccession().getManifest().getCommittedAt()).isEqualTo(second.getCommittedAt());
+        // Part entries record their write time the same way: CORE and PARSED were carried, BLOBS was written.
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_CORE).getWrittenAt()).isEqualTo(first.getCommittedAt());
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_PARSED).getWrittenAt()).isEqualTo(first.getCommittedAt());
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_BLOBS).getWrittenAt()).isEqualTo(second.getCommittedAt());
+        assertThat(saved.getAccession().getManifest().getPartsList())
+                .extracting(PartManifestEntry::getWrittenAt).containsOnly(first.getCommittedAt(), second.getCommittedAt());
 
         var read = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build());
         var blobs = read.getDocument().getBlobBag().getBlobs().getBlobList();
@@ -300,6 +306,11 @@ class BlobBindingFactsIT {
         return manifest.getPartsList().stream()
                 .filter(part -> part.getEntry().getSelector().getPart() == DocumentPart.DOCUMENT_PART_BLOBS)
                 .findFirst().orElseThrow();
+    }
+
+    private static PartManifestEntry part(StoredManifest manifest, DocumentPart part) {
+        return manifest.getPartsList().stream().map(StoredPartEntry::getEntry)
+                .filter(entry -> entry.getSelector().getPart() == part).findFirst().orElseThrow();
     }
 
     private static BlobObjectRef binding(StoredManifest manifest, String blobId) {

@@ -1084,10 +1084,10 @@ public final class DocumentSaves {
         authorized.grant().ifPresent(validation::setWriterGrant);
         authorized.process().ifPresent(validation::setProcessAuthority);
         var committedAt = timestamp(clock.instant());
-        // Every binding this revision made takes its stamp; carried bindings keep theirs.
+        // Every part and binding this revision wrote takes its commit time; carried ones keep theirs.
         var written = BlobWrite.newBuilder().setRevision(revision).setCommittedAt(committedAt);
         if (request.getOwner().hasStep()) written.setStep(request.getOwner().getStep());
-        var stamped = ordered.stream().map(part -> stampNewBindings(part, written.build())).toList();
+        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written.build())).toList();
         var stored = StoredManifest.newBuilder().setAddress(address).setRevision(revision)
                 .setPreviousRevision(currentRevision).addAllParts(stamped).setValidation(validation)
                 .setOperationId(request.getOperationId()).setIntentSha256(intentSha).setOwner(request.getOwner())
@@ -1170,10 +1170,16 @@ public final class DocumentSaves {
         return carried;
     }
 
-    /** The part with every raw blob binding this revision made stamped with its write. */
-    private static StoredPartEntry stampNewBindings(StoredPartEntry part, BlobWrite written) {
-        if (part.getBlobRefsList().stream().allMatch(BlobObjectRef::hasWritten)) return part;
+    /**
+     * The part with this revision's write recorded: {@code written_at} on an entry
+     * written or sourced in this revision, and the {@link BlobWrite} on every raw
+     * blob binding this revision made. Carried entries and bindings are unchanged.
+     */
+    private static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written) {
+        boolean entryWritten = part.getEntry().getWrittenInRevision() == revision;
+        if (!entryWritten && part.getBlobRefsList().stream().allMatch(BlobObjectRef::hasWritten)) return part;
         var stamped = part.toBuilder();
+        if (entryWritten) stamped.getEntryBuilder().setWrittenAt(written.getCommittedAt());
         for (int index = 0; index < stamped.getBlobRefsCount(); index++)
             if (!stamped.getBlobRefs(index).hasWritten()) stamped.getBlobRefsBuilder(index).setWritten(written);
         return stamped.build();
