@@ -22,6 +22,7 @@ import com.google.protobuf.Value;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,7 +63,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * through the child when the child declares that type; a value of the field's
  * own type is copied as is; any other message type fails the projection. This
  * is how a list of one message type (stored blobs, say) builds a list of
- * another (renditions). Child CEL rules are validated with the parent.</p>
+ * another (renditions). Child CEL rules are validated with the parent. One
+ * {@link #project(Message)} call refuses to re-enter a (target type, source
+ * value) pair it is still projecting, and refuses more than
+ * {@value #MAX_NESTING_DEPTH} open projections, so a schema whose child
+ * mapping does not descend fails with a {@link ProjectionException} instead
+ * of exhausting the stack.</p>
  *
  * <p>The mapping also derives {@link FieldMask}s: {@link #targetMask()} names
  * every populated target field (partial-response/update masks), and
@@ -127,6 +133,13 @@ public final class MessageProjection {
     private final TypeConverter typeConverter = new TypeConverter();
     // A retention budget for compiled evaluators, not a limit on accepted source schemas.
     static final int MAX_CACHED_EVALUATORS = 128;
+    /**
+     * The most projections one {@link #project(Message)} call may have open at
+     * once, the root included. A cycle that re-enters an open (target, source)
+     * pair fails sooner; this bound stops chains that never repeat, such as CEL
+     * building a new value at every level.
+     */
+    static final int MAX_NESTING_DEPTH = 64;
     private final Map<Descriptor, CelEvaluator> evaluators = new LinkedHashMap<>(16, 0.75f, true);
 
     private MessageProjection(
@@ -431,28 +444,57 @@ public final class MessageProjection {
      *
      * @throws ProjectionException when the source type is not declared, when a
      *         CEL rule fails at evaluation, when a value cannot be coerced
-     *         to its target field type, or when a message value is neither its
-     *         field's type nor a declared source of that field's child projection
+     *         to its target field type, when a message value is neither its
+     *         field's type nor a declared source of that field's child projection,
+     *         or when child projections re-enter a (target, source) pair still
+     *         being projected or nest deeper than {@value #MAX_NESTING_DEPTH}
      */
     public DynamicMessage project(Message source) {
         Objects.requireNonNull(source, "source");
+        return project(source, new HashSet<>());
+    }
+
+    /**
+     * Projects {@code source} with {@code open} holding the (target, source)
+     * pairs of the projections this call is inside. Projection is deterministic,
+     * so meeting an open pair again means the recursion would never end. Source
+     * values compare by protobuf equality, so a CEL-built copy of an open source
+     * counts as the same value. A pair leaves the set when its projection
+     * returns, so siblings may project equal values.
+     */
+    private DynamicMessage project(Message source, Set<OpenProjection> open) {
         Descriptor sourceType = source.getDescriptorForType();
         if (!supports(sourceType)) {
             throw new ProjectionException("Type " + sourceType.getFullName()
                     + " is not a declared source of projection " + targetType.getFullName()
                     + " (declared: " + String.join(", ", declaredSources) + ")");
         }
-        DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
-        for (FieldRule rule : rules) {
-            Object value = resolve(rule.from(), source, sourceType);
-            if (value == null) {
-                value = resolve(rule.defaultFrom(), source, sourceType);
-            }
-            if (value != null) {
-                assign(out, rule.field(), value);
-            }
+        if (open.size() >= MAX_NESTING_DEPTH) {
+            throw new ProjectionException("Projection " + targetType.getFullName()
+                    + " would open more than " + MAX_NESTING_DEPTH
+                    + " nested projections; a child mapping does not descend");
         }
-        return out.build();
+        OpenProjection pair = new OpenProjection(targetType, source);
+        if (!open.add(pair)) {
+            throw new ProjectionException("Projection " + targetType.getFullName()
+                    + " re-enters itself with an equal " + sourceType.getFullName()
+                    + " source; a child mapping does not descend");
+        }
+        try {
+            DynamicMessage.Builder out = DynamicMessage.newBuilder(targetType);
+            for (FieldRule rule : rules) {
+                Object value = resolve(rule.from(), source, sourceType);
+                if (value == null) {
+                    value = resolve(rule.defaultFrom(), source, sourceType);
+                }
+                if (value != null) {
+                    assign(out, rule.field(), value, open);
+                }
+            }
+            return out.build();
+        } finally {
+            open.remove(pair);
+        }
     }
 
     private Object resolve(Rule rule, Message source, Descriptor sourceType) {
@@ -495,7 +537,8 @@ public final class MessageProjection {
         }
     }
 
-    private void assign(DynamicMessage.Builder out, FieldDescriptor field, Object value) {
+    private void assign(
+            DynamicMessage.Builder out, FieldDescriptor field, Object value, Set<OpenProjection> open) {
         if (field.isMapField()) {
             // Map values arrive as java.util.Map from generated sources but as MapEntry
             // lists from DynamicMessage sources; support them deliberately, not by accident.
@@ -509,14 +552,14 @@ public final class MessageProjection {
                             + field.getFullName() + " is not a list: " + value.getClass().getName());
                 }
                 for (Object element : elements) {
-                    out.addRepeatedField(field, convert(field, element));
+                    out.addRepeatedField(field, convert(field, element, open));
                 }
             } else {
                 if (value instanceof List<?>) {
                     throw new ProjectionException("Value for singular projection field "
                             + field.getFullName() + " is a list");
                 }
-                out.setField(field, convert(field, value));
+                out.setField(field, convert(field, value, open));
             }
         } catch (IllegalArgumentException e) {
             throw new ProjectionException(
@@ -530,7 +573,7 @@ public final class MessageProjection {
      * projection; everything else, including a message of the field's own type,
      * follows {@link TypeConverter}.
      */
-    private Object convert(FieldDescriptor field, Object value) {
+    private Object convert(FieldDescriptor field, Object value, Set<OpenProjection> open) {
         MessageProjection child = children.get(field);
         if (child != null && value instanceof Message message) {
             Descriptor valueType = message.getDescriptorForType();
@@ -542,7 +585,7 @@ public final class MessageProjection {
                             + " nor a declared source of its projection (declared: "
                             + String.join(", ", child.declaredSources()) + ")");
                 }
-                return child.project(message);
+                return child.project(message, open);
             }
         }
         return typeConverter.convertToFieldType(value, field);
@@ -583,5 +626,12 @@ public final class MessageProjection {
     }
 
     private record LiteralRule(FieldDescriptor field, Value literal) implements Rule {
+    }
+
+    /**
+     * A projection in progress: its target type (descriptors compare by
+     * identity) and its source value (messages compare by content).
+     */
+    private record OpenProjection(Descriptor target, Message source) {
     }
 }

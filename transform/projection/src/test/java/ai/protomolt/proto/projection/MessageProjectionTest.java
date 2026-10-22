@@ -11,8 +11,10 @@ import ai.protomolt.proto.projection.test.BrokenChildParent;
 import ai.protomolt.proto.projection.test.BrokenProjection;
 import ai.protomolt.proto.projection.test.Case;
 import ai.protomolt.proto.projection.test.FlatDoc;
+import ai.protomolt.proto.projection.test.Loop;
 import ai.protomolt.proto.projection.test.Matter;
 import ai.protomolt.proto.projection.test.MisfedEntryView;
+import ai.protomolt.proto.projection.test.MutualA;
 import ai.protomolt.proto.projection.test.Note;
 import ai.protomolt.proto.projection.test.PartState;
 import ai.protomolt.proto.projection.test.Rendition;
@@ -28,6 +30,7 @@ import ai.protomolt.proto.projection.test.TreeNode;
 import ai.protomolt.proto.projection.test.TreeView;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.Empty;
 import com.google.protobuf.ExtensionRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -491,6 +494,61 @@ class MessageProjectionTest {
         assertThat(MessageProjection.resolves(zoo, "name.length")).isFalse();
         // Segments are not trimmed individually.
         assertThat(MessageProjection.resolves(zoo, "nested . leaf")).isFalse();
+    }
+
+    private static final SourceResolver EMPTY = SourceResolver.of(Empty.getDescriptor());
+
+    @Test
+    void refusesAChildThatProjectsTheSameSourceIntoItself() {
+        MessageProjection projection = MessageProjection.forTarget(Loop.getDescriptor(), EMPTY).orElseThrow();
+
+        assertThatThrownBy(() -> projection.project(Empty.getDefaultInstance()))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("ai.protomolt.proto.projection.test.v1.Loop re-enters itself")
+                .hasMessageContaining("google.protobuf.Empty");
+    }
+
+    @Test
+    void refusesTwoTargetsThatHandTheSameSourceBackAndForth() {
+        MessageProjection projection = MessageProjection.forTarget(MutualA.getDescriptor(), EMPTY).orElseThrow();
+
+        // A opens with Empty, B opens with Empty, then A would reopen with Empty.
+        assertThatThrownBy(() -> projection.project(Empty.getDefaultInstance()))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("ai.protomolt.proto.projection.test.v1.MutualA re-enters itself");
+    }
+
+    @Test
+    void projectsEqualSiblingsBecauseOnlyOpenProjectionsCount() throws Exception {
+        MessageProjection projection = MessageProjection.forTarget(
+                TreeView.getDescriptor(), SourceResolver.of(TreeNode.getDescriptor())).orElseThrow();
+        TreeNode twin = TreeNode.newBuilder().setLabel("twin").build();
+        TreeNode tree = TreeNode.newBuilder().setLabel("root").addChildren(twin).addChildren(twin).build();
+
+        TreeView view = TreeView.parseFrom(projection.project(tree).toByteString(),
+                ExtensionRegistry.getEmptyRegistry());
+
+        assertThat(view.getChildrenList()).extracting(TreeView::getLabel).containsExactly("TWIN", "TWIN");
+    }
+
+    private static TreeNode chain(int depth) {
+        TreeNode node = TreeNode.newBuilder().setLabel("n" + depth).build();
+        for (int n = depth - 1; n >= 1; n--) {
+            node = TreeNode.newBuilder().setLabel("n" + n).addChildren(node).build();
+        }
+        return node;
+    }
+
+    @Test
+    void boundsNestingDepthForChainsThatNeverRepeat() {
+        MessageProjection projection = MessageProjection.forTarget(
+                TreeView.getDescriptor(), SourceResolver.of(TreeNode.getDescriptor())).orElseThrow();
+
+        // Every level is a different value, so only the depth bound stops it.
+        assertThat(projection.project(chain(MessageProjection.MAX_NESTING_DEPTH))).isNotNull();
+        assertThatThrownBy(() -> projection.project(chain(MessageProjection.MAX_NESTING_DEPTH + 1)))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("more than " + MessageProjection.MAX_NESTING_DEPTH + " nested projections");
     }
 
     @Test

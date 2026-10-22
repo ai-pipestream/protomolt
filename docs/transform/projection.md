@@ -140,6 +140,14 @@ above. Child CEL rules are validated when the parent is built, so a child
 typo fails `forTarget` for the parent. Recursive types work: a target that
 contains itself reuses its own projection as the child.
 
+Projection must descend. One `project` call fails with `ProjectionException`
+when a child would reopen a (target type, source value) pair that is still
+being projected, as a child mapped by CEL `source` into its own type would.
+Source values compare by protobuf equality, so a CEL-built copy counts as the
+same value. Siblings may project equal values, since a pair closes when its
+projection returns. At most 64 projections may be open at once, which stops
+chains that never repeat a value.
+
 In `sourceMask`, a path that feeds a child stays as written (here
 `blob_bag.blobs.blob`). A FieldMask path names the whole subtree below it, and
 a path ending in a repeated field cannot be extended, so the parent path

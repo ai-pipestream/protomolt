@@ -10,6 +10,7 @@ option java_package = "ai.protomolt.proto.projection.test";
 option java_outer_classname = "ProjectionTestProto";
 
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -605,6 +606,37 @@ message TreeView {
   repeated TreeView children = 2 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "children"}
   }];
+}
+
+// A target whose child maps the source to itself. It compiles, but projecting
+// it would never end, so projection must refuse it.
+message Loop {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source again, into the same target type.
+  Loop child = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
+}
+
+// First half of a two-target cycle: hands its source to MutualB.
+message MutualA {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source, into the other target.
+  MutualB next = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
+}
+
+// Second half of the cycle: hands the same source back to MutualA.
+message MutualB {
+  option (ai.protomolt.proto.projection.v1.sources) = {
+    source: "google.protobuf.Empty"
+  };
+
+  // The same source, back into the first target.
+  MutualA next = 1 [(ai.protomolt.proto.projection.v1.from) = {cel: "source"}];
 }
 
 // Part states as a stored manifest records them.
