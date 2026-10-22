@@ -372,6 +372,24 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   uploads with process authority, and a console session uploads as the scoped
   caller its principal is bound as, so an account it is not bound to answers
   403 and a request with neither credential answers 401.
+- **Session writes.** A session uploads and deletes only as an intake owner
+  its principal's account binding lists in `intake_writers` (account,
+  datasource, optional connector, and whether it may create documents). For
+  such a principal the host registers one writer credential (issuer
+  `repo-account-bindings`) and one intake writer grant per listed owner, so
+  the document service's usual writer check applies: each revision records the
+  grant it was saved under, and the commit rechecks it. The grants follow the
+  binding: removing an owner revokes its grant the next time the principal is
+  bound, and listing it again issues a new grant ID. A principal with no
+  `intake_writers` reads only, and its uploads and deletes answer 403
+  `WRITE_DENIED`. A session that creates a document grants each ACL identity
+  its binding presents `READ` and `WRITE` on it, so it can read and delete
+  what it saved; an upload that replaces a revision keeps that revision's
+  access rules. The operator token's uploads write no access rules, as before.
+  `/console/session` lists the session's `intake_writers`; the account list
+  marks each account read only or names what the session writes as there, and
+  the upload form says before sending whether the binding covers the datasource
+  and connector entered.
 
 Every failed call shows its gRPC status name and the server's message; a
 response the console refuses (a stream that breaks its contract, a digest that
@@ -429,8 +447,8 @@ LocalStack S3 and Keycloak, seeds the fixture corpus, serves `dist/` with the
 Connect gateway and sign-in routes on one port, and runs `npm run
 test:browser` (Playwright, specs in `e2e/`) against it. Every spec signs in
 through Keycloak's own login page and holds only the session cookie; the write
-specs also send the operator token, because a session carries no writer
-credential yet. Run it with:
+specs also send the operator token, because the fixture's account bindings list
+no intake writers. Run it with:
 
     cd apps/console && npm ci && npm run build && npx playwright install chromium
     PROTOMOLT_CONSOLE_BROWSER_IT=1 ./gradlew :protomolt-repo-fixtures:integrationTest --tests '*ConsoleBrowserIT'

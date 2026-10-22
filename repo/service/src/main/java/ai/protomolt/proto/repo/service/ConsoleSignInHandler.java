@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.service;
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.ConsoleSession;
 import ai.protomolt.proto.authz.ConsoleSessionStatus;
+import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.authz.OidcConsoleSessions;
 import ai.protomolt.proto.authz.OidcConsoleSessions.LoginResult;
 import ai.protomolt.proto.authz.OidcConsoleSessions.LoginStart;
@@ -61,15 +62,19 @@ public final class ConsoleSignInHandler implements HttpHandler {
 
     private final OidcConsoleSessions sessions;
     private final Function<AuthenticatedCaller, List<String>> boundAccounts;
+    private final Function<AuthenticatedCaller, List<IntakeWriterScope>> boundWriters;
 
     private ConsoleSignInHandler(OidcConsoleSessions sessions,
-                                 Function<AuthenticatedCaller, List<String>> boundAccounts) {
+                                 Function<AuthenticatedCaller, List<String>> boundAccounts,
+                                 Function<AuthenticatedCaller, List<IntakeWriterScope>> boundWriters) {
         this.sessions = sessions;
         this.boundAccounts = boundAccounts;
+        this.boundWriters = boundWriters;
     }
 
     /**
-     * The routes over {@code sessions}.
+     * The routes over {@code sessions}, for a host whose sessions only read: the status
+     * answer lists no intake writers.
      *
      * @param sessions the session store
      * @param boundAccounts the accounts a session's caller is bound to, for the status answer
@@ -77,8 +82,23 @@ public final class ConsoleSignInHandler implements HttpHandler {
      */
     public static ConsoleSignInHandler over(OidcConsoleSessions sessions,
                                             Function<AuthenticatedCaller, List<String>> boundAccounts) {
+        return over(sessions, boundAccounts, caller -> List.of());
+    }
+
+    /**
+     * The routes over {@code sessions}.
+     *
+     * @param sessions the session store
+     * @param boundAccounts the accounts a session's caller is bound to, for the status answer
+     * @param boundWriters the intake owners a session's caller may save as, for the status answer
+     * @return the handler
+     */
+    public static ConsoleSignInHandler over(OidcConsoleSessions sessions,
+                                            Function<AuthenticatedCaller, List<String>> boundAccounts,
+                                            Function<AuthenticatedCaller, List<IntakeWriterScope>> boundWriters) {
         return new ConsoleSignInHandler(Objects.requireNonNull(sessions, "sessions"),
-                Objects.requireNonNull(boundAccounts, "boundAccounts"));
+                Objects.requireNonNull(boundAccounts, "boundAccounts"),
+                Objects.requireNonNull(boundWriters, "boundWriters"));
     }
 
     /**
@@ -87,7 +107,7 @@ public final class ConsoleSignInHandler implements HttpHandler {
      * @return the handler
      */
     public static ConsoleSignInHandler notConfigured() {
-        return new ConsoleSignInHandler(null, null);
+        return new ConsoleSignInHandler(null, null, null);
     }
 
     /** Whether sign-in is configured on this host. */
@@ -162,6 +182,7 @@ public final class ConsoleSignInHandler implements HttpHandler {
             AuthenticatedCaller caller = sessions.resolve(headers).orElseThrow();
             status.setPrincipal(session.get().getPrincipal())
                     .addAllAccountIds(boundAccounts.apply(caller))
+                    .addAllIntakeWriters(boundWriters.apply(caller))
                     .setExpiresAt(session.get().getExpiresAt());
         }
         byte[] body = status.build().toByteArray();

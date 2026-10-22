@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import ai.protomolt.proto.authz.AuthenticatedCaller;
 import ai.protomolt.proto.authz.ConsoleSessionStatus;
+import ai.protomolt.proto.authz.IntakeWriterScope;
 import ai.protomolt.proto.authz.FakeOpenIdProvider;
 import ai.protomolt.proto.authz.MutableClock;
 import ai.protomolt.proto.authz.OidcConsoleSessions;
@@ -128,6 +129,28 @@ class ConsoleSignInHandlerTest {
         assertThat(cookieHeader(logout, OidcConsoleSessions.COOKIE)).contains("Max-Age=0");
         assertThat(get(ConsoleSignInHandler.PATH, OidcConsoleSessions.COOKIE + "=" + session).statusCode())
                 .isEqualTo(401);
+    }
+
+    @Test
+    void theStatusNamesTheIntakeWritersTheSessionsBindingLists() throws Exception {
+        IntakeWriterScope files = IntakeWriterScope.newBuilder()
+                .setAccountId("acct-a").setDatasourceId("ds-files").setAllowCreate(true).build();
+        host.removeContext(ConsoleSignInHandler.PATH);
+        host.createContext(ConsoleSignInHandler.PATH, ConsoleSignInHandler.over(sessions, ACCOUNTS,
+                caller -> "alice".equals(caller.caller().name()) ? List.of(files) : List.of()));
+        String session = signIn();
+        ConsoleSessionStatus parsed = ConsoleSessionStatus.parseFrom(
+                get(ConsoleSignInHandler.PATH, OidcConsoleSessions.COOKIE + "=" + session).body());
+        assertThat(parsed.getIntakeWritersList()).containsExactly(files);
+    }
+
+    @Test
+    void aReadOnlyHostListsNoIntakeWriters() throws Exception {
+        String session = signIn();
+        ConsoleSessionStatus parsed = ConsoleSessionStatus.parseFrom(
+                get(ConsoleSignInHandler.PATH, OidcConsoleSessions.COOKIE + "=" + session).body());
+        assertThat(parsed.getAccountIdsList()).containsExactly("acct-a", "acct-b");
+        assertThat(parsed.getIntakeWritersList()).isEmpty();
     }
 
     @Test

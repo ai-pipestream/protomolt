@@ -1312,10 +1312,37 @@ public final class DocumentSaves {
         var datasource = request.getTarget().getUseDatasourceId();
         if (!document.getOwnership().getDatasourceId().equals(datasource))
             throw malformedException("The target datasource differs from the document's ownership");
-        var address = NodeAddress.newBuilder().setDocId(document.getDocId()).setGraphAddressId(datasource)
+        return intakeAddress(account, datasource, document.getDocId());
+    }
+
+    /** The call number an intake datasource target resolves to. */
+    private static NodeAddress intakeAddress(String account, String datasource, String docId) {
+        var address = NodeAddress.newBuilder().setDocId(docId).setGraphAddressId(datasource)
                 .setAccountId(account).setGraphId("intake:" + account).build();
         DocumentReads.requireAddress(address);
         return address;
+    }
+
+    /**
+     * The access rules of one revision of an intake document, for an upload that replaces
+     * that revision and keeps them. Empty when the revision carries no rules or does not
+     * exist; the save itself then answers the stale or missing revision.
+     *
+     * @param caller the uploading caller; it must be bound to the account
+     * @param accountId the document's account
+     * @param datasourceId the intake datasource the upload targets
+     * @param docId the document ID
+     * @param revision the exact revision the upload expects
+     * @return the revision's document security, if it carries any
+     */
+    Optional<ai.protomolt.proto.repo.v1.DocumentSecurity> intakeRevisionSecurity(RepositoryCaller caller,
+            String accountId, String datasourceId, String docId, long revision) {
+        return guarded(() -> {
+            var address = intakeAddress(accountId, datasourceId, docId);
+            DocumentReads.requireAccount(caller, accountId);
+            return catalog.manifest(address, revision).map(StoredManifest::getOwnership)
+                    .filter(OwnershipContext::hasSecurity).map(OwnershipContext::getSecurity);
+        });
     }
 
     /**
