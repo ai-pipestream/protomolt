@@ -129,7 +129,7 @@ public final class RuleChecker {
             return cleared.error();
         }
         boolean append = trimmed.contains("+=");
-        String[] sides = trimmed.split(append ? "\\+=" : "=", 2);
+        String[] sides = ShapeText.sides(trimmed, append);
         if (sides.length != 2 || sides[0].isBlank() || sides[1].isBlank()) {
             return "not 'target = source.path', 'target += source.path', or '-target'";
         }
@@ -217,7 +217,7 @@ public final class RuleChecker {
             return Resolution.error("empty path");
         }
         Descriptor current = root;
-        String[] segments = dotted.split("\\.");
+        String[] segments = ShapeText.splitPath(dotted);
         if (segments.length == 0) {
             // A path of nothing but separators, such as "." — split drops the empty segments.
             return Resolution.error("path '" + dotted + "' names no fields");

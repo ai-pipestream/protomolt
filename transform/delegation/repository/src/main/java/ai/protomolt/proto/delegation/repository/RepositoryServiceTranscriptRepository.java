@@ -26,7 +26,6 @@ import java.util.Optional;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 /**
  * Stores a complete delegation transcript as one v2 repository document whose CORE
@@ -51,9 +50,6 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
             EncryptedRepositoryStateCodec.DEFAULT_MAX_PLAINTEXT_BYTES;
     /** Default deadline applied independently to every repository RPC. */
     public static final Duration DEFAULT_RPC_TIMEOUT = Duration.ofSeconds(30);
-
-    private static final Pattern KEY_REFERENCE = Pattern.compile(
-            "[A-Za-z][A-Za-z0-9+.-]{0,31}:[A-Za-z_][A-Za-z0-9_]{0,127}");
 
     private final DocumentServiceGrpc.DocumentServiceBlockingStub documents;
     private final String driveName;
@@ -107,7 +103,7 @@ public final class RepositoryServiceTranscriptRepository implements TranscriptRe
         this.rpcTimeout = requireRpcTimeout(rpcTimeout);
         if (driveName.length() > 200 || objectKey.length() > 1024
                 || keyReference.length() > 256
-                || !KEY_REFERENCE.matcher(keyReference).matches()) {
+                || !KeyReferences.reference(keyReference)) {
             throw new IllegalArgumentException("transcript repository configuration is invalid");
         }
     }
