@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.catalog.CatalogDataLoss;
 import ai.protomolt.proto.repo.catalog.CatalogException;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
+import ai.protomolt.proto.repo.admission.DocumentLinks;
 import ai.protomolt.proto.repo.admission.DocumentRetainedDefinitions;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.catalog.Catalog;
@@ -423,8 +424,10 @@ public final class DocumentReads {
      * Decodes one stored fragment with the schemas its revision retained: the part's
      * fragment schema and every recorded Any occurrence's schema, through the same
      * admission engine a save runs. The occurrences found must be the ones recorded.
+     *
+     * @return the links the fragment holds (requirements §17); empty outside CORE
      */
-    void decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
+    List<DocumentLinks.Link> decodeRetained(StoredManifest stored, PartSelector part, ByteString bytes) {
         var validation = stored.getValidation();
         var binding = validation.getPartSchemasList().stream().filter(schema -> schema.getPart().equals(part)).findFirst()
                 .orElseThrow(() -> new AccessionException(Status.Code.DATA_LOSS, "Part has no retained schema binding", null));
@@ -467,6 +470,7 @@ public final class DocumentReads {
                             occurrence.getSha256(), occurrence.getLength()));
                 if (!new HashSet<>(accepted.opaque()).equals(expectedOpaque))
                     throw lost("Stored part's opaque occurrences differ from the retained record", null);
+                return accepted.links();
             }
         } catch (DocumentSchemaAdmission.DataLoss | DocumentCandidateAdmission.SchemaMissing
                  | DocumentCandidateAdmission.OpaqueMismatch
@@ -476,6 +480,29 @@ public final class DocumentReads {
         } catch (DocumentCandidateAdmission.BudgetExhausted budget) {
             throw new AccessionException(Status.Code.RESOURCE_EXHAUSTED, "Retained schema budget exhausted: "
                     + budget.getMessage(), null, budget);
+        }
+    }
+
+    /** The catalog these reads resolve against. */
+    Catalog catalog() { return catalog; }
+
+    /**
+     * The links of a revision's CORE part, decoded with the schemas the revision
+     * retained (requirements §17). The part's catalog length is reserved against the
+     * read budget while it is buffered. A tombstone has none.
+     *
+     * @param stored the revision, already resolved under the caller's read access
+     * @return the links in field order
+     */
+    List<DocumentLinks.Link> coreLinks(StoredManifest stored) {
+        if (stored.getTombstone()) return List.of();
+        var core = stored.getPartsList().stream()
+                .filter(part -> part.getEntry().getSelector().equals(DocumentSaves.CORE_SELECTOR)).findFirst()
+                .filter(part -> part.getEntry().getState() == PartState.PART_STATE_PRESENT && part.hasRef())
+                .orElseThrow(() -> lost("Revision " + stored.getRevision() + " has no CORE object", null));
+        requirePartWithinCeiling(core.getRef());
+        try (var lease = Objects.requireNonNull(reservations.reserve(core.getRef().getLength()), "reservation lease")) {
+            return decodeRetained(stored, DocumentSaves.CORE_SELECTOR, read(core.getRef()));
         }
     }
 

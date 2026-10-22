@@ -194,6 +194,39 @@ marking what the selection actually returned.
   drive-scoped listing: drives are a write-time storage choice, not part of
   a document's identity.
 
+### Links
+
+A link is a `DocumentLink` field in CORE, including the typed
+`structured_data` payload, whose descriptor carries the
+`(ai.protomolt.proto.repo.v2.link)` option (`repo/v2/links.proto`). The option
+names the relation and, optionally, the `structured_data` types a static target
+may hold. A `DocumentLink` field without the option, the option on any other
+field, or a link anywhere under a map value refuses the save as
+`VALIDATION_FAILED`.
+
+A link is named by `(field_path, ordinal)`: field names from the CORE root
+joined by `.`, with `[i]` after each repeated ancestor
+(`structured_data.sections[0].cites`), and the index inside a repeated link
+field. On a save that writes or sources CORE, each static target must be in
+the same account, exist unpurged, be readable by the saving caller and hold
+the pinned revision when one is named, or the save is rejected
+`LINK_TARGET_NOT_FOUND`; when the field lists `target_types`, the addressed
+revision's admitted type must be listed, or it is `LINK_TARGET_TYPE`. Both are
+recorded `FAILED_PRECONDITION` outcomes. A tombstoned target is accepted and
+the link dangles. A dynamic target's filter must set a field and be
+consistent; it is not evaluated at save.
+
+- **`ListLinks`** — a revision's links, decoded with its retained schema. A
+  static link reports `target_tombstoned` or `target_unavailable` (missing,
+  purged or unreadable, one state) for this reader; a dynamic link returns
+  its selector.
+- **`ResolveLink`** — one page of a dynamic link's targets: its filter and
+  sort run as `ListDocuments` in the linking document's account under the
+  reader's access, tombstones excluded. A static link is `FAILED_PRECONDITION`.
+- **`ListBacklinks`** — static links into a document from current revisions
+  the reader can read, optionally of one relation, ordered by linking call
+  number, field path and ordinal.
+
 ## Admission: schema, validation and opaque content
 
 Every save is admitted before anything is written:

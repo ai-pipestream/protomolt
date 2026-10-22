@@ -692,6 +692,13 @@ is vendored upstream and uses upstream's numbers.
 | 8 | metric (`metric.v1`) | `metric = 59100541` (field), `metric_message = 59100542` (message) | Member role, aggregate, public name, per-measure row filter, calculated measures, default time grain, subject, identity field, synthetic members | `ProtoOptionsMetricHintSource` into `MetricMapping` (`metric/spi/src/main/java/ai/protomolt/proto/metric/spi/`). **No `.proto` in the tree uses these options**; the only annotated instances are built programmatically in tests |
 | 9 | protovalidate (`buf.validate`, vendored) | upstream numbers 1159 and 1160 | The full upstream rule vocabulary, vendored verbatim at v1.2.2 | `ProtovalidateRuleSource`, ServiceLoader-registered (`protobuf/validation-protovalidate`) |
 
+The repository contract takes the next block for one field extension of its
+own: `link = 59100551` (`repo/v2/links.proto`) marks a `DocumentLink` field as a
+document link and names its relation and allowed target types. Its reader is
+`DocumentLinks` (`repo/admission/src/main/java/ai/protomolt/proto/repo/admission/DocumentLinks.java`),
+which admission runs on every CORE schema and payload; the links it finds feed
+the catalog edge table and the `ListLinks`, `ResolveLink` and `ListBacklinks` reads.
+
 Two more things worth stating plainly:
 
 - **`index_message` (59100472) has no reader anywhere**, main or test.
