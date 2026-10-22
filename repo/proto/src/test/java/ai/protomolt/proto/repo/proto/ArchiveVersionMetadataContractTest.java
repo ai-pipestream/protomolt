@@ -21,7 +21,8 @@ class ArchiveVersionMetadataContractTest {
         check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().setCurrentVersion(2)).build(),false);
         check(valid.toBuilder().setVersion(0).setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().setCurrentVersion(0)).build(),false);
         check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().setAddress(address().toBuilder().setEntryId("another"))).build(),false);
-        check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().clearEntryUuid()).build(),false);
+        // The call number is the identity over v2 documents: a snapshot with no entry_uuid still names its entry.
+        check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().clearEntryUuid()).build(),true);
         check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().setEntryUuid("not-a-uuid")).build(),false);
         check(valid.toBuilder().setMetadataSnapshot(valid.getMetadataSnapshot().toBuilder().setTitle("x".repeat(501))).build(),false);
     }
