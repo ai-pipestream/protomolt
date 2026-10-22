@@ -23,6 +23,27 @@ import org.junit.jupiter.api.Test;
  */
 class RepositoryCorpusTest {
 
+    @Test void spaceTokensCutsOnSingleSpacesAndSkipsEmptyTokens() {
+        assertThat(RepositoryCorpus.spaceTokens("a b c")).containsExactly("a", "b", "c");
+        assertThat(RepositoryCorpus.spaceTokens("single")).containsExactly("single");
+        // Spacing irregularities produce no empty word: consecutive, leading
+        // and trailing spaces are skipped rather than becoming tokens.
+        assertThat(RepositoryCorpus.spaceTokens("a  b")).containsExactly("a", "b");
+        assertThat(RepositoryCorpus.spaceTokens(" a b ")).containsExactly("a", "b");
+        assertThat(RepositoryCorpus.spaceTokens("")).isEmpty();
+        assertThat(RepositoryCorpus.spaceTokens("   ")).isEmpty();
+    }
+
+    @Test void spaceTokensMatchesTheReplacedSplitOnSingleSpacedText() {
+        // The oracle uses the split call the fixture no longer uses; for the
+        // single-spaced text the corpus generates, the outputs are identical.
+        for (String text : new String[] {"a", "a b", "a b c d", "one two three"}) {
+            assertThat(RepositoryCorpus.spaceTokens(text))
+                    .as("text '%s'", text)
+                    .containsExactlyElementsOf(java.util.Arrays.asList(text.split(" ")));
+        }
+    }
+
     @Test void sameSeedBuildsTheSameMessagesAndBlobDigests() throws IOException {
         var first = RepositoryCorpus.build();
         var second = RepositoryCorpus.build();

@@ -28,8 +28,17 @@ public final class CorpusSeederMain {
     /** The corpus seed; unset means {@link RepositoryCorpus#DEFAULT_SEED}. */
     public static final String ENV_SEED = "PROTOMOLT_CORPUS_SEED_VALUE";
 
-    /** The large blob's length in bytes; unset means {@link RepositoryCorpus#DEFAULT_LARGE_BLOB_BYTES}. */
+    /**
+     * The large blob's length in bytes; unset or blank means
+     * {@link RepositoryCorpus#DEFAULT_LARGE_BLOB_BYTES}. The value must be an
+     * integer between 1 and {@link #MAX_LARGE_BLOB_BYTES}; anything else is
+     * refused naming this variable, so a stray value cannot make the seeder
+     * allocate an arbitrarily large blob.
+     */
     public static final String ENV_LARGE_BLOB_BYTES = "PROTOMOLT_CORPUS_LARGE_BLOB_BYTES";
+
+    /** The most bytes {@link #ENV_LARGE_BLOB_BYTES} may ask for: 64 MiB. */
+    public static final long MAX_LARGE_BLOB_BYTES = 64L * 1024 * 1024;
 
     private static final Logger LOG = LoggerFactory.getLogger(CorpusSeederMain.class);
 
@@ -86,7 +95,13 @@ public final class CorpusSeederMain {
         var seedText = environment.get(ENV_SEED);
         if (seedText != null && !seedText.isBlank()) seed = parse(ENV_SEED, seedText);
         var lengthText = environment.get(ENV_LARGE_BLOB_BYTES);
-        if (lengthText != null && !lengthText.isBlank()) largeBlobBytes = parse(ENV_LARGE_BLOB_BYTES, lengthText);
+        if (lengthText != null && !lengthText.isBlank()) {
+            largeBlobBytes = parse(ENV_LARGE_BLOB_BYTES, lengthText);
+            if (largeBlobBytes < 1 || largeBlobBytes > MAX_LARGE_BLOB_BYTES) {
+                throw new IllegalArgumentException(ENV_LARGE_BLOB_BYTES
+                        + " must be between 1 and " + MAX_LARGE_BLOB_BYTES + " bytes, not " + largeBlobBytes);
+            }
+        }
         return new RepositoryCorpus.Parameters(seed, largeBlobBytes);
     }
 
