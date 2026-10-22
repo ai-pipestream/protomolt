@@ -1,5 +1,6 @@
 package ai.protomolt.proto.shapes;
 
+import ai.protomolt.proto.formats.Formats;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
@@ -18,7 +19,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Synthesizes real message types at runtime — the output shapes of joins and unions. Three
@@ -38,8 +38,6 @@ import java.util.regex.Pattern;
  * schema registry (with references) like any hand-written one.</p>
  */
 public final class ShapeSynthesizer {
-
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     /** A named source type in shape order; names become field names. */
     public record NamedType(String name, Descriptor type) {
@@ -200,7 +198,7 @@ public final class ShapeSynthesizer {
             throw new IllegalArgumentException("Projection path '" + scopedPath
                     + "' names a whole source; project a field of it, or use an envelope");
         }
-        String[] segments = scopedPath.substring(dot + 1).split("\\.");
+        String[] segments = ShapeText.splitPath(scopedPath.substring(dot + 1));
         FieldDescriptor field = null;
         for (int i = 0; i < segments.length; i++) {
             field = current.findFieldByName(segments[i]);
@@ -347,9 +345,7 @@ public final class ShapeSynthesizer {
 
     private static String fileName(String fullName) {
         String pkg = packageName(fullName);
-        String base = simpleName(fullName)
-                .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
-                .toLowerCase(Locale.ROOT);
+        String base = ShapeText.snakeCase(simpleName(fullName));
         return pkg.isEmpty() ? base + ".proto" : pkg.replace('.', '/') + "/" + base + ".proto";
     }
 
@@ -367,7 +363,7 @@ public final class ShapeSynthesizer {
 
     private static void requireIdentifier(String name, String what) {
         Objects.requireNonNull(name, what);
-        if (!IDENTIFIER.matcher(name).matches()) {
+        if (!Formats.isIdentifier(name)) {
             throw new IllegalArgumentException("Not a valid " + what + ": '" + name + "'");
         }
     }

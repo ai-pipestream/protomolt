@@ -51,7 +51,7 @@ public final class ScopedProtoMapper {
             return;
         }
         boolean append = trimmed.contains("+=");
-        String[] sides = trimmed.split(append ? "\\+=" : "=", 2);
+        String[] sides = ShapeText.sides(trimmed, append);
         if (sides.length != 2 || sides[0].isBlank() || sides[1].isBlank()) {
             throw new MappingException("Rule is not 'target = source.path', "
                     + "'target += source.path', or '-target'", rule);

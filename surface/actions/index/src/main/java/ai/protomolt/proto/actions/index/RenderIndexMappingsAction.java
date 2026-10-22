@@ -226,17 +226,17 @@ final class RenderIndexMappingsAction implements ProtoAction {
                 : Inputs.stringElements(node, "/sensitivity/" + key);
     }
 
-    private static String sensitivityOf(com.google.protobuf.Descriptors.Descriptor descriptor,
-                                        String path) {
+    static String sensitivityOf(com.google.protobuf.Descriptors.Descriptor descriptor,
+                                String path) {
         com.google.protobuf.Descriptors.Descriptor current = descriptor;
-        String[] segments = path.split("\\.");
-        for (int i = 0; i < segments.length; i++) {
+        java.util.List<String> segments = dotSegments(path);
+        for (int i = 0; i < segments.size(); i++) {
             com.google.protobuf.Descriptors.FieldDescriptor field =
-                    current.findFieldByName(segments[i]);
+                    current.findFieldByName(segments.get(i));
             if (field == null) {
                 return "";
             }
-            if (i == segments.length - 1) {
+            if (i == segments.size() - 1) {
                 return ai.protomolt.proto.meta.DescriptorMetadata.field(field)
                         .map(meta -> meta.getSensitivity())
                         .orElse("");
@@ -248,6 +248,28 @@ final class RenderIndexMappingsAction implements ProtoAction {
             current = field.getMessageType();
         }
         return "";
+    }
+
+    /**
+     * Dot-separated segments of {@code path} without regex: an input with no dot yields
+     * {@code List.of(path)}, while trailing empty segments after a dot are dropped.
+     */
+    static java.util.List<String> dotSegments(String path) {
+        int firstDot = path.indexOf('.');
+        if (firstDot < 0) {
+            return java.util.List.of(path);
+        }
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        int from = 0;
+        for (int dot = firstDot; dot >= 0; dot = path.indexOf('.', from)) {
+            parts.add(path.substring(from, dot));
+            from = dot + 1;
+        }
+        parts.add(path.substring(from));
+        while (!parts.isEmpty() && parts.get(parts.size() - 1).isEmpty()) {
+            parts.remove(parts.size() - 1);
+        }
+        return parts;
     }
 
     private static ObjectNode solr(IndexMapping mapping, ActionContext context) {

@@ -152,5 +152,7 @@ class ProtoApiTokenValidatorTest {
 
         assertThat(validator.validate(cookieToken("api_token"), headers, Map.of())).isPresent();
         assertThat(validator.validate(cookieToken("session"), headers, Map.of())).isEmpty();
+        assertThat(ProtoApiTokenValidator.cookieValue(";; =bad; api_token = val=1 ; ;", "api_token"))
+                .isEqualTo("val=1");
     }
 }

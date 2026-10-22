@@ -76,11 +76,16 @@ public final class ProtoRestHttpSupport {
             // The prefix must be a whole path segment: /grpc-jsonFoo/Bar is not /grpc-json.
             return Optional.empty();
         }
-        String[] parts = remainder.split("/", -1);
-        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+        int slash = remainder.indexOf('/');
+        if (slash < 0 || remainder.indexOf('/', slash + 1) >= 0) {
             return Optional.empty();
         }
-        return Optional.of(parts);
+        String service = remainder.substring(0, slash);
+        String method = remainder.substring(slash + 1);
+        if (service.isBlank() || method.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(new String[] {service, method});
     }
 
     /**
@@ -91,13 +96,19 @@ public final class ProtoRestHttpSupport {
         if (rawQuery == null || rawQuery.isBlank()) {
             return out;
         }
-        for (String pair : rawQuery.split("&")) {
+        int start = 0;
+        while (start <= rawQuery.length()) {
+            int amp = rawQuery.indexOf('&', start);
+            String pair = amp < 0 ? rawQuery.substring(start) : rawQuery.substring(start, amp);
             int eq = pair.indexOf('=');
-            if (eq <= 0) {
-                continue;
+            if (eq > 0) {
+                // Keep the first value for a repeated parameter, matching the host contract.
+                out.putIfAbsent(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
             }
-            // Keep the first value for a repeated parameter, matching the host contract.
-            out.putIfAbsent(decode(pair.substring(0, eq)), decode(pair.substring(eq + 1)));
+            if (amp < 0) {
+                break;
+            }
+            start = amp + 1;
         }
         return out;
     }

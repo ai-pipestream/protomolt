@@ -13,6 +13,8 @@ import com.google.protobuf.Message;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.util.JsonFormat;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ServiceLoader;
 
 /**
@@ -443,7 +445,7 @@ public final class CatalogContract {
      */
     private static String pointer(String path) {
         StringBuilder out = new StringBuilder();
-        for (String segment : jsonPath(path).split("\\.")) {
+        for (String segment : dotSegments(jsonPath(path))) {
             out.append('/').append(segment.replace("[", "/").replace("]", ""));
         }
         return out.toString();
@@ -452,7 +454,7 @@ public final class CatalogContract {
     /** A validator path with each field named as the caller wrote it in the envelope. */
     private static String jsonPath(String path) {
         StringBuilder out = new StringBuilder();
-        for (String segment : path.split("\\.")) {
+        for (String segment : dotSegments(path)) {
             if (out.length() > 0) {
                 out.append('.');
             }
@@ -462,6 +464,28 @@ public final class CatalogContract {
                     : jsonName(segment.substring(0, bracket)) + segment.substring(bracket));
         }
         return out.toString();
+    }
+
+    /**
+     * Dot-separated segments of {@code path} without regex: an input with no dot yields
+     * {@code List.of(path)}, while trailing empty segments after a dot are dropped.
+     */
+    static List<String> dotSegments(String path) {
+        int firstDot = path.indexOf('.');
+        if (firstDot < 0) {
+            return List.of(path);
+        }
+        List<String> parts = new ArrayList<>();
+        int from = 0;
+        for (int dot = firstDot; dot >= 0; dot = path.indexOf('.', from)) {
+            parts.add(path.substring(from, dot));
+            from = dot + 1;
+        }
+        parts.add(path.substring(from));
+        while (!parts.isEmpty() && parts.get(parts.size() - 1).isEmpty()) {
+            parts.remove(parts.size() - 1);
+        }
+        return parts;
     }
 
     /** One proto field name as its proto3 JSON spelling. */
