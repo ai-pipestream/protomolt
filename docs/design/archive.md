@@ -331,9 +331,11 @@ Every rendition is one stored object of one revision. The mapping from
   the original file, so a request that sets it with no `original` rendition
   written or carried is `INVALID_ARGUMENT` naming `filename`.
 - `parsed` is the PARSED part, not an opaque blob. Its bytes are the encoded
-  PARSED fragment (a `Document` carrying only `parser_results`), typed-validated
-  by v2 like any parser output. `parsed` with a sub-key, or `parsed` bytes
-  carrying any field outside `parser_results`, is `INVALID_ARGUMENT` naming
+  PARSED fragment (a `Document` carrying `doc_id` and `parser_results` only;
+  v2 fragment confinement requires and stores `doc_id`, which equals the
+  entry's `entry_id`), typed-validated by v2 like any parser output. `parsed`
+  with a sub-key, or `parsed` bytes carrying any field other than `doc_id` and
+  `parser_results`, or a `doc_id` other than the entry's, is `INVALID_ARGUMENT` naming
   the rendition. Every other rendition stays opaque bytes the archive never
   interprets.
 - `schema_subject` maps to a new optional `Blob.schema_subject`, recorded and
