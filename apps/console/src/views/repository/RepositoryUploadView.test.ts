@@ -14,7 +14,9 @@ import {
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { ItemErrorSchema } from '@/gen/ai/protomolt/proto/repo/v2/errors_pb'
 import { AccessionSchema } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
-import { REPOSITORY_SIGN_IN, REPOSITORY_UPLOAD_REQUEST } from '@/repository/clients'
+import { IntakeWriterScopeSchema } from '@/gen/ai/protomolt/proto/authz/v1/account_bindings_pb'
+import { ConsoleSessionStatusSchema } from '@/gen/ai/protomolt/proto/authz/v1/console_session_pb'
+import { REPOSITORY_SESSION, REPOSITORY_SIGN_IN, REPOSITORY_UPLOAD_REQUEST } from '@/repository/clients'
 import { FakeUploadRequest, at, testAddress, type FakeAnswer } from '@/repository/repositoryTestKit'
 import { mountRepositoryView, settle } from '@/repository/repositoryViewKit'
 import RepositoryUploadView from './RepositoryUploadView.vue'
@@ -201,6 +203,44 @@ describe('RepositoryUploadView', () => {
     await settle()
     expect(wrapper.get('[data-testid="up-input-error"]').text()).toBe('Drive: is blank')
     expect(FakeUploadRequest.sent).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it("tells a signed-in session whether its binding's writer scopes cover the upload", async () => {
+    const status = async () =>
+      create(ConsoleSessionStatusSchema, {
+        authenticated: true,
+        principal: 'ada',
+        accountIds: ['acct-a'],
+        intakeWriters: [
+          create(IntakeWriterScopeSchema, { accountId: 'acct-a', datasourceId: 'ds-files', allowCreate: true }),
+          create(IntakeWriterScopeSchema, { accountId: 'acct-a', datasourceId: 'ds-mail' }),
+        ],
+      })
+    const { wrapper } = await mountRepositoryView(RepositoryUploadView, '/repository/upload?account=acct-a', repository([]), {
+      [REPOSITORY_SESSION as symbol]: { status },
+    })
+    expect(wrapper.find('[data-testid="up-writer"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="up-datasource"] input').setValue('ds-files')
+    expect(wrapper.get('[data-testid="up-writer"]').text()).toContain('may save as ds-files (create and update)')
+    await wrapper.get('[data-testid="up-datasource"] input').setValue('ds-mail')
+    const refused = wrapper.get('[data-testid="up-writer"]').text()
+    expect(refused).toContain('no writer scope for this new document')
+    expect(refused).toContain('WRITE_DENIED')
+    expect(refused).toContain('ds-files (create and update); ds-mail (update only)')
+    await wrapper.get('[data-testid="up-expected"] input').setValue('3')
+    expect(wrapper.get('[data-testid="up-writer"]').text()).toContain('may save as ds-mail (update only)')
+    wrapper.unmount()
+  })
+
+  it('names a session status read that failed instead of hiding it', async () => {
+    const status = async () => {
+      throw new Error('/console/session answered 503: sign-in is not configured')
+    }
+    const { wrapper } = await mountRepositoryView(RepositoryUploadView, '/repository/upload?account=acct-a', repository([]), {
+      [REPOSITORY_SESSION as symbol]: { status },
+    })
+    expect(wrapper.get('[data-testid="up-session-failure"]').text()).toContain('sign-in is not configured')
     wrapper.unmount()
   })
 })
