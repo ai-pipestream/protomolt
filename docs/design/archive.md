@@ -352,7 +352,7 @@ Entry metadata maps onto CORE:
 | `metadata` (field 99) | `search_metadata.metadata` |
 | `declared`, `origin` | `structured_data`, an `Any` of a registered archive message, typed-validated |
 
-**v2 prerequisites.** The archive's existing guarantees need four additive
+**v2 prerequisites.** The archive's existing guarantees need five additive
 changes to the v2 contract, specified here so the implementation issues can
 cite them:
 
@@ -376,14 +376,27 @@ cite them:
 3. **`Blob.schema_subject`**, above.
 4. **`DocumentManifest.committed_at`**, the accession's commit time, so a
    manifest read can say when its revision landed without a history read.
+5. **`PartManifestEntry.written_at = 9`** (and the stored `StoredPartEntry`
+   entry it wraps): the commit time of the revision that wrote the part,
+   set at commit when a part is written and kept across carry-forward and
+   `PartSource` exactly as `written_in_revision` is. A PARSED part written at
+   revision 1 and carried through revision 2 then still reports revision 1's
+   time; `DocumentManifest.committed_at` is the current accession's time and
+   is not a substitute.
 
 ### 3. Read side: projections over v2 reads
 
-Each archive read is one v2 read, then one projection into the archive view.
-Nested projections (#568) let a list of one message type build a list of
-another: a field whose message type declares `(sources)` gets a child
-projection, applied element by element. The view messages declare their
-sources and mappings on the `.proto`:
+Each archive read is one v2 read per revision it serves, then one projection
+into the archive view. Every per-rendition fact, including when a carried
+part or blob was written, is on that revision's manifest and blob rows
+(prerequisites 2 and 5), so no read walks history. Nested projections (#568)
+let a list of one message type build a list of another: a field whose message
+type declares `(sources)` gets a child projection, applied element by element.
+#568 also converts enum values across enum types by number (a `PartState`
+value into a `RenditionState` field) and a numeric `default_from` literal
+into an enum value by number; a number with no value in the target enum fails
+the projection naming the field. The view messages declare their sources and
+mappings on the `.proto`:
 
 ```proto
 // Rows of VersionManifest.renditions: one per raw blob and one for PARSED.
@@ -406,8 +419,9 @@ message RenditionManifestEntry {
   string sha256 = 4 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "checksum" path: "sha256"}
   }];
+  // Blob rows: written.committed_at (prerequisite 2); PARSED: written_at (prerequisite 5).
   google.protobuf.Timestamp written_at = 6 [(ai.protomolt.proto.projection.v1.from) = {
-    paths: {path: "written.committed_at"}
+    paths: {path: "written.committed_at" path: "written_at"}
   }];
   string deleted_reason = 7 [(ai.protomolt.proto.projection.v1.from) = {
     paths: {path: "deleted_reason"}
@@ -586,7 +600,11 @@ No protovalidate, buf.validate or hand-written regex is involved.
 **What the implementation pins first.** The `renditions` rule concatenates two
 lists of different message types under `dyn`. The implementation's first test
 projects a revision with two blobs and a PARSED part through the real view
-`.proto` and asserts every row. If the CEL runtime refuses the heterogeneous
+`.proto` and asserts every row, including a raw blob row whose `state` comes
+from the `number_value: 1` fallback and a PARSED row whose `state` converts
+from `PartState`. A second test writes PARSED at revision 1, carries it
+through revision 2, and asserts the PARSED row's `written_at` is revision 1's
+commit time. If the CEL runtime refuses the heterogeneous
 list, the PARSED row moves to its own `parsed` field on `VersionManifest`
 (still a projection), not into code.
 
@@ -620,16 +638,42 @@ already streams through a digest, refuses length and digest mismatches and
 leaves an uncommitted object unreferenced, so the archive's staging key and
 settle copy are retired.
 
-- **Last write wins** (`expected_version = 0`) is the translator reading the
-  current revision once and saving against it. A concurrent writer that
-  commits first makes the save `ABORTED`, returned as it is; the translator
-  never retries on the caller's behalf.
-- **Deduplication.** When the translated save would change nothing (every
-  written rendition's SHA-256, length and media type equal the current row,
-  and CORE is unchanged), the translator returns `deduplicated = true` with
-  the current coordinates and saves nothing. v2 itself records a new revision
-  for every PUT (§6), so this check is the archive's, done against the
-  revision it read for `expected`.
+- **Outcome lookup comes first.** Every write resolves its `operation_id`
+  (section 5) and asks `GetOperationOutcome(account_id, operation_id)` before
+  it reads anything else. A recorded outcome is the answer: a committed
+  accession whose `archive.content_sha256` request metadata equals this
+  request's content digest is returned with `replayed = true` and the revision
+  that operation committed, with no current-revision read and no new save. A
+  recorded rejection is returned as recorded. A recorded outcome with a
+  different content digest is `ALREADY_EXISTS` naming `operation_id`. Content
+  dedup against the current revision is not an outcome lookup and never
+  stands in for one.
+- **Last write wins** (`expected_version = 0`) runs only when no outcome is
+  recorded: the translator reads the current revision once and saves against
+  it under the same `operation_id`. A writer that commits first makes the save
+  `ABORTED`, returned as it is; the translator never retries on the caller's
+  behalf. When two attempts of one operation race (a retry while the first is
+  still in flight), one commits; the other fails on the revision check or as
+  an operation reuse, and the translator repeats the outcome lookup once
+  before answering, so the loser replays the winner's outcome.
+- **The translated save records the archive content digest.**
+  `SaveDocumentRequest.metadata["archive.content_sha256"]` is the section 5
+  `content_sha256`. It is persisted request metadata (§7), so it is part of the
+  v2 intent and readable back from the committed revision
+  (`GetDocumentResponse.metadata`), which is how the replay check above
+  compares content for caller-supplied IDs as well as derived ones.
+- **Deduplication.** When no outcome is recorded and the translated save would
+  change nothing (every written rendition's SHA-256, length and media type
+  equal the current row, and CORE is unchanged), the translator returns
+  `deduplicated = true` with the current coordinates and saves nothing. v2
+  itself records a new revision for every PUT (§6), so this check is the
+  archive's, done against the revision it read for `expected`.
+- **Pinned cases.** The implementation tests, for both a derived and a
+  caller-supplied `operation_id`: writer A saves revision 1 with
+  `expected_version = 0` and loses its response, writer B saves different
+  content at revision 2, and A's retry replays revision 1 (`replayed = true`)
+  and leaves revision 2 current; the same retry with no intervening writer;
+  and a supplied ID reused with different content, which is `ALREADY_EXISTS`.
 - **`VersionManifest.metadata_snapshot`** is the CORE of that revision,
   projected, so every version keeps the metadata it was saved with.
 
@@ -642,7 +686,8 @@ none. Both write requests gain an optional field, and both responses echo it:
 message PutEntryRequest {
   // ... fields 1 to 11 and 99 unchanged ...
   // Retry identity. Blank: derived deterministically (UUIDv5) from the entry
-  // address, the expected revision and the request content; never random.
+  // address, the requested expected_version and the request content; never
+  // random.
   string operation_id = 12 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {min_len: 1, max_len: 200}
@@ -670,7 +715,7 @@ message UploadRenditionHeader {
 message ArchiveOperationKey {
   string operation_kind = 1;        // "archive.put-entry" or "archive.upload-rendition"
   EntryAddress address = 2;         // account_id, archive, entry_id
-  int64 expected_revision = 3;      // the revision sent to v2; 0 for none
+  int64 expected_version = 3;       // as the caller sent it; 0 for last write wins
   string content_sha256 = 4;        // the request content digest below
 }
 ```
@@ -681,12 +726,14 @@ message ArchiveOperationKey {
   constant in the contract, never configuration. The key is protobuf, not a
   joined string, so no character in an `entry_id` can make two keys encode
   alike, and `operation_kind` gives the domain separation §7 requires.
-- **`expected_revision` is the revision actually sent to v2**, after the
-  last-write-wins read. v2 binds the expected revision into the save's intent
-  (`SaveIntents`), so a key built from the caller's `0` would collide with a
-  different intent after the entry moved on. A retried last-write-wins
-  `PutEntry` after a lost response therefore derives a new ID, and the
-  deduplication check above answers it with the version it already landed.
+- **`expected_version` is the caller's requested value**, `0` for last write
+  wins, never the revision the translator later reads. A retry is the same
+  request, so it derives the same ID whatever happened to the entry in
+  between, and the outcome lookup of section 4 finds the original save. v2
+  binds the expected revision it receives into the save's intent
+  (`SaveIntents`), which is why the lookup runs before the current-revision
+  read: a recorded outcome is never compared against a newly read revision,
+  and with no recorded outcome there is no earlier intent to conflict with.
 - **`content_sha256`** for `PutEntry` is the SHA-256 of the binary encoding of
   the request with `operation_id` and `expected_version` cleared, renditions
   sorted by `(name, sub_key)` and metadata sorted by unsigned UTF-8 key (§7
