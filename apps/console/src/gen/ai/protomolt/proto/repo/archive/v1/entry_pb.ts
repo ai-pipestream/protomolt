@@ -8,6 +8,9 @@ import type { Classification } from "../../../asset/v1/classification_pb";
 import { file_ai_protomolt_proto_asset_v1_classification } from "../../../asset/v1/classification_pb";
 import type { ContentProfile } from "../../../asset/v1/content_pb";
 import { file_ai_protomolt_proto_asset_v1_content } from "../../../asset/v1/content_pb";
+import type { FormatFact, ObjectStoreOrigin } from "../../../asset/v1/format_pb";
+import { file_ai_protomolt_proto_asset_v1_format } from "../../../asset/v1/format_pb";
+import { file_ai_protomolt_proto_projection_v1_projection } from "../../../projection/v1/projection_pb";
 import { file_ai_protomolt_proto_validate_v1_validate } from "../../../validate/v1/validate_pb";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
@@ -17,7 +20,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ai/protomolt/proto/repo/archive/v1/entry.proto.
  */
 export const file_ai_protomolt_proto_repo_archive_v1_entry: GenFile = /*@__PURE__*/
-  fileDesc("Ci5haS9wcm90b21vbHQvcHJvdG8vcmVwby9hcmNoaXZlL3YxL2VudHJ5LnByb3RvEiJhaS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxIngKDEVudHJ5QWRkcmVzcxIjCgphY2NvdW50X2lkGAEgASgJQg+K1LnhAQkIARIFCAEQyAESIAoHYXJjaGl2ZRgCIAEoCUIPitS54QEJCAESBRBk6AEBEiEKCGVudHJ5X2lkGAMgASgJQg+K1LnhAQkIARIFCAEQ9AMiUQoQV3JpdGVBdHRyaWJ1dGlvbhIeCgZtb2R1bGUYASABKAlCDorUueEBCBIDEMgBiAEBEh0KBWFjdG9yGAIgASgJQg6K1LnhAQgSAxDIAYgBASKoAQoTUmVuZGl0aW9uRGVzY3JpcHRvchIeCgRuYW1lGAEgASgJQhCK1LnhAQoIARIGEMgBgAIBEiIKB3N1Yl9rZXkYAiABKAlCEYrUueEBCxIGEMgBgAIBiAEBEiUKCm1lZGlhX3R5cGUYAyABKAlCEYrUueEBCxIGEMgBqAEBiAEBEiYKDnNjaGVtYV9zdWJqZWN0GAQgASgJQg6K1LnhAQgSAxCsAogBASLNBQoWUmVuZGl0aW9uTWFuaWZlc3RFbnRyeRJUCglyZW5kaXRpb24YASABKAsyNy5haS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxLlJlbmRpdGlvbkRlc2NyaXB0b3JCCIrUueEBAggBEkEKBXN0YXRlGAIgASgOMjIuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5SZW5kaXRpb25TdGF0ZRISCgpzaXplX2J5dGVzGAMgASgDEh4KBnNoYTI1NhgEIAEoCUIOitS54QEIEgPIAQGIAQESIgoKb2JqZWN0X2tleRgFIAEoCUIOitS54QEIEgMQgAiIAQESLgoKd3JpdHRlbl9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJgoOZGVsZXRlZF9yZWFzb24YByABKAlCDorUueEBCBIDEMgBiAEBEkgKCndyaXR0ZW5fYnkYCCABKAsyNC5haS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxLldyaXRlQXR0cmlidXRpb24SRAoPY29udGVudF9wcm9maWxlGAkgASgLMisuYWkucHJvdG9tb2x0LnByb3RvLmFzc2V0LnYxLkNvbnRlbnRQcm9maWxlEigKEXN0b3JhZ2Vfb2JqZWN0X2lkGAogASgJQg2K1LnhAQcSAmgBiAEBOq8BktS54QGoAQqlAQodYXJjaGl2ZS1zdG9yYWdlLWJpbmRpbmctc3RhdGUSQGEgc3RvcmFnZSBiaW5kaW5nIHJlcXVpcmVzIFBSRVNFTlQgY29udGVudCBvciBERUxFVEVEIHByb3ZlbmFuY2UaQnRoaXMuc3RvcmFnZV9vYmplY3RfaWQgPT0gJycgfHwgdGhpcy5zdGF0ZSA9PSAxIHx8IHRoaXMuc3RhdGUgPT0gMyKqBQoPVmVyc2lvbk1hbmlmZXN0EksKB2FkZHJlc3MYASABKAsyMC5haS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxLkVudHJ5QWRkcmVzc0IIitS54QECCAESDwoHdmVyc2lvbhgCIAEoAxIlCg1yb290X2NoZWNrc3VtGAMgASgJQg6K1LnhAQgSA8gBAYgBARITCgt0b3RhbF9ieXRlcxgEIAEoAxIuCgpjcmVhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJOCgpyZW5kaXRpb25zGAYgAygLMjouYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5SZW5kaXRpb25NYW5pZmVzdEVudHJ5EkgKEW1ldGFkYXRhX3NuYXBzaG90GAcgASgLMi0uYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5FbnRyeUluZm86sgKS1LnhAasCCqgCChlhcmNoaXZlLnNuYXBzaG90X2lkZW50aXR5Ej9WZXJzaW9uIG1ldGFkYXRhIG11c3QgaWRlbnRpZnkgdGhlIGNvbnRhaW5pbmcgZW50cnkgYW5kIHZlcnNpb24ayQEhaGFzKHRoaXMubWV0YWRhdGFfc25hcHNob3QpIHx8ICh0aGlzLnZlcnNpb24gPiAwICYmIHRoaXMubWV0YWRhdGFfc25hcHNob3QuY3VycmVudF92ZXJzaW9uID09IHRoaXMudmVyc2lvbiAmJiB0aGlzLm1ldGFkYXRhX3NuYXBzaG90LmFkZHJlc3MgPT0gdGhpcy5hZGRyZXNzICYmIHRoaXMubWV0YWRhdGFfc25hcHNob3QuZW50cnlfdXVpZCAhPSAnJyki9QQKCUVudHJ5SW5mbxJBCgdhZGRyZXNzGAEgASgLMjAuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5FbnRyeUFkZHJlc3MSIQoKZW50cnlfdXVpZBgCIAEoCUINitS54QEHEgJoAYgBARIXCg9jdXJyZW50X3ZlcnNpb24YAyABKAMSHQoFdGl0bGUYBCABKAlCDorUueEBCBIDEPQDiAEBEiAKCGZpbGVuYW1lGAUgASgJQg6K1LnhAQgSAxD0A4gBARInCgxjb250ZW50X3R5cGUYBiABKAlCEYrUueEBCxIGEMgBqAEBiAEBEiIKCnNvdXJjZV91cmkYByABKAlCDorUueEBCBIDENAPiAEBEjYKEnNvdXJjZV9tb2RpZmllZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKY3JlYXRlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQwoOY2xhc3NpZmljYXRpb24YCyABKAsyKy5haS5wcm90b21vbHQucHJvdG8uYXNzZXQudjEuQ2xhc3NpZmljYXRpb24STQoIbWV0YWRhdGEYYyADKAsyOy5haS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxLkVudHJ5SW5mby5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJ2ChBSZW5kaXRpb25Db250ZW50ElQKCXJlbmRpdGlvbhgBIAEoCzI3LmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuUmVuZGl0aW9uRGVzY3JpcHRvckIIitS54QECCAESDAoEZGF0YRgCIAEoDCqGAQoOUmVuZGl0aW9uU3RhdGUSHwobUkVORElUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASGwoXUkVORElUSU9OX1NUQVRFX1BSRVNFTlQQARIZChVSRU5ESVRJT05fU1RBVEVfRU1QVFkQAhIbChdSRU5ESVRJT05fU1RBVEVfREVMRVRFRBADQiYKImFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjFQAWIGcHJvdG8z", [file_ai_protomolt_proto_asset_v1_classification, file_ai_protomolt_proto_asset_v1_content, file_ai_protomolt_proto_validate_v1_validate, file_google_protobuf_timestamp]);
+  fileDesc("Ci5haS9wcm90b21vbHQvcHJvdG8vcmVwby9hcmNoaXZlL3YxL2VudHJ5LnByb3RvEiJhaS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxIuYBCgxFbnRyeUFkZHJlc3MSNwoKYWNjb3VudF9pZBgBIAEoCUIjitS54QEJCAESBQgBEMgBgta54QEOCgwKCmFjY291bnRfaWQSOgoHYXJjaGl2ZRgCIAEoCUIpitS54QEJCAESBRBk6AEBgta54QEUChIKEGdyYXBoX2FkZHJlc3NfaWQSMQoIZW50cnlfaWQYAyABKAlCH4rUueEBCQgBEgUIARD0A4LWueEBCgoICgZkb2NfaWQ6LvrVueEBKAomYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuTm9kZUFkZHJlc3Mi3gEKEFdyaXRlQXR0cmlidXRpb24SVAoGbW9kdWxlGAEgASgJQkSK1LnhAQgSAxDIAYgBAYLWueEBMAouChZ3cml0dGVuLnN0ZXAubW9kdWxlX2lkChRvd25lci5zdGVwLm1vZHVsZV9pZBIdCgVhY3RvchgCIAEoCUIOitS54QEIEgMQyAGIAQE6VfrVueEBTwofYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjEuQmxvYgosYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjIuUGFydE1hbmlmZXN0RW50cnkiiAQKE1JlbmRpdGlvbkRlc2NyaXB0b3IScwoEbmFtZRgBIAEoCUJlitS54QEKCAESBhDIAYACAYLWueEBHhIcc291cmNlLmJsb2JfaWQuc3BsaXQoJy8nKVswXYrWueEBKxIpc291cmNlLnNlbGVjdG9yLnBhcnQgPT0gNCA/ICdwYXJzZWQnIDogJycSagoHc3ViX2tleRgCIAEoCUJZitS54QELEgYQyAGAAgGIAQGC1rnhAUISQHNvdXJjZS5ibG9iX2lkLmNvbnRhaW5zKCcvJykgPyBzb3VyY2UuYmxvYl9pZC5zcGxpdCgnLycpWzFdIDogJycSeQoKbWVkaWFfdHlwZRgDIAEoCUJlitS54QELEgYQyAGoAQGIAQGC1rnhAQ0KCwoJbWltZV90eXBlita54QE7Ejlzb3VyY2Uuc2VsZWN0b3IucGFydCA9PSA0ID8gJ2FwcGxpY2F0aW9uL3gtcHJvdG9idWYnIDogJycSPgoOc2NoZW1hX3N1YmplY3QYBCABKAlCJorUueEBCBIDEKwCiAEBgta54QESChAKDnNjaGVtYV9zdWJqZWN0OlX61bnhAU8KH2FpLnByb3RvbW9sdC5wcm90by5yZXBvLnYxLkJsb2IKLGFpLnByb3RvbW9sdC5wcm90by5yZXBvLnYyLlBhcnRNYW5pZmVzdEVudHJ5ItYHChZSZW5kaXRpb25NYW5pZmVzdEVudHJ5EmIKCXJlbmRpdGlvbhgBIAEoCzI3LmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuUmVuZGl0aW9uRGVzY3JpcHRvckIWitS54QECCAGC1rnhAQgSBnNvdXJjZRJjCgVzdGF0ZRgCIAEoDjIyLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuUmVuZGl0aW9uU3RhdGVCIILWueEBCQoHCgVzdGF0ZYrWueEBCxoJEQAAAAAAAPA/EigKCnNpemVfYnl0ZXMYAyABKANCFILWueEBDgoMCgpzaXplX2J5dGVzEjgKBnNoYTI1NhgEIAEoCUIoitS54QEIEgPIAQGIAQGC1rnhARQKEgoIY2hlY2tzdW0KBnNoYTI1NhIiCgpvYmplY3Rfa2V5GAUgASgJQg6K1LnhAQgSAxCACIgBARJaCgp3cml0dGVuX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEIqgta54QEkCiIKFHdyaXR0ZW4uY29tbWl0dGVkX2F0Cgp3cml0dGVuX2F0Ej4KDmRlbGV0ZWRfcmVhc29uGAcgASgJQiaK1LnhAQgSAxDIAYgBAYLWueEBEgoQCg5kZWxldGVkX3JlYXNvbhJYCgp3cml0dGVuX2J5GAggASgLMjQuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5Xcml0ZUF0dHJpYnV0aW9uQg6C1rnhAQgSBnNvdXJjZRJECg9jb250ZW50X3Byb2ZpbGUYCSABKAsyKy5haS5wcm90b21vbHQucHJvdG8uYXNzZXQudjEuQ29udGVudFByb2ZpbGUSKAoRc3RvcmFnZV9vYmplY3RfaWQYCiABKAlCDYrUueEBBxICaAGIAQE6hAKS1LnhAagBCqUBCh1hcmNoaXZlLXN0b3JhZ2UtYmluZGluZy1zdGF0ZRJAYSBzdG9yYWdlIGJpbmRpbmcgcmVxdWlyZXMgUFJFU0VOVCBjb250ZW50IG9yIERFTEVURUQgcHJvdmVuYW5jZRpCdGhpcy5zdG9yYWdlX29iamVjdF9pZCA9PSAnJyB8fCB0aGlzLnN0YXRlID09IDEgfHwgdGhpcy5zdGF0ZSA9PSAz+tW54QFPCh9haS5wcm90b21vbHQucHJvdG8ucmVwby52MS5CbG9iCixhaS5wcm90b21vbHQucHJvdG8ucmVwby52Mi5QYXJ0TWFuaWZlc3RFbnRyeSLLBwoPVmVyc2lvbk1hbmlmZXN0EmUKB2FkZHJlc3MYASABKAsyMC5haS5wcm90b21vbHQucHJvdG8ucmVwby5hcmNoaXZlLnYxLkVudHJ5QWRkcmVzc0IiitS54QECCAGC1rnhARQKEgoQbWFuaWZlc3QuYWRkcmVzcxIsCgd2ZXJzaW9uGAIgASgDQhuC1rnhARUKEwoRbWFuaWZlc3QucmV2aXNpb24SSgoNcm9vdF9jaGVja3N1bRgDIAEoCUIzitS54QEIEgPIAQGIAQGC1rnhAR8KHQobdmFsaWRhdGlvbi5jYW5kaWRhdGVfc2hhMjU2EhMKC3RvdGFsX2J5dGVzGAQgASgDEk8KCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQh+C1rnhARkKFwoVbWFuaWZlc3QuY29tbWl0dGVkX2F0EtYBCgpyZW5kaXRpb25zGAYgAygLMjouYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5SZW5kaXRpb25NYW5pZmVzdEVudHJ5QoUBgta54QF/En1keW4oc291cmNlLmRvY3VtZW50LmJsb2JfYmFnLmJsb2JzLmJsb2IpICsgZHluKHNvdXJjZS5tYW5pZmVzdC5wYXJ0cy5maWx0ZXIocCwgaGFzKHAuc2VsZWN0b3IucGFydCkgJiYgcC5zZWxlY3Rvci5wYXJ0ID09IDQpKRJYChFtZXRhZGF0YV9zbmFwc2hvdBgHIAEoCzItLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuRW50cnlJbmZvQg6C1rnhAQgSBnNvdXJjZTq9ApLUueEBgAIK/QEKGWFyY2hpdmUuc25hcHNob3RfaWRlbnRpdHkSP1ZlcnNpb24gbWV0YWRhdGEgbXVzdCBpZGVudGlmeSB0aGUgY29udGFpbmluZyBlbnRyeSBhbmQgdmVyc2lvbhqeASFoYXModGhpcy5tZXRhZGF0YV9zbmFwc2hvdCkgfHwgKHRoaXMudmVyc2lvbiA+IDAgJiYgdGhpcy5tZXRhZGF0YV9zbmFwc2hvdC5jdXJyZW50X3ZlcnNpb24gPT0gdGhpcy52ZXJzaW9uICYmIHRoaXMubWV0YWRhdGFfc25hcHNob3QuYWRkcmVzcyA9PSB0aGlzLmFkZHJlc3Mp+tW54QEwCi5haS5wcm90b21vbHQucHJvdG8ucmVwby52Mi5HZXREb2N1bWVudFJlc3BvbnNlIpwKCglFbnRyeUluZm8SZgoHYWRkcmVzcxgBIAEoCzIwLmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuRW50cnlBZGRyZXNzQiOC1rnhAR0KGwoQbWFuaWZlc3QuYWRkcmVzcwoHYWRkcmVzcxIhCgplbnRyeV91dWlkGAIgASgJQg2K1LnhAQcSAmgBiAEBEj4KD2N1cnJlbnRfdmVyc2lvbhgDIAEoA0Ilgta54QEfCh0KEW1hbmlmZXN0LnJldmlzaW9uCghyZXZpc2lvbhJTCgV0aXRsZRgEIAEoCUJEitS54QEIEgMQ9AOIAQGC1rnhATAKLgoeZG9jdW1lbnQuc2VhcmNoX21ldGFkYXRhLnRpdGxlCgxsb29rdXAudGl0bGUSigEKCGZpbGVuYW1lGAUgASgJQniK1LnhAQgSAxD0A4gBAYLWueEBZBJic291cmNlLmRvY3VtZW50LmJsb2JfYmFnLmJsb2JzLmJsb2IuZmlsdGVyKGIsIGIuYmxvYl9pZCA9PSAnb3JpZ2luYWwnKS5tYXAoYiwgYi5maWxlbmFtZSkuam9pbignJykScwoMY29udGVudF90eXBlGAYgASgJQl2K1LnhAQsSBhDIAagBAYgBAYLWueEBRgpECilkb2N1bWVudC5zZWFyY2hfbWV0YWRhdGEuc291cmNlX21pbWVfdHlwZQoXbG9va3VwLnNvdXJjZV9taW1lX3R5cGUSYgoKc291cmNlX3VyaRgHIAEoCUJOitS54QEIEgMQ0A+IAQGC1rnhAToKOAojZG9jdW1lbnQuc2VhcmNoX21ldGFkYXRhLnNvdXJjZV91cmkKEWxvb2t1cC5zb3VyY2VfdXJpEogBChJzb3VyY2VfbW9kaWZpZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQlCC1rnhAUoKSAorZG9jdW1lbnQuc2VhcmNoX21ldGFkYXRhLmxhc3RfbW9kaWZpZWRfZGF0ZQoZbG9va3VwLmxhc3RfbW9kaWZpZWRfZGF0ZRJ2CgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEJGgta54QFACj4KJmRvY3VtZW50LnNlYXJjaF9tZXRhZGF0YS5jcmVhdGlvbl9kYXRlChRsb29rdXAuY3JlYXRpb25fZGF0ZRJdCgp1cGRhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEItgta54QEnCiUKFW1hbmlmZXN0LmNvbW1pdHRlZF9hdAoMY29tbWl0dGVkX2F0EkMKDmNsYXNzaWZpY2F0aW9uGAsgASgLMisuYWkucHJvdG9tb2x0LnByb3RvLmFzc2V0LnYxLkNsYXNzaWZpY2F0aW9uEk0KCG1ldGFkYXRhGGMgAygLMjsuYWkucHJvdG9tb2x0LnByb3RvLnJlcG8uYXJjaGl2ZS52MS5FbnRyeUluZm8uTWV0YWRhdGFFbnRyeRovCg1NZXRhZGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAE6YvrVueEBXAouYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjIuR2V0RG9jdW1lbnRSZXNwb25zZQoqYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjIuRG9jdW1lbnRTdW1tYXJ5IugCCg5WZXJzaW9uU3VtbWFyeRItCgd2ZXJzaW9uGAEgASgDQhyK1LnhAQQiAggAgta54QEMCgoKCHJldmlzaW9uEj8KEHByZXZpb3VzX3ZlcnNpb24YAiABKANCJYrUueEBBCICEACC1rnhARUKEwoRcHJldmlvdXNfcmV2aXNpb24STgoKY3JlYXRlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCHorUueEBAggBgta54QEQCg4KDGNvbW1pdHRlZF9hdBI8CgZtb2R1bGUYBCABKAlCLIrUueEBCBIDEMgBiAEBgta54QEYChYKFG93bmVyLnN0ZXAubW9kdWxlX2lkEiQKB2RlbGV0ZWQYBSABKAhCE4LWueEBDQoLCgl0b21ic3RvbmU6MvrVueEBLAoqYWkucHJvdG9tb2x0LnByb3RvLnJlcG8udjIuUmV2aXNpb25TdW1tYXJ5Io4BChFBcmNoaXZlRW50cnlGYWN0cxI5CghkZWNsYXJlZBgBIAEoCzInLmFpLnByb3RvbW9sdC5wcm90by5hc3NldC52MS5Gb3JtYXRGYWN0Ej4KBm9yaWdpbhgCIAEoCzIuLmFpLnByb3RvbW9sdC5wcm90by5hc3NldC52MS5PYmplY3RTdG9yZU9yaWdpbiJ2ChBSZW5kaXRpb25Db250ZW50ElQKCXJlbmRpdGlvbhgBIAEoCzI3LmFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjEuUmVuZGl0aW9uRGVzY3JpcHRvckIIitS54QECCAESDAoEZGF0YRgCIAEoDCqGAQoOUmVuZGl0aW9uU3RhdGUSHwobUkVORElUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASGwoXUkVORElUSU9OX1NUQVRFX1BSRVNFTlQQARIZChVSRU5ESVRJT05fU1RBVEVfRU1QVFkQAhIbChdSRU5ESVRJT05fU1RBVEVfREVMRVRFRBADQiYKImFpLnByb3RvbW9sdC5wcm90by5yZXBvLmFyY2hpdmUudjFQAWIGcHJvdG8z", [file_ai_protomolt_proto_asset_v1_classification, file_ai_protomolt_proto_asset_v1_content, file_ai_protomolt_proto_asset_v1_format, file_ai_protomolt_proto_projection_v1_projection, file_ai_protomolt_proto_validate_v1_validate, file_google_protobuf_timestamp]);
 
 /**
  * The logical identity of one entry: the three segments the deterministic
@@ -30,14 +33,15 @@ export const file_ai_protomolt_proto_repo_archive_v1_entry: GenFile = /*@__PURE_
  */
 export type EntryAddress = Message<"ai.protomolt.proto.repo.archive.v1.EntryAddress"> & {
   /**
-   * Owning account (tenant root).
+   * Owning account (tenant root). Over v2: NodeAddress.account_id.
    *
    * @generated from field: string account_id = 1;
    */
   accountId: string;
 
   /**
-   * The archive (account-scoped collection) holding the entry.
+   * The archive (account-scoped collection) holding the entry. Over v2:
+   * NodeAddress.graph_address_id, under graph_id "archive:<account_id>".
    *
    * @generated from field: string archive = 2;
    */
@@ -45,7 +49,8 @@ export type EntryAddress = Message<"ai.protomolt.proto.repo.archive.v1.EntryAddr
 
   /**
    * Caller-chosen entry identity, unique within the archive. Free-form:
-   * a URI, a natural key, anything stable the caller owns.
+   * a URI, a natural key, anything stable the caller owns. Over v2:
+   * NodeAddress.doc_id, verbatim.
    *
    * @generated from field: string entry_id = 3;
    */
@@ -67,14 +72,17 @@ export const EntryAddressSchema: GenMessage<EntryAddress> = /*@__PURE__*/
  */
 export type WriteAttribution = Message<"ai.protomolt.proto.repo.archive.v1.WriteAttribution"> & {
   /**
-   * The producing module or tool (e.g. "grparse", "markdown-export").
+   * The producing module or tool (e.g. "grparse", "markdown-export"). Over
+   * v2: the step module of the save that bound a blob, or of the save that
+   * wrote the PARSED part.
    *
    * @generated from field: string module = 1;
    */
   module: string;
 
   /**
-   * The acting principal, when one is known.
+   * The acting principal, when one is known. Not projected over v2: the
+   * authenticated caller is recorded as grant or process-authority evidence.
    *
    * @generated from field: string actor = 2;
    */
@@ -98,7 +106,8 @@ export const WriteAttributionSchema: GenMessage<WriteAttribution> = /*@__PURE__*
 export type RenditionDescriptor = Message<"ai.protomolt.proto.repo.archive.v1.RenditionDescriptor"> & {
   /**
    * The rendition name (e.g. "original", "parsed", "markdown",
-   * "metadata.parquet"). Path-safe because it appears in object keys.
+   * "metadata.parquet"). Path-safe because it appears in object keys. Over
+   * v2: a raw blob's blob_id up to its first "/"; "parsed" for the PARSED part.
    *
    * @generated from field: string name = 1;
    */
@@ -107,14 +116,15 @@ export type RenditionDescriptor = Message<"ai.protomolt.proto.repo.archive.v1.Re
   /**
    * Multi-object renditions (per page, per chunk set, per partition) store
    * one object per sub-key under one rendition name. Empty for
-   * single-object renditions.
+   * single-object renditions. Over v2: a raw blob's blob_id after its "/".
    *
    * @generated from field: string sub_key = 2;
    */
   subKey: string;
 
   /**
-   * IANA media type of the bytes.
+   * IANA media type of the bytes. Over v2: Blob.mime_type; the PARSED part
+   * is an encoded protobuf fragment.
    *
    * @generated from field: string media_type = 3;
    */
@@ -141,18 +151,24 @@ export const RenditionDescriptorSchema: GenMessage<RenditionDescriptor> = /*@__P
  * One rendition object in a version's manifest: what it is, what state it
  * is in, and exactly where and what its bytes are.
  *
+ * Over v2 there is one row per raw blob of the revision's BLOBS part and one
+ * for its PARSED part. object_key and storage_object_id are not projected:
+ * stack references are internal. content_profile is the classification
+ * layer's output, not a stored document field, and is host-filled.
+ *
  * @generated from message ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry
  */
 export type RenditionManifestEntry = Message<"ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry"> & {
   /**
-   * What the object is.
+   * What the object is. Projected from the same blob or part entry.
    *
    * @generated from field: ai.protomolt.proto.repo.archive.v1.RenditionDescriptor rendition = 1;
    */
   rendition?: RenditionDescriptor | undefined;
 
   /**
-   * Lifecycle state of the object.
+   * Lifecycle state of the object. PartState and RenditionState share
+   * numbers; a blob listed in the document is PRESENT.
    *
    * @generated from field: ai.protomolt.proto.repo.archive.v1.RenditionState state = 2;
    */
@@ -181,7 +197,9 @@ export type RenditionManifestEntry = Message<"ai.protomolt.proto.repo.archive.v1
   objectKey: string;
 
   /**
-   * When this rendition's bytes were written.
+   * When this rendition's bytes were written. Blob rows: the commit time of
+   * the save that bound the blob; PARSED: the commit time of the revision
+   * that wrote the part. Both survive carry-forward.
    *
    * @generated from field: google.protobuf.Timestamp written_at = 6;
    */
@@ -235,6 +253,8 @@ export const RenditionManifestEntrySchema: GenMessage<RenditionManifestEntry> = 
  * a version contains, where they live, what they hash to, and what
  * happened to them.
  *
+ * Over v2 a version is one revision of the entry's document.
+ *
  * @generated from message ai.protomolt.proto.repo.archive.v1.VersionManifest
  */
 export type VersionManifest = Message<"ai.protomolt.proto.repo.archive.v1.VersionManifest"> & {
@@ -256,13 +276,16 @@ export type VersionManifest = Message<"ai.protomolt.proto.repo.archive.v1.Versio
   /**
    * SHA-256 over the ordered rendition hashes: the version's identity as
    * content. Two versions with equal root checksums hold identical bytes.
+   * Over v2: the revision's candidate_sha256, one digest of the composed
+   * candidate computed by v2.
    *
    * @generated from field: string root_checksum = 3;
    */
   rootChecksum: string;
 
   /**
-   * Sum of PRESENT rendition sizes in this version.
+   * Sum of PRESENT rendition sizes in this version. Host-filled over v2: a
+   * sum over the rows, and CEL has no fold.
    *
    * @generated from field: int64 total_bytes = 4;
    */
@@ -276,7 +299,8 @@ export type VersionManifest = Message<"ai.protomolt.proto.repo.archive.v1.Versio
   createdAt?: Timestamp | undefined;
 
   /**
-   * One entry per rendition object, in stable (name, sub_key) order.
+   * One entry per rendition object, in stable (name, sub_key) order. Over
+   * v2: the raw blobs in stored order, then the PARSED part when present.
    *
    * @generated from field: repeated ai.protomolt.proto.repo.archive.v1.RenditionManifestEntry renditions = 6;
    */
@@ -287,6 +311,7 @@ export type VersionManifest = Message<"ai.protomolt.proto.repo.archive.v1.Versio
    * Absent means legacy metadata was not recorded; never fill it from current info.
    * current_version is frozen at capture and equals this manifest's version.
    * This is provenance, not current authority or a schema/admission attestation.
+   * Over v2: the CORE of the same revision, projected.
    *
    * @generated from field: ai.protomolt.proto.repo.archive.v1.EntryInfo metadata_snapshot = 7;
    */
@@ -306,6 +331,10 @@ export const VersionManifestSchema: GenMessage<VersionManifest> = /*@__PURE__*/
  * schema_subject pin, not a map entry — the map is for labels, renditions
  * are for data.
  *
+ * Over v2: projected from a document read or a listing row. metadata and
+ * classification are host-filled: projection v1 refuses map fields, and the
+ * classification is the asset layer's output, not a stored document field.
+ *
  * @generated from message ai.protomolt.proto.repo.archive.v1.EntryInfo
  */
 export type EntryInfo = Message<"ai.protomolt.proto.repo.archive.v1.EntryInfo"> & {
@@ -318,7 +347,8 @@ export type EntryInfo = Message<"ai.protomolt.proto.repo.archive.v1.EntryInfo"> 
 
   /**
    * The deterministic entry UUID (derived echo of the address; also the
-   * object-key prefix segment).
+   * object-key prefix segment). Not projected over v2: the call number is
+   * the identity.
    *
    * @generated from field: string entry_uuid = 2;
    */
@@ -340,7 +370,8 @@ export type EntryInfo = Message<"ai.protomolt.proto.repo.archive.v1.EntryInfo"> 
   title: string;
 
   /**
-   * Original filename, when the entry came from a file.
+   * Original filename, when the entry came from a file. Over v2: the
+   * "original" blob's filename; listing rows have none.
    *
    * @generated from field: string filename = 5;
    */
@@ -407,6 +438,87 @@ export const EntryInfoSchema: GenMessage<EntryInfo> = /*@__PURE__*/
   messageDesc(file_ai_protomolt_proto_repo_archive_v1_entry, 5);
 
 /**
+ * One retained version of an entry, as ListVersions reports it over v2:
+ * projected from the revision's history row. A row carries no renditions;
+ * GetEntryManifest at the version reads them.
+ *
+ * @generated from message ai.protomolt.proto.repo.archive.v1.VersionSummary
+ */
+export type VersionSummary = Message<"ai.protomolt.proto.repo.archive.v1.VersionSummary"> & {
+  /**
+   * The version number.
+   *
+   * @generated from field: int64 version = 1;
+   */
+  version: bigint;
+
+  /**
+   * The version this one superseded; 0 for the first.
+   *
+   * @generated from field: int64 previous_version = 2;
+   */
+  previousVersion: bigint;
+
+  /**
+   * When this version was committed.
+   *
+   * @generated from field: google.protobuf.Timestamp created_at = 3;
+   */
+  createdAt?: Timestamp | undefined;
+
+  /**
+   * The producing module of the save, when a step wrote it.
+   *
+   * @generated from field: string module = 4;
+   */
+  module: string;
+
+  /**
+   * The version is a deletion.
+   *
+   * @generated from field: bool deleted = 5;
+   */
+  deleted: boolean;
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.archive.v1.VersionSummary.
+ * Use `create(VersionSummarySchema)` to create a new message.
+ */
+export const VersionSummarySchema: GenMessage<VersionSummary> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_archive_v1_entry, 6);
+
+/**
+ * The structured CORE payload of an archive entry over v2: the producer's
+ * format declaration and the asset's object-storage origin, stored as the
+ * document's structured_data and typed-validated like any Any occurrence.
+ *
+ * @generated from message ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts
+ */
+export type ArchiveEntryFacts = Message<"ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts"> & {
+  /**
+   * The producer's format declaration for the entry's primary rendition.
+   *
+   * @generated from field: ai.protomolt.proto.asset.v1.FormatFact declared = 1;
+   */
+  declared?: FormatFact | undefined;
+
+  /**
+   * Where the asset came from, when it arrived from object storage.
+   *
+   * @generated from field: ai.protomolt.proto.asset.v1.ObjectStoreOrigin origin = 2;
+   */
+  origin?: ObjectStoreOrigin | undefined;
+};
+
+/**
+ * Describes the message ai.protomolt.proto.repo.archive.v1.ArchiveEntryFacts.
+ * Use `create(ArchiveEntryFactsSchema)` to create a new message.
+ */
+export const ArchiveEntryFactsSchema: GenMessage<ArchiveEntryFacts> = /*@__PURE__*/
+  messageDesc(file_ai_protomolt_proto_repo_archive_v1_entry, 7);
+
+/**
  * A rendition with its bytes: the inline save/read payload shape.
  *
  * @generated from message ai.protomolt.proto.repo.archive.v1.RenditionContent
@@ -432,7 +544,7 @@ export type RenditionContent = Message<"ai.protomolt.proto.repo.archive.v1.Rendi
  * Use `create(RenditionContentSchema)` to create a new message.
  */
 export const RenditionContentSchema: GenMessage<RenditionContent> = /*@__PURE__*/
-  messageDesc(file_ai_protomolt_proto_repo_archive_v1_entry, 6);
+  messageDesc(file_ai_protomolt_proto_repo_archive_v1_entry, 8);
 
 /**
  * Lifecycle state of one rendition object.
