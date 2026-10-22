@@ -207,7 +207,8 @@ field, or a link anywhere under a map value refuses the save as
 A link is named by `(field_path, ordinal)`: field names from the CORE root
 joined by `.`, with `[i]` after each repeated ancestor
 (`structured_data.sections[0].cites`), and the index inside a repeated link
-field. On a save that writes or sources CORE, each static target must be in
+field. A typed `Any` nested in `structured_data` is entered without a segment
+of its own (`structured_data.nested.cites`); an opaque one is not read. On a save that writes or sources CORE, each static target must be in
 the same account, exist unpurged, be readable by the saving caller and hold
 the pinned revision when one is named, or the save is rejected
 `LINK_TARGET_NOT_FOUND`; when the field lists `target_types`, the addressed

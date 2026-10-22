@@ -450,6 +450,60 @@ class DocumentLinksIT {
         }
     }
 
+    @Test void aTypedNestedAnyIsEnteredWithoutASegmentOfItsOwn() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var target = address(ACCOUNT, "t");
+            saves.save(processAuthority(), save("t", target, document("t", citation(c -> {}), "reader")));
+            var inner = citation(c -> c.setField(CITATION.findFieldByName("cites"), link(fixed(target, null))));
+            var src = address(ACCOUNT, "src");
+            saves.save(processAuthority(), save("src", src, document("src", citation(c -> {
+                c.setField(CITATION.findFieldByName("nested"), packed(inner));
+                c.addRepeatedField(CITATION.findFieldByName("extras"), packed(citation(x -> {})));
+                c.addRepeatedField(CITATION.findFieldByName("extras"), packed(citation(x -> x.addRepeatedField(
+                        CITATION.findFieldByName("sections"), section(fixed(target, 1L))))));
+            }), "reader")));
+            var expected = List.of(tuple("structured_data.extras[1].sections[0].cites", 0), tuple("structured_data.nested.cites", 0));
+            assertThat(f.catalog.links(src)).extracting(CatalogRecords.Link::fieldPath, CatalogRecords.Link::ordinal)
+                    .containsExactlyElementsOf(expected);
+            var listed = linkReads(f).listLinks(reader("reader"), ListLinksRequest.newBuilder().setAddress(src).build());
+            assertThat(listed.getLinksList()).extracting(ResolvedLink::getFieldPath, ResolvedLink::getOrdinal)
+                    .containsExactly(tuple("structured_data.nested.cites", 0), tuple("structured_data.extras[1].sections[0].cites", 0));
+            assertThat(linkReads(f).listBacklinks(reader("reader"), ListBacklinksRequest.newBuilder().setTarget(target)
+                    .setPageSize(10).build()).getBacklinksList()).extracting(Backlink::getFieldPath)
+                    .containsExactly("structured_data.extras[1].sections[0].cites", "structured_data.nested.cites");
+            var edges = f.catalog.links(src);
+            try (var connection = DriverManager.getConnection(f.url, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                connection.createStatement().execute("DELETE FROM catalog_document_links");
+            }
+            new CatalogEntryRebuild(f.catalog, f.reads).rebuild(ACCOUNT);
+            assertThat(f.catalog.links(src)).isEqualTo(edges);
+
+            // The nested target is checked like any other: a missing one refuses the save.
+            var missing = citation(c -> c.setField(CITATION.findFieldByName("cites"), link(fixed(address(ACCOUNT, "nope"), null))));
+            var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("nested-missing",
+                    address(ACCOUNT, "nested-missing"), document("nested-missing", citation(c ->
+                            c.setField(CITATION.findFieldByName("nested"), packed(missing))), "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(rejection.getMessage()).isEqualTo("The target of link structured_data.nested.cites is not found");
+        }
+    }
+
+    @Test void aLinkUnderAMapValueThroughAnAnyIsRefused() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var target = address(ACCOUNT, "t");
+            saves.save(processAuthority(), save("t", target, document("t", citation(c -> {}), "reader")));
+            var entry = DynamicMessage.newBuilder(CITATION.findNestedTypeByName("NotesEntry"));
+            entry.setField(entry.getDescriptorForType().findFieldByName("key"), "k");
+            entry.setField(entry.getDescriptorForType().findFieldByName("value"), packed(citation(c -> {})));
+            var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("mapped", address(ACCOUNT, "mapped"),
+                    document("mapped", citation(c -> c.addRepeatedField(CITATION.findFieldByName("notes"), entry.build())), "reader"))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(rejection.getMessage()).contains("test.links.v1.Citation.notes").contains("a link cannot sit under a map value");
+        }
+    }
+
     @Test void aRebuildRecomputesEdgesAndRevisionTypes() throws Exception {
         try (var f = new AccessionFixture()) {
             var saves = saves(f);
@@ -533,6 +587,7 @@ class DocumentLinksIT {
     private static FileDescriptor file() {
         var file = FileDescriptorProto.newBuilder().setName("test/links/v1/citation.proto").setPackage("test.links.v1")
                 .setSyntax("proto3").addDependency(LinksProto.getDescriptor().getName())
+                .addDependency(Any.getDescriptor().getFile().getName())
                 .addMessageType(DescriptorProto.newBuilder().setName("Section")
                         .addField(link("cites", 1, true, LinkField.newBuilder().setRelation("references"))))
                 .addMessageType(DescriptorProto.newBuilder().setName("Citation")
@@ -541,7 +596,15 @@ class DocumentLinksIT {
                         .addField(link("cites", 2, false, LinkField.newBuilder().setRelation("references")))
                         .addField(message("sections", 3, ".test.links.v1.Section", true))
                         .addField(link("typed", 4, false, LinkField.newBuilder().setRelation("source").addTargetTypes(CITATION_TYPE)))
-                        .addField(link("related", 5, false, LinkField.newBuilder().setRelation("related"))))
+                        .addField(link("related", 5, false, LinkField.newBuilder().setRelation("related")))
+                        .addField(message("nested", 6, ".google.protobuf.Any", false))
+                        .addField(message("extras", 7, ".google.protobuf.Any", true))
+                        .addField(message("notes", 8, ".test.links.v1.Citation.NotesEntry", true))
+                        .addNestedType(DescriptorProto.newBuilder().setName("NotesEntry")
+                                .setOptions(com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder().setMapEntry(true))
+                                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING).setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                .addField(message("value", 2, ".google.protobuf.Any", false))))
                 .addMessageType(DescriptorProto.newBuilder().setName("Unlinked").addField(message("cites", 1, LINK, false)))
                 .addMessageType(DescriptorProto.newBuilder().setName("Deep0").addField(message(LONG_NAME, 1, ".test.links.v1.Deep1", false)))
                 .addMessageType(DescriptorProto.newBuilder().setName("Deep1").addField(message(LONG_NAME, 1, ".test.links.v1.Deep2", false)))
@@ -550,7 +613,7 @@ class DocumentLinksIT {
                         LinkField.newBuilder().setRelation("references"))))
                 .build();
         try {
-            return FileDescriptor.buildFrom(file, new FileDescriptor[]{LinksProto.getDescriptor()});
+            return FileDescriptor.buildFrom(file, new FileDescriptor[]{LinksProto.getDescriptor(), Any.getDescriptor().getFile()});
         } catch (DescriptorValidationException invalid) {
             throw new IllegalStateException(invalid);
         }
@@ -570,6 +633,11 @@ class DocumentLinksIT {
         var builder = DynamicMessage.newBuilder(CITATION).setField(CITATION.findFieldByName("title"), "citation");
         fill.accept(builder);
         return builder.build();
+    }
+
+    /** A Citation packed into a nested Any. */
+    static Message packed(Message citation) {
+        return Any.newBuilder().setTypeUrl(CITATION_URL).setValue(citation.toByteString()).build();
     }
 
     static Message section(DocumentLink... cites) {
