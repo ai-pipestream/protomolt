@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.admission;
 import ai.protomolt.proto.types.ConceptRef;
 import ai.protomolt.proto.validate.source.ProtomoltRuleSource;
 import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
@@ -12,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Concept tags (requirements §17, "Subject tags"). A tag is a value of a
@@ -20,9 +22,11 @@ import java.util.Objects;
  * <p>
  * A tag's identity is the same field path and ordinal as a link's: field names
  * joined by {@code .}, with {@code [i]} after each repeated ancestor message, and
- * the ordinal is the index inside the tag field itself, 0 when it is singular. Map
- * values are not traversed (the validator refuses a binding under one), and an
- * {@link Any} value is a schema boundary the walk does not cross. Bindings declared
+ * the ordinal is the index inside the tag field itself, 0 when it is singular. A
+ * typed {@link Any} is entered without a segment of its own, as for links; an
+ * opaque one is not entered. Map values are not traversed: the validator refuses a
+ * binding under one, and a tag reached from a map value through a typed Any is
+ * refused here. Bindings declared
  * on descriptors rebuilt from retained schema bytes are read through the same rule
  * source the validator uses, so they are never read as absent.
  */
@@ -52,6 +56,13 @@ public final class DocumentConcepts {
 
         /** The tag's place as a violation path names it: the field path, with [ordinal] for a repeated field. */
         public String at() { return repeated ? fieldPath + "[" + ordinal + "]" : fieldPath; }
+    }
+
+    /** A tag reached from a map value through a typed Any; names the map field. */
+    public static final class TagUnderMap extends IllegalArgumentException {
+        TagUnderMap(String map) {
+            super(map + ": a concept tag cannot sit under a map value");
+        }
     }
 
     /**
@@ -91,40 +102,90 @@ public final class DocumentConcepts {
     }
 
     /**
-     * The tags in a message, in field number order and then element order.
-     * {@link Any} values and map values are not entered.
+     * The tags in a message, in field number order and then element order, without
+     * entering any {@link Any} value. Map values are not entered.
      *
      * @param message a decoded message
      * @param prefix the message's path in the document, or empty for the root
      * @return the tags found
      */
     public static List<Tag> extract(Message message, String prefix) {
-        Objects.requireNonNull(message); Objects.requireNonNull(prefix);
+        return extract(message, prefix, (typeUrl, value) -> Optional.empty());
+    }
+
+    /**
+     * The tags in a message, entering each typed nested {@link Any} the unpacker
+     * decodes without a path segment of its own, as the link walk does; a repeated
+     * Any takes {@code [i]} and an opaque one is not entered.
+     *
+     * @param message a decoded message
+     * @param prefix the message's path in the document, or empty for the root
+     * @param unpacker decodes nested typed Any values with their admitted schemas
+     * @return the tags found
+     * @throws TagUnderMap when a map value reaches a tag through a typed Any
+     */
+    public static List<Tag> extract(Message message, String prefix, DocumentLinks.Unpacker unpacker) {
+        Objects.requireNonNull(message); Objects.requireNonNull(prefix); Objects.requireNonNull(unpacker);
         var found = new ArrayList<Tag>();
-        collect(message, prefix, found);
+        collect(message, prefix, unpacker, found);
         return List.copyOf(found);
     }
 
-    private static void collect(Message message, String prefix, List<Tag> found) {
-        if (message.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) return;
+    private static void collect(Message message, String prefix, DocumentLinks.Unpacker unpacker, List<Tag> found) {
         for (Map.Entry<FieldDescriptor, Object> entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
-            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE || field.isMapField()) continue;
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.isMapField()) {
+                var valueField = field.getMessageType().findFieldByName("value");
+                if (valueField.getJavaType() == FieldDescriptor.JavaType.MESSAGE)
+                    for (var element : (List<?>) entry.getValue())
+                        requireNoTagUnder(field, (Message) ((Message) element).getField(valueField), unpacker);
+                continue;
+            }
             var path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
             boolean ref = field.getMessageType().getFullName().equals(CONCEPT_REF_TYPE);
             // An unbound ConceptRef (a mapping target, a filter) is not a tag and holds no message field.
             if (ref && !tagField(field)) continue;
-            if (field.isRepeated()) {
-                var values = (List<?>) entry.getValue();
-                for (int i = 0; i < values.size(); i++) {
-                    if (ref) found.add(tag(path, i, true, (Message) values.get(i)));
-                    else collect((Message) values.get(i), path + "[" + i + "]", found);
-                }
-            } else if (ref) {
-                found.add(tag(path, 0, false, (Message) entry.getValue()));
-            } else {
-                collect((Message) entry.getValue(), path, found);
+            var values = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            for (int i = 0; i < values.size(); i++) {
+                var value = (Message) values.get(i);
+                var at = field.isRepeated() ? path + "[" + i + "]" : path;
+                if (ref) found.add(tag(path, field.isRepeated() ? i : 0, field.isRepeated(), value));
+                else if (isAny(field.getMessageType())) unpacked(value, unpacker).ifPresent(payload -> collect(payload, at, unpacker, found));
+                else collect(value, at, unpacker, found);
             }
+        }
+    }
+
+    private static boolean isAny(Descriptor type) {
+        return type.getFullName().equals(Any.getDescriptor().getFullName());
+    }
+
+    /** The typed payload of an Any value; empty when it is opaque. */
+    private static Optional<Message> unpacked(Message any, DocumentLinks.Unpacker unpacker) {
+        var type = any.getDescriptorForType();
+        return unpacker.unpack((String) any.getField(type.findFieldByName("type_url")),
+                (ByteString) any.getField(type.findFieldByName("value")));
+    }
+
+    /** Refuses a tag reached from a map value through a typed Any. */
+    private static void requireNoTagUnder(FieldDescriptor map, Message value, DocumentLinks.Unpacker unpacker) {
+        if (isAny(value.getDescriptorForType())) {
+            var payload = unpacked(value, unpacker);
+            if (payload.isEmpty()) return;
+            if (declaresTags(payload.get().getDescriptorForType())) throw new TagUnderMap(map.getFullName());
+            requireNoTagUnder(map, payload.get(), unpacker);
+            return;
+        }
+        for (Map.Entry<FieldDescriptor, Object> entry : value.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            var valueField = field.isMapField() ? field.getMessageType().findFieldByName("value") : null;
+            if (valueField != null && valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            var elements = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            for (var element : elements)
+                requireNoTagUnder(map, valueField != null ? (Message) ((Message) element).getField(valueField) : (Message) element,
+                        unpacker);
         }
     }
 

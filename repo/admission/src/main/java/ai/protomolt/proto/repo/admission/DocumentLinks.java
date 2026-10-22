@@ -4,6 +4,7 @@ import ai.protomolt.proto.repo.v2.DocumentLink;
 import ai.protomolt.proto.repo.v2.LinkField;
 import ai.protomolt.proto.repo.v2.LinksProto;
 import com.google.protobuf.Any;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.DescriptorProtos.FieldOptions;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
@@ -26,8 +27,9 @@ import java.util.Optional;
  * relation and the value names the target.
  * <p>
  * The schema rules hold for every message reachable from a type, through
- * singular, repeated and map-valued message fields; an {@link Any} value is a
- * schema boundary and is not entered here. A {@code DocumentLink} field
+ * singular, repeated and map-valued message fields; an {@link Any} type is a
+ * schema boundary the descriptor walk does not cross, and each typed Any value is
+ * checked against its own schema when the value walk enters it. A {@code DocumentLink} field
  * without the option, the option on a field of any other type, a link field
  * anywhere under a map value, and an option whose own rules fail are each a
  * {@link SchemaRefused}.
@@ -35,8 +37,9 @@ import java.util.Optional;
  * A link's identity is its field path and ordinal: field names joined by
  * {@code .}, with {@code [i]} after each repeated ancestor message (for example
  * {@code sections[0].cites}), and the ordinal is the index inside the link field
- * itself, 0 when it is singular. Map values are not traversed, which is why no
- * link may sit under one. Descriptors built from retained schema bytes carry the
+ * itself, 0 when it is singular. A typed Any is entered without a segment of its
+ * own; an opaque one is not entered. Map values are not traversed, which is why no
+ * link may sit under one, directly or through an Any. Descriptors built from retained schema bytes carry the
  * option as an unknown field, so options are reparsed against a registry that
  * knows it rather than read as absent.
  */
@@ -203,9 +206,25 @@ public final class DocumentLinks {
     }
 
     /**
-     * The links in a message, in field number order and then element order. The
-     * message's type must satisfy {@link #requireLinkSchema}; {@link Any} values
-     * are not entered.
+     * Decodes one nested {@link Any} for the link walk with the exact schema admission
+     * resolved for it.
+     */
+    @FunctionalInterface public interface Unpacker {
+        /**
+         * @param typeUrl the Any's type URL
+         * @param value the Any's value bytes
+         * @return the decoded payload, or empty when the occurrence is opaque and was not decoded
+         */
+        Optional<Message> unpack(String typeUrl, ByteString value);
+    }
+
+    /** Enters no Any: for a CORE fragment, whose Any roots admission walks on their own. */
+    private static final Unpacker NONE = (typeUrl, value) -> Optional.empty();
+
+    /**
+     * The links in a message, in field number order and then element order, without
+     * entering any {@link Any} value. The message's type must satisfy
+     * {@link #requireLinkSchema}.
      *
      * @param message a decoded message
      * @param prefix the message's path in the document, or empty for the root
@@ -214,36 +233,92 @@ public final class DocumentLinks {
      *         carries fields this server's {@link DocumentLink} does not know
      */
     public static List<Link> extract(Message message, String prefix) {
-        Objects.requireNonNull(message); Objects.requireNonNull(prefix);
+        return extract(message, prefix, NONE);
+    }
+
+    /**
+     * The links in a message, entering each typed nested {@link Any} the unpacker
+     * decodes without a path segment of its own (requirements §17): the path goes on
+     * with the packed message's field names, and a repeated Any takes {@code [i]}. An
+     * opaque Any is not entered. Map values are not entered either, and a link a map
+     * value reaches through an Any is refused as one under the map would be.
+     *
+     * @param message a decoded message
+     * @param prefix the message's path in the document, or empty for the root
+     * @param unpacker decodes nested typed Any values
+     * @return the links found
+     * @throws SchemaRefused when a declaration breaks a rule or a link value
+     *         carries fields this server's {@link DocumentLink} does not know
+     */
+    public static List<Link> extract(Message message, String prefix, Unpacker unpacker) {
+        Objects.requireNonNull(message); Objects.requireNonNull(prefix); Objects.requireNonNull(unpacker);
         var found = new ArrayList<Link>();
-        collect(message, prefix, found);
+        collect(message, prefix, unpacker, found);
         return List.copyOf(found);
     }
 
-    private static void collect(Message message, String prefix, List<Link> found) {
-        if (message.getDescriptorForType().getFullName().equals(Any.getDescriptor().getFullName())) return;
+    private static boolean isAny(Descriptor type) {
+        return type.getFullName().equals(Any.getDescriptor().getFullName());
+    }
+
+    private static void collect(Message message, String prefix, Unpacker unpacker, List<Link> found) {
         for (Map.Entry<FieldDescriptor, Object> entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
             var path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
-            // Map values are not traversed; the schema rules keep links out of them.
-            if (field.isMapField()) continue;
+            if (field.isMapField()) {
+                // Map values are not entered; the schema rules keep links out of them, and an
+                // Any under a map value must not bring one in.
+                var valueField = field.getMessageType().findFieldByName("value");
+                if (valueField.getJavaType() == FieldDescriptor.JavaType.MESSAGE)
+                    for (var element : (List<?>) entry.getValue())
+                        requireNoLinkUnder(field, (Message) ((Message) element).getField(valueField), unpacker);
+                continue;
+            }
             var declared = linkField(field);
             boolean link = field.getMessageType().getFullName().equals(LINK_TYPE);
             if (link != declared.isPresent())
                 throw new SchemaRefused(field.getFullName(), declared.isPresent()
                         ? "the link option needs a " + LINK_TYPE + " field" : "a " + LINK_TYPE + " field needs the link option");
-            if (field.isRepeated()) {
-                var values = (List<?>) entry.getValue();
-                for (int i = 0; i < values.size(); i++) {
-                    if (link) found.add(new Link(path, i, true, declared.get(), value(field, (Message) values.get(i))));
-                    else collect((Message) values.get(i), path + "[" + i + "]", found);
-                }
-            } else if (link) {
-                found.add(new Link(path, 0, false, declared.get(), value(field, (Message) entry.getValue())));
-            } else {
-                collect((Message) entry.getValue(), path, found);
+            var values = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            for (int i = 0; i < values.size(); i++) {
+                var value = (Message) values.get(i);
+                var at = field.isRepeated() ? path + "[" + i + "]" : path;
+                if (link) found.add(new Link(path, field.isRepeated() ? i : 0, field.isRepeated(), declared.get(), value(field, value)));
+                else if (isAny(field.getMessageType())) unpacked(value, unpacker).ifPresent(payload -> collect(payload, at, unpacker, found));
+                else collect(value, at, unpacker, found);
             }
+        }
+    }
+
+    /** The typed payload of an Any value, its link declarations checked; empty when it is opaque. */
+    private static Optional<Message> unpacked(Message any, Unpacker unpacker) {
+        var type = any.getDescriptorForType();
+        var payload = unpacker.unpack((String) any.getField(type.findFieldByName("type_url")),
+                (ByteString) any.getField(type.findFieldByName("value")));
+        payload.ifPresent(decoded -> requireLinkSchema(decoded.getDescriptorForType()));
+        return payload;
+    }
+
+    /** Refuses a link reached from a map value through a typed Any. */
+    private static void requireNoLinkUnder(FieldDescriptor map, Message value, Unpacker unpacker) {
+        if (isAny(value.getDescriptorForType())) {
+            var payload = unpacked(value, unpacker);
+            if (payload.isEmpty()) return;
+            if (declaresLinks(payload.get().getDescriptorForType()))
+                throw new SchemaRefused(map.getFullName(), "a link cannot sit under a map value");
+            requireNoLinkUnder(map, payload.get(), unpacker);
+            return;
+        }
+        for (Map.Entry<FieldDescriptor, Object> entry : value.getAllFields().entrySet()) {
+            var field = entry.getKey();
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            var valueField = field.isMapField() ? field.getMessageType().findFieldByName("value") : null;
+            if (valueField != null && valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            var elements = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            for (var element : elements)
+                requireNoLinkUnder(map, valueField != null ? (Message) ((Message) element).getField(valueField) : (Message) element,
+                        unpacker);
         }
     }
 

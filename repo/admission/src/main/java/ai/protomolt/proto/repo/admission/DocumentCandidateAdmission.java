@@ -15,9 +15,11 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 
 /**
@@ -413,12 +415,23 @@ public final class DocumentCandidateAdmission {
                         found = accepted.checked().payload().occurrences();
                         var decoded = accepted.checked().payload().decoded();
                         requireLinks(decoded.getDescriptorForType(), envelope.getTypeUrl());
-                        var rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()));
+                        var nestedPayloads = nestedPayloads(found, definitions, active);
+                        final List<DocumentLinks.Link> rootLinks;
+                        try {
+                            rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()), nestedPayloads);
+                        } catch (DocumentLinks.SchemaRefused refused) {
+                            throw new ContentRefused("link schema of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
+                        }
                         if (!rootLinks.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
                             throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
                                     + " holds link " + rootLinks.getFirst().fieldPath() + "; links belong in CORE", null);
                         links.addAll(rootLinks);
-                        var rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()));
+                        final List<DocumentConcepts.Tag> rootTags;
+                        try {
+                            rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()), nestedPayloads);
+                        } catch (DocumentConcepts.TagUnderMap refused) {
+                            throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
+                        }
                         if (!rootTags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
                             throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
                                     + " holds concept tag " + rootTags.getFirst().fieldPath() + "; concept tags belong in CORE", null);
@@ -449,18 +462,6 @@ public final class DocumentCandidateAdmission {
                         var reference = definitions.references.get(
                                 new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
                         if (reference == null) throw new IllegalStateException("occurrence schema was not selected");
-                        // A nested Any is a schema boundary the link walk does not cross, so a type
-                        // that declares links is refused there rather than stored with unread links.
-                        if (occurrence.path().size() > 1) {
-                            var nested = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(),
-                                    boundary.artifactSha256()));
-                            if (nested != null && declaresLinks(nested.type(), boundary.typeUrl()))
-                                throw new ContentRefused("payload " + boundary.typeUrl()
-                                        + " declares links inside a nested Any; links are read from CORE and its Any roots", null);
-                            if (nested != null && DocumentConcepts.declaresTags(nested.type()))
-                                throw new ContentRefused("payload " + boundary.typeUrl() + " declares concept tags inside a"
-                                        + " nested Any; concept tags are read from CORE and its Any roots", null);
-                        }
                         occurrences.add(new Occurrence(fragment.part(), steps, reference.toProto(),
                                 boundary.valueSha256(), boundary.valueSizeBytes()));
                     }
@@ -488,12 +489,29 @@ public final class DocumentCandidateAdmission {
         }
     }
 
-    private static boolean declaresLinks(Descriptor type, String where) {
-        try {
-            return DocumentLinks.declaresLinks(type);
-        } catch (DocumentLinks.SchemaRefused refused) {
-            throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
-        }
+    /**
+     * Decodes the nested Any values of one root for the link and tag walks, each with the exact
+     * schema admission resolved for that occurrence: an Any is matched by its type URL
+     * and the SHA-256 of its value. An attested opaque occurrence has no resolved
+     * schema, so it is not decoded and its links are not read.
+     */
+    private static DocumentLinks.Unpacker nestedPayloads(List<DocumentSchemaOccurrences.Occurrence> occurrences,
+            DocumentSchemaDefinitions definitions, Runnable control) {
+        var schemas = new HashMap<List<String>, Descriptor>();
+        for (var occurrence : occurrences)
+            if (occurrence.path().getLast() instanceof DocumentSchemaOccurrences.Boundary boundary) {
+                var schema = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
+                if (schema != null) schemas.putIfAbsent(List.of(boundary.typeUrl(), boundary.valueSha256()), schema.type());
+            }
+        return (typeUrl, value) -> {
+            var schema = schemas.get(List.of(typeUrl, DocumentSchemaOccurrences.sha256(value, control)));
+            if (schema == null) return Optional.empty();
+            try {
+                return Optional.of(DynamicMessage.parseFrom(schema, value));
+            } catch (InvalidProtocolBufferException impossible) {
+                throw new IllegalStateException("An admitted Any value failed to decode", impossible);
+            }
+        };
     }
 
     /** The field path of an Any root: its access steps named against the container type. */

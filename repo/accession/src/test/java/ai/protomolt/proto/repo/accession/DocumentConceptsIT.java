@@ -35,6 +35,7 @@ import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldOptions;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
+import com.google.protobuf.DescriptorProtos.MessageOptions;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FileDescriptor;
@@ -67,6 +68,7 @@ class DocumentConceptsIT {
     static final Descriptor PAPER = FILE.findMessageTypeByName("Paper");
     static final Descriptor SECTION = FILE.findMessageTypeByName("Section");
     static final Descriptor TAGGED = FILE.findMessageTypeByName("Tagged");
+    static final Descriptor EXTRAS_ENTRY = PAPER.findNestedTypeByName("ExtrasEntry");
     static final String PAPER_URL = "type.googleapis.com/test.concepts.v1.Paper";
     static final String TAGGED_URL = "type.googleapis.com/test.concepts.v1.Tagged";
     private static final String ACCOUNT = "a";
@@ -173,13 +175,23 @@ class DocumentConceptsIT {
                             ref("subject", "physics")))))),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
             assertThat(unmounted.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.unmounted");
-            // A type held by a nested Any is past the boundary the tag walk reads, so declaring tags there is refused.
-            var tagged = DynamicMessage.newBuilder(TAGGED).setField(TAGGED.findFieldByName("subject"), ref("subject", "physics")).build();
-            var nested = SemanticPartsIT.rejected(() -> mounted.save(processAuthority(), save("nested",
-                    address(ACCOUNT, "nested"), document("nested", paper(p -> p.setField(PAPER.findFieldByName("inner"),
-                            Any.newBuilder().setTypeUrl(TAGGED_URL).setValue(tagged.toByteString()).build()))))),
+            // A typed nested Any is validated with the same mounts and projected without a segment of its own.
+            var biology = SemanticPartsIT.rejected(() -> mounted.save(processAuthority(), save("nested-bad",
+                    address(ACCOUNT, "nested-bad"), document("nested-bad", paper(p -> p.setField(PAPER.findFieldByName("inner"),
+                            tagged("biology")))))),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
-            assertThat(nested.getMessage()).contains(TAGGED_URL).contains("nested Any");
+            assertThat(biology.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.member");
+            var nested = saveTagged(mounted, "nested", p -> p.setField(PAPER.findFieldByName("inner"), tagged("physics")));
+            assertThat(f.catalog.concepts(nested)).containsExactly(
+                    new CatalogRecords.ConceptTag("structured_data.inner.subject", 0, "subject", "physics"));
+            // A map value may not reach a tag, even through a typed Any.
+            var keyed = SemanticPartsIT.rejected(() -> mounted.save(processAuthority(), save("keyed",
+                    address(ACCOUNT, "keyed"), document("keyed", paper(p -> p.addRepeatedField(PAPER.findFieldByName("extras"),
+                            DynamicMessage.newBuilder(EXTRAS_ENTRY).setField(EXTRAS_ENTRY.findFieldByName("key"), "k")
+                                    .setField(EXTRAS_ENTRY.findFieldByName("value"), tagged("physics")).build()))))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(keyed.getMessage()).contains("extras").contains("map value");
+            assertThat(f.catalog.current(address(ACCOUNT, "keyed"))).isEmpty();
             // A tag whose field path the catalog index cannot hold is refused by name, before anything is written.
             var unstorable = SemanticPartsIT.rejected(() -> mounted.save(processAuthority(), save("long",
                     address(ACCOUNT, "long"), document("long", paper(p -> p.setField(PAPER.findFieldByName(LONG_NAME),
@@ -378,6 +390,12 @@ class DocumentConceptsIT {
         return builder.build();
     }
 
+    /** A Tagged payload packed in an Any. */
+    static Any tagged(String concept) {
+        var tagged = DynamicMessage.newBuilder(TAGGED).setField(TAGGED.findFieldByName("subject"), ref("subject", concept)).build();
+        return Any.newBuilder().setTypeUrl(TAGGED_URL).setValue(tagged.toByteString()).build();
+    }
+
     static Message section(Message... tags) {
         var builder = DynamicMessage.newBuilder(SECTION);
         for (var tag : tags) builder.addRepeatedField(SECTION.findFieldByName("tags"), tag);
@@ -423,7 +441,7 @@ class DocumentConceptsIT {
     /**
      * test.concepts.v1: Paper binds subject and Section binds tags to schemes;
      * Paper.mapped is an unbound ConceptRef, Paper.related a dynamic link and
- * Paper.inner an Any; Tagged binds its subject.
+ * Paper.inner an Any and Paper.extras a map of Any; Tagged binds its subject.
      */
     private static FileDescriptor file() {
         var subject = FieldOptions.newBuilder().setExtension(ValidateProto.field,
@@ -445,7 +463,13 @@ class DocumentConceptsIT {
                         .addField(message("mapped", 4, REF, false))
                         .addField(message("related", 5, ".ai.protomolt.proto.repo.v2.DocumentLink", false).setOptions(link))
                         .addField(message("inner", 6, ".google.protobuf.Any", false))
-                        .addField(message(LONG_NAME, 7, REF, false).setOptions(subject)))
+                        .addField(message(LONG_NAME, 7, REF, false).setOptions(subject))
+                        .addField(message("extras", 8, ".test.concepts.v1.Paper.ExtrasEntry", true))
+                        .addNestedType(DescriptorProto.newBuilder().setName("ExtrasEntry")
+                                .setOptions(MessageOptions.newBuilder().setMapEntry(true))
+                                .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1)
+                                        .setType(FieldDescriptorProto.Type.TYPE_STRING).setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                                .addField(message("value", 2, ".google.protobuf.Any", false))))
                 .addMessageType(DescriptorProto.newBuilder().setName("Tagged")
                         .addField(message("subject", 1, REF, false).setOptions(subject)))
                 .build();

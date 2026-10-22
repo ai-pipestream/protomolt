@@ -207,7 +207,8 @@ field, or a link anywhere under a map value refuses the save as
 A link is named by `(field_path, ordinal)`: field names from the CORE root
 joined by `.`, with `[i]` after each repeated ancestor
 (`structured_data.sections[0].cites`), and the index inside a repeated link
-field. On a save that writes or sources CORE, each static target must be in
+field. A typed `Any` nested in `structured_data` is entered without a segment
+of its own (`structured_data.nested.cites`); an opaque one is not read. On a save that writes or sources CORE, each static target must be in
 the same account, exist unpurged, be readable by the saving caller and hold
 the pinned revision when one is named, or the save is rejected
 `LINK_TARGET_NOT_FOUND`; when the field lists `target_types`, the addressed
@@ -244,9 +245,11 @@ each tag's membership against the concept schemes the host mounts
 mounted scheme lacks is `concept.member` and a bound scheme the host has not
 mounted is `concept.unmounted`, both `VALIDATION_FAILED`. Reads and catalog
 rebuilds decode stored content without deciding membership again, so a host
-that has not mounted a scheme still reads what was admitted. A tag outside
-CORE, or in a type held by a nested `Any`, refuses the save, and so does a
-tag whose field path is over 1024 UTF-8 bytes (`concept-catalog-storable`).
+that has not mounted a scheme still reads what was admitted. Tags in a typed
+nested `Any` are read as links are, without a path segment for the `Any`. A
+tag outside CORE, one a map value reaches through a typed `Any`, or one whose
+field path is over 1024 UTF-8 bytes (`concept-catalog-storable`) fails the
+save.
 
 Tags project into `catalog_document_concepts` under the same
 `(field_path, ordinal)` identity as links: current revision only, replaced by
