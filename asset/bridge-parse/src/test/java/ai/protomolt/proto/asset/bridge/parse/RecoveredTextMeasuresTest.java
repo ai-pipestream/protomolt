@@ -96,6 +96,38 @@ class RecoveredTextMeasuresTest {
                 .doesNotContain("engine-confidence");
     }
 
+    @Test
+    void tokenAndLineSplittingKeepTheRegexSemantics() {
+        // Every regex whitespace form separates tokens: space, tab, newline,
+        // vertical tab, form feed, carriage return. Runs collapse, and
+        // leading whitespace yields no token.
+        RecoveredText vertical = RecoveredTextMeasures.measure(
+                "alpha\u000Bbravo\fcharlie\rdelta echo",
+                RecoveredTextMeasures.NO_ENGINE_CONFIDENCE);
+        assertThat(vertical.getWordCount()).isEqualTo(5);
+        assertThat(vertical.getWellFormedWords()).isEqualTo(5);
+
+        // A trailing newline leaves a blank tail line that is not counted,
+        // and a CR is ordinary line content (stripped for the stub check).
+        RecoveredText lines = RecoveredTextMeasures.measure(
+                "one line of plain recovered prose here\nshort\r\n",
+                RecoveredTextMeasures.NO_ENGINE_CONFIDENCE);
+        assertThat(lines.getLineCount()).isEqualTo(2);
+        assertThat(lines.getStubLineCount()).isEqualTo(1);
+    }
+
+    @Test
+    void edgePunctuationStrippingUsesTheAsciiPunctuationSet() {
+        // Punctuation hanging off either end does not cost a word its shape;
+        // a token of nothing but edge punctuation has no word inside it, and
+        // non-ASCII punctuation is not in the set, so it stays and counts.
+        RecoveredText measured = RecoveredTextMeasures.measure(
+                "\"hello,\" [world] --dash-- ... \u2014ab\u2014",
+                RecoveredTextMeasures.NO_ENGINE_CONFIDENCE);
+        assertThat(measured.getWordCount()).isEqualTo(5);
+        assertThat(measured.getWellFormedWords()).isEqualTo(3);
+    }
+
     private static double dimension(QualityScore score, String name) {
         return score.getDimensionsList().stream()
                 .filter(item -> item.getName().equals(name))

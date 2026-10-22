@@ -400,12 +400,13 @@ public class TypeConverter {
      * outside the target range is rejected rather than truncated, matching the Struct conversion
      * path.</p>
      *
+     * <p>An enum value of another enum type converts by number, the value the wire carries, never
+     * by name; a number converts to the enum value with that number. Either fails when the target
+     * enum has no value with that number.</p>
+     *
      * @param value The value to convert
      * @param field The target field descriptor
      * @return The converted value, or the original if no conversion is needed
-     * <p>An enum value of another enum type converts by number, then by name; a number converts
-     * to the enum value with that number. Either fails when the target enum has no such value.</p>
-     *
      * @throws IllegalArgumentException if conversion is not possible, or if a numeric value cannot
      *         be represented exactly by an integral field type
      */
@@ -501,22 +502,19 @@ public class TypeConverter {
     }
 
     /**
-     * The value of {@code field}'s enum type matching {@code value}: the same number first,
-     * since that is what the wire carries, then the same name.
+     * The value of {@code field}'s enum type with {@code value}'s number, since that is what
+     * the wire carries. Names are not consulted: the same name can sit at another number in
+     * the target, and matching it would write a number the source never meant.
      *
-     * @throws IllegalArgumentException when the target enum has neither
+     * @throws IllegalArgumentException when the target enum has no value with that number
      */
     private static EnumValueDescriptor alignEnum(EnumValueDescriptor value, FieldDescriptor field) {
         EnumValueDescriptor byNumber = field.getEnumType().findValueByNumber(value.getNumber());
         if (byNumber != null) {
             return byNumber;
         }
-        EnumValueDescriptor byName = field.getEnumType().findValueByName(value.getName());
-        if (byName != null) {
-            return byName;
-        }
         throw new IllegalArgumentException("Enum value " + value.getFullName() + " (" + value.getNumber()
-                + ") has no value with that number or name in " + field.getEnumType().getFullName()
+                + ") has no value with that number in " + field.getEnumType().getFullName()
                 + " for field " + field.getFullName());
     }
 

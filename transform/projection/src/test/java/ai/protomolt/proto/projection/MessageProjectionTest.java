@@ -539,6 +539,29 @@ class MessageProjectionTest {
         return node;
     }
 
+    /** A chain whose levels differ only in how deep they go, so comparing two walks the whole chain. */
+    private static TreeNode uniformChain(int depth) {
+        TreeNode node = TreeNode.newBuilder().setLabel("same").build();
+        for (int n = depth - 1; n >= 1; n--) {
+            node = TreeNode.newBuilder().setLabel("same").addChildren(node).build();
+        }
+        return node;
+    }
+
+    @Test
+    void refusesSourcesNestedFarPastTheBoundWithoutOverflowingTheStack() {
+        MessageProjection projection = MessageProjection.forTarget(
+                TreeView.getDescriptor(), SourceResolver.of(TreeNode.getDescriptor())).orElseThrow();
+
+        // Hashing or comparing these recursively would overflow the stack long before depth 10000.
+        assertThatThrownBy(() -> projection.project(chain(10_000)))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("more than " + MessageProjection.MAX_NESTING_DEPTH + " nested projections");
+        assertThatThrownBy(() -> projection.project(uniformChain(10_000)))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("more than " + MessageProjection.MAX_NESTING_DEPTH + " nested projections");
+    }
+
     @Test
     void boundsNestingDepthForChainsThatNeverRepeat() {
         MessageProjection projection = MessageProjection.forTarget(

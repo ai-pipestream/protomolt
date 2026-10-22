@@ -9,6 +9,8 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -109,11 +111,35 @@ public final class S3ParquetSink implements AutoCloseable {
         if (key.startsWith("/")) {
             throw new IllegalArgumentException("key must be relative (got \"" + key + "\")");
         }
-        for (String segment : key.split("/")) {
+        for (String segment : splitOnSlash(key)) {
             if (segment.equals("..")) {
                 throw new IllegalArgumentException("key cannot contain \"..\" (got \""
                         + key + "\")");
             }
         }
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code '/'} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    private static List<String> splitOnSlash(String key) {
+        if (key.isEmpty()) {
+            return List.of("");
+        }
+        List<String> segments = new ArrayList<>();
+        int start = 0;
+        int slash;
+        while ((slash = key.indexOf('/', start)) >= 0) {
+            segments.add(key.substring(start, slash));
+            start = slash + 1;
+        }
+        segments.add(key.substring(start));
+        int end = segments.size();
+        while (end > 0 && segments.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return segments.subList(0, end);
     }
 }

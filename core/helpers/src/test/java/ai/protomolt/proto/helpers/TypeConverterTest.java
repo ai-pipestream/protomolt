@@ -628,15 +628,28 @@ public class TypeConverterTest {
     }
 
     @Test
-    void enumOfAnotherTypeFallsBackToTheSameName() throws DescriptorValidationException {
-        FieldDescriptor source = enumField("old", "UNSET", 0, "GREEN", 1);
-        FieldDescriptor target = enumField("renumbered", "UNSET", 0, "GREEN", 5);
+    void enumNamesThatCollideAtDifferentNumbersConvertByNumber() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("before", "UNSET", 0, "RED", 1, "GREEN", 2);
+        FieldDescriptor target = enumField("after", "UNSET", 0, "GREEN", 1, "RED", 2);
+        // RED is 1 on the wire, so it lands on the target's 1 even though the target has a RED at 2.
         assertSame(enumValue(target, "GREEN"),
+                converter.convertToFieldType(enumValue(source, "RED"), target));
+        assertSame(enumValue(target, "RED"),
                 converter.convertToFieldType(enumValue(source, "GREEN"), target));
     }
 
     @Test
-    void enumWithNoMatchingNumberOrNameIsRejected() throws DescriptorValidationException {
+    void enumWhoseNameExistsOnlyAtAnotherNumberIsRejected() throws DescriptorValidationException {
+        FieldDescriptor source = enumField("old", "UNSET", 0, "GREEN", 1);
+        FieldDescriptor target = enumField("renumbered", "UNSET", 0, "GREEN", 5);
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> converter.convertToFieldType(enumValue(source, "GREEN"), target));
+        assertTrue(ex.getMessage().contains("old.State.GREEN (1)"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("renumbered.State"), ex.getMessage());
+    }
+
+    @Test
+    void enumWithNoMatchingNumberIsRejected() throws DescriptorValidationException {
         FieldDescriptor source = enumField("wide", "UNSET", 0, "EXTRA", 9);
         FieldDescriptor target = enumField("narrow", "UNSET", 0, "ONLY", 1);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,

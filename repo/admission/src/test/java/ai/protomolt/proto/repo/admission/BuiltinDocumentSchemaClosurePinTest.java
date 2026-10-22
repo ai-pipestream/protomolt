@@ -38,7 +38,7 @@ class BuiltinDocumentSchemaClosurePinTest {
      * lowercase hex characters.
      */
     private static final String PINNED_DESCRIPTOR_SHA256 =
-            "224e4678b5703ecb4c79a53091bc4dc3fbb2eb09ad5bd58ae855575e5b5069eb";
+            "50dabaee70843163a0809aaaec00c1f7bb3edfa08e3cf78feb1a0ca845927071";
 
     /**
      * Canonical descriptor fingerprint of the same closure
@@ -46,7 +46,7 @@ class BuiltinDocumentSchemaClosurePinTest {
      * lowercase hex characters.
      */
     private static final String PINNED_DESCRIPTOR_FINGERPRINT =
-            "0826de26a3df73ab5a2a3f8a051b2fe73d0f43853e9edf32dd81cf928651fa39";
+            "20b08edae6a912107a103f23acbb4230b0ea48b50f634f3bc8256baf86ab1d60";
 
     /** Fully qualified name of the builtin container root message. */
     private static final String EXPECTED_ROOT_TYPE_NAME =
