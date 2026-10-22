@@ -39,14 +39,19 @@ public final class DocumentConcepts {
      * @param fieldPath descriptor path of the tag field from the walked root, with the
      *        index of every enclosing repeated element
      * @param ordinal element index in a repeated tag field; 0 for a singular one
+     * @param repeated whether the tag field is repeated
      * @param schemeId the tagged concept's scheme
      * @param conceptId the tagged concept's id
      */
-    public record Tag(String fieldPath, int ordinal, String schemeId, String conceptId) {
+    public record Tag(String fieldPath, int ordinal, boolean repeated, String schemeId, String conceptId) {
         public Tag {
             Objects.requireNonNull(fieldPath); Objects.requireNonNull(schemeId); Objects.requireNonNull(conceptId);
-            if (fieldPath.isEmpty() || ordinal < 0) throw new IllegalArgumentException("A tag needs a field path and an ordinal");
+            if (fieldPath.isEmpty() || ordinal < 0 || (!repeated && ordinal != 0))
+                throw new IllegalArgumentException("A tag needs a field path and an ordinal");
         }
+
+        /** The tag's place as a violation path names it: the field path, with [ordinal] for a repeated field. */
+        public String at() { return repeated ? fieldPath + "[" + ordinal + "]" : fieldPath; }
     }
 
     /**
@@ -112,20 +117,20 @@ public final class DocumentConcepts {
             if (field.isRepeated()) {
                 var values = (List<?>) entry.getValue();
                 for (int i = 0; i < values.size(); i++) {
-                    if (ref) found.add(tag(path, i, (Message) values.get(i)));
+                    if (ref) found.add(tag(path, i, true, (Message) values.get(i)));
                     else collect((Message) values.get(i), path + "[" + i + "]", found);
                 }
             } else if (ref) {
-                found.add(tag(path, 0, (Message) entry.getValue()));
+                found.add(tag(path, 0, false, (Message) entry.getValue()));
             } else {
                 collect((Message) entry.getValue(), path, found);
             }
         }
     }
 
-    private static Tag tag(String path, int ordinal, Message value) {
+    private static Tag tag(String path, int ordinal, boolean repeated, Message value) {
         var type = value.getDescriptorForType();
-        return new Tag(path, ordinal, (String) value.getField(type.findFieldByName("scheme_id")),
+        return new Tag(path, ordinal, repeated, (String) value.getField(type.findFieldByName("scheme_id")),
                 (String) value.getField(type.findFieldByName("concept_id")));
     }
 }

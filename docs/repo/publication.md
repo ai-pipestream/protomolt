@@ -245,7 +245,8 @@ mounted scheme lacks is `concept.member` and a bound scheme the host has not
 mounted is `concept.unmounted`, both `VALIDATION_FAILED`. Reads and catalog
 rebuilds decode stored content without deciding membership again, so a host
 that has not mounted a scheme still reads what was admitted. A tag outside
-CORE, or in a type held by a nested `Any`, refuses the save.
+CORE, or in a type held by a nested `Any`, refuses the save, and so does a
+tag whose field path is over 1024 UTF-8 bytes (`concept-catalog-storable`).
 
 Tags project into `catalog_document_concepts` under the same
 `(field_path, ordinal)` identity as links: current revision only, replaced by

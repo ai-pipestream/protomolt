@@ -1029,6 +1029,13 @@ public final class DocumentSaves {
             return reject(caller, request, address, intentSha, authorized, linkRefusal.get().reason(),
                     linkRefusal.get().message(), linkRefusal.get().violations());
         var linkRows = DocumentLinkReads.rows(coreLinks);
+        // S11c: concept tags (requirements §17) must fit the catalog's tag index, refused by name.
+        var unstorableTags = coreConcepts.stream().flatMap(tag -> CatalogEntries.unstorableConcept(tag.fieldPath()).stream()
+                .map(problem -> FieldViolation.newBuilder().setPart(CORE_SELECTOR).setFieldPath(tag.at())
+                        .setRuleId("concept-catalog-storable").setMessage(problem).build())).toList();
+        if (!unstorableTags.isEmpty())
+            return reject(caller, request, address, intentSha, authorized, RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "A concept tag does not fit the catalog", unstorableTags);
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).

@@ -61,6 +61,8 @@ import org.junit.jupiter.api.Test;
  */
 class DocumentConceptsIT {
     private static final String REF = ".ai.protomolt.proto.types.v1.ConceptRef";
+    /** A bound field whose name alone passes the catalog's 1024-byte field path bound. */
+    private static final String LONG_NAME = "long_" + "x".repeat(1030);
     private static final FileDescriptor FILE = file();
     static final Descriptor PAPER = FILE.findMessageTypeByName("Paper");
     static final Descriptor SECTION = FILE.findMessageTypeByName("Section");
@@ -178,6 +180,14 @@ class DocumentConceptsIT {
                             Any.newBuilder().setTypeUrl(TAGGED_URL).setValue(tagged.toByteString()).build()))))),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
             assertThat(nested.getMessage()).contains(TAGGED_URL).contains("nested Any");
+            // A tag whose field path the catalog index cannot hold is refused by name, before anything is written.
+            var unstorable = SemanticPartsIT.rejected(() -> mounted.save(processAuthority(), save("long",
+                    address(ACCOUNT, "long"), document("long", paper(p -> p.setField(PAPER.findFieldByName(LONG_NAME),
+                            ref("subject", "physics")))))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(unstorable.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId)
+                    .containsExactly(tuple("structured_data." + LONG_NAME, "concept-catalog-storable"));
+            assertThat(f.catalog.current(address(ACCOUNT, "long"))).isEmpty();
             assertThat(f.catalog.current(address(ACCOUNT, "bad"))).isEmpty();
             assertThat(f.catalog.current(address(ACCOUNT, "cold"))).isEmpty();
         }
@@ -434,7 +444,8 @@ class DocumentConceptsIT {
                         .addField(message("sections", 3, ".test.concepts.v1.Section", true))
                         .addField(message("mapped", 4, REF, false))
                         .addField(message("related", 5, ".ai.protomolt.proto.repo.v2.DocumentLink", false).setOptions(link))
-                        .addField(message("inner", 6, ".google.protobuf.Any", false)))
+                        .addField(message("inner", 6, ".google.protobuf.Any", false))
+                        .addField(message(LONG_NAME, 7, REF, false).setOptions(subject)))
                 .addMessageType(DescriptorProto.newBuilder().setName("Tagged")
                         .addField(message("subject", 1, REF, false).setOptions(subject)))
                 .build();
