@@ -294,6 +294,9 @@ public final class ProtomoltRuleSource implements ValidationRuleSource {
         if (rules.getIdentifier()) {
             b.format(StringFormat.IDENTIFIER);
         }
+        if (rules.getLinkRelation()) {
+            b.format(StringFormat.LINK_RELATION);
+        }
         return b.build();
     }
 

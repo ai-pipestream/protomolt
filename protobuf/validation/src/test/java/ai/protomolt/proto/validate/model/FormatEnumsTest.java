@@ -35,6 +35,7 @@ class FormatEnumsTest {
         assertThat(StringFormat.PROTOBUF_FQN.ruleId()).isEqualTo("string.protobuf_fqn");
         assertThat(StringFormat.PROTOBUF_DOT_FQN.ruleId()).isEqualTo("string.protobuf_dot_fqn");
         assertThat(StringFormat.HOST_AND_PORT.ruleId()).isEqualTo("string.host_and_port");
+        assertThat(StringFormat.LINK_RELATION.ruleId()).isEqualTo("string.link_relation");
     }
 
     @Test

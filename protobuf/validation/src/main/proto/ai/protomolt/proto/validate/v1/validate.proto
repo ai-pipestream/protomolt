@@ -123,6 +123,12 @@ message StringRules {
   // Value must be a single bare identifier ([A-Za-z_][A-Za-z0-9_]*,
   // no dots): a protobuf field or message segment name.
   optional bool identifier = 36;
+
+  // Value must be a link relation: a Dublin Core relation term
+  // (isPartOf), a name in the IANA Link Relations registry (canonical),
+  // or an absolute URI naming an RFC 8288 extension relation. Bundled
+  // names match exactly as registered.
+  optional bool link_relation = 37;
 }
 
 // Standard constraints for int32 fields.

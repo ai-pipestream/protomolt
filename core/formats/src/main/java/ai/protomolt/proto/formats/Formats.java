@@ -1,5 +1,7 @@
 package ai.protomolt.proto.formats;
 
+import java.util.Optional;
+
 /**
  * Facade over the RFC-accurate string format validators in this package, exposing them under the
  * names protovalidate's CEL standard library uses ({@code isHostname}, {@code isEmail},
@@ -209,5 +211,22 @@ public final class Formats {
     /** A single bare identifier: {@code [A-Za-z_][A-Za-z0-9_]*}, no dots. */
     public static boolean isIdentifier(String value) {
         return Identifiers.isIdentifier(value);
+    }
+
+    /**
+     * A link relation: a Dublin Core relation term ({@code isPartOf}), an IANA registered
+     * relation name ({@code canonical}), or an absolute URI naming an RFC 8288 extension
+     * relation ({@code https://example.com/rel/parent}). Bundled names match exactly.
+     */
+    public static boolean isLinkRelation(String value) {
+        return LinkRelations.isLinkRelation(value);
+    }
+
+    /**
+     * The paired Dublin Core inverse of a relation ({@code isPartOf} for {@code hasPart} and
+     * the reverse), or empty when the relation has no bundled inverse.
+     */
+    public static Optional<String> inverseLinkRelation(String value) {
+        return LinkRelations.inverse(value);
     }
 }

@@ -36,12 +36,12 @@ The format set: `date`, `date_time`, `mime_type`, `language_tag`,
 (composes with `len` for sized ids like W3C trace ids), `base64`,
 `email`, `uuid`, `hostname`, `uri`, `ip`, `ipv4`, `ipv6`, `slug`,
 `region_code`, `protobuf_fqn`, `path_safe_name`, `gtin`, `decimal`,
-`endpoint_address`, and `identifier`. Mechanics:
+`endpoint_address`, `identifier`, and `link_relation`. Mechanics:
 
 - "Absent or valid" is a declaration, not a regex alternation:
   `ignore_if_zero: true` on the field rules skips every rule at the
   zero value.
-- Vocabulary formats bundle **no data**: the JDK's own strict BCP 47
+- The JDK-backed vocabulary formats bundle **no data**: the JDK's own strict BCP 47
   parser answers `language_tag`, its ISO 4217 table answers
   `currency_code`, and its ISO 3166 table answers `region_code`
   (Unicode CLDR underneath), so nothing needs attribution and nothing
@@ -80,7 +80,11 @@ alternation: a value shaped like `host:port` must carry a dialable
 port and never falls back to the URI reading (`localhost:99999`
 parses as a URI with scheme `localhost` otherwise); anything else
 must be an absolute URI with a non-empty rest. `identifier` is a bare
-`[A-Za-z_][A-Za-z0-9_]*` protobuf segment name. There is no generic
+`[A-Za-z_][A-Za-z0-9_]*` protobuf segment name. `link_relation` is the
+relation a document link declares: a bundled Dublin Core relation term or IANA
+registered name, matched exactly, or else an absolute URI (an RFC 8288 extension
+relation); its tables are the one vocabulary format that bundles data, attributed
+in `NOTICE`. There is no generic
 `any_of` combinator in the dialect: an alternation with precedence is
 a domain grammar, and domain grammars become named formats.
 

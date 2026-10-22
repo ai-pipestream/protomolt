@@ -86,6 +86,12 @@ message StringRules {
   optional bool hex = 27;
   // Value must be base64 (standard alphabet, correct padding).
   optional bool base64 = 28;
+
+  // Value must be a link relation: a Dublin Core relation term
+  // (isPartOf), a name in the IANA Link Relations registry (canonical),
+  // or an absolute URI naming an RFC 8288 extension relation. Bundled
+  // names match exactly as registered.
+  optional bool link_relation = 37;
 }
 
 // Standard constraints for int32 fields.
