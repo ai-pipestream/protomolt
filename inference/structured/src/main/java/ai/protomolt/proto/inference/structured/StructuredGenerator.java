@@ -430,10 +430,22 @@ public final class StructuredGenerator {
     }
 
     /** Produces an OpenAI-compatible schema name while retaining deterministic identity. */
-    private static String schemaName(String targetType) {
-        String normalized = targetType.replaceAll("[^A-Za-z0-9_-]", "_");
+    static String schemaName(String targetType) {
+        StringBuilder normalized = new StringBuilder(targetType.length());
+        int i = 0;
+        while (i < targetType.length()) {
+            int codePoint = targetType.codePointAt(i);
+            if ((codePoint >= 'A' && codePoint <= 'Z') || (codePoint >= 'a' && codePoint <= 'z')
+                    || (codePoint >= '0' && codePoint <= '9')
+                    || codePoint == '_' || codePoint == '-') {
+                normalized.appendCodePoint(codePoint);
+            } else {
+                normalized.append('_');
+            }
+            i += Character.charCount(codePoint);
+        }
         if (normalized.length() <= 64) {
-            return normalized;
+            return normalized.toString();
         }
         return normalized.substring(0, 55) + "_" + sha256Hex(targetType).substring(0, 8);
     }

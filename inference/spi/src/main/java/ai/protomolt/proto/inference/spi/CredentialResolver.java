@@ -1,7 +1,5 @@
 package ai.protomolt.proto.inference.spi;
 
-import java.util.regex.Pattern;
-
 /**
  * Resolves a model catalog entry's opaque credential reference
  * ({@code ModelEntry.credential_ref}, e.g. {@code "env:OPENAI_TOKEN"}) to the
@@ -36,10 +34,57 @@ public interface CredentialResolver {
      * scheme validates against this one shape so a malformed reference fails
      * the same way everywhere.
      */
-    Pattern REFERENCE_FORMAT = Pattern.compile("^[a-z][a-z0-9-]*:[A-Za-z0-9._/-]+$");
+    private static boolean isWellFormedReference(String reference) {
+        int colon = reference.indexOf(':');
+        if (colon < 1 || colon == reference.length() - 1) {
+            return false;
+        }
+        char schemeStart = reference.charAt(0);
+        if (schemeStart < 'a' || schemeStart > 'z') {
+            return false;
+        }
+        for (int i = 1; i < colon; i++) {
+            char c = reference.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+                return false;
+            }
+        }
+        for (int i = colon + 1; i < reference.length(); i++) {
+            if (!isReferenceNameChar(reference.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-    /** RFC 6750 bearer-token characters, including optional base64 padding. */
-    Pattern BEARER_FORMAT = Pattern.compile("^[A-Za-z0-9\\-._~+/]+=*$");
+    private static boolean isReferenceNameChar(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == '.' || c == '_' || c == '/' || c == '-';
+    }
+
+    /**
+     * RFC 6750 bearer-token characters, including optional base64 padding (only as a
+     * trailing run).
+     */
+    private static boolean isBearerTokenMaterial(String credential) {
+        int length = credential.length();
+        int i = 0;
+        while (i < length && isBearerChar(credential.charAt(i))) {
+            i++;
+        }
+        if (i == 0) {
+            return false;
+        }
+        while (i < length && credential.charAt(i) == '=') {
+            i++;
+        }
+        return i == length;
+    }
+
+    private static boolean isBearerChar(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                || c == '-' || c == '.' || c == '_' || c == '~' || c == '+' || c == '/';
+    }
 
     /**
      * Resolves one reference to its credential material.
@@ -60,12 +105,12 @@ public interface CredentialResolver {
      *
      * @param credentialRef the reference to check
      * @throws CredentialResolutionException when the reference is null or does
-     *     not match {@link #REFERENCE_FORMAT}; the message never carries the
+     *     not have the {@code <scheme>:<name>} shape; the message never carries the
      *     reference
      */
     static void checkFormat(String credentialRef) {
         if (credentialRef == null || credentialRef.length() > MAX_REFERENCE_LENGTH
-                || !REFERENCE_FORMAT.matcher(credentialRef).matches()) {
+                || !isWellFormedReference(credentialRef)) {
             throw new CredentialResolutionException("malformed credential reference "
                     + "(want '<scheme>:<name>', e.g. env:OPENAI_TOKEN)");
         }
@@ -100,7 +145,7 @@ public interface CredentialResolver {
             throw new CredentialResolutionException(
                     "resolved credential exceeds the bearer header size limit");
         }
-        if (!BEARER_FORMAT.matcher(credential).matches()) {
+        if (!isBearerTokenMaterial(credential)) {
             throw new CredentialResolutionException(
                     "resolved credential is not valid bearer-token material");
         }

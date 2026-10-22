@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /**
  * Wraps a generated JSON Schema document into the structured-output envelope LLM
@@ -18,9 +17,24 @@ import java.util.regex.Pattern;
 public final class ResponseFormatShaper {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Pattern PROVIDER_SAFE_NAME = Pattern.compile("[A-Za-z0-9_-]{1,64}");
 
     private ResponseFormatShaper() {
+    }
+
+    /** 1-64 ASCII letters, digits, '_' or '-', the envelope-name shape providers accept. */
+    private static boolean isProviderSafeName(String name) {
+        int length = name.length();
+        if (length < 1 || length > 64) {
+            return false;
+        }
+        for (int i = 0; i < length; i++) {
+            char c = name.charAt(i);
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '_' || c == '-')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -35,7 +49,7 @@ public final class ResponseFormatShaper {
     public static String jsonSchemaEnvelope(String name, String jsonSchema, boolean strict) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(jsonSchema, "jsonSchema");
-        if (!PROVIDER_SAFE_NAME.matcher(name).matches()) {
+        if (!isProviderSafeName(name)) {
             throw new IllegalArgumentException(
                     "name must be provider-safe: 1-64 ASCII letters, digits, '_' or '-'");
         }

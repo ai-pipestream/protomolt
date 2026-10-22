@@ -79,4 +79,9 @@ class ClasspathDescriptorLoaderEdgeCasesTest {
     void reportsLoaderType() {
         assertThat(loader.getLoaderType()).isEqualTo("Classpath Class Resolver");
     }
+
+    @Test
+    void returnsNullForATrailingDotWithoutInventingAnEmptySegment() throws Exception {
+        assertThat(loader.loadDescriptorForType("com.example.")).isNull();
+    }
 }
