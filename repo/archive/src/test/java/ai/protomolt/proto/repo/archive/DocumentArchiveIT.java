@@ -874,6 +874,36 @@ class DocumentArchiveIT {
         assertThat(row(current, "scan", "0001").getSha256()).isEqualTo(RenditionReads.sha256Hex(x));
     }
 
+    /**
+     * A supplied operation ID with no expected_sha256 has a content digest that
+     * covers no byte: a retry of the same bytes replays, and other bytes of the
+     * same length are ALREADY_EXISTS rather than a replay of the first upload.
+     */
+    @Test
+    void aSuppliedIdUploadWithoutADigestReplaysOnlyTheSameBytes() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        ByteString x = randomBytes(5_000, 31);
+        ByteString y = randomBytes(5_000, 32);
+        UploadRenditionHeader header = UploadRenditionHeader.newBuilder().setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder().setName("scan").setSubKey("0001").setMediaType("image/tiff"))
+                .setSizeBytes(x.size()).setOperationId("scan-" + address.getEntryId()).build();
+        UploadRenditionResponse first = upload(header, x, 1_000);
+        assertThat(first.getReplayed()).isFalse();
+        assertThat(first.getVersion()).isEqualTo(1);
+
+        UploadRenditionResponse retry = upload(header, x, 1_000);
+        assertThat(retry.getReplayed()).isTrue();
+        assertThat(retry.getVersion()).isEqualTo(1);
+        assertThat(retry.getSha256()).isEqualTo(RenditionReads.sha256Hex(x));
+
+        StatusRuntimeException other = catchThrowableOfType(StatusRuntimeException.class, () -> upload(header, y, 1_000));
+        assertThat(other).as("other bytes are refused").isNotNull();
+        assertThat(other.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(other.getStatus().getDescription()).isEqualTo("operation_id: " + header.getOperationId()
+                + " is recorded for an upload of other bytes (SHA-256 " + RenditionReads.sha256Hex(x) + ", 5000 bytes)");
+        assertThat(revisions(address)).isEqualTo(1);
+    }
+
     @Test
     void anUploadWithoutIdOrDigestAndAWrongLengthAreRefused() {
         EntryAddress address = entry(RETAINED);

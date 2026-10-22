@@ -12,6 +12,8 @@ import io.grpc.stub.ClientCallStreamObserver;
 import io.grpc.stub.ClientResponseObserver;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Objects;
 
 /**
@@ -24,6 +26,11 @@ import java.util.Objects;
  * <p>Flow control is end to end: the next archive frame is requested only when
  * the v2 call can take another, so a slow repository holds back the producer
  * instead of filling memory.</p>
+ *
+ * <p>A header with a supplied operation ID and no {@code expected_sha256} has a
+ * content digest that covers no byte, so the chunks are digested as they pass:
+ * a recorded outcome under that ID is replayed only when the bytes sent match
+ * the rendition it recorded, and other bytes are {@code ALREADY_EXISTS}.</p>
  */
 public final class RenditionUploads {
 
@@ -48,7 +55,11 @@ public final class RenditionUploads {
         private final StreamObserver<UploadRenditionResponse> responses;
         private final ServerCallStreamObserver<UploadRenditionResponse> server;
         private DocumentArchive.Pending pending;
+        private DocumentArchive.Verify verifying;
         private ClientCallStreamObserver<UploadDocumentRequest> upload;
+        private final MessageDigest sent = RenditionReads.sha256();
+        private long sentBytes;
+        private boolean clientCompleted;
         private boolean waitingForUpload;
         private boolean finished;
 
@@ -67,7 +78,7 @@ public final class RenditionUploads {
                 return;
             }
             try {
-                if (pending == null) {
+                if (pending == null && verifying == null) {
                     if (!frame.hasHeader()) {
                         throw ArchiveErrors.invalid("frame", "the first frame of an upload must be the header");
                     }
@@ -75,6 +86,14 @@ public final class RenditionUploads {
                 } else {
                     if (!frame.hasChunk()) {
                         throw ArchiveErrors.invalid("frame", "only the first frame of an upload is a header");
+                    }
+                    frame.getChunk().asReadOnlyByteBufferList().forEach(sent::update);
+                    sentBytes += frame.getChunk().size();
+                    if (verifying != null) {
+                        if (server != null) {
+                            server.request(1);
+                        }
+                        return;
                     }
                     upload.onNext(UploadDocumentRequest.newBuilder().setData(frame.getChunk()).build());
                     requestNext();
@@ -90,6 +109,13 @@ public final class RenditionUploads {
                 finished = true;
                 responses.onNext(replay.response());
                 responses.onCompleted();
+                return;
+            }
+            if (start instanceof DocumentArchive.Verify verify) {
+                verifying = verify;
+                if (server != null) {
+                    server.request(1);
+                }
                 return;
             }
             pending = (DocumentArchive.Pending) start;
@@ -152,11 +178,28 @@ public final class RenditionUploads {
             if (finished) {
                 return;
             }
+            if (verifying != null) {
+                try {
+                    DocumentArchive.requireRecordedBytes(verifying.response(), sentSha256(), sentBytes);
+                } catch (StatusRuntimeException failure) {
+                    fail(failure);
+                    return;
+                }
+                finished = true;
+                responses.onNext(verifying.response());
+                responses.onCompleted();
+                return;
+            }
             if (pending == null) {
                 fail(ArchiveErrors.invalid("frame", "an upload needs a header frame"));
                 return;
             }
+            clientCompleted = true;
             upload.onCompleted();
+        }
+
+        private String sentSha256() {
+            return HexFormat.of().formatHex(sent.digest());
         }
 
         private void uploadCompleted(UploadDocumentResponse result) {
@@ -186,10 +229,25 @@ public final class RenditionUploads {
                     ? runtime : Status.fromThrowable(failure).asRuntimeException(Status.trailersFromThrowable(failure));
             UploadRenditionResponse response;
             try {
+                String sha256 = null;
+                long size = 0;
+                if (pending.checkBytes()) {
+                    synchronized (this) {
+                        if (!clientCompleted) {
+                            // Not every byte has arrived, so a lost race cannot be told from other bytes.
+                            throw status;
+                        }
+                        sha256 = sentSha256();
+                        size = sentBytes;
+                    }
+                }
                 response = archive.uploadResponse(
                         archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(), status)
                                 .revision(),
                         pending.rendition(), pending.operationId(), true);
+                if (sha256 != null) {
+                    DocumentArchive.requireRecordedBytes(response, sha256, size);
+                }
             } catch (StatusRuntimeException answer) {
                 fail(answer);
                 return;

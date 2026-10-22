@@ -857,17 +857,49 @@ public final class DocumentArchive {
 
     // --------------------------------------------------------------- uploads
 
-    /** What an upload's header frame resolves to: a replayed outcome, or the v2 upload to open. */
-    sealed interface UploadStart permits Replay, Pending {
+    /**
+     * What an upload's header frame resolves to: a replayed outcome, a recorded
+     * outcome to replay once the bytes are checked, or the v2 upload to open.
+     */
+    sealed interface UploadStart permits Replay, Verify, Pending {
     }
 
     /** An earlier identical upload's recorded outcome; nothing is uploaded. */
     record Replay(UploadRenditionResponse response) implements UploadStart {
     }
 
-    /** The v2 upload header to send, and what finishing the upload needs. */
+    /**
+     * The recorded outcome of an earlier upload under a supplied operation ID
+     * whose header named no {@code expected_sha256}. The header digest cannot
+     * tell its bytes apart, so the bytes sent again are digested, never
+     * uploaded, and the outcome is replayed only when they match the recorded
+     * rendition (see {@link #requireRecordedBytes}).
+     */
+    record Verify(UploadRenditionResponse response) implements UploadStart {
+    }
+
+    /**
+     * The v2 upload header to send, and what finishing the upload needs.
+     * {@code checkBytes} is set when the header named no {@code expected_sha256}:
+     * a lost race is then replayed only for the same bytes.
+     */
     record Pending(NodeAddress address, String operationId, String contentSha256,
-            RenditionDescriptor rendition, UploadHeader header) implements UploadStart {
+            RenditionDescriptor rendition, UploadHeader header, boolean checkBytes) implements UploadStart {
+    }
+
+    /**
+     * Checks that the bytes of an upload match the rendition its recorded
+     * outcome names before that outcome is replayed.
+     *
+     * @throws StatusRuntimeException {@code ALREADY_EXISTS} naming
+     *         {@code operation_id} when the SHA-256 or the length differs
+     */
+    static void requireRecordedBytes(UploadRenditionResponse recorded, String sha256, long sizeBytes) {
+        if (!recorded.getSha256().equals(sha256) || recorded.getSizeBytes() != sizeBytes) {
+            throw ArchiveErrors.alreadyExists("operation_id", recorded.getOperationId()
+                    + " is recorded for an upload of other bytes (SHA-256 " + recorded.getSha256() + ", "
+                    + recorded.getSizeBytes() + " bytes)");
+        }
     }
 
     /**
@@ -889,8 +921,10 @@ public final class DocumentArchive {
         String operationId = ArchiveOperationKeys.operationId(header, contentSha256);
         boolean derivedLastWriteWins = header.getOperationId().isEmpty() && header.getExpectedVersion() == 0;
         Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256, derivedLastWriteWins);
+        boolean checkBytes = header.getExpectedSha256().isEmpty();
         if (recorded.isPresent()) {
-            return new Replay(uploadResponse(recorded.get().revision(), rendition, operationId, true));
+            UploadRenditionResponse replay = uploadResponse(recorded.get().revision(), rendition, operationId, true);
+            return checkBytes ? new Verify(replay) : new Replay(replay);
         }
 
         Optional<GetDocumentResponse> current = readCurrent(address);
@@ -948,7 +982,7 @@ public final class DocumentArchive {
         }
         save.setDocument(document);
         upload.setSave(save);
-        return new Pending(address, operationId, contentSha256, rendition, upload.build());
+        return new Pending(address, operationId, contentSha256, rendition, upload.build(), checkBytes);
     }
 
     /** The archive receipt of a committed (or raced and replayed) upload. */
