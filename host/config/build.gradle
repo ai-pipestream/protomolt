@@ -7,8 +7,11 @@ dependencies {
     // API because TaxonomyMounts implements the validator's TaxonomyCatalog
     // seam, which consumers hand to their validator constructions.
     api project(':protomolt-protobuf-validation')
-    // The Taxonomy config document type TaxonomyMounts follows.
-    implementation project(':protomolt-protobuf-types')
+    // The Taxonomy and ConceptScheme config document types the mounts follow;
+    // API because ConceptSchemeMounts.expand takes and returns ConceptRef values.
+    api project(':protomolt-protobuf-types')
+    // Scheme ids are slugs, checked when a mount subscribes.
+    implementation project(':protomolt-formats')
     // The mounted trust snapshot is the receipt layer's document, exposed
     // through Mounted.
     api project(':protomolt-receipt')

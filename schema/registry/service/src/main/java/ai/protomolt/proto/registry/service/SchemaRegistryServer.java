@@ -820,7 +820,7 @@ public final class SchemaRegistryServer implements AutoCloseable {
         if (raw == null) {
             return params;
         }
-        for (String pair : raw.split("&")) {
+        for (String pair : splitOn(raw, '&')) {
             int equals = pair.indexOf('=');
             String name = equals < 0 ? pair : pair.substring(0, equals);
             String value = equals < 0 ? "" : pair.substring(equals + 1);
@@ -963,12 +963,36 @@ public final class SchemaRegistryServer implements AutoCloseable {
 
     private static List<String> decodeSegments(String rawPath) {
         List<String> segments = new ArrayList<>();
-        for (String segment : rawPath.split("/")) {
+        for (String segment : splitOn(rawPath, '/')) {
             if (!segment.isEmpty()) {
                 segments.add(URLDecoder.decode(segment, StandardCharsets.UTF_8));
             }
         }
         return segments;
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on one literal separator, without regex: an
+     * empty input is one empty token, trailing empty tokens are dropped, leading and
+     * interior empty tokens are kept.
+     */
+    static List<String> splitOn(String text, char separator) {
+        if (text.isEmpty()) {
+            return List.of("");
+        }
+        List<String> tokens = new ArrayList<>();
+        int start = 0;
+        int next;
+        while ((next = text.indexOf(separator, start)) >= 0) {
+            tokens.add(text.substring(start, next));
+            start = next + 1;
+        }
+        tokens.add(text.substring(start));
+        int end = tokens.size();
+        while (end > 0 && tokens.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return tokens.subList(0, end);
     }
 
     @FunctionalInterface

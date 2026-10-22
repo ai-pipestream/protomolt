@@ -1,5 +1,6 @@
 package ai.protomolt.proto.asset.characterize.container;
 
+import ai.protomolt.proto.asset.characterize.FormatGrammar;
 import ai.protomolt.proto.asset.characterize.FormatGrammars;
 import ai.protomolt.proto.asset.v1.FormatFact;
 import ai.protomolt.proto.asset.v1.PresentationDocument;
@@ -7,7 +8,6 @@ import ai.protomolt.proto.asset.v1.SpreadsheetDocument;
 import ai.protomolt.proto.asset.v1.WordDocument;
 
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Which published container formats the registry has a place for.
@@ -83,7 +83,7 @@ public final class ContainerFormats {
     }
 
     /** The entry's own grammar decides whether the name belongs on the fact. */
-    private static String matching(String filename, Pattern grammar) {
-        return filename != null && grammar.matcher(filename).matches() ? filename : "";
+    private static String matching(String filename, FormatGrammar grammar) {
+        return grammar.matches(filename) ? filename : "";
     }
 }
