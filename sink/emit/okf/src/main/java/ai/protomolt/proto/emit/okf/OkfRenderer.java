@@ -343,7 +343,7 @@ public final class OkfRenderer {
         return description.isBlank() ? "Registry subject." : description;
     }
 
-    private static String frontmatterField(String doc, String key) {
+    static String frontmatterField(String doc, String key) {
         boolean inFrontmatter = false;
         for (String line : splitOnNewline(doc)) {
             if (line.equals("---")) {
