@@ -550,7 +550,7 @@ correctness and RustFS for performance measurements.
    or `UploadDocument`, gated by §9 validation. Versions are revisions, history stays in
    the catalog, and provider object versioning is not used (§6). The ledger, its
    migrations, and its own backup and purge paths retire once the replacement passes §15
-   on archive traffic. The design of record, including the five additive v2 changes it
+   on archive traffic. The design of record, including the seven additive v2 changes it
    needs, is "The archive over v2 documents" in `docs/design/archive.md`.
 2. **Consumers of the semantic shape.** Replacing `SemanticProcessingResult` (including
    `embedding_config_id`) needs an inventory of its consumers first: the chunker,

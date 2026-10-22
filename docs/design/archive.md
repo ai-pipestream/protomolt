@@ -354,7 +354,7 @@ Entry metadata maps onto CORE:
 | `metadata` (field 99) | `search_metadata.metadata` |
 | `declared`, `origin` | `structured_data`, an `Any` of a registered archive message, typed-validated |
 
-**v2 prerequisites.** The archive's existing guarantees need five additive
+**v2 prerequisites.** The archive's existing guarantees need seven additive
 changes to the v2 contract, specified here so the implementation issues can
 cite them:
 
@@ -387,6 +387,29 @@ cite them:
    revision 1 and carried through revision 2 then still reports revision 1's
    time; `DocumentManifest.committed_at` is the current accession's time and
    is not a substitute.
+6. **Recorded unchanged outcomes.** `SaveDocumentRequest` gains
+   `UnchangedPolicy unchanged` (`UNCHANGED_POLICY_UNSPECIFIED = 0`: a new
+   revision for every PUT, as today; `UNCHANGED_POLICY_RECORD_OUTCOME = 1`).
+   It is part of the save's intent. Under `RECORD_OUTCOME`, when every PUT's
+   stored fragment SHA-256 and length equal the expected revision's part
+   entry, every raw blob binds the expected revision's object, and the save
+   names no `PartSource`, `derived_from` or opaque attestation, the commit
+   transaction runs steps 1, 2 and 4 of §7 only: it records the operation
+   outcome (the expected revision's `Accession`, with a new
+   `SaveDocumentResponse.unchanged = true`) and inserts no accession, writes
+   no outbox event and leaves the current-revision pointer alone.
+   Authorization, the in-transaction grant recheck and validation of the
+   request structure run exactly as for any save, and the expected-revision
+   check makes it race-safe: a writer that commits first turns the same
+   request into an `ABORTED` or, with a fresh expected revision, a real
+   revision. Uploaded objects of an unchanged save stay unreferenced, as for
+   any save that does not commit them (§6).
+7. **Recorded request metadata.** `RecordedOutcome` gains
+   `map<string, string> request_metadata = 4`: the persisted request metadata
+   (§7) of the save that recorded the outcome, on the accession, unchanged and
+   rejection arms alike. A rejection has no revision to read metadata from, so
+   this is the only place a recorded rejection keeps its intent. It is read
+   under the same access rules as the outcome itself (§7, "Retry identity").
 
 ### 3. Read side: projections over v2 reads
 
@@ -633,6 +656,8 @@ the translator holds no rules v2 does not also enforce.
 | `writes` | `PUT` CORE; `PUT` BLOBS when any blob rendition is written; `PUT` PARSED when `parsed` is written |
 | `owner` | `SaveOwner` of section 1 |
 | `validation_mode` | `TYPED` |
+| `unchanged` | `UNCHANGED_POLICY_RECORD_OUTCOME` (prerequisite 6) |
+| `metadata` | `archive.content_sha256` (section 5) |
 
 `UploadRendition` becomes one `UploadDocument`: the header frame carries the
 same `SaveDocumentRequest` with `UploadHeader.blob_id` naming the streamed
@@ -644,14 +669,19 @@ settle copy are retired.
 
 - **Outcome lookup comes first.** Every write resolves its `operation_id`
   (section 5) and asks `GetOperationOutcome(account_id, operation_id)` before
-  it reads anything else. A recorded outcome is the answer: a committed
-  accession whose `archive.content_sha256` request metadata equals this
-  request's content digest is returned with `replayed = true` and the revision
-  that operation committed, with no current-revision read and no new save. A
-  recorded rejection is returned as recorded. A recorded outcome with a
-  different content digest is `ALREADY_EXISTS` naming `operation_id`. Content
-  dedup against the current revision is not an outcome lookup and never
-  stands in for one.
+  it reads anything else. A recorded outcome is the answer, compared by the
+  archive intent it recorded (prerequisite 7), never by a revision read:
+  - `request_metadata["archive.content_sha256"]` equal to this request's
+    content digest: a committed accession is returned with `replayed = true`
+    and the revision that operation committed; an unchanged outcome
+    (prerequisite 6) is returned with `replayed = true` and
+    `deduplicated = true` and the revision it matched; a recorded rejection
+    is returned as recorded. No current-revision read and no new save.
+  - A different or missing digest, on any arm: `ALREADY_EXISTS` naming
+    `operation_id`. A rejection is replayed only to the request that caused
+    it.
+  Content dedup against the current revision is not an outcome lookup and
+  never stands in for one.
 - **Last write wins** (`expected_version = 0`) runs only when no outcome is
   recorded: the translator reads the current revision once and saves against
   it under the same `operation_id`. A writer that commits first makes the save
@@ -663,21 +693,32 @@ settle copy are retired.
 - **The translated save records the archive content digest.**
   `SaveDocumentRequest.metadata["archive.content_sha256"]` is the section 5
   `content_sha256`. It is persisted request metadata (§7), so it is part of the
-  v2 intent and readable back from the committed revision
-  (`GetDocumentResponse.metadata`), which is how the replay check above
-  compares content for caller-supplied IDs as well as derived ones.
-- **Deduplication.** When no outcome is recorded and the translated save would
-  change nothing (every written rendition's SHA-256, length and media type
-  equal the current row, and CORE is unchanged), the translator returns
-  `deduplicated = true` with the current coordinates and saves nothing. v2
-  itself records a new revision for every PUT (§6), so this check is the
-  archive's, done against the revision it read for `expected`.
-- **Pinned cases.** The implementation tests, for both a derived and a
-  caller-supplied `operation_id`: writer A saves revision 1 with
-  `expected_version = 0` and loses its response, writer B saves different
-  content at revision 2, and A's retry replays revision 1 (`replayed = true`)
-  and leaves revision 2 current; the same retry with no intervening writer;
-  and a supplied ID reused with different content, which is `ALREADY_EXISTS`.
+  v2 intent, and v2 records it with the operation outcome on every arm
+  (prerequisite 7), including rejections, which have no revision to read it
+  from. The replay check above therefore compares content the same way for
+  caller-supplied and derived IDs.
+- **Deduplication is a recorded outcome.** Every translated save sets
+  `unchanged = UNCHANGED_POLICY_RECORD_OUTCOME` (prerequisite 6). When the
+  composed candidate equals the expected revision, v2 commits the operation
+  outcome only, in the same transaction, after the same authorization and
+  expected-revision checks as any save, and the archive answers
+  `deduplicated = true` with that revision. The archive does no dedup of its
+  own and never answers `deduplicated` without a recorded outcome, so a lost
+  `deduplicated` response is recovered by the outcome lookup like any other.
+- **Pinned cases.** The implementation tests each of these for both a derived
+  and a caller-supplied `operation_id`:
+  - writer A saves revision 1 with `expected_version = 0` and loses its
+    response, writer B saves different content at revision 2, and A's retry
+    replays revision 1 (`replayed = true`) and leaves revision 2 current;
+  - A's request matches revision 1 and deduplicates (`deduplicated = true`,
+    no new revision), the response is lost, B saves revision 2, and A's retry
+    replays the deduplicated outcome at revision 1 and leaves revision 2
+    current;
+  - a request rejected by v2 validation, retried unchanged, replays the
+    rejection;
+  - the same retries with no intervening writer;
+  - a supplied ID reused with different content after a committed, an
+    unchanged and a rejected outcome, each `ALREADY_EXISTS`.
 - **`VersionManifest.metadata_snapshot`** is the CORE of that revision,
   projected, so every version keeps the metadata it was saved with.
 
