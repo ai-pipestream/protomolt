@@ -1671,12 +1671,23 @@ public final class DocumentSaves {
      * revision, or at its current one, must be listed; otherwise LINK_TARGET_TYPE. A
      * tombstoned current target is accepted unpinned: the link is born dangling. A
      * dynamic target's filter must select something and be consistent, as a listing's
-     * is; it is not evaluated here.
+     * is; it is not evaluated here. A pinned revision must be a document revision, not
+     * a tombstone. Every link must also fit the catalog's edge index, checked first, so
+     * an oversized path or key is refused by name rather than failing inside the commit.
      */
     private Optional<SemanticRejection> linkRefusal(RepositoryCaller caller, String account, List<DocumentLinks.Link> links) {
         var violations = new ArrayList<FieldViolation>();
         for (var link : links) {
-            var at = link.fieldPath() + "[" + link.ordinal() + "]";
+            var target = link.link().hasStaticTarget() ? Optional.of(link.link().getStaticTarget().getAddress())
+                    : Optional.<NodeAddress>empty();
+            CatalogEntries.unstorableLink(link.fieldPath(), link.field().getRelation(), target)
+                    .ifPresent(problem -> violations.add(linkViolation(link, "link-catalog-storable", problem)));
+        }
+        if (!violations.isEmpty())
+            return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "A link does not fit the catalog", List.copyOf(violations)));
+        for (var link : links) {
+            var at = link.at();
             if (link.link().hasDynamicTarget()) {
                 var dynamic = link.link().getDynamicTarget();
                 if (dynamic.getFilter().equals(DocumentFilter.getDefaultInstance()))
@@ -1696,7 +1707,7 @@ public final class DocumentSaves {
                     || address.getGraphAddressId().isBlank() || address.getDocId().isBlank()
                     ? Optional.<CatalogRecords.LinkTarget>empty() : catalog.linkTarget(address, pinned);
             if (found.isEmpty() || !DocumentReads.canRead(caller, address, found.get().entry().getOwnership())
-                    || (pinned.isPresent() && found.get().pinned().isEmpty()))
+                    || (pinned.isPresent() && (found.get().pinned().isEmpty() || found.get().pinned().get().tombstone())))
                 return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND,
                         "The target of link " + at + " is not found", List.of()));
             if (link.field().getTargetTypesCount() == 0) continue;
@@ -1715,7 +1726,7 @@ public final class DocumentSaves {
 
     private static FieldViolation linkViolation(DocumentLinks.Link link, String ruleId, String message) {
         return FieldViolation.newBuilder().setPart(CORE_SELECTOR)
-                .setFieldPath(link.ordinal() == 0 ? link.fieldPath() : link.fieldPath() + "[" + link.ordinal() + "]")
+                .setFieldPath(link.at())
                 .setRuleId(ruleId).setMessage(message).build();
     }
 

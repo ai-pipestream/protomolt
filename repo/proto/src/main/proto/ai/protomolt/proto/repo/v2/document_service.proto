@@ -966,7 +966,7 @@ message ResolvedLink {
   // an element of an enclosing repeated field or map carries its index or key.
   string field_path = 1 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
-    string: {min_len: 1}
+    string: {min_len: 1, max_len: 1024}
   }];
   // Element index in a repeated link field; 0 for a singular one.
   int32 ordinal = 2 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
@@ -1003,10 +1003,11 @@ message ResolveLinkRequest {
   ai.protomolt.proto.repo.v1.NodeAddress address = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
   // Unset means current.
   RevisionSelector revision = 2;
-  // The link field's path, as ListLinks returns it.
+  // The link field's path, as ListLinks returns it. A stored path is at most
+  // 1024 UTF-8 bytes, so this bound addresses every link.
   string field_path = 3 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
-    string: {min_len: 1, max_len: 4000}
+    string: {min_len: 1, max_len: 1024}
   }];
   // The element index, as ListLinks returns it.
   int32 ordinal = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];
@@ -1054,7 +1055,7 @@ message Backlink {
   // Descriptor path of the link field.
   string field_path = 3 [(ai.protomolt.proto.validate.v1.field) = {
     required: true
-    string: {min_len: 1}
+    string: {min_len: 1, max_len: 1024}
   }];
   // Element index in a repeated link field; 0 for a singular one.
   int32 ordinal = 4 [(ai.protomolt.proto.validate.v1.field).int32.gte = 0];

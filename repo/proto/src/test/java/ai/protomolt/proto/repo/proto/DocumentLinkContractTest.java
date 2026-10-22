@@ -67,6 +67,8 @@ class DocumentLinkContractTest {
         check(resolve.clone().setPageSize(1001).build(), false);
         check(resolve.clone().setOrdinal(-1).build(), false);
         check(resolve.clone().clearFieldPath().build(), false);
+        check(resolve.clone().setFieldPath("p".repeat(1024)).build(), true);
+        check(resolve.clone().setFieldPath("p".repeat(1025)).build(), false);
         var backlinks = ListBacklinksRequest.newBuilder().setTarget(ADDRESS).setPageSize(10);
         check(backlinks.build(), true);
         check(backlinks.clone().setRelation("isPartOf").build(), true);

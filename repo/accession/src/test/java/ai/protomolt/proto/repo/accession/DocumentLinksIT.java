@@ -55,12 +55,16 @@ import org.junit.jupiter.api.Test;
  */
 class DocumentLinksIT {
     private static final String LINK = ".ai.protomolt.proto.repo.v2.DocumentLink";
+    /** A 260-character field name: four levels of it put a link path past the catalog's 1024-byte bound. */
+    private static final String LONG_NAME = "n".repeat(260);
     private static final FileDescriptor FILE = file();
     static final Descriptor CITATION = FILE.findMessageTypeByName("Citation");
     static final Descriptor SECTION = FILE.findMessageTypeByName("Section");
     static final Descriptor UNLINKED = FILE.findMessageTypeByName("Unlinked");
     static final String CITATION_URL = "type.googleapis.com/test.links.v1.Citation";
     static final String UNLINKED_URL = "type.googleapis.com/test.links.v1.Unlinked";
+    static final Descriptor DEEP = FILE.findMessageTypeByName("Deep0");
+    static final String DEEP_URL = "type.googleapis.com/test.links.v1.Deep0";
     private static final String CITATION_TYPE = "test.links.v1.Citation";
     private static final String ACCOUNT = "a";
 
@@ -197,7 +201,7 @@ class DocumentLinksIT {
                 var rejection = SemanticPartsIT.rejected(() -> saves.save(chunker, request), Status.Code.FAILED_PRECONDITION,
                         RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
                 assertThat(rejection.getMessage()).as(refused.getKey())
-                        .isEqualTo("The target of link structured_data.cites[0] is not found");
+                        .isEqualTo("The target of link structured_data.cites is not found");
                 assertThat(recorded(f, operation)).as(refused.getKey()).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
                 assertThat(f.catalog.current(address(ACCOUNT, operation))).isEmpty();
             }
@@ -238,7 +242,7 @@ class DocumentLinksIT {
                         address(ACCOUNT, operation), document(operation, citation(c ->
                                 c.setField(CITATION.findFieldByName("typed"), link(refused))), "reader"))),
                         Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE);
-                assertThat(rejection.getMessage()).startsWith("The target of link structured_data.typed[0] holds ");
+                assertThat(rejection.getMessage()).startsWith("The target of link structured_data.typed holds ");
                 assertThat(recorded(f, operation)).isEqualTo(RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE);
             }
             // Pinned to the revision that held a Citation: the current type is not substituted.
@@ -273,6 +277,59 @@ class DocumentLinksIT {
             var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("bad", address(ACCOUNT, "bad"), unlinked)),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
             assertThat(rejection.getMessage()).contains("test.links.v1.Unlinked.cites").contains("needs the link option");
+        }
+    }
+
+    @Test void aLinkThatDoesNotFitTheCatalogIsRefusedByName() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var target = address(ACCOUNT, "t");
+            saves.save(processAuthority(), save("t", target, document("t", citation(c -> {}), "reader")));
+            // structured_data plus four 260-character segments: 1059 bytes of names and dots.
+            Message leaf = DynamicMessage.newBuilder(FILE.findMessageTypeByName("Deep3"))
+                    .setField(FILE.findMessageTypeByName("Deep3").findFieldByName(LONG_NAME), link(fixed(target, null))).build();
+            for (var level : List.of("Deep2", "Deep1", "Deep0")) {
+                var type = FILE.findMessageTypeByName(level);
+                leaf = DynamicMessage.newBuilder(type).setField(type.findFieldByName(LONG_NAME), leaf).build();
+            }
+            var path = "structured_data." + String.join(".", java.util.Collections.nCopies(4, LONG_NAME));
+            assertThat(path.length()).isGreaterThan(1024);
+            var deep = document("deep", null, "reader").toBuilder().setStructuredData(Any.newBuilder().setTypeUrl(DEEP_URL)
+                    .setValue(leaf.toByteString())).build();
+            var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("deep", address(ACCOUNT, "deep"), deep)),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(rejection.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId,
+                    FieldViolation::getMessage).containsExactly(tuple(path, "link-catalog-storable", "field path exceeds 1024 bytes"));
+            assertThat(recorded(f, "deep")).isEqualTo(RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(f.catalog.current(address(ACCOUNT, "deep"))).isEmpty();
+            // Refused before any stack write: only the target's save wrote objects.
+            assertThat(f.stack.puts.get()).isEqualTo(1);
+
+            // A relation plus target call number past the backlink index bound is refused the same way.
+            var long_ = address(ACCOUNT, "x".repeat(2100));
+            var refused = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("wide", address(ACCOUNT, "wide"),
+                    document("wide", citation(c -> c.setField(CITATION.findFieldByName("cites"), link(fixed(long_, null)))), "reader"))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(refused.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId,
+                    FieldViolation::getMessage).containsExactly(tuple("structured_data.cites", "link-catalog-storable",
+                    "relation and target call number exceed 2048 bytes"));
+        }
+    }
+
+    @Test void aLinkPinnedToATombstoneRevisionIsNotFound() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var z = address(ACCOUNT, "z");
+            saves.save(processAuthority(), save("z-1", z, document("z", citation(c -> {}), "reader")));
+            new DocumentDeletes(f.catalog, Clock.systemUTC()).delete(processAuthority(), DeleteDocumentRequest.newBuilder()
+                    .setAddress(z).setExpected(at(1)).setOperationId("delete-z").build());
+            saves.save(processAuthority(), save("z-3", z, document("z", citation(c -> {}), "reader")).toBuilder()
+                    .setExpected(at(2)).build());
+            SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("pin-tombstone", address(ACCOUNT, "pin-tombstone"),
+                    document("pin-tombstone", citation(c -> c.setField(CITATION.findFieldByName("cites"), link(fixed(z, 2L)))), "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            saves.save(processAuthority(), save("pin-live", address(ACCOUNT, "pin-live"), document("pin-live", citation(c ->
+                    c.setField(CITATION.findFieldByName("cites"), link(fixed(z, 3L)))), "reader")));
         }
     }
 
@@ -337,7 +394,7 @@ class DocumentLinksIT {
                                     .build()))), "reader"))),
                     Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
             assertThat(refused.getViolationsList()).extracting(FieldViolation::getFieldPath, FieldViolation::getRuleId)
-                    .containsExactly(tuple("structured_data.sections[0].cites", "link-dynamic-filter-consistent"));
+                    .containsExactly(tuple("structured_data.sections[0].cites[0]", "link-dynamic-filter-consistent"));
             assertThat(recorded(f, "contradictory")).isEqualTo(RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
         }
     }
@@ -448,8 +505,10 @@ class DocumentLinksIT {
         var base = AccessionFixture.resolver();
         var citation = definition(CITATION, CITATION_URL);
         var unlinked = definition(UNLINKED, UNLINKED_URL);
+        var deep = definition(DEEP, DEEP_URL);
         return selection -> CITATION_URL.equals(selection.typeUrl()) ? citation
-                : UNLINKED_URL.equals(selection.typeUrl()) ? unlinked : base.select(selection);
+                : UNLINKED_URL.equals(selection.typeUrl()) ? unlinked
+                : DEEP_URL.equals(selection.typeUrl()) ? deep : base.select(selection);
     }
 
     private static DocumentSchemaAdmission.Definition definition(Descriptor type, String typeUrl) {
@@ -484,6 +543,11 @@ class DocumentLinksIT {
                         .addField(link("typed", 4, false, LinkField.newBuilder().setRelation("source").addTargetTypes(CITATION_TYPE)))
                         .addField(link("related", 5, false, LinkField.newBuilder().setRelation("related"))))
                 .addMessageType(DescriptorProto.newBuilder().setName("Unlinked").addField(message("cites", 1, LINK, false)))
+                .addMessageType(DescriptorProto.newBuilder().setName("Deep0").addField(message(LONG_NAME, 1, ".test.links.v1.Deep1", false)))
+                .addMessageType(DescriptorProto.newBuilder().setName("Deep1").addField(message(LONG_NAME, 1, ".test.links.v1.Deep2", false)))
+                .addMessageType(DescriptorProto.newBuilder().setName("Deep2").addField(message(LONG_NAME, 1, ".test.links.v1.Deep3", false)))
+                .addMessageType(DescriptorProto.newBuilder().setName("Deep3").addField(link(LONG_NAME, 1, false,
+                        LinkField.newBuilder().setRelation("references"))))
                 .build();
         try {
             return FileDescriptor.buildFrom(file, new FileDescriptor[]{LinksProto.getDescriptor()});
