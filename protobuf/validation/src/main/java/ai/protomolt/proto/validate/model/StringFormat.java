@@ -74,7 +74,10 @@ public enum StringFormat {
     IDENTIFIER("string.identifier",
             "value must be a bare identifier (a letter or underscore, then letters, digits,"
                     + " or underscores)",
-            Formats::isIdentifier);
+            Formats::isIdentifier),
+    LINK_RELATION("string.link_relation",
+            "value must be a Dublin Core or IANA registered link relation, or an absolute URI",
+            Formats::isLinkRelation);
 
     private final String ruleId;
     private final String defaultMessage;
