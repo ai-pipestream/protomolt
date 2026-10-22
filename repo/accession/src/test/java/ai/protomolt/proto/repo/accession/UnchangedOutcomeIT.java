@@ -122,9 +122,7 @@ class UnchangedOutcomeIT {
 
     private void assertPartStateChangeCommits(WriteAction action, String reason, PartState state) {
         var first = f.saves.save(processAuthority(), create("op-1", address, document()).build());
-        assertThat(first.getAccession().getManifest().getPartsList()).filteredOn(p ->
-                p.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).singleElement()
-                .satisfies(p -> assertThat(p.getState()).isEqualTo(PartState.PART_STATE_PRESENT));
+        assertThat(parsedState(first)).isEqualTo(PartState.PART_STATE_PRESENT);
         var coreOnly = document().toBuilder().clearBlobBag().clearParserResults().build();
 
         // Control: the identical CORE PUT on its own is unchanged, so only the PARSED write below differs.
@@ -134,16 +132,12 @@ class UnchangedOutcomeIT {
         assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(1);
 
         var request = again("op-2", 1, coreOnly).clearWrites().addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
-                .addWrites(PartWrite.newBuilder().setSelector(PartSelector.newBuilder()
-                        .setPart(DocumentPart.DOCUMENT_PART_PARSED)).setAction(action).setDeletedReason(reason))
-                .build();
+                .addWrites(parsed(action, reason)).build();
         var saved = f.saves.save(processAuthority(), request);
         assertThat(saved.getUnchanged()).as("deduplicated").isFalse();
         assertThat(saved.getReplayed()).isFalse();
         assertThat(saved.getAccession().getRevision()).isEqualTo(2);
-        assertThat(saved.getAccession().getManifest().getPartsList()).filteredOn(p ->
-                p.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED).singleElement()
-                .satisfies(p -> assertThat(p.getState()).isEqualTo(state));
+        assertThat(parsedState(saved)).isEqualTo(state);
         assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(2);
         assertThat(f.catalog.events(address)).hasSize(2);
         var recorded = outcome("op-2");
@@ -155,6 +149,58 @@ class UnchangedOutcomeIT {
         assertThat(retry.getUnchanged()).isFalse();
         assertThat(retry.getAccession().getRevision()).isEqualTo(2);
         assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(2);
+    }
+
+    /** A save whose only write is a PARSED DELETE commits revision 2. */
+    @Test void aDeleteOnlySaveCommitsARevision() {
+        f.saves.save(processAuthority(), create("op-1", address, document()).build());
+        var request = again("op-2", 1, document()).clearDocument().clearWrites()
+                .addWrites(parsed(WriteAction.WRITE_ACTION_DELETE, "obsolete")).build();
+        var saved = f.saves.save(processAuthority(), request);
+        assertThat(saved.getUnchanged()).as("deduplicated").isFalse();
+        assertThat(saved.getAccession().getRevision()).isEqualTo(2);
+        assertThat(parsedState(saved)).isEqualTo(PartState.PART_STATE_DELETED);
+        assertThat(outcome("op-2").hasUnchanged()).isFalse();
+        assertThat(f.catalog.current(address).orElseThrow().revision()).isEqualTo(2);
+    }
+
+    /**
+     * A PUT is unchanged only over a PRESENT part: putting the revision 1 PARSED
+     * content back over a part revision 2 deleted or emptied, with an equal CORE
+     * PUT, commits revision 3.
+     */
+    @Test void aPutOverADeletedPartCommitsARevision() {
+        assertPutOverRemovedPartCommits(WriteAction.WRITE_ACTION_DELETE, "obsolete");
+    }
+
+    @Test void aPutOverAnEmptyPartCommitsARevision() {
+        assertPutOverRemovedPartCommits(WriteAction.WRITE_ACTION_EMPTY, "");
+    }
+
+    private void assertPutOverRemovedPartCommits(WriteAction removal, String reason) {
+        f.saves.save(processAuthority(), create("op-1", address, document()).build());
+        f.saves.save(processAuthority(), again("op-2", 1, document()).clearDocument().clearWrites()
+                .addWrites(parsed(removal, reason)).build());
+        var restored = document().toBuilder().clearBlobBag().build();
+        var request = again("op-3", 2, restored).clearWrites().addWrites(put(DocumentPart.DOCUMENT_PART_CORE))
+                .addWrites(put(DocumentPart.DOCUMENT_PART_PARSED)).build();
+        var saved = f.saves.save(processAuthority(), request);
+        assertThat(saved.getUnchanged()).as("deduplicated").isFalse();
+        assertThat(saved.getAccession().getRevision()).isEqualTo(3);
+        assertThat(parsedState(saved)).isEqualTo(PartState.PART_STATE_PRESENT);
+        assertThat(outcome("op-3").hasUnchanged()).isFalse();
+        assertThat(f.catalog.events(address)).hasSize(3);
+    }
+
+    private static PartWrite parsed(WriteAction action, String reason) {
+        return PartWrite.newBuilder().setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_PARSED))
+                .setAction(action).setDeletedReason(reason).build();
+    }
+
+    private static PartState parsedState(SaveDocumentResponse saved) {
+        return saved.getAccession().getManifest().getPartsList().stream()
+                .filter(p -> p.getSelector().getPart() == DocumentPart.DOCUMENT_PART_PARSED)
+                .findFirst().orElseThrow().getState();
     }
 
     @Test void aStaleExpectedRevisionIsAbortedAndRecordsNothing() {
