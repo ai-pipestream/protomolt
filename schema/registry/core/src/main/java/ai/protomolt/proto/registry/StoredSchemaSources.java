@@ -84,12 +84,12 @@ public final class StoredSchemaSources {
         // Subjects that are import paths (the register-by-path convention) keep their true
         // path, so the served descriptor set carries importable file names; anything else
         // sanitizes to a flat name.
-        String name = subject.replaceAll("[^A-Za-z0-9._/-]", "_");
+        String name = sanitize(subject, true);
         while (name.startsWith("/")) {
             name = name.substring(1);
         }
         if (name.isBlank() || name.contains("..") || name.endsWith("/")) {
-            name = subject.replaceAll("[^A-Za-z0-9._-]", "_");
+            name = sanitize(subject, false);
         }
         if (!name.endsWith(".proto")) {
             name += ".proto";
@@ -98,5 +98,23 @@ public final class StoredSchemaSources {
             name = "_" + name;
         }
         return name;
+    }
+
+    /**
+     * Keeps {@code A-Z a-z 0-9 . _ -} (and {@code /} when {@code keepSlash}); every other
+     * code point becomes one underscore, so a supplementary character folds to a single
+     * {@code _}.
+     */
+    private static String sanitize(String subject, boolean keepSlash) {
+        StringBuilder out = new StringBuilder(subject.length());
+        subject.codePoints().forEach(cp -> {
+            if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= '0' && cp <= '9')
+                    || cp == '.' || cp == '_' || cp == '-' || (keepSlash && cp == '/')) {
+                out.appendCodePoint(cp);
+            } else {
+                out.append('_');
+            }
+        });
+        return out.toString();
     }
 }

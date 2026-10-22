@@ -248,8 +248,7 @@ public final class AuthoringPolicySeed {
     }
 
     private static void requireFixtureTarget(String target) {
-        if (target == null || target.length() > 512
-                || !target.matches("[A-Za-z0-9][A-Za-z0-9.-]*:[0-9]{1,5}")) {
+        if (target == null || target.length() > 512 || !isHostPortShape(target)) {
             throw new IllegalArgumentException("fixture target must be host:port");
         }
         int colon = target.lastIndexOf(':');
@@ -263,6 +262,40 @@ public final class AuthoringPolicySeed {
             // Reject malformed targets before publishing an intent.
         }
         throw new IllegalArgumentException("fixture target port is invalid");
+    }
+
+    /**
+     * The target shape: a host of {@code A-Z a-z 0-9 . -} starting with an alphanumeric,
+     * then one colon, then one to five ASCII digits.
+     */
+    static boolean isHostPortShape(String target) {
+        int colon = target.indexOf(':');
+        if (colon < 1) {
+            return false;
+        }
+        char first = target.charAt(0);
+        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+                || (first >= '0' && first <= '9'))) {
+            return false;
+        }
+        for (int i = 1; i < colon; i++) {
+            char c = target.charAt(i);
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '.' || c == '-')) {
+                return false;
+            }
+        }
+        int digits = target.length() - colon - 1;
+        if (digits < 1 || digits > 5) {
+            return false;
+        }
+        for (int i = colon + 1; i < target.length(); i++) {
+            char c = target.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void validate(Message message) {

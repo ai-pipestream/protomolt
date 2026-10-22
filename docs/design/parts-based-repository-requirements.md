@@ -215,9 +215,15 @@ reserve operation IDs. Schema-registry failures remain separate from grant looku
     (`StoredPartEntry.blob_refs`, table `catalog_blob_refs`).
   - The server fills `Blob.storage_ref` from that binding. A client can't supply or invent a
     physical storage reference, and a client-supplied `storage_ref` is refused.
+  - On read the server also fills `Blob.size_bytes`, `Blob.checksum` and
+    `checksum_type = SHA256` from the binding, and `Blob.written` with the revision, commit
+    time and step provenance of the write that bound it. A declared size or SHA-256 that
+    disagrees with the bound object is refused on save, as is a client-supplied `written`.
   - A client can still reuse authorized existing content without re-uploading it, through
-    the supported mechanisms: upload, a `PartSource` source, or carry-forward of an unchanged
-    part. The server resolves and verifies each such reference.
+    the supported mechanisms: upload, a `PartSource` source, carry-forward of an unchanged
+    part, or blob-level carry-forward: a blob in a BLOBS PUT with no `data` and no
+    `storage_ref` that names a blob of the expected revision keeps that blob's binding and
+    its `written` stamp. The server resolves and verifies each such reference.
   - **Digest-based PUT reuse.** For `WRITE_ACTION_PUT`, the server reuses identical
     `(SHA-256, length)` bytes from the same document's authorized base revision in the
     selected stack, or from an object newly written by this save in that stack. This

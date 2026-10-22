@@ -309,11 +309,23 @@ public final class OkfRenderer {
 
     static String yaml(String value) {
         // A plain scalar is safe without quotes; "key: value"-looking content is not.
-        if (value.matches("[A-Za-z0-9 ._:/-]*") && !value.isBlank()
+        if (isPlainScalar(value) && !value.isBlank()
                 && !value.contains(": ") && !value.startsWith(" ") && !value.endsWith(" ")) {
             return value;
         }
         return '"' + value.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+    }
+
+    /** Every char is one of {@code A-Z a-z 0-9} space {@code . _ : / -}; empty passes. */
+    private static boolean isPlainScalar(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == ' ' || c == '.' || c == '_' || c == ':' || c == '/' || c == '-')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static String firstSentence(String text) {
@@ -331,9 +343,9 @@ public final class OkfRenderer {
         return description.isBlank() ? "Registry subject." : description;
     }
 
-    private static String frontmatterField(String doc, String key) {
+    static String frontmatterField(String doc, String key) {
         boolean inFrontmatter = false;
-        for (String line : doc.split("\n")) {
+        for (String line : splitOnNewline(doc)) {
             if (line.equals("---")) {
                 if (inFrontmatter) {
                     break; // the block ended without the key
@@ -351,6 +363,30 @@ public final class OkfRenderer {
             }
         }
         return "";
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code '\n'} without regex: an empty input
+     * is one empty line, a {@code '\r'} stays on its line, trailing empty lines are dropped,
+     * leading and interior empty lines are kept.
+     */
+    private static List<String> splitOnNewline(String doc) {
+        if (doc.isEmpty()) {
+            return List.of("");
+        }
+        List<String> lines = new ArrayList<>();
+        int start = 0;
+        int newline;
+        while ((newline = doc.indexOf('\n', start)) >= 0) {
+            lines.add(doc.substring(start, newline));
+            start = newline + 1;
+        }
+        lines.add(doc.substring(start));
+        int end = lines.size();
+        while (end > 0 && lines.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return lines.subList(0, end);
     }
 
     /** The renderable types and services, in file order, internal option carriers excluded. */

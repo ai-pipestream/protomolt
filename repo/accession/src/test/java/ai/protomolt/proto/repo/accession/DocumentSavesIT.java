@@ -218,7 +218,9 @@ class DocumentSavesIT {
             var stored = restarted.catalog.manifest(address, 1).orElseThrow();
             assertThat(read.getDocument()).isEqualTo(claimChecked(document, stored));
             assertThat(restarted.blobBytes(stored, "b1")).isEqualTo(document.getBlobBag().getBlob().getData().toByteArray());
-            assertThat(read.getDocument().getBlobBag().getBlob().getSizeBytes()).isEqualTo(Long.MAX_VALUE - 7);
+            // A blob's size is the server's measurement of its bytes; the int64 extreme rides in structured_data.
+            assertThat(read.getDocument().getBlobBag().getBlob().getSizeBytes())
+                    .isEqualTo(document.getBlobBag().getBlob().getData().size());
             assertThat(read.getDocument().getStructuredData().unpack(com.google.protobuf.Int64Value.class).getValue())
                     .isEqualTo(Long.MAX_VALUE);
             assertThat(read.getValidation().getResolvedOccurrencesList()).singleElement()

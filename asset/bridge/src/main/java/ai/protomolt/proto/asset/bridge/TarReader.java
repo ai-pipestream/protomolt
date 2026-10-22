@@ -220,8 +220,14 @@ final class TarReader implements AutoCloseable {
     }
 
     /** pax records are "&lt;length&gt; &lt;key&gt;=&lt;value&gt;\n"; only path matters here. */
-    private static String paxPath(String records) {
-        for (String line : records.split("\n")) {
+    static String paxPath(String records) {
+        int from = 0;
+        while (from <= records.length()) {
+            int newline = records.indexOf('\n', from);
+            String line = newline < 0 ? records.substring(from) : records.substring(from, newline);
+            // Advance before any skip below: every iteration moves to the next
+            // line (or the end), so an empty or malformed line cannot spin.
+            from = newline < 0 ? records.length() + 1 : newline + 1;
             int space = line.indexOf(' ');
             int equals = line.indexOf('=');
             if (space < 0 || equals < space) {

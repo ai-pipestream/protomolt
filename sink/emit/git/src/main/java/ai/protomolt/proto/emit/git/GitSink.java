@@ -106,11 +106,35 @@ public final class GitSink implements BundleSink {
         while (cleaned.endsWith("/")) {
             cleaned = cleaned.substring(0, cleaned.length() - 1);
         }
-        for (String segment : cleaned.isEmpty() ? new String[0] : cleaned.split("/")) {
+        for (String segment : cleaned.isEmpty() ? List.<String>of() : splitOnSlash(cleaned)) {
             if (segment.isBlank() || segment.equals(".") || segment.equals("..")) {
                 throw new IllegalArgumentException("Invalid prefix segment: " + prefix);
             }
         }
         return cleaned;
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code '/'} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    private static List<String> splitOnSlash(String path) {
+        if (path.isEmpty()) {
+            return List.of("");
+        }
+        List<String> segments = new ArrayList<>();
+        int start = 0;
+        int slash;
+        while ((slash = path.indexOf('/', start)) >= 0) {
+            segments.add(path.substring(start, slash));
+            start = slash + 1;
+        }
+        segments.add(path.substring(start));
+        int end = segments.size();
+        while (end > 0 && segments.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return segments.subList(0, end);
     }
 }

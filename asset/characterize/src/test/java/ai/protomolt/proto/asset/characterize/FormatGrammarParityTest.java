@@ -8,12 +8,11 @@ import com.google.protobuf.Descriptors.FieldDescriptor;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The grammar parity pin: {@link FormatGrammars}' compiled patterns are
+ * The grammar parity pin: {@link FormatGrammars}' carried expressions are
  * byte-for-byte the expressions the contract declares on each format
  * message's {@code filename} field. Read from the ACTUAL descriptor
  * annotations, so the identifier and the validator cannot drift apart —
@@ -21,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FormatGrammarParityTest {
 
-    private static final Map<FormatFact.FormatCase, Pattern> GRAMMARS = Map.ofEntries(
+    private static final Map<FormatFact.FormatCase, FormatGrammar> GRAMMARS = Map.ofEntries(
             Map.entry(FormatFact.FormatCase.TAR, FormatGrammars.TAR),
             Map.entry(FormatFact.FormatCase.ZIP, FormatGrammars.ZIP),
             Map.entry(FormatFact.FormatCase.GZIP, FormatGrammars.GZIP),
@@ -47,15 +46,15 @@ class FormatGrammarParityTest {
         for (FieldDescriptor arm : union.getOneofs().get(0).getFields()) {
             FormatFact.FormatCase formatCase =
                     FormatFact.FormatCase.forNumber(arm.getNumber());
-            Pattern grammar = GRAMMARS.get(formatCase);
-            assertThat(grammar).as("no compiled grammar for arm " + arm.getName()).isNotNull();
+            FormatGrammar grammar = GRAMMARS.get(formatCase);
+            assertThat(grammar).as("no grammar for arm " + arm.getName()).isNotNull();
 
             FieldDescriptor filename = arm.getMessageType().findFieldByName("filename");
             assertThat(filename).as(arm.getName() + " has no filename field").isNotNull();
             FieldRules rules = filename.getOptions().getExtension(ValidateProto.field);
             assertThat(rules.getString().getPattern())
-                    .as(arm.getName() + "'s contract pattern vs the compiled grammar")
-                    .isEqualTo(grammar.pattern());
+                    .as(arm.getName() + "'s contract pattern vs the carried expression")
+                    .isEqualTo(grammar.expression());
         }
         assertThat(union.getOneofs().get(0).getFields())
                 .as("every arm accounted for")
