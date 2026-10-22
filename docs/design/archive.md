@@ -680,6 +680,17 @@ settle copy are retired.
   - A different or missing digest, on any arm: `ALREADY_EXISTS` naming
     `operation_id`. A rejection is replayed only to the request that caused
     it.
+  - A derived (blank) `operation_id` with `expected_version = 0` whose
+    recorded committed or unchanged revision is no longer the entry's current
+    revision: `FAILED_PRECONDITION` naming the recorded version and the
+    current one (or "a deletion at version N" when the entry was deleted),
+    and telling the caller to send `expected_version` equal to the current
+    version, or a new `operation_id`, to write the content again. A derived ID
+    cannot tell a retry from a repeat of the same write, so a success-shaped
+    replay would hide that the content is not current, and saving again would
+    overwrite the intervening writer. A recorded revision that is still
+    current replays as above. Caller-supplied IDs and nonzero
+    `expected_version` always replay as above.
   Content dedup against the current revision is not an outcome lookup and
   never stands in for one.
 - **Last write wins** (`expected_version = 0`) runs only when no outcome is
@@ -706,14 +717,20 @@ settle copy are retired.
   own and never answers `deduplicated` without a recorded outcome, so a lost
   `deduplicated` response is recovered by the outcome lookup like any other.
 - **Pinned cases.** The implementation tests each of these for both a derived
-  and a caller-supplied `operation_id`:
+  and a caller-supplied `operation_id` unless a case names one:
   - writer A saves revision 1 with `expected_version = 0` and loses its
     response, writer B saves different content at revision 2, and A's retry
-    replays revision 1 (`replayed = true`) and leaves revision 2 current;
+    leaves revision 2 current: with a supplied ID it replays revision 1
+    (`replayed = true`); with a derived ID it is `FAILED_PRECONDITION` naming
+    versions 1 and 2, and a further attempt with `expected_version = 2` writes
+    A again as revision 3;
   - A's request matches revision 1 and deduplicates (`deduplicated = true`,
     no new revision), the response is lost, B saves revision 2, and A's retry
-    replays the deduplicated outcome at revision 1 and leaves revision 2
-    current;
+    leaves revision 2 current: with a supplied ID it replays the deduplicated
+    outcome at revision 1; with a derived ID it is `FAILED_PRECONDITION` as
+    above;
+  - with a derived ID, B deletes the entry instead of saving, and A's retry
+    is `FAILED_PRECONDITION` naming the deletion's version;
   - a request rejected by v2 validation, retried unchanged, replays the
     rejection;
   - the same retries with no intervening writer;
@@ -750,6 +767,14 @@ message UploadRenditionHeader {
       ignore_if_zero: true
     }
   ];
+  // Optimistic concurrency, as on PutEntryRequest: when non-zero, the upload
+  // succeeds only if the entry's current version equals this value; zero is
+  // last write wins.
+  int64 expected_version = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
+    }
+  ];
 }
 
 // PutEntryResponse and UploadRenditionResponse gain:
@@ -783,7 +808,8 @@ message ArchiveOperationKey {
   the request with `operation_id` and `expected_version` cleared, renditions
   sorted by `(name, sub_key)` and metadata sorted by unsigned UTF-8 key (§7
   canonicalization). For `UploadRendition` it is the same digest of the header
-  with `expected_sha256` kept, since the header frame must carry the operation
+  with `operation_id` and `expected_version` cleared (the key holds
+  `expected_version`) and `expected_sha256` kept, since the header frame must carry the operation
   ID before any byte arrives. A blank `operation_id` with a blank
   `expected_sha256` is `INVALID_ARGUMENT` naming both fields: without either,
   the content is unknown when the ID is needed, and a random ID is never the
