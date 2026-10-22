@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.proto;
 
 import ai.protomolt.proto.repo.semantic.v1.*;
+import ai.protomolt.proto.repo.v1.BlobWrite;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
@@ -162,9 +163,11 @@ class RepositoryV2ContractTest {
     @Test void accessionsRequireAuthorityAndTombstonesMakeNoValidationClaim() throws Exception {
         var accession = Accession.newBuilder().setAddress(ADDRESS).setRevision(1)
                 .setCommittedAt(Timestamp.newBuilder().setSeconds(1))
-                .setManifest(DocumentManifest.newBuilder().setAddress(ADDRESS).setRevision(1))
+                .setManifest(DocumentManifest.newBuilder().setAddress(ADDRESS).setRevision(1)
+                        .setCommittedAt(Timestamp.newBuilder().setSeconds(1)))
                 .setValidation(validation()).setOwner(intakeOwner());
         check(accession.build(), true);
+        check(accession.getManifest().toBuilder().clearCommittedAt().build(), false);
         check(accession.clone().clearOwner().build(), false);
         check(accession.clone().setValidation(validation().clearProcessAuthority()).build(), false);
         var tombstoneValidation = RevisionValidation.newBuilder().setStatus(ValidationStatus.VALIDATION_STATUS_NOT_APPLICABLE)
@@ -240,6 +243,17 @@ class RepositoryV2ContractTest {
         check(stored.build(), true);
         check(stored.clone().clearOwnership().build(), false);
         check(stored.clone().clearOwner().build(), false);
+
+        // A raw blob binding records the write that bound it; the stamp is not optional.
+        var binding = BlobObjectRef.newBuilder().setBlobId("b1")
+                .setRef(StackRef.newBuilder().setStackId("s1").setKey("b").setSha256(SHA).setLength(3))
+                .setWritten(BlobWrite.newBuilder().setRevision(1).setCommittedAt(Timestamp.newBuilder().setSeconds(1)));
+        check(binding.build(), true);
+        check(binding.clone().setWritten(binding.getWritten().toBuilder()
+                .setStep(WriteProvenance.newBuilder().setModuleId("parser"))).build(), true);
+        check(binding.clone().clearWritten().build(), false);
+        check(binding.clone().setWritten(binding.getWritten().toBuilder().setRevision(0)).build(), false);
+        check(binding.clone().setWritten(binding.getWritten().toBuilder().clearCommittedAt()).build(), false);
     }
 
     @Test void outcomesAndErrorsAreExplicit() throws Exception {

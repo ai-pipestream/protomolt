@@ -241,6 +241,8 @@ message DocumentManifest {
   bool tombstone = 3;
   // Every part of the revision, in codec order.
   repeated PartManifestEntry parts = 4;
+  // When the accession's commit transaction ran.
+  google.protobuf.Timestamp committed_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // The overall verdict recorded on a revision.
