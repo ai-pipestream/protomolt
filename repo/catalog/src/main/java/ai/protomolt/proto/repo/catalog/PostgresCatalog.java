@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -562,6 +563,53 @@ public final class PostgresCatalog implements Catalog {
             }
             return new Recorded(selectOutcome(connection, accountId, operationId)
                     .orElseThrow(() -> new IllegalStateException("Recorded rejection is not readable")));
+        });
+    }
+
+    @Override public CommitResult recordUnchanged(NodeAddress address, String operationId, String intentSha256,
+            long expectedRevision, RecordedOutcome outcome, List<String> grantIds, Optional<CredentialCheck> credential) {
+        if (!outcome.hasUnchanged() || outcome.getUnchanged().getRevision() != expectedRevision
+                || !outcome.getUnchanged().getAddress().equals(address))
+            throw new IllegalArgumentException("An unchanged outcome names the expected revision of its own address");
+        // Unsigned UTF-8 order, as commit locks them.
+        var grants = grantIds.stream().map(Objects::requireNonNull).distinct().sorted(CatalogRecords::compareUtf8).toList();
+        var account = address.getAccountId();
+        return inTransaction("Unchanged outcome record", connection -> {
+            var existing = selectOutcome(connection, account, operationId);
+            if (existing.isPresent()) return new Recorded(existing.get());
+            var denied = recheckAuthority(connection, grants, credential);
+            if (denied.isPresent()) return denied.get();
+            long documentId;
+            // A share lock: a concurrent commit moving the pointer waits for this record.
+            try (var select = connection.prepareStatement("""
+                    SELECT document_id, current_revision, tombstone, purged FROM catalog_documents
+                    WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ? FOR SHARE""")) {
+                bindAddress(select, 1, address);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) return new Conflict(0, false);
+                    if (rows.getBoolean(4)) return new CatalogRecords.TargetPurged();
+                    if (rows.getLong(2) != expectedRevision || rows.getBoolean(3))
+                        return new Conflict(rows.getLong(2), rows.getBoolean(3));
+                    documentId = rows.getLong(1);
+                }
+            }
+            int inserted;
+            try (var insert = connection.prepareStatement("""
+                    INSERT INTO catalog_operation_outcomes (account_id, operation_id, intent_sha256, document_id, revision,
+                        outcome, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""")) {
+                insert.setString(1, account);
+                insert.setString(2, operationId);
+                insert.setString(3, intentSha256);
+                insert.setLong(4, documentId);
+                insert.setLong(5, expectedRevision);
+                insert.setBytes(6, outcome.toByteArray());
+                insert.setTimestamp(7, toTimestamp(outcome.getRecordedAt()));
+                inserted = insert.executeUpdate();
+            }
+            if (inserted == 0)
+                return new Recorded(selectOutcome(connection, account, operationId)
+                        .orElseThrow(() -> new IllegalStateException("Concurrently recorded outcome is not readable")));
+            return new CatalogRecords.Committed();
         });
     }
 

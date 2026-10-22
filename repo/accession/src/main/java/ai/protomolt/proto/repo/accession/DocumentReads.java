@@ -379,7 +379,8 @@ public final class DocumentReads {
             if (recorded.isEmpty())
                 return GetOperationOutcomeResponse.newBuilder().setNone(NoRecordedOutcome.getDefaultInstance()).build();
             var outcome = recorded.get().outcome();
-            if (outcome.hasAccession()) current(caller, outcome.getAccession().getAddress());
+            if (outcome.hasAccession() || outcome.hasUnchanged())
+                current(caller, DocumentSaves.recordedAccession(outcome).getAddress());
             else if (outcome.hasRejection()) RejectionAccess.require(catalog, caller, recorded.get());
             return GetOperationOutcomeResponse.newBuilder().setCommitted(outcome).build();
         });

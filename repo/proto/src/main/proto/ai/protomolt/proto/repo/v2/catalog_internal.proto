@@ -294,6 +294,9 @@ message SaveIntent {
   string operation_kind = 11 [(ai.protomolt.proto.validate.v1.field).string.const = "save"];
   // Exact source lineage.
   repeated SourceRevision derived_from = 12;
+  // The request's unchanged policy; unset for UNCHANGED_POLICY_UNSPECIFIED, so
+  // intents recorded before the field existed keep their encoding.
+  UnchangedPolicy unchanged = 13;
 }
 
 // One part of a composed candidate, for RevisionValidation.candidate_sha256.

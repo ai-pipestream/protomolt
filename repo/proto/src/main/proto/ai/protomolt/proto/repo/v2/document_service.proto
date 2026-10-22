@@ -234,9 +234,25 @@ message SaveDocumentRequest {
   // in the saving document's account, and the caller must be able to read its
   // document's current revision, or the save is rejected with SOURCE_NOT_FOUND.
   repeated SourceRevision derived_from = 11;
+  // What a save that changes nothing does. Part of the retry identity.
+  UnchangedPolicy unchanged = 12 [(ai.protomolt.proto.validate.v1.field).enum.defined_only = true];
   // Persisted request metadata; part of the retry identity. Transport tracing
   // belongs in request context, not here.
   map<string, string> metadata = 99;
+}
+
+// What a save whose candidate equals its expected revision does.
+enum UnchangedPolicy {
+  // A new revision for every PUT, equal or not.
+  UNCHANGED_POLICY_UNSPECIFIED = 0;
+  // When every PUT's stored fragment SHA-256 and length equal the expected
+  // revision's part entry, every raw blob binds the expected revision's
+  // object, and the save names no PartSource, derived_from or opaque
+  // attestation, the commit records only the operation outcome: the expected
+  // revision's Accession as RecordedOutcome.unchanged. No revision, no outbox
+  // event, no pointer move. Authorization, the in-transaction authority
+  // recheck and the expected-revision check run as for any save.
+  UNCHANGED_POLICY_RECORD_OUTCOME = 1;
 }
 
 // A committed save.
@@ -256,6 +272,9 @@ message SaveDocumentResponse {
   // The recorded outcome was returned for a retry, including the concurrent
   // same-ID case.
   bool replayed = 3;
+  // The save changed nothing under UNCHANGED_POLICY_RECORD_OUTCOME: accession
+  // is the expected revision's, and only the outcome was recorded.
+  bool unchanged = 4;
 }
 
 // One item of a bulk save.
@@ -440,8 +459,8 @@ message GetOperationOutcomeRequest {
 message RecordedOutcome {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "recorded-outcome-required"
-    message: "a recorded outcome is an accession or a rejection"
-    expression: "has(this.accession) || has(this.rejection)"
+    message: "a recorded outcome is an accession, an unchanged save or a rejection"
+    expression: "has(this.accession) || has(this.unchanged) || has(this.rejection)"
   };
   // Exactly one result.
   oneof result {
@@ -449,9 +468,16 @@ message RecordedOutcome {
     Accession accession = 1;
     // Committed failure, such as a validation rejection.
     SaveRejection rejection = 2;
+    // A save under UNCHANGED_POLICY_RECORD_OUTCOME that changed nothing: the
+    // accession of the expected revision it matched. No revision was added.
+    Accession unchanged = 5;
   }
   // When it was recorded.
   google.protobuf.Timestamp recorded_at = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The persisted request metadata of the save that recorded this outcome, on
+  // every arm. A rejection has no revision to read it from, so this is where a
+  // recorded rejection keeps its request intent.
+  map<string, string> request_metadata = 4;
 }
 
 // No outcome is recorded. This does not mean the request failed: an
