@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
@@ -36,9 +35,6 @@ import org.apache.iceberg.mapping.NameMappingParser;
  * the evidence.
  */
 public final class IcebergRollupSink implements RollupSink {
-
-    /** What a member name must look like to become a rollup column. */
-    private static final Pattern COLUMN = Pattern.compile("[a-z_][a-z0-9_]{0,199}");
 
     private final Catalog catalog;
     private final String namespace;
@@ -169,12 +165,33 @@ public final class IcebergRollupSink implements RollupSink {
 
     private static FieldDescriptorProto.Builder column(
             String member, int number, FieldDescriptorProto.Type type) {
-        if (!COLUMN.matcher(member).matches()) {
+        if (!isColumnName(member)) {
             throw new IllegalArgumentException("member '" + member + "' cannot become a"
                     + " rollup column: names are lower_snake identifiers");
         }
         return FieldDescriptorProto.newBuilder()
                 .setName(member).setNumber(number).setType(type)
                 .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL);
+    }
+
+    /**
+     * What a member name must look like to become a rollup column: one of {@code a-z _}
+     * then up to 199 of {@code a-z 0-9 _}.
+     */
+    private static boolean isColumnName(String member) {
+        if (member.isEmpty() || member.length() > 200) {
+            return false;
+        }
+        char first = member.charAt(0);
+        if (!((first >= 'a' && first <= 'z') || first == '_')) {
+            return false;
+        }
+        for (int i = 1; i < member.length(); i++) {
+            char c = member.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+                return false;
+            }
+        }
+        return true;
     }
 }

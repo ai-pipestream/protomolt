@@ -50,9 +50,23 @@ public final class SchemaRegistryStores {
     }
 
     private static String requireId(String id) {
-        if (id == null || !id.matches("[a-z][a-z0-9-]*")) {
+        if (id == null || !isProviderId(id)) {
             throw new IllegalArgumentException("Invalid registry storage provider ID: " + id);
         }
         return id;
+    }
+
+    /** One {@code a-z} then any run of {@code a-z 0-9 -}. */
+    private static boolean isProviderId(String id) {
+        if (id.isEmpty() || id.charAt(0) < 'a' || id.charAt(0) > 'z') {
+            return false;
+        }
+        for (int i = 1; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+                return false;
+            }
+        }
+        return true;
     }
 }

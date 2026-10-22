@@ -73,7 +73,7 @@ public final class OkfRegistryBundles {
         StringBuilder doc = new StringBuilder();
         String resource = options.registryUrl() == null || options.registryUrl().isBlank()
                 ? null
-                : options.registryUrl().replaceAll("/+$", "") + "/subjects/"
+                : stripTrailingSlashRun(options.registryUrl()) + "/subjects/"
                         + URLEncoder.encode(subject, StandardCharsets.UTF_8)
                         + "/versions/latest";
         OkfRenderer.frontmatter(doc, "Registry Subject", subject,
@@ -177,5 +177,27 @@ public final class OkfRegistryBundles {
                     ? c : '_');
         }
         return out.toString();
+    }
+
+    /**
+     * Removes a trailing run of slashes, where "trailing" also means just before a final
+     * line terminator, the way the former {@code replaceAll("/+$", "")} matched.
+     */
+    static String stripTrailingSlashRun(String url) {
+        int cut = url.length();
+        if (cut >= 2 && url.charAt(cut - 2) == '\r' && url.charAt(cut - 1) == '\n') {
+            cut -= 2;
+        } else if (cut >= 1 && isLineTerminator(url.charAt(cut - 1))) {
+            cut -= 1;
+        }
+        int start = cut;
+        while (start > 0 && url.charAt(start - 1) == '/') {
+            start--;
+        }
+        return start == cut ? url : url.substring(0, start) + url.substring(cut);
+    }
+
+    private static boolean isLineTerminator(char c) {
+        return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
     }
 }
