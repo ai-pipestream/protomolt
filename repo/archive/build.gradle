@@ -1,0 +1,30 @@
+description = 'The archive over v2 documents: ArchiveService reads projected from DocumentService reads, and archive writes translated into one DocumentService save'
+
+dependencies {
+    // The archive view messages and the DocumentService client they read through.
+    api project(':protomolt-repo-proto')
+    // Projections compile the view .proto's (sources) and (from) options.
+    implementation project(':protomolt-projection')
+    // Every projected view is checked against its own validate.v1 rules.
+    implementation project(':protomolt-protobuf-validation')
+    // The content digest is the deterministic protobuf encoding.
+    implementation project(':protomolt-descriptors')
+    implementation libs.grpc.api
+    implementation libs.grpc.stub
+    implementation libs.grpc.protobuf
+
+    // The suites run the translator against a real DocumentService over
+    // PostgreSQL and LocalStack S3.
+    testImplementation testFixtures(project(':protomolt-repo-accession'))
+    testImplementation project(':protomolt-repo-accession')
+    testImplementation project(':protomolt-repo-admission')
+    testImplementation libs.grpc.inprocess
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.localstack
+    testImplementation libs.testcontainers.junit.jupiter
+    testRuntimeOnly libs.slf4j.simple
+}
+
+ext.forbiddenRuntimeModules = ['protomolt-repo-container', 'protomolt-repo-engine', 'protomolt-repo-service',
+        'protomolt-repo-accession', 'protomolt-repo-catalog', 'hibernate-core', 'jedis', 'kafka-clients']
+apply from: rootProject.file('gradle/runtime-boundaries.gradle')

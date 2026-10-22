@@ -589,3 +589,5 @@ include 'protomolt-repo-accession'
 project(':protomolt-repo-accession').projectDir = file('repo/accession')
 include 'protomolt-repo-fixtures'
 project(':protomolt-repo-fixtures').projectDir = file('repo/fixtures')
+include 'protomolt-repo-archive'
+project(':protomolt-repo-archive').projectDir = file('repo/archive')
