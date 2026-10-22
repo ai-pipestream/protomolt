@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.archive;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import ai.protomolt.proto.asset.v1.ClassificationState;
 import ai.protomolt.proto.asset.v1.ObjectStoreOrigin;
@@ -40,7 +41,9 @@ import ai.protomolt.proto.repo.v1.ParserResult;
 import ai.protomolt.proto.repo.v1.SearchMetadata;
 import ai.protomolt.proto.repo.v2.DocumentServiceGrpc;
 import ai.protomolt.proto.repo.v2.GetDocumentRequest;
+import ai.protomolt.proto.repo.v2.GetOperationOutcomeRequest;
 import ai.protomolt.proto.repo.v2.ListRevisionsRequest;
+import ai.protomolt.proto.repo.v2.SaveRejection;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import io.grpc.ManagedChannel;
@@ -49,6 +52,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -362,6 +366,11 @@ class DocumentArchiveIT {
         PutEntryResponse again = archive.putEntry(firstPut(address).setOperationId("dedupe-2-" + address.getEntryId()).build());
         assertThat(again.getDeduplicated()).isTrue();
         assertThat(again.getReplayed()).isFalse();
+        // The deduplicated answer is a recorded v2 outcome bound to revision 1.
+        var recorded = documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
+                .setAccountId(ACCOUNT).setOperationId(again.getOperationId()).build()).getCommitted();
+        assertThat(recorded.getUnchanged().getRevision()).isEqualTo(1);
+        assertThat(recorded.getRequestMetadataMap()).containsKey(DocumentArchive.CONTENT_SHA256_METADATA);
         assertThat(again.getVersion()).isEqualTo(first.getVersion());
         assertThat(again.getManifest()).isEqualTo(first.getManifest());
         assertThat(revisions(address)).isEqualTo(1);
@@ -398,6 +407,46 @@ class DocumentArchiveIT {
             assertThat(revisions(address)).isEqualTo(2);
             assertThat(archive.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(address).build())
                     .getInfo().getTitle()).isEqualTo("Writer B");
+        }
+    }
+
+    /**
+     * Codex #15035: writer A's put matches revision 1 and is deduplicated; its
+     * response is lost; writer B lands revision 2; A's retry must answer
+     * revision 1 with replayed set and leave revision 2 current, never save A's
+     * content again as revision 3. Pinned for a derived and a supplied ID.
+     */
+    @Test
+    void aDeduplicatedPutRetriedAfterAnotherWriterReplaysItsRevision() {
+        for (boolean supplied : new boolean[] {false, true}) {
+            EntryAddress address = entry(RETAINED);
+            archive.putEntry(firstPut(address).setOperationId("first-writer-" + address.getEntryId()).build());
+            PutEntryRequest a = supplied
+                    ? firstPut(address).setOperationId("writer-a-" + address.getEntryId()).build()
+                    : firstPut(address).build();
+            PutEntryResponse deduplicated = archive.putEntry(a);
+            assertThat(deduplicated.getDeduplicated()).isTrue();
+            assertThat(deduplicated.getVersion()).isEqualTo(1);
+
+            PutEntryResponse b = archive.putEntry(PutEntryRequest.newBuilder().setAddress(address)
+                    .setTitle("Writer B").build());
+            assertThat(b.getVersion()).isEqualTo(2);
+
+            PutEntryResponse retry = archive.putEntry(a);
+            assertThat(retry.getReplayed()).isTrue();
+            assertThat(retry.getDeduplicated()).isTrue();
+            assertThat(retry.getVersion()).isEqualTo(1);
+            assertThat(retry.getOperationId()).isEqualTo(deduplicated.getOperationId());
+            assertThat(retry.getManifest()).isEqualTo(deduplicated.getManifest());
+            assertThat(revisions(address)).isEqualTo(2);
+            assertThat(archive.getEntryManifest(GetEntryManifestRequest.newBuilder().setAddress(address).build())
+                    .getInfo().getTitle()).isEqualTo("Writer B");
+            if (supplied) {
+                // The unchanged outcome binds the supplied ID to A's content.
+                PutEntryRequest reuse = a.toBuilder().setTitle("Writer A again").build();
+                assertThat(code(() -> archive.putEntry(reuse))).isEqualTo(Status.Code.ALREADY_EXISTS);
+                assertThat(revisions(address)).isEqualTo(2);
+            }
         }
     }
 
@@ -635,6 +684,48 @@ class DocumentArchiveIT {
         assertThat(retry.getVersion()).isEqualTo(2);
         assertThat(retry.getOperationId()).isEqualTo(uploaded.getOperationId());
         assertThat(revisions(address)).isEqualTo(2);
+    }
+
+    /**
+     * Codex #15035: a recorded rejection is returned only to a retry of the same
+     * archive request. Reusing the supplied operation ID with other content is
+     * ALREADY_EXISTS, not the earlier rejection.
+     */
+    @Test
+    void aRecordedRejectionIsReplayedOnlyForTheSameContent() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        ByteString bytes = randomBytes(5_000, 13);
+        UploadRenditionHeader mismatched = UploadRenditionHeader.newBuilder()
+                .setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder().setName("original").setMediaType("application/pdf"))
+                .setSizeBytes(bytes.size())
+                .setExpectedSha256("0".repeat(64))
+                .setOperationId("rejected-" + address.getEntryId())
+                .build();
+        StatusRuntimeException first = catchThrowableOfType(StatusRuntimeException.class,
+                () -> upload(mismatched, bytes, 1024));
+        assertThat(first.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
+                .setAccountId(ACCOUNT).setOperationId(mismatched.getOperationId()).build())
+                .getCommitted().hasRejection()).isTrue();
+
+        StatusRuntimeException retry = catchThrowableOfType(StatusRuntimeException.class,
+                () -> upload(mismatched, bytes, 1024));
+        assertThat(retry.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(StatusProto.fromThrowable(retry).getDetailsList())
+                .anySatisfy(detail -> assertThat(detail.is(SaveRejection.class)).isTrue());
+
+        UploadRenditionHeader corrected = mismatched.toBuilder()
+                .setExpectedSha256(RenditionReads.sha256Hex(bytes)).build();
+        StatusRuntimeException reuse = catchThrowableOfType(StatusRuntimeException.class,
+                () -> upload(corrected, bytes, 1024));
+        assertThat(reuse.getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(reuse.getStatus().getDescription()).contains("operation_id");
+
+        PutEntryRequest put = PutEntryRequest.newBuilder().setAddress(address)
+                .setOperationId(mismatched.getOperationId()).setTitle("other request").build();
+        assertThat(code(() -> archive.putEntry(put))).isEqualTo(Status.Code.ALREADY_EXISTS);
+        assertThat(revisions(address)).isZero();
     }
 
     @Test

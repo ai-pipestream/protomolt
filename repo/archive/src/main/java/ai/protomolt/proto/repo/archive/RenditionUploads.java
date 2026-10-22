@@ -187,7 +187,8 @@ public final class RenditionUploads {
             UploadRenditionResponse response;
             try {
                 response = archive.uploadResponse(
-                        archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(), status),
+                        archive.afterLostRace(pending.address(), pending.operationId(), pending.contentSha256(), status)
+                                .revision(),
                         pending.rendition(), pending.operationId(), true);
             } catch (StatusRuntimeException answer) {
                 fail(answer);

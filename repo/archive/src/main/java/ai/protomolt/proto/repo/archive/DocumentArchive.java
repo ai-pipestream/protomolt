@@ -61,6 +61,7 @@ import ai.protomolt.proto.repo.v2.SaveDocumentResponse;
 import ai.protomolt.proto.repo.v2.SaveOwner;
 import ai.protomolt.proto.repo.v2.SaveRejection;
 import ai.protomolt.proto.repo.v2.StreamedPart;
+import ai.protomolt.proto.repo.v2.UnchangedPolicy;
 import ai.protomolt.proto.repo.v2.UploadHeader;
 import ai.protomolt.proto.repo.v2.ValidationMode;
 import ai.protomolt.proto.repo.v2.WriteAction;
@@ -98,14 +99,17 @@ import java.util.stream.Collectors;
  * operation ID, asks {@code GetOperationOutcome} before reading anything else,
  * and replays a recorded outcome whose {@code archive.content_sha256} request
  * metadata matches; only with no recorded outcome does it read the current
- * revision and save. v2 save validation is the only write gate: the translator
+ * revision and save. Every save asks v2 to record an unchanged outcome
+ * ({@code UNCHANGED_POLICY_RECORD_OUTCOME}) instead of a new revision when it
+ * changes nothing, which is what {@code deduplicated} reports: the archive does
+ * no dedup of its own. v2 save validation is the only write gate: the translator
  * checks only what the archive contract adds (rendition naming, the PARSED
  * fragment's shape, {@code filename} needing an original).</p>
  *
  * <p>Not served here, each a follow-up under #535: {@code ListEntries}
  * classification filters and {@code total_count} (no v2 counterpart until the
- * archive's counters are decided), content profiles and classifications (the
- * asset layer's output), and dedup of streamed uploads.</p>
+ * archive's counters are decided), and content profiles and classifications (the
+ * asset layer's output).</p>
  */
 public final class DocumentArchive {
 
@@ -113,7 +117,6 @@ public final class DocumentArchive {
     public static final String CONTENT_SHA256_METADATA = "archive.content_sha256";
 
     static final int DEFAULT_PAGE_SIZE = 100;
-    static final String PARSED_MEDIA_TYPE = "application/x-protobuf";
 
     private static final ProtoValidator VALIDATOR = ProtoValidator.create();
     private static final PartSelection CORE_AND_BLOBS = PartSelection.newBuilder()
@@ -307,9 +310,9 @@ public final class DocumentArchive {
         String contentSha256 = ArchiveOperationKeys.putEntryContentSha256(request);
         String operationId = ArchiveOperationKeys.operationId(request, contentSha256);
 
-        Optional<GetDocumentResponse> recorded = recordedOutcome(address, operationId, contentSha256);
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256);
         if (recorded.isPresent()) {
-            return putResponse(recorded.get(), operationId, false, true);
+            return putResponse(recorded.get().revision(), operationId, recorded.get().unchanged(), true);
         }
 
         Optional<GetDocumentResponse> current = readCurrent(address);
@@ -344,13 +347,6 @@ public final class DocumentArchive {
                     .getParserResultsMap());
         }
 
-        if (current.isPresent()
-                && (request.getExpectedVersion() == 0
-                        || request.getExpectedVersion() == current.get().getManifest().getRevision())
-                && unchanged(current.get(), document, written, filenameChange)) {
-            return putResponse(current.get(), operationId, true, false);
-        }
-
         SaveDocumentRequest.Builder save = SaveDocumentRequest.newBuilder()
                 .setOperationId(operationId)
                 .setTarget(DocumentTarget.newBuilder().setAddress(address))
@@ -359,6 +355,7 @@ public final class DocumentArchive {
                 .addWrites(put(ArchiveCoordinates.CORE))
                 .setOwner(owner(binding, request.getWrittenBy()))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
                 .setDrive(binding.drive())
                 .putMetadata(CONTENT_SHA256_METADATA, contentSha256);
         if (document.hasBlobBag()) {
@@ -371,10 +368,11 @@ public final class DocumentArchive {
         try {
             saved = documents.saveDocument(save.build());
         } catch (StatusRuntimeException failure) {
-            return putResponse(afterLostRace(address, operationId, contentSha256, failure), operationId, false, true);
+            Recorded winner = afterLostRace(address, operationId, contentSha256, failure);
+            return putResponse(winner.revision(), operationId, winner.unchanged(), true);
         }
         GetDocumentResponse committed = read(address, revision(saved.getAccession().getRevision()), CORE_AND_BLOBS);
-        return putResponse(committed, operationId, false, saved.getReplayed());
+        return putResponse(committed, operationId, saved.getUnchanged(), saved.getReplayed());
     }
 
     /**
@@ -438,7 +436,7 @@ public final class DocumentArchive {
             RenditionContent replacement = written.get(blob.getBlobId());
             Blob.Builder next = replacement != null
                     ? writtenBlob(blob.getBlobId(), replacement)
-                    : blob.toBuilder().clearStorageRef().clearWritten();
+                    : carriedStub(blob);
             if (blob.getBlobId().equals(ArchiveCoordinates.ORIGINAL)) {
                 if (!filename.isEmpty()) {
                     next.setFilename(filename);
@@ -460,6 +458,16 @@ public final class DocumentArchive {
             blobs.addBlob(next);
         }
         return blobs;
+    }
+
+    /**
+     * A current blob listed by ID for blob-level carry-forward: its stored
+     * metadata without the facts the server fills on read (storage reference,
+     * size, checksum, write record), so the BLOBS fragment of a save that changes
+     * nothing equals the stored one.
+     */
+    static Blob.Builder carriedStub(Blob blob) {
+        return blob.toBuilder().clearStorageRef().clearWritten().clearSizeBytes().clearChecksum().clearChecksumType();
     }
 
     private static Blob.Builder writtenBlob(String blobId, RenditionContent content) {
@@ -536,45 +544,6 @@ public final class DocumentArchive {
         }
     }
 
-    /**
-     * Whether a save would change nothing: every written rendition matches the
-     * current row's SHA-256, length and media type, and CORE is unchanged.
-     */
-    private boolean unchanged(GetDocumentResponse current, Document.Builder next,
-            Map<String, RenditionContent> written, boolean filenameChange) {
-        if (filenameChange) {
-            return false;
-        }
-        Document stored = current.getDocument();
-        String entryId = current.getManifest().getAddress().getDocId();
-        if (!stored.getSearchMetadata().equals(next.getSearchMetadata())
-                || !stored.getStructuredData().equals(next.getStructuredData())
-                || !stored.getOwnership().equals(next.getOwnership())) {
-            return false;
-        }
-        VersionManifest manifest = views.manifest(current);
-        for (RenditionContent content : written.values()) {
-            RenditionDescriptor rendition = content.getRendition();
-            boolean parsed = rendition.getName().equals(ArchiveCoordinates.PARSED);
-            String mediaType = parsed ? PARSED_MEDIA_TYPE : rendition.getMediaType();
-            String sha256 = RenditionReads.sha256Hex(parsed
-                    ? parsedFragment(content, entryId).toByteString() : content.getData());
-            long size = parsed ? parsedFragment(content, entryId).getSerializedSize() : content.getData().size();
-            boolean same = manifest.getRenditionsList().stream().anyMatch(row ->
-                    row.getRendition().getName().equals(rendition.getName())
-                            && row.getRendition().getSubKey().equals(rendition.getSubKey())
-                            && row.getState() == RenditionState.RENDITION_STATE_PRESENT
-                            && row.getSizeBytes() == size
-                            && row.getSha256().equals(sha256)
-                            && row.getRendition().getMediaType().equals(mediaType)
-                            && row.getRendition().getSchemaSubject().equals(rendition.getSchemaSubject()));
-            if (!same) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private PutEntryResponse putResponse(GetDocumentResponse revision, String operationId,
             boolean deduplicated, boolean replayed) {
         VersionManifest manifest = views.manifest(revision);
@@ -611,16 +580,24 @@ public final class DocumentArchive {
 
     // ------------------------------------------------------ outcome lookups
 
+    /** A recorded outcome this request replays: the revision it names, and whether it was an unchanged save. */
+    record Recorded(GetDocumentResponse revision, boolean unchanged) {
+    }
+
     /**
-     * The committed revision of an earlier save under {@code operationId}, when
-     * one is recorded and its content digest matches.
+     * The recorded outcome of an earlier save under {@code operationId}, compared
+     * by the archive content digest it recorded (prerequisite 7), never by a
+     * revision read: a committed or unchanged outcome with this request's digest
+     * is returned with the revision it names, and a rejection with this
+     * request's digest is thrown as recorded.
      *
      * @throws StatusRuntimeException {@code ALREADY_EXISTS} naming
-     *         {@code operation_id} when the recorded save carried other content;
-     *         the recorded rejection's status, with its {@code SaveRejection}
-     *         detail, when the operation was rejected
+     *         {@code operation_id} when the recorded digest differs or is absent, on
+     *         any arm, or the outcome names another entry; the recorded rejection's
+     *         status, with its {@code SaveRejection} detail, when this request was
+     *         rejected before
      */
-    Optional<GetDocumentResponse> recordedOutcome(NodeAddress address, String operationId, String contentSha256) {
+    Optional<Recorded> recordedOutcome(NodeAddress address, String operationId, String contentSha256) {
         GetOperationOutcomeResponse outcome = documents.getOperationOutcome(GetOperationOutcomeRequest.newBuilder()
                 .setAccountId(address.getAccountId())
                 .setOperationId(operationId)
@@ -629,22 +606,22 @@ public final class DocumentArchive {
             return Optional.empty();
         }
         RecordedOutcome recorded = outcome.getCommitted();
+        String recordedDigest = recorded.getRequestMetadataOrDefault(CONTENT_SHA256_METADATA, "");
+        if (!recordedDigest.equals(contentSha256)) {
+            throw ArchiveErrors.alreadyExists("operation_id", operationId
+                    + " is recorded for a request with other content");
+        }
         if (recorded.hasRejection()) {
             throw recordedRejection(recorded.getRejection());
         }
-        Accession accession = recorded.getAccession();
+        Accession accession = recorded.hasUnchanged() ? recorded.getUnchanged() : recorded.getAccession();
         if (!accession.getAddress().equals(address)) {
             throw ArchiveErrors.alreadyExists("operation_id", operationId + " is recorded for "
                     + accession.getAddress().getGraphId() + "/" + accession.getAddress().getGraphAddressId()
                     + "/" + accession.getAddress().getDocId() + ", not this entry");
         }
-        GetDocumentResponse committed = read(address, revision(accession.getRevision()), CORE_AND_BLOBS);
-        String recordedDigest = committed.getMetadataOrDefault(CONTENT_SHA256_METADATA, "");
-        if (!recordedDigest.equals(contentSha256)) {
-            throw ArchiveErrors.alreadyExists("operation_id", operationId
-                    + " is recorded for a save with other content (revision " + accession.getRevision() + ")");
-        }
-        return Optional.of(committed);
+        return Optional.of(new Recorded(read(address, revision(accession.getRevision()), CORE_AND_BLOBS),
+                recorded.hasUnchanged()));
     }
 
     /**
@@ -652,13 +629,13 @@ public final class DocumentArchive {
      * the outcome lookup runs once more, and a recorded matching outcome is the
      * answer. Anything else is the original failure, unchanged.
      */
-    GetDocumentResponse afterLostRace(NodeAddress address, String operationId, String contentSha256,
+    Recorded afterLostRace(NodeAddress address, String operationId, String contentSha256,
             StatusRuntimeException failure) {
         Status.Code code = failure.getStatus().getCode();
         if (code != Status.Code.ABORTED && code != Status.Code.ALREADY_EXISTS) {
             throw failure;
         }
-        Optional<GetDocumentResponse> winner;
+        Optional<Recorded> winner;
         try {
             winner = recordedOutcome(address, operationId, contentSha256);
         } catch (StatusRuntimeException lookupFailure) {
@@ -848,9 +825,9 @@ public final class DocumentArchive {
         }
         String contentSha256 = ArchiveOperationKeys.uploadContentSha256(header);
         String operationId = ArchiveOperationKeys.operationId(header, contentSha256);
-        Optional<GetDocumentResponse> recorded = recordedOutcome(address, operationId, contentSha256);
+        Optional<Recorded> recorded = recordedOutcome(address, operationId, contentSha256);
         if (recorded.isPresent()) {
-            return new Replay(uploadResponse(recorded.get(), rendition, operationId, true));
+            return new Replay(uploadResponse(recorded.get().revision(), rendition, operationId, true));
         }
 
         Optional<GetDocumentResponse> current = readCurrent(address);
@@ -866,6 +843,7 @@ public final class DocumentArchive {
                 .addWrites(put(ArchiveCoordinates.CORE))
                 .setOwner(owner(binding, header.getWrittenBy()))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME)
                 .setDrive(binding.drive())
                 .putMetadata(CONTENT_SHA256_METADATA, contentSha256);
         UploadHeader.Builder upload = UploadHeader.newBuilder()
@@ -895,7 +873,7 @@ public final class DocumentArchive {
                     blobs.addBlob(streamed);
                     placed = true;
                 } else {
-                    blobs.addBlob(blob.toBuilder().clearStorageRef().clearWritten());
+                    blobs.addBlob(carriedStub(blob));
                 }
             }
             if (!placed) {
