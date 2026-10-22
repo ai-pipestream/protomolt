@@ -251,13 +251,42 @@ class ConceptSchemeRuleTest {
     }
 
     @Test
-    void aBoundConceptRefAnywhereUnderAMapValueFailsRuleCompilation() {
+    void aBoundConceptRefAnywhereUnderAMapValueFailsSchemaPreparation() {
         // Two levels down (map value Wrapper, then Section.tags): occurrences under a map
         // have no field-path identity, so the binding is a schema error.
-        assertThatThrownBy(() -> VALIDATOR.validate(empty("Keyed")))
+        Descriptors.Descriptor keyed = FILE.findMessageTypeByName("Keyed");
+        assertThatThrownBy(() -> VALIDATOR.prepareSchema(keyed, 10, 20, () -> {}))
                 .isInstanceOf(RuleCompilationException.class)
                 .hasMessageContaining("Section.tags")
                 .hasMessageContaining("map field ai.protomolt.proto.types.v1.Keyed.sections");
+    }
+
+    @Test
+    void theWalkRejectsABoundConceptRefReachedUnderAMapValue() {
+        // Without preparation, the binding is refused when a tag is reached under a map;
+        // an empty map reaches nothing, and the same Section outside a map validates.
+        Descriptors.Descriptor keyed = FILE.findMessageTypeByName("Keyed");
+        Descriptors.Descriptor entry = keyed.findFieldByName("sections").getMessageType();
+        Descriptors.Descriptor wrapper = FILE.findMessageTypeByName("Wrapper");
+        Descriptors.Descriptor section = FILE.findMessageTypeByName("Section");
+        DynamicMessage tagged = DynamicMessage.newBuilder(section)
+                .addRepeatedField(section.findFieldByName("tags"), ref("subject", "physics"))
+                .build();
+        DynamicMessage wrapped = DynamicMessage.newBuilder(wrapper)
+                .setField(wrapper.findFieldByName("section"), tagged)
+                .build();
+        assertThat(VALIDATOR.validate(wrapped).valid()).isTrue();
+        assertThat(VALIDATOR.validate(empty("Keyed")).valid()).isTrue();
+        DynamicMessage message = DynamicMessage.newBuilder(keyed)
+                .addRepeatedField(keyed.findFieldByName("sections"), DynamicMessage.newBuilder(entry)
+                        .setField(entry.findFieldByName("key"), "intro")
+                        .setField(entry.findFieldByName("value"), wrapped)
+                        .build())
+                .build();
+        assertThatThrownBy(() -> VALIDATOR.validate(message))
+                .isInstanceOf(RuleCompilationException.class)
+                .hasMessageContaining("Section.tags")
+                .hasMessageContaining("the map value at sections[\"intro\"].section.tags[0]");
     }
 
     @Test
