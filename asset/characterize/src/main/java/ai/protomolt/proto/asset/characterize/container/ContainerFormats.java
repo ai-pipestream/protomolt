@@ -84,6 +84,6 @@ public final class ContainerFormats {
 
     /** The entry's own grammar decides whether the name belongs on the fact. */
     private static String matching(String filename, FormatGrammar grammar) {
-        return grammar.matches(filename) ? filename : "";
+        return grammar.matches(filename) ? filename : ""; // zero-regex: allowed
     }
 }

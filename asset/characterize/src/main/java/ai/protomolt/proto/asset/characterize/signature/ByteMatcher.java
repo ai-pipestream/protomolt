@@ -72,7 +72,7 @@ public interface ByteMatcher {
         }
         return candidate -> {
             for (ByteMatcher member : copy) {
-                if (member.matches(candidate)) {
+                if (member.matches(candidate)) { // zero-regex: allowed
                     return true;
                 }
             }
@@ -87,6 +87,6 @@ public interface ByteMatcher {
      * @return the matcher
      */
     static ByteMatcher not(ByteMatcher matcher) {
-        return candidate -> !matcher.matches(candidate);
+        return candidate -> !matcher.matches(candidate); // zero-regex: allowed
     }
 }

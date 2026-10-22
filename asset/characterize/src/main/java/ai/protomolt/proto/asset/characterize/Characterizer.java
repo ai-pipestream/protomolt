@@ -255,7 +255,7 @@ public final class Characterizer {
     /** gzip magic: a tar-grammar name means a compressed tar, not a gzip file. */
     private static FormatFact gzipOrTar(String filename,
                                         List<CharacterizationEvidence> evidence) {
-        if (filename != null && FormatGrammars.TAR.matches(filename)) {
+        if (filename != null && FormatGrammars.TAR.matches(filename)) { // zero-regex: allowed
             evidence.add(evidence("probe", "gzip bytes carrying a tar-grammar name"));
             return FormatFact.newBuilder()
                     .setTar(TarArchive.newBuilder().setFilename(filename)).build();
@@ -358,7 +358,7 @@ public final class Characterizer {
 
     /** The filename when it matches the grammar; "" (left unset) otherwise. */
     private static String matching(String filename, FormatGrammar grammar) {
-        return grammar.matches(filename) ? filename : "";
+        return grammar.matches(filename) ? filename : ""; // zero-regex: allowed
     }
 
     private static CharacterizationEvidence evidence(String signal, String observation) {

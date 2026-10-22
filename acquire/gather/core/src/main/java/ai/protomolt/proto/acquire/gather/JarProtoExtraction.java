@@ -81,10 +81,10 @@ public final class JarProtoExtraction {
                     continue;
                 }
                 Path asPath = Path.of(name);
-                if (!includes.isEmpty() && includes.stream().noneMatch(m -> m.matches(asPath))) {
+                if (!includes.isEmpty() && includes.stream().noneMatch(m -> m.matches(asPath))) { // zero-regex: allowed
                     continue;
                 }
-                if (excludes.stream().anyMatch(m -> m.matches(asPath))) {
+                if (excludes.stream().anyMatch(m -> m.matches(asPath))) { // zero-regex: allowed
                     continue;
                 }
                 try (InputStream in = zip.getInputStream(entry)) {

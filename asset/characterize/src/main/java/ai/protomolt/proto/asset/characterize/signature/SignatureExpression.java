@@ -169,7 +169,7 @@ public final class SignatureExpression {
                 long at = offset;
                 for (ByteMatcher matcher : run.matchers()) {
                     int value = bytes.byteAt(at);
-                    if (value == ByteWindows.NOT_OBSERVED || !matcher.matches(value)) {
+                    if (value == ByteWindows.NOT_OBSERVED || !matcher.matches(value)) { // zero-regex: allowed
                         yield NO_MATCH;
                     }
                     at++;
