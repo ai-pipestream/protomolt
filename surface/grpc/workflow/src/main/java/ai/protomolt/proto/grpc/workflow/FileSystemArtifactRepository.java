@@ -10,7 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 /**
  * Filesystem-backed {@link ArtifactRepository}: content-addressed, deduplicating, and
@@ -33,7 +32,6 @@ import java.util.regex.Pattern;
  */
 public final class FileSystemArtifactRepository implements ArtifactRepository {
 
-    private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
     private static final String REFERENCE_SUFFIX = ".ref";
 
     private final Path root;
@@ -83,7 +81,7 @@ public final class FileSystemArtifactRepository implements ArtifactRepository {
 
     @Override
     public Optional<StoredArtifact> find(String sha256) throws IOException {
-        if (sha256 == null || !SHA256.matcher(sha256).matches()) {
+        if (!isSha256Hex(sha256)) {
             // Also the path-traversal guard: only a well-formed identity ever reaches the
             // filesystem, so a caller-controlled sha can never escape the root.
             throw new IllegalArgumentException(
@@ -118,6 +116,19 @@ public final class FileSystemArtifactRepository implements ArtifactRepository {
 
     private static ArtifactReference readReference(Path path) throws IOException {
         return ArtifactReference.parseFrom(Files.readAllBytes(path));
+    }
+
+    static boolean isSha256Hex(String value) {
+        if (value == null || value.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < 64; i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Temp sibling plus atomic rename: readers never observe a partially written file. */

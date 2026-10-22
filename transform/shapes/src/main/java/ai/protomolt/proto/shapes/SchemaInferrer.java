@@ -187,7 +187,15 @@ public final class SchemaInferrer {
     }
 
     private static String fieldName(String key, Set<String> taken) {
-        String name = key.replaceAll("[^A-Za-z0-9_]", "_");
+        var sanitized = new StringBuilder(key.length());
+        for (int i = 0; i < key.length();) {
+            int c = key.codePointAt(i);
+            boolean keep = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '_';
+            sanitized.appendCodePoint(keep ? c : '_');
+            i += Character.charCount(c);
+        }
+        String name = sanitized.toString();
         if (name.isEmpty() || Character.isDigit(name.charAt(0))) {
             name = "_" + name;
         }

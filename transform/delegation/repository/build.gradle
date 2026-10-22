@@ -1,6 +1,7 @@
 plugins { alias(libs.plugins.protobuf) }
 description = 'Encrypted delegation transcript persistence through the repository service'
 dependencies {
+    implementation project(':protomolt-formats')
     api project(':protomolt-delegation-lifecycle')
     api project(':protomolt-repo-proto')
 }

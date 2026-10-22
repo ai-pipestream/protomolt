@@ -81,11 +81,18 @@ public final class Composer {
                     + knownRoles());
         }
         List<String> requested = new ArrayList<>();
-        for (String role : roles.split(",", -1)) {
+        int start = 0;
+        while (true) {
+            int comma = roles.indexOf(',', start);
+            String role = comma < 0 ? roles.substring(start) : roles.substring(start, comma);
             if (role.isBlank()) {
                 throw new ComposerException(ENV_ROLES + " contains an empty role; supply a name between separators");
             }
             requested.add(role.trim().toLowerCase(Locale.ROOT));
+            if (comma < 0) {
+                break;
+            }
+            start = comma + 1;
         }
         return boot(requested);
     }

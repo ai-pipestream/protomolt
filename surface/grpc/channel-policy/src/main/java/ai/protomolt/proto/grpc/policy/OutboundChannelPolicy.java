@@ -3,13 +3,14 @@ package ai.protomolt.proto.grpc.policy;
 import io.grpc.ManagedChannel;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 
 /**
  * Host-owned guardrail for every outbound gRPC channel.
@@ -20,8 +21,6 @@ import java.util.regex.Pattern;
  * a host must resolve those references in its own channel factory before it can open a channel.</p>
  */
 public final class OutboundChannelPolicy {
-
-    private static final Pattern DNS_LABEL = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?");
 
     private final Set<String> allowedSchemes;
     private final Set<String> allowedHosts;
@@ -267,8 +266,17 @@ public final class OutboundChannelPolicy {
         return new ParsedTarget(rawTarget, scheme, hostPort.host(), hostPort.port(), canonical);
     }
 
-    private static boolean looksLikeIpv4Literal(String host) {
-        return host.matches("\\d+(?:\\.\\d+){3}");
+    static boolean looksLikeIpv4Literal(String host) {
+        List<String> segments = splitKeepEmpty(host, '.');
+        if (segments.size() != 4) {
+            return false;
+        }
+        for (String segment : segments) {
+            if (!isAsciiDigits(segment)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static HostPort splitHostPort(String authority) {
@@ -311,8 +319,8 @@ public final class OutboundChannelPolicy {
             return;
         }
         if (scheme.equals("ipv4")) {
-            String[] octets = host.split("\\.", -1);
-            if (octets.length != 4) {
+            List<String> octets = splitKeepEmpty(host, '.');
+            if (octets.size() != 4) {
                 throw new OutboundChannelPolicyException("IPv4 target host is invalid");
             }
             for (String octet : octets) {
@@ -331,10 +339,62 @@ public final class OutboundChannelPolicy {
         if (host.length() > 253) {
             throw new OutboundChannelPolicyException("DNS target host is too long");
         }
-        for (String label : host.split("\\.", -1)) {
-            if (label.isEmpty() || !DNS_LABEL.matcher(label).matches()) {
+        for (String label : splitKeepEmpty(host, '.')) {
+            if (!isDnsLabel(label)) {
                 throw new OutboundChannelPolicyException("DNS target host is invalid");
             }
+        }
+    }
+
+    /**
+     * An RFC 1123 DNS label: 1..63 ASCII letters, digits, or interior hyphens, starting and
+     * ending with an ASCII letter or digit.
+     */
+    static boolean isDnsLabel(String label) {
+        if (label == null || label.isEmpty() || label.length() > 63) {
+            return false;
+        }
+        if (!isAsciiAlphaNumeric(label.charAt(0))
+                || !isAsciiAlphaNumeric(label.charAt(label.length() - 1))) {
+            return false;
+        }
+        for (int i = 1; i < label.length() - 1; i++) {
+            char c = label.charAt(i);
+            if (!isAsciiAlphaNumeric(c) && c != '-') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isAsciiAlphaNumeric(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    }
+
+    private static boolean isAsciiDigits(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static List<String> splitKeepEmpty(String value, char delimiter) {
+        List<String> parts = new ArrayList<>();
+        int from = 0;
+        while (true) {
+            int at = value.indexOf(delimiter, from);
+            if (at < 0) {
+                parts.add(value.substring(from));
+                return parts;
+            }
+            parts.add(value.substring(from, at));
+            from = at + 1;
         }
     }
 
@@ -355,14 +415,14 @@ public final class OutboundChannelPolicy {
         if (section.isEmpty()) {
             return 0;
         }
-        String[] groups = section.split(":", -1);
+        List<String> groups = splitKeepEmpty(section, ':');
         for (String group : groups) {
             if (group.isEmpty() || group.length() > 4
                     || !group.chars().allMatch(value -> Character.digit(value, 16) >= 0)) {
                 return -1;
             }
         }
-        return groups.length;
+        return groups.size();
     }
 
     private static boolean hostMatches(String rule, String host) {
