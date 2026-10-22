@@ -2,6 +2,7 @@ package ai.protomolt.proto.repo.catalog;
 
 import ai.protomolt.proto.projection.MessageProjection;
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.CatalogEntry;
 import ai.protomolt.proto.repo.v2.DocumentLookup;
 import ai.protomolt.proto.repo.v2.StoredManifest;
@@ -88,6 +89,38 @@ public final class CatalogEntries {
     public static final int MAX_TITLE_BYTES = 2000;
     /** The longest metadata key the catalog stores, in UTF-8 bytes: it is half of a primary key. */
     public static final int MAX_METADATA_KEY_BYTES = 200;
+
+    /** The longest link field path the catalog stores, in UTF-8 bytes: it is part of the edge table's primary key. */
+    public static final int MAX_LINK_FIELD_PATH_BYTES = 1024;
+    /** The longest link relation plus target call number the catalog stores, in UTF-8 bytes: the backlink index key. */
+    public static final int MAX_LINK_KEY_BYTES = 2048;
+
+    /**
+     * Why the catalog's edge table could not hold a link, if it could not. PostgreSQL
+     * caps a btree entry at 2704 bytes: the field path is bounded for the primary key,
+     * and the relation with the target's four call number components for the backlink
+     * index. Checked at admission so the save is refused by name instead of failing
+     * inside the commit.
+     *
+     * @param fieldPath the link's field path
+     * @param relation the link field's relation
+     * @param target the static target's call number; empty for a dynamic link
+     * @return the problem, empty when the link fits
+     */
+    public static Optional<String> unstorableLink(String fieldPath, String relation, Optional<NodeAddress> target) {
+        if (utf8Length(fieldPath) > MAX_LINK_FIELD_PATH_BYTES)
+            return Optional.of("field path exceeds " + MAX_LINK_FIELD_PATH_BYTES + " bytes");
+        if (fieldPath.indexOf('\0') >= 0) return Optional.of("field path contains a NUL character");
+        if (target.isEmpty()) return Optional.empty();
+        var address = target.get();
+        long key = utf8Length(relation);
+        for (var component : List.of(address.getAccountId(), address.getGraphId(), address.getGraphAddressId(), address.getDocId())) {
+            if (component.indexOf('\0') >= 0) return Optional.of("target call number contains a NUL character");
+            key += utf8Length(component);
+        }
+        return key > MAX_LINK_KEY_BYTES
+                ? Optional.of("relation and target call number exceed " + MAX_LINK_KEY_BYTES + " bytes") : Optional.empty();
+    }
 
     /** One lookup value the catalog cannot store, named by its path in the document. */
     public record Unstorable(String fieldPath, String message) {}

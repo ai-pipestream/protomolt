@@ -59,14 +59,19 @@ public final class DocumentLinks {
      * @param fieldPath descriptor path of the link field from the walked root, with
      *        the index or key of every enclosing repeated or map element
      * @param ordinal element index in a repeated link field; 0 for a singular one
+     * @param repeated whether the link field is repeated
      * @param field the field's link declaration
      * @param link the link value
      */
-    public record Link(String fieldPath, int ordinal, LinkField field, DocumentLink link) {
+    public record Link(String fieldPath, int ordinal, boolean repeated, LinkField field, DocumentLink link) {
         public Link {
             Objects.requireNonNull(fieldPath); Objects.requireNonNull(field); Objects.requireNonNull(link);
-            if (fieldPath.isEmpty() || ordinal < 0) throw new IllegalArgumentException("A link needs a field path and an ordinal");
+            if (fieldPath.isEmpty() || ordinal < 0 || (!repeated && ordinal != 0))
+                throw new IllegalArgumentException("A link needs a field path and an ordinal");
         }
+
+        /** The link's place as a violation path names it: the field path, with [ordinal] for a repeated field. */
+        public String at() { return repeated ? fieldPath + "[" + ordinal + "]" : fieldPath; }
     }
 
     /** A schema that breaks the link declaration rules; names the field and the rule. */
@@ -231,11 +236,11 @@ public final class DocumentLinks {
             if (field.isRepeated()) {
                 var values = (List<?>) entry.getValue();
                 for (int i = 0; i < values.size(); i++) {
-                    if (link) found.add(new Link(path, i, declared.get(), value(field, (Message) values.get(i))));
+                    if (link) found.add(new Link(path, i, true, declared.get(), value(field, (Message) values.get(i))));
                     else collect((Message) values.get(i), path + "[" + i + "]", found);
                 }
             } else if (link) {
-                found.add(new Link(path, 0, declared.get(), value(field, (Message) entry.getValue())));
+                found.add(new Link(path, 0, false, declared.get(), value(field, (Message) entry.getValue())));
             } else {
                 collect((Message) entry.getValue(), path, found);
             }

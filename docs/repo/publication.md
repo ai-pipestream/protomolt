@@ -214,7 +214,14 @@ the pinned revision when one is named, or the save is rejected
 revision's admitted type must be listed, or it is `LINK_TARGET_TYPE`. Both are
 recorded `FAILED_PRECONDITION` outcomes. A tombstoned target is accepted and
 the link dangles. A dynamic target's filter must set a field and be
-consistent; it is not evaluated at save.
+consistent; it is not evaluated at save. A pinned revision must be a
+document revision, not a tombstone. A link must also fit the catalog's edge
+table: a field path of at most 1024 UTF-8 bytes, and a relation plus target
+call number of at most 2048; a larger one is refused `VALIDATION_FAILED` with
+rule `link-catalog-storable`. Revisions committed before the link migration
+have no recorded `structured_data_type` until `CatalogEntryRebuild` runs, so a
+link with `target_types` to such a document is refused `LINK_TARGET_TYPE`
+until then.
 
 - **`ListLinks`** — a revision's links, decoded with its retained schema. A
   static link reports `target_tombstoned` or `target_unavailable` (missing,
