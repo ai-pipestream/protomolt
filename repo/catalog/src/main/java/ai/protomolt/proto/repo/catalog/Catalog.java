@@ -101,10 +101,21 @@ public interface Catalog extends AutoCloseable {
      * @param lookup the lookup of that revision's CORE part; empty for a tombstone
      * @param links the static links of that CORE part, which replace the document's
      *        link rows; empty for a tombstone
+     * @param concepts the concept tags of that CORE part, which replace the document's
+     *        concept rows; empty for a tombstone
      * @return whether the entry was rewritten
      */
     boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup,
-            List<CatalogRecords.Link> links);
+            List<CatalogRecords.Link> links, List<CatalogRecords.ConceptTag> concepts);
+
+    /**
+     * The concept rows of a document's current revision (requirements §17), by field
+     * path in unsigned UTF-8 order and then ordinal.
+     *
+     * @param address the tagged document
+     * @return the rows; empty for a missing or purged document
+     */
+    List<CatalogRecords.ConceptTag> concepts(NodeAddress address);
 
     // ------------------------------------------------------------------ links
 

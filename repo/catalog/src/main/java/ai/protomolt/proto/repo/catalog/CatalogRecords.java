@@ -11,6 +11,7 @@ import ai.protomolt.proto.repo.v2.RecordedOutcome;
 import ai.protomolt.proto.repo.v2.StackRef;
 import ai.protomolt.proto.repo.v2.StoredManifest;
 import ai.protomolt.proto.repo.v2.WriterGrant;
+import ai.protomolt.proto.types.ConceptRef;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import java.util.List;
@@ -38,11 +39,26 @@ public final class CatalogRecords {
     }
 
     /** What a listing selects and how it is ordered. */
+    /**
+     * The scope, filter and sort of a listing. A filter with a concept matches the
+     * documents tagged with any of {@code concepts}, the concept's expansion against
+     * the mounted schemes; a filter without one carries none.
+     */
     public record Listing(String accountId, String graphId, String graphAddressId, boolean includeTombstoned,
-            DocumentFilter filter, DocumentSort sort) {
+            DocumentFilter filter, DocumentSort sort, List<ConceptRef> concepts) {
         public Listing {
             Objects.requireNonNull(accountId); Objects.requireNonNull(graphId); Objects.requireNonNull(graphAddressId);
             Objects.requireNonNull(filter); Objects.requireNonNull(sort);
+            concepts = List.copyOf(concepts);
+            if (filter.hasConcept() == concepts.isEmpty())
+                throw new IllegalArgumentException(filter.hasConcept()
+                        ? "A concept filter needs its expanded concepts" : "Expanded concepts need a concept filter");
+        }
+
+        /** A listing whose filter has no concept. */
+        public Listing(String accountId, String graphId, String graphAddressId, boolean includeTombstoned,
+                DocumentFilter filter, DocumentSort sort) {
+            this(accountId, graphId, graphAddressId, includeTombstoned, filter, sort, List.of());
         }
 
         /** The unfiltered address-ordered listing of one account. */
@@ -80,7 +96,8 @@ public final class CatalogRecords {
      * under a share lock. {@code lookup} is the lookup of a written or sourced CORE
      * part; empty when CORE is carried, in which case the catalog keeps the row's
      * current lookup. A tombstone has none; a create needs one. {@code links} are the
-     * static links of that CORE part and replace the document's link rows; they go
+     * static links of that CORE part and replace the document's link rows, and
+     * {@code concepts} are its concept tags and replace its concept rows; both go
      * with the lookup, so a commit without a lookup carries none: a carried CORE
      * keeps the rows and a tombstone clears them.
      */
@@ -88,7 +105,7 @@ public final class CatalogRecords {
                          StoredManifest manifest, RecordedOutcome outcome, DocumentEvent event,
                          List<StackRef> newObjects, List<StackRef> carriedObjects, Map<String, ByteString> artifacts,
                          List<String> grantIds, Optional<CredentialCheck> credential,
-                         Optional<DocumentLookup> lookup, List<Link> links) {
+                         Optional<DocumentLookup> lookup, List<Link> links, List<ConceptTag> concepts) {
         public Commit {
             Objects.requireNonNull(address); Objects.requireNonNull(operationId); Objects.requireNonNull(intentSha256);
             Objects.requireNonNull(expected); Objects.requireNonNull(manifest); Objects.requireNonNull(outcome);
@@ -97,6 +114,10 @@ public final class CatalogRecords {
             if (lookup.isEmpty() && !links.isEmpty())
                 throw new IllegalArgumentException("Link rows go with the lookup of a written or sourced CORE part");
             requireDistinct(links);
+            concepts = List.copyOf(concepts);
+            if (lookup.isEmpty() && !concepts.isEmpty())
+                throw new IllegalArgumentException("Concept rows go with the lookup of a written or sourced CORE part");
+            requireDistinctTags(concepts);
             if (manifest.getTombstone() && lookup.isPresent())
                 throw new IllegalArgumentException("A tombstone commit carries no lookup");
             if (expected.hasNone() && !manifest.getTombstone() && lookup.isEmpty())
@@ -108,14 +129,34 @@ public final class CatalogRecords {
             Objects.requireNonNull(credential);
         }
 
-        /** A commit whose CORE part, if written, holds no static link. */
+        /** A commit whose CORE part, if written, holds no static link and no concept tag. */
         public Commit(NodeAddress address, String operationId, String intentSha256, ExpectedRevision expected,
                       StoredManifest manifest, RecordedOutcome outcome, DocumentEvent event,
                       List<StackRef> newObjects, List<StackRef> carriedObjects, Map<String, ByteString> artifacts,
                       List<String> grantIds, Optional<CredentialCheck> credential, Optional<DocumentLookup> lookup) {
             this(address, operationId, intentSha256, expected, manifest, outcome, event, newObjects, carriedObjects,
-                    artifacts, grantIds, credential, lookup, List.of());
+                    artifacts, grantIds, credential, lookup, List.of(), List.of());
         }
+    }
+
+    /**
+     * One concept tag of a document's current revision (requirements §17): a value
+     * of a {@code concept_schemes}-bound ConceptRef field at its occurrence identity.
+     */
+    public record ConceptTag(String fieldPath, int ordinal, String schemeId, String conceptId) {
+        public ConceptTag {
+            Objects.requireNonNull(fieldPath); Objects.requireNonNull(schemeId); Objects.requireNonNull(conceptId);
+            if (fieldPath.isEmpty() || schemeId.isEmpty() || conceptId.isEmpty() || ordinal < 0)
+                throw new IllegalArgumentException("A concept row needs a field path, an ordinal, a scheme and a concept");
+        }
+    }
+
+    /** Refuses two concept rows at one field path and ordinal. */
+    public static void requireDistinctTags(List<ConceptTag> tags) {
+        var seen = new java.util.HashSet<List<Object>>();
+        for (var tag : tags)
+            if (!seen.add(List.of(tag.fieldPath(), tag.ordinal())))
+                throw new IllegalArgumentException("Two concept tags at " + tag.fieldPath() + "[" + tag.ordinal() + "]");
     }
 
     /**
