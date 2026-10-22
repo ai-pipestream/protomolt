@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -101,9 +102,24 @@ public final class UploadHttpHandler implements HttpHandler {
     private static final int HTTP_INTERNAL_ERROR = 500;
     private static final int HTTP_UNAVAILABLE = 503;
 
+    /**
+     * Resolves the caller an upload request runs as from the request's headers: the
+     * operator token, a scoped bearer credential or a console session, as the host composes.
+     */
+    @FunctionalInterface
+    public interface Callers {
+        /**
+         * The caller the request runs as.
+         *
+         * @param headers the request's headers
+         * @return the caller, or empty when the request presents no usable credential (401)
+         * @throws IllegalStateException when the credential store cannot answer (503)
+         */
+        Optional<RepositoryCaller> resolve(Headers headers);
+    }
+
     private final DocumentUploads uploads;
-    private final byte[] expectedTokenBytes;
-    private final Supplier<RepositoryCaller> callerSupplier;
+    private final Callers callers;
 
     /**
      * Constructs an HTTP streaming upload handler using a process-authority intake caller when
@@ -127,20 +143,46 @@ public final class UploadHttpHandler implements HttpHandler {
             DocumentUploads uploads,
             String apiToken,
             Supplier<RepositoryCaller> callerSupplier) {
+        this(uploads, operatorToken(apiToken, Objects.requireNonNull(callerSupplier, "callerSupplier")));
+    }
+
+    /**
+     * Constructs an HTTP streaming upload handler whose caller is resolved per request, so a
+     * route can accept every credential its host accepts (for example the operator token and
+     * console sessions) and save as the caller the credential names.
+     *
+     * @param uploads the streaming upload coordinator
+     * @param callers resolves each request's caller from its headers
+     */
+    public UploadHttpHandler(DocumentUploads uploads, Callers callers) {
         this.uploads = Objects.requireNonNull(uploads, "uploads");
+        this.callers = Objects.requireNonNull(callers, "callers");
+    }
+
+    // The operator token alone, read from api_token or a Bearer Authorization header.
+    private static Callers operatorToken(String apiToken, Supplier<RepositoryCaller> caller) {
         Objects.requireNonNull(apiToken, "apiToken");
         if (apiToken.isBlank()) {
             throw new IllegalArgumentException("apiToken must not be blank");
         }
-        this.expectedTokenBytes = apiToken.getBytes(StandardCharsets.UTF_8);
-        this.callerSupplier = Objects.requireNonNull(callerSupplier, "callerSupplier");
+        byte[] expected = apiToken.getBytes(StandardCharsets.UTF_8);
+        return headers -> authenticate(headers, expected) ? Optional.of(caller.get()) : Optional.empty();
     }
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         boolean proto = acceptsProto(exchange.getRequestHeaders());
         try {
-            if (!authenticate(exchange.getRequestHeaders())) {
+            Optional<RepositoryCaller> caller;
+            try {
+                caller = callers.resolve(exchange.getRequestHeaders());
+            } catch (IllegalStateException outage) {
+                // An unreachable credential store is an outage, never a bad credential.
+                sendError(exchange, proto, HTTP_UNAVAILABLE, Status.Code.UNAVAILABLE,
+                        "The credential store is unavailable: " + outage.getMessage());
+                return;
+            }
+            if (caller.isEmpty()) {
                 sendError(exchange, proto, HTTP_UNAUTHORIZED, Status.Code.UNAUTHENTICATED, "Unauthorized");
                 return;
             }
@@ -220,7 +262,7 @@ public final class UploadHttpHandler implements HttpHandler {
                     expectedRevision);
 
             try (var body = exchange.getRequestBody()) {
-                var result = uploads.uploadResult(callerSupplier.get(), header, body);
+                var result = uploads.uploadResult(caller.get(), header, body);
                 if (proto) {
                     sendProto(exchange, result.response());
                     return;
@@ -250,7 +292,7 @@ public final class UploadHttpHandler implements HttpHandler {
         }
     }
 
-    private boolean authenticate(Headers headers) {
+    private static boolean authenticate(Headers headers, byte[] expectedTokenBytes) {
         String presented = headers.getFirst(HEADER_API_TOKEN);
         if (presented != null) {
             presented = presented.trim();
