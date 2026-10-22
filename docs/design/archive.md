@@ -376,10 +376,12 @@ cite them:
 3. **`Blob.schema_subject`**, above.
 4. **`DocumentManifest.committed_at`**, the accession's commit time, so a
    manifest read can say when its revision landed without a history read.
-5. **`PartManifestEntry.written_at = 9`** (and the stored `StoredPartEntry`
-   entry it wraps): the commit time of the revision that wrote the part,
-   set at commit when a part is written and kept across carry-forward and
-   `PartSource` exactly as `written_in_revision` is. A PARSED part written at
+5. **`PartManifestEntry.written_at = 11`** (fields 9 and 10 are `opaque` and
+   `content_included`; `StoredPartEntry.entry` is this message, so the stored
+   form gains it too): the commit time of the revision that wrote the part.
+   It follows `written_in_revision` exactly: set at commit when a part is
+   written, kept across carry-forward, and restamped with the sourcing
+   commit's time when the part comes from `PartSource`. A PARSED part written at
    revision 1 and carried through revision 2 then still reports revision 1's
    time; `DocumentManifest.committed_at` is the current accession's time and
    is not a substitute.
