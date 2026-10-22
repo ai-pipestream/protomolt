@@ -342,17 +342,17 @@ class DocumentArchiveIT {
     }
 
     @Test
-    void aParsedFragmentWithoutDocIdIsStoredWithTheEntrysIdentity() {
+    void aParsedFragmentWithoutTheEntrysDocIdIsInvalid() {
         EntryAddress address = entry(RETAINED);
         ByteString anonymous = Document.newBuilder()
                 .putParserResults("tika", ParserResult.newBuilder().setParserName("tika").setParserVersion("1")
                         .setStatus(ParseStatus.PARSE_STATUS_OK).build())
                 .build().toByteString();
-        archive.putEntry(PutEntryRequest.newBuilder().setAddress(address)
-                .addRenditions(rendition("parsed", "", "", anonymous)).build());
-        GetEntryResponse entry = archive.getEntry(GetEntryRequest.newBuilder().setAddress(address).build());
-        assertThat(entry.getRenditionsList()).extracting(RenditionContent::getData)
-                .containsExactly(parsedFragment(address, "tika"));
+        PutEntryRequest request = PutEntryRequest.newBuilder().setAddress(address)
+                .addRenditions(rendition("parsed", "", "", anonymous)).build();
+        assertThat(code(() -> archive.putEntry(request))).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(description(() -> archive.putEntry(request))).contains("renditions[parsed]", "doc_id");
+        assertThat(revisions(address)).isZero();
     }
 
     @Test

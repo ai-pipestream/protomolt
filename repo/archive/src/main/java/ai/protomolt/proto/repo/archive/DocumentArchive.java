@@ -400,9 +400,8 @@ public final class DocumentArchive {
 
     /**
      * The PARSED fragment a {@code parsed} rendition carries, as v2 stores it: an
-     * encoded {@code Document} holding the entry's {@code doc_id} and
-     * {@code parser_results} and nothing else. A written fragment may leave
-     * {@code doc_id} blank; the returned fragment carries it.
+     * encoded {@code Document} holding {@code doc_id}, equal to the entry's
+     * {@code entry_id}, and {@code parser_results}, and nothing else.
      */
     static Document parsedFragment(RenditionContent parsed, String entryId) {
         Document fragment;
@@ -412,13 +411,14 @@ public final class DocumentArchive {
             throw ArchiveErrors.invalid("renditions[parsed].data",
                     "is not an encoded Document PARSED fragment: " + e.getMessage());
         }
-        if (!fragment.getDocId().isEmpty() && !fragment.getDocId().equals(entryId)) {
+        if (!fragment.getDocId().equals(entryId)) {
             throw ArchiveErrors.invalid("renditions[parsed].data",
-                    "names doc_id " + fragment.getDocId() + ", not this entry's " + entryId);
+                    "names doc_id '" + fragment.getDocId() + "', not this entry's " + entryId
+                            + "; the PARSED fragment carries the entry_id as its doc_id");
         }
         Document identified = Document.newBuilder().setDocId(entryId)
                 .putAllParserResults(fragment.getParserResultsMap()).build();
-        if (!fragment.toBuilder().setDocId(entryId).build().equals(identified)) {
+        if (!fragment.equals(identified)) {
             throw ArchiveErrors.invalid("renditions[parsed].data",
                     "carries Document fields outside doc_id and parser_results; the parsed rendition is the"
                             + " PARSED part only");
