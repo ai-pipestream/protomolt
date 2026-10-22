@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package ai.protomolt.proto.types.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.protomolt.proto.types";
+option java_outer_classname = "ConceptsProto";
+
+import "ai/protomolt/proto/validate/v1/validate.proto";
+
+// A concept scheme modelled on W3C SKOS: one facet (subject, department,
+// region, sensitivity, product line) as an operator-loaded config document
+// on the config lane.
+//
+// The document carries no id and no version. Its config subject
+// ("concept-scheme:<scheme_id>", scheme_id a slug) is the identity and the
+// config source's version is the version; a copy of either inside the
+// document could only agree or lie.
+//
+// Only one direction of each relation is stored. narrower is the inverse of
+// broader and is computed by the mount; one side of a symmetric relation
+// (related, exact_match, close_match, related_match) is enough, the mount
+// closes it. The graph checks (references resolve, broader acyclic, related
+// disjoint from the hierarchy, replaced_by chains end live, label integrity)
+// run at the mount, so a scheme failing any of them never mounts.
+message ConceptScheme {
+  // The scheme's title, at most one per language.
+  repeated LangLabel pref_label = 1;
+  // At least one concept; ids unique.
+  repeated Concept concepts = 2 [(ai.protomolt.proto.validate.v1.field).repeated.min_items = 1];
+}
+
+// One concept of a scheme.
+message Concept {
+  // Stable opaque id, unique in the scheme, independent of every label.
+  // A retired concept keeps its id; an id is not reused.
+  string id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 200}
+  }];
+  // Preferred label: at most one per language.
+  repeated LangLabel pref_label = 2 [(ai.protomolt.proto.validate.v1.field).repeated.min_items = 1];
+  // Alternate labels (synonyms, abbreviations).
+  repeated LangLabel alt_label = 3;
+  // Hidden labels: matched by search, not displayed (misspellings).
+  repeated LangLabel hidden_label = 4;
+  // Parents in this scheme. Several are allowed; the graph is acyclic.
+  repeated string broader = 5 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
+  // Associated concepts in this scheme; symmetric, not hierarchical.
+  repeated string related = 6 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
+  // Cross-scheme mappings. Each target names another scheme.
+  repeated ConceptRef exact_match = 7;
+  repeated ConceptRef close_match = 8;
+  repeated ConceptRef broad_match = 9;
+  repeated ConceptRef narrow_match = 10;
+  repeated ConceptRef related_match = 11;
+  // Notes, at most one definition per language.
+  repeated LangLabel definition = 12;
+  repeated LangLabel scope_note = 13;
+  // Retired: still a member, still matched, not offered for new tags.
+  bool deprecated = 14;
+  // For a deprecated concept, its successors in this scheme.
+  repeated string replaced_by = 15;
+  // The concept's IRI, kept for SKOS round trips. Not an identity.
+  optional string iri = 16 [(ai.protomolt.proto.validate.v1.field).string.uri = true];
+}
+
+// Text in one language.
+message LangLabel {
+  string language = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {language_tag: true}
+  }];
+  string text = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1000}
+  }];
+}
+
+// A document tag, and a mapping target: scheme and concept id. A field of
+// this type binds its values to schemes with the concept_schemes field rule.
+message ConceptRef {
+  string scheme_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 200}
+  }];
+  string concept_id = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {path_safe_name: true, max_len: 200}
+  }];
+}
+
+// Which optional steps a query on a ConceptRef expands through. The
+// queried concept, its exact_match closure across mounted schemes and the
+// deprecated concepts whose replaced_by chain reaches it are always
+// included and need no flag. broader, related, broad_match, narrow_match
+// and related_match are navigation and never expand a query.
+message ConceptExpansion {
+  // Add in-scheme descendants (narrower, transitive).
+  bool narrower = 1;
+  // Add close_match targets, one hop from the queried concept.
+  bool close_match = 2;
+}
