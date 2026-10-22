@@ -105,6 +105,48 @@ class BlobBindingFactsIT {
         assertThat(uploaded.getSaved().getAccession().getManifest().getCommittedAt()).isEqualTo(second.getCommittedAt());
     }
 
+    @Test void carryingAnUnstampedPartOrBindingNeverGivesItTheNewRevisionsStamp() throws Exception {
+        var address = address(account, "doc-unstamped");
+        f.saves.save(processAuthority(), create("op-1", address, bag(account, "doc-unstamped",
+                raw("original", ORIGINAL), raw("thumbnail", "a thumbnail"))).build());
+        // Revision 1 as a catalog written before write stamps existed would hold it.
+        var unstamped = f.catalog.manifest(address, 1).orElseThrow().toBuilder();
+        for (var part : unstamped.getPartsBuilderList()) {
+            part.getEntryBuilder().clearWrittenAt();
+            part.getBlobRefsBuilderList().forEach(BlobObjectRef.Builder::clearWritten);
+        }
+        rewriteManifest(address, 1, unstamped.build());
+
+        var read = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build());
+        assertThat(read.getDocument().getBlobBag().getBlobs().getBlobList())
+                .allSatisfy(blob -> assertThat(blob.hasWritten()).as("no stamp is invented on read").isFalse());
+        assertThat(read.getManifest().getPartsList()).allSatisfy(entry -> assertThat(entry.hasWrittenAt()).isFalse());
+
+        // Revision 2 carries "original" by blob_id, adds "markdown", and carries CORE and PARSED whole.
+        f.saves.save(processAuthority(), blobsOnly("op-2", address, 1, carried("original").build(), raw("markdown", MARKDOWN)));
+        var second = f.catalog.manifest(address, 2).orElseThrow();
+        assertThat(binding(second, "original").hasWritten()).as("a carried unstamped binding stays unstamped").isFalse();
+        assertThat(binding(second, "markdown").getWritten().getRevision()).isEqualTo(2);
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_CORE).hasWrittenAt()).isFalse();
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_PARSED).hasWrittenAt()).isFalse();
+        assertThat(part(second, DocumentPart.DOCUMENT_PART_BLOBS).getWrittenAt()).isEqualTo(second.getCommittedAt());
+
+        // Revision 3 writes CORE only: the BLOBS part and both bindings pass through as they were.
+        f.saves.save(processAuthority(), SaveDocumentRequest.newBuilder().setOperationId("op-3")
+                .setTarget(DocumentTarget.newBuilder().setAddress(address)).setExpected(at(2))
+                .setDocument(document(account, "doc-unstamped", "v3").toBuilder().clearBlobBag().clearParserResults())
+                .addWrites(put(DocumentPart.DOCUMENT_PART_CORE)).setOwner(intakeOwner()).build());
+        var third = f.catalog.manifest(address, 3).orElseThrow();
+        assertThat(blobsEntry(third)).isEqualTo(blobsEntry(second));
+        assertThat(part(third, DocumentPart.DOCUMENT_PART_PARSED).hasWrittenAt()).isFalse();
+        assertThat(part(third, DocumentPart.DOCUMENT_PART_CORE).getWrittenAt()).isEqualTo(third.getCommittedAt());
+        var latest = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(address).build())
+                .getDocument().getBlobBag().getBlobs().getBlobList();
+        assertThat(latest).extracting(Blob::getBlobId).containsExactly("original", "markdown");
+        assertThat(latest.get(0).hasWritten()).isFalse();
+        assertThat(latest.get(1).getWritten().getRevision()).isEqualTo(2);
+    }
+
     @Test void aCarriedBlobWhoseObjectWasPurgedFailsTheCommitAsSourcePurged() throws Exception {
         var address = address(account, "doc-carry-purged");
         f.saves.save(processAuthority(), create("op-1", address, bag(account, "doc-carry-purged",
@@ -278,6 +320,29 @@ class BlobBindingFactsIT {
                     assertThat(((SaveRejection) failure.detail().orElseThrow()).getReason())
                             .isEqualTo(RejectionReason.REJECTION_REASON_MALFORMED_REQUEST);
                 });
+    }
+
+    /** Replaces one revision's stored manifest in place, past the catalog's immutability trigger. */
+    private void rewriteManifest(NodeAddress address, long revision, StoredManifest manifest) throws Exception {
+        var bytes = manifest.toByteArray();
+        try (var connection = DriverManager.getConnection(f.url, POSTGRES.getUsername(), POSTGRES.getPassword());
+             var statement = connection.createStatement();
+             var update = connection.prepareStatement("""
+                     UPDATE catalog_revisions SET manifest = ?, manifest_sha256 = ?
+                     WHERE revision = ? AND document_id = (SELECT document_id FROM catalog_documents
+                         WHERE account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?)""")) {
+            statement.execute("ALTER TABLE catalog_revisions DISABLE TRIGGER catalog_revisions_immutable");
+            update.setBytes(1, bytes);
+            update.setString(2, SaveIntents.sha256Hex(bytes));
+            update.setLong(3, revision);
+            update.setString(4, address.getAccountId());
+            update.setString(5, address.getGraphId());
+            update.setString(6, address.getGraphAddressId());
+            update.setString(7, address.getDocId());
+            assertThat(update.executeUpdate()).isEqualTo(1);
+            statement.execute("ALTER TABLE catalog_revisions ENABLE TRIGGER catalog_revisions_immutable");
+        }
+        assertThat(f.catalog.manifest(address, revision).orElseThrow()).isEqualTo(manifest);
     }
 
     private static Document bag(String account, String doc, Blob... blobs) {

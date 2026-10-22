@@ -239,10 +239,13 @@ final class RawBlobs {
             var ref = bound.get(blob.getBlobId());
             if (ref == null || !used.add(blob.getBlobId()))
                 throw new AccessionException(Status.Code.DATA_LOSS, "Stored blob has no claim check binding", null);
-            return blob.toBuilder().setStorageRef(FileStorageReference.newBuilder()
+            var checked = blob.toBuilder().setStorageRef(FileStorageReference.newBuilder()
                     .setDriveName(ref.getRef().getStackId()).setObjectKey(ref.getRef().getKey()))
                     .setSizeBytes(ref.getRef().getLength()).setChecksum(ref.getRef().getSha256())
-                    .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256).setWritten(ref.getWritten()).build();
+                    .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256);
+            // A binding recorded before write stamps existed has none; the read says so by omission.
+            if (ref.hasWritten()) checked.setWritten(ref.getWritten());
+            return checked.build();
         });
         if (used.size() != bound.size())
             throw new AccessionException(Status.Code.DATA_LOSS, "A claim check binding names no stored blob", null);

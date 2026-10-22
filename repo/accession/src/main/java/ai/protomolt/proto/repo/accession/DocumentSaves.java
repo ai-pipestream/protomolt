@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -788,6 +789,8 @@ public final class DocumentSaves {
         var carried = new HashSet<>(parts.keySet());
         var kinds = new LinkedHashMap<PartSelector, ChangeKind>();
         var sourced = new LinkedHashMap<PartSelector, StackRef>();
+        // The raw blob bindings this save makes; only these take its BlobWrite.
+        var newBindings = new HashSet<BindingKey>();
         for (var source : request.getSourcesList()) {
             var selector = source.getSelector();
             var from = readableSource(caller, account, source.getFromAddress(), source.getFromRevision());
@@ -820,10 +823,14 @@ public final class DocumentSaves {
                         original.getOwner(), original.getWriterGrant(), Optional.of(original)));
             }
             var copied = entry.get().toBuilder();
-            copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded();
-            // A sourced part is written in this revision, so its raw blob bindings take this
-            // revision's stamp below; only blob-level carry-forward keeps an earlier one.
-            for (int index = 0; index < copied.getBlobRefsCount(); index++) copied.getBlobRefsBuilder(index).clearWritten();
+            copied.getEntryBuilder().setWrittenInRevision(revision).setOwner(request.getOwner()).clearContentIncluded()
+                    .clearWrittenAt();
+            // A sourced part is written in this revision, so it and its raw blob bindings take
+            // this revision's stamp below; only carry-forward keeps an earlier one.
+            for (int index = 0; index < copied.getBlobRefsCount(); index++) {
+                copied.getBlobRefsBuilder(index).clearWritten();
+                newBindings.add(new BindingKey(selector, copied.getBlobRefs(index).getBlobId()));
+            }
             parts.put(selector, copied.build());
             carried.remove(selector);
             if (entry.get().hasRef()) sourced.put(selector, entry.get().getRef());
@@ -1034,6 +1041,7 @@ public final class DocumentSaves {
             var ref = putOrReuse(stack, raw.data(), reusable, newObjects);
             blobRefs.add(BlobObjectRef.newBuilder().setBlobId(raw.blobId()).setRef(ref).build());
         }
+        for (var ref : blobRefs) newBindings.add(new BindingKey(BLOBS_SELECTOR, ref.getBlobId()));
         // Blob-level carry-forward: the expected revision's binding, stamp included, with
         // no bytes sent and no copy; its object joins the carried-object purge check below.
         blobRefs.addAll(carriedBlobs);
@@ -1087,7 +1095,7 @@ public final class DocumentSaves {
         // Every part and binding this revision wrote takes its commit time; carried ones keep theirs.
         var written = BlobWrite.newBuilder().setRevision(revision).setCommittedAt(committedAt);
         if (request.getOwner().hasStep()) written.setStep(request.getOwner().getStep());
-        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written.build())).toList();
+        var stamped = ordered.stream().map(part -> stampNewWrites(part, revision, written.build(), newBindings)).toList();
         var stored = StoredManifest.newBuilder().setAddress(address).setRevision(revision)
                 .setPreviousRevision(currentRevision).addAllParts(stamped).setValidation(validation)
                 .setOperationId(request.getOperationId()).setIntentSha256(intentSha).setOwner(request.getOwner())
@@ -1170,18 +1178,27 @@ public final class DocumentSaves {
         return carried;
     }
 
+    /** One raw blob binding of one part. */
+    private record BindingKey(PartSelector part, String blobId) {}
+
     /**
      * The part with this revision's write recorded: {@code written_at} on an entry
-     * written or sourced in this revision, and the {@link BlobWrite} on every raw
-     * blob binding this revision made. Carried entries and bindings are unchanged.
+     * written or sourced in this revision, and the {@link BlobWrite} on each raw blob
+     * binding this revision made. Carried entries and bindings are left as they were,
+     * stamped or not: a binding without a stamp is never given this revision's.
      */
-    private static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written) {
-        boolean entryWritten = part.getEntry().getWrittenInRevision() == revision;
-        if (!entryWritten && part.getBlobRefsList().stream().allMatch(BlobObjectRef::hasWritten)) return part;
+    private static StoredPartEntry stampNewWrites(StoredPartEntry part, long revision, BlobWrite written,
+            Set<BindingKey> newBindings) {
+        var selector = part.getEntry().getSelector();
+        boolean entryWritten = part.getEntry().getWrittenInRevision() == revision && !part.getEntry().hasWrittenAt();
+        boolean bindingsWritten = part.getBlobRefsList().stream()
+                .anyMatch(ref -> newBindings.contains(new BindingKey(selector, ref.getBlobId())));
+        if (!entryWritten && !bindingsWritten) return part;
         var stamped = part.toBuilder();
         if (entryWritten) stamped.getEntryBuilder().setWrittenAt(written.getCommittedAt());
         for (int index = 0; index < stamped.getBlobRefsCount(); index++)
-            if (!stamped.getBlobRefs(index).hasWritten()) stamped.getBlobRefsBuilder(index).setWritten(written);
+            if (newBindings.contains(new BindingKey(selector, stamped.getBlobRefs(index).getBlobId())))
+                stamped.getBlobRefsBuilder(index).setWritten(written);
         return stamped.build();
     }
 

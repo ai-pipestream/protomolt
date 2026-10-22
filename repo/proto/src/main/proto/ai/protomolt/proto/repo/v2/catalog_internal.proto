@@ -69,13 +69,13 @@ message StackRef {
 message BlobObjectRef {
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "blob-write-revision"
-    message: "a blob binding names the positive revision that bound it"
-    expression: "this.written.revision > 0"
+    message: "a blob binding's stamp names the positive revision that bound it"
+    expression: "!has(this.written) || this.written.revision > 0"
   };
   option (ai.protomolt.proto.validate.v1.message).cel = {
     id: "blob-write-committed-at"
-    message: "a blob binding records the commit time that bound it"
-    expression: "has(this.written.committed_at)"
+    message: "a blob binding's stamp records the commit time that bound it"
+    expression: "!has(this.written) || has(this.written.committed_at)"
   };
   // Blob.blob_id in the BLOBS fragment; unique within the part.
   string blob_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
@@ -84,9 +84,10 @@ message BlobObjectRef {
   }];
   // The stack object holding the blob's raw bytes, written or verified by the server.
   StackRef ref = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
-  // The write that bound the object. A blob carried forward by its blob_id keeps
-  // this stamp; the server exposes it on read as Blob.written.
-  ai.protomolt.proto.repo.v1.BlobWrite written = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The write that bound the object, set by the save that binds it. A blob carried
+  // forward keeps this stamp, or its absence for a binding made before stamps were
+  // recorded; the server exposes it on read as Blob.written.
+  ai.protomolt.proto.repo.v1.BlobWrite written = 3;
 }
 
 // One stored part of one accession.

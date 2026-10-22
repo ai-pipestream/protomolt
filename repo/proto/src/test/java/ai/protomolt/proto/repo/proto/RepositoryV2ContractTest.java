@@ -242,20 +242,22 @@ class RepositoryV2ContractTest {
                         .setWrittenAt(Timestamp.newBuilder().setSeconds(1)))
                         .setRef(StackRef.newBuilder().setStackId("s1").setKey("k").setSha256(SHA).setLength(10)));
         check(stored.build(), true);
+        // A part written before write times were recorded has none and stays valid.
         var untimed = stored.clone();
         untimed.getPartsBuilder(0).getEntryBuilder().clearWrittenAt();
-        check(untimed.build(), false);
+        check(untimed.build(), true);
         check(stored.clone().clearOwnership().build(), false);
         check(stored.clone().clearOwner().build(), false);
 
-        // A raw blob binding records the write that bound it; the stamp is not optional.
+        // A stamp, when present, names a positive revision and a commit time; a binding
+        // made before stamps were recorded has none.
         var binding = BlobObjectRef.newBuilder().setBlobId("b1")
                 .setRef(StackRef.newBuilder().setStackId("s1").setKey("b").setSha256(SHA).setLength(3))
                 .setWritten(BlobWrite.newBuilder().setRevision(1).setCommittedAt(Timestamp.newBuilder().setSeconds(1)));
         check(binding.build(), true);
         check(binding.clone().setWritten(binding.getWritten().toBuilder()
                 .setStep(WriteProvenance.newBuilder().setModuleId("parser"))).build(), true);
-        check(binding.clone().clearWritten().build(), false);
+        check(binding.clone().clearWritten().build(), true);
         check(binding.clone().setWritten(binding.getWritten().toBuilder().setRevision(0)).build(), false);
         check(binding.clone().setWritten(binding.getWritten().toBuilder().clearCommittedAt()).build(), false);
     }
