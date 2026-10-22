@@ -72,4 +72,20 @@ class ResponseFormatShaperTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("provider-safe");
     }
+
+    @Test
+    void acceptsANameAtTheProviderLimit() throws Exception {
+        String name = "A9_-" + "a".repeat(60);
+        String envelope = ResponseFormatShaper.jsonSchemaEnvelope(name, "{}", false);
+
+        assertThat(MAPPER.readTree(envelope).get("json_schema").get("name").asText())
+                .isEqualTo(name);
+    }
+
+    @Test
+    void rejectsAnEmptyName() {
+        assertThatThrownBy(() -> ResponseFormatShaper.jsonSchemaEnvelope("", "{}", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("provider-safe");
+    }
 }

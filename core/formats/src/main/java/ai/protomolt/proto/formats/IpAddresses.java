@@ -212,7 +212,18 @@ public final class IpAddresses {
         if (half.isEmpty()) {
             return new String[0];
         }
-        String[] parts = half.split(":", -1);
+        int count = 1;
+        for (int i = half.indexOf(':'); i >= 0; i = half.indexOf(':', i + 1)) {
+            count++;
+        }
+        String[] parts = new String[count];
+        int start = 0;
+        for (int slot = 0; slot < count - 1; slot++) {
+            int colon = half.indexOf(':', start);
+            parts[slot] = half.substring(start, colon);
+            start = colon + 1;
+        }
+        parts[count - 1] = half.substring(start);
         for (String p : parts) {
             if (p.isEmpty()) {
                 return null;
