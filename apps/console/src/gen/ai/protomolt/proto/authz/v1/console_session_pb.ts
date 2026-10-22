@@ -6,6 +6,8 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { IntakeWriterScope } from "./account_bindings_pb";
+import { file_ai_protomolt_proto_authz_v1_account_bindings } from "./account_bindings_pb";
 import { file_ai_protomolt_proto_validate_v1_validate } from "../../validate/v1/validate_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -13,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ai/protomolt/proto/authz/v1/console_session.proto.
  */
 export const file_ai_protomolt_proto_authz_v1_console_session: GenFile = /*@__PURE__*/
-  fileDesc("CjFhaS9wcm90b21vbHQvcHJvdG8vYXV0aHovdjEvY29uc29sZV9zZXNzaW9uLnByb3RvEhthaS5wcm90b21vbHQucHJvdG8uYXV0aHoudjEijQIKDkNvbnNvbGVTZXNzaW9uEiIKCXByaW5jaXBhbBgBIAEoCUIPitS54QEJCAESBQgBEIABEiQKBnNjb3BlcxgCIAMoCUIUitS54QEOagwIARgBIgYSBAgBEEASHAoGaXNzdWVyGAMgASgJQgyK1LnhAQYIARICeAESIAoHc3ViamVjdBgEIAEoCUIPitS54QEJCAESBQgBEP8BEjcKCWlzc3VlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCIrUueEBAggBEjgKCmV4cGlyZXNfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgiK1LnhAQIIASKnAQoUQ29uc29sZVNlc3Npb25TdGF0dXMSFQoNYXV0aGVudGljYXRlZBgBIAEoCBIeCglwcmluY2lwYWwYAiABKAlCC4rUueEBBRIDEIABEigKC2FjY291bnRfaWRzGAMgAygJQhOK1LnhAQ1qCxgBIgcSBQgBEMgBEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wKpQCCg1TaWduSW5GYWlsdXJlEh8KG1NJR05fSU5fRkFJTFVSRV9VTlNQRUNJRklFRBAAEiIKHlNJR05fSU5fRkFJTFVSRV9TVEFURV9NSVNNQVRDSBABEiEKHVNJR05fSU5fRkFJTFVSRV9MT0dJTl9FWFBJUkVEEAISIwofU0lHTl9JTl9GQUlMVVJFX1BST1ZJREVSX0RFTklFRBADEikKJVNJR05fSU5fRkFJTFVSRV9UT0tFTl9FWENIQU5HRV9GQUlMRUQQBBIkCiBTSUdOX0lOX0ZBSUxVUkVfSURfVE9LRU5fSU5WQUxJRBAFEiUKIVNJR05fSU5fRkFJTFVSRV9VTktOT1dOX1BSSU5DSVBBTBAGQjEKGGFpLnByb3RvbW9sdC5wcm90by5hdXRoekITQ29uc29sZVNlc3Npb25Qcm90b1ABYgZwcm90bzM", [file_google_protobuf_timestamp, file_ai_protomolt_proto_validate_v1_validate]);
+  fileDesc("CjFhaS9wcm90b21vbHQvcHJvdG8vYXV0aHovdjEvY29uc29sZV9zZXNzaW9uLnByb3RvEhthaS5wcm90b21vbHQucHJvdG8uYXV0aHoudjEijQIKDkNvbnNvbGVTZXNzaW9uEiIKCXByaW5jaXBhbBgBIAEoCUIPitS54QEJCAESBQgBEIABEiQKBnNjb3BlcxgCIAMoCUIUitS54QEOagwIARgBIgYSBAgBEEASHAoGaXNzdWVyGAMgASgJQgyK1LnhAQYIARICeAESIAoHc3ViamVjdBgEIAEoCUIPitS54QEJCAESBQgBEP8BEjcKCWlzc3VlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCIrUueEBAggBEjgKCmV4cGlyZXNfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgiK1LnhAQIIASLvAQoUQ29uc29sZVNlc3Npb25TdGF0dXMSFQoNYXV0aGVudGljYXRlZBgBIAEoCBIeCglwcmluY2lwYWwYAiABKAlCC4rUueEBBRIDEIABEigKC2FjY291bnRfaWRzGAMgAygJQhOK1LnhAQ1qCxgBIgcSBQgBEMgBEi4KCmV4cGlyZXNfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEkYKDmludGFrZV93cml0ZXJzGAUgAygLMi4uYWkucHJvdG9tb2x0LnByb3RvLmF1dGh6LnYxLkludGFrZVdyaXRlclNjb3BlKpQCCg1TaWduSW5GYWlsdXJlEh8KG1NJR05fSU5fRkFJTFVSRV9VTlNQRUNJRklFRBAAEiIKHlNJR05fSU5fRkFJTFVSRV9TVEFURV9NSVNNQVRDSBABEiEKHVNJR05fSU5fRkFJTFVSRV9MT0dJTl9FWFBJUkVEEAISIwofU0lHTl9JTl9GQUlMVVJFX1BST1ZJREVSX0RFTklFRBADEikKJVNJR05fSU5fRkFJTFVSRV9UT0tFTl9FWENIQU5HRV9GQUlMRUQQBBIkCiBTSUdOX0lOX0ZBSUxVUkVfSURfVE9LRU5fSU5WQUxJRBAFEiUKIVNJR05fSU5fRkFJTFVSRV9VTktOT1dOX1BSSU5DSVBBTBAGQjEKGGFpLnByb3RvbW9sdC5wcm90by5hdXRoekITQ29uc29sZVNlc3Npb25Qcm90b1ABYgZwcm90bzM", [file_google_protobuf_timestamp, file_ai_protomolt_proto_authz_v1_account_bindings, file_ai_protomolt_proto_validate_v1_validate]);
 
 /**
  * A host's record of one signed-in browser session: the principal an OIDC
@@ -114,6 +116,14 @@ export type ConsoleSessionStatus = Message<"ai.protomolt.proto.authz.v1.ConsoleS
    * @generated from field: google.protobuf.Timestamp expires_at = 4;
    */
   expiresAt?: Timestamp | undefined;
+
+  /**
+   * The intake owners the session may upload and delete as, from the
+   * principal's account binding; empty when the session only reads.
+   *
+   * @generated from field: repeated ai.protomolt.proto.authz.v1.IntakeWriterScope intake_writers = 5;
+   */
+  intakeWriters: IntakeWriterScope[];
 };
 
 /**

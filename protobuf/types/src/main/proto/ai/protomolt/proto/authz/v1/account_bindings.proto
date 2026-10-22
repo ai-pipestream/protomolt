@@ -50,6 +50,40 @@ message AccountBinding {
   // The identities document access rules match for this principal inside
   // its bound accounts. Empty means only rules open to "public" match.
   repeated AclIdentity acl_identities = 3;
+  // The intake owners the principal may save as, each in one of its bound
+  // accounts. The repository host gives the principal a writer credential
+  // and one writer grant per entry, and revokes a grant when its entry is
+  // removed. Empty means the principal reads but never writes.
+  repeated IntakeWriterScope intake_writers = 4 [
+    (ai.protomolt.proto.validate.v1.field).repeated.max_items = 100
+  ];
+}
+
+// One intake owner a bound principal may save as: a datasource in an
+// account, optionally through one connector.
+message IntakeWriterScope {
+  // The account; it must be one of the binding's account_ids.
+  string account_id = 1 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // The datasource the principal saves documents for.
+  string datasource_id = 2 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      required: true
+      string: {min_len: 1, max_len: 200}
+    }
+  ];
+  // Only documents of this connector; absent means any connector of the
+  // datasource.
+  optional string connector_id = 3 [
+    (ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200}
+  ];
+  // The principal may create documents, not only save new revisions of
+  // existing ones.
+  bool allow_create = 4;
 }
 
 // One identity a document access rule can name.
