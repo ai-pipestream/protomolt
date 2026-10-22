@@ -491,6 +491,40 @@ class DocumentArchiveIT {
         assertThat(archive.putEntry(a.toBuilder().setExpectedVersion(2).build()).getVersion()).isEqualTo(3);
     }
 
+    /**
+     * Last write wins onto a deleted entry: expected_version 0 asks for no check,
+     * so a put or an upload of new content saves over the deletion's revision
+     * rather than being ABORTED by the tombstone v2 keeps as current.
+     */
+    @Test
+    void lastWriteWinsOntoADeletedEntrySavesOverTheDeletion() throws Exception {
+        EntryAddress address = entry(RETAINED);
+        archive.putEntry(firstPut(address).build());
+        delete(address, 1);
+        PutEntryResponse restated = archive.putEntry(firstPut(address).setTitle("Quarterly report, restated").build());
+        assertThat(restated.getReplayed()).isFalse();
+        assertThat(restated.getVersion()).isEqualTo(3);
+        assertThat(archive.getEntry(GetEntryRequest.newBuilder().setAddress(address).build()).getInfo().getTitle())
+                .isEqualTo("Quarterly report, restated");
+
+        delete(address, 3);
+        ByteString scan = randomBytes(5_000, 21);
+        UploadRenditionResponse uploaded = upload(UploadRenditionHeader.newBuilder().setAddress(address)
+                .setRendition(RenditionDescriptor.newBuilder().setName("scan").setSubKey("0001").setMediaType("image/tiff"))
+                .setSizeBytes(scan.size()).setExpectedSha256(RenditionReads.sha256Hex(scan)).build(), scan, 1_000);
+        assertThat(uploaded.getReplayed()).isFalse();
+        assertThat(uploaded.getVersion()).isEqualTo(5);
+        VersionManifest current = archive.getEntryManifest(GetEntryManifestRequest.newBuilder()
+                .setAddress(address).build()).getManifest();
+        assertThat(row(current, "scan", "0001").getSha256()).isEqualTo(RenditionReads.sha256Hex(scan));
+    }
+
+    private void delete(EntryAddress address, long revision) {
+        documents.deleteDocument(DeleteDocumentRequest.newBuilder().setAddress(ArchiveCoordinates.address(address))
+                .setExpected(ExpectedRevision.newBuilder().setRevision(revision))
+                .setOperationId("delete-" + address.getEntryId() + "-" + revision).build());
+    }
+
     /** The FAILED_PRECONDITION of a derived ID whose recorded version was replaced, naming the remedy. */
     static void assertSuperseded(ThrowingCallable call, String operationId, long recorded, String replacedBy,
             long current) {

@@ -321,8 +321,7 @@ public final class DocumentArchive {
         Optional<GetDocumentResponse> current = readCurrent(address);
         ExpectedRevision expected = request.getExpectedVersion() > 0
                 ? ExpectedRevision.newBuilder().setRevision(request.getExpectedVersion()).build()
-                : current.map(read -> ExpectedRevision.newBuilder().setRevision(read.getManifest().getRevision()).build())
-                        .orElse(ExpectedRevision.newBuilder().setNone(true).build());
+                : lastWriteWins(address, current);
 
         Document.Builder document = core(binding, request.getAddress(), current, request.getTitle(),
                 request.getContentType(), request.getSourceUri(),
@@ -741,6 +740,34 @@ public final class DocumentArchive {
         }
     }
 
+    /**
+     * The expected revision of a last-write-wins save ({@code expected_version}
+     * 0): the current revision of a live entry; the deletion's revision when the
+     * entry is deleted, since v2 keeps the tombstone as the current revision and
+     * would refuse {@code ExpectedRevision.none} with {@code ABORTED}; and none
+     * when the entry has no revisions. A newest revision that is live although
+     * {@code current} was not found is another writer's: none is sent, and the
+     * save loses that race as any concurrent last-write-wins save does.
+     */
+    ExpectedRevision lastWriteWins(NodeAddress address, Optional<GetDocumentResponse> current) {
+        if (current.isPresent()) {
+            return ExpectedRevision.newBuilder().setRevision(current.get().getManifest().getRevision()).build();
+        }
+        ExpectedRevision none = ExpectedRevision.newBuilder().setNone(true).build();
+        try {
+            return documents.listRevisions(ListRevisionsRequest.newBuilder().setAddress(address).setPageSize(1).build())
+                    .getRevisionsList().stream().findFirst()
+                    .filter(RevisionSummary::getTombstone)
+                    .map(deletion -> ExpectedRevision.newBuilder().setRevision(deletion.getRevision()).build())
+                    .orElse(none);
+        } catch (StatusRuntimeException failure) {
+            if (failure.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                return none;
+            }
+            throw failure;
+        }
+    }
+
     static RevisionSelector current() {
         return RevisionSelector.newBuilder().setCurrent(true).build();
     }
@@ -875,8 +902,7 @@ public final class DocumentArchive {
                 .setTarget(DocumentTarget.newBuilder().setAddress(address))
                 .setExpected(header.getExpectedVersion() > 0
                         ? ExpectedRevision.newBuilder().setRevision(header.getExpectedVersion()).build()
-                        : current.map(read -> ExpectedRevision.newBuilder().setRevision(read.getManifest().getRevision()).build())
-                                .orElse(ExpectedRevision.newBuilder().setNone(true).build()))
+                        : lastWriteWins(address, current))
                 .addWrites(put(ArchiveCoordinates.CORE))
                 .setOwner(owner(binding, header.getWrittenBy()))
                 .setValidationMode(ValidationMode.VALIDATION_MODE_TYPED)
