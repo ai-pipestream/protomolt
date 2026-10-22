@@ -494,7 +494,7 @@ public final class ConfluentSchemaRegistryLoader implements DescriptorLoader, Au
      * reference names.
      */
     private static String rootFileName(String subject, Map<String, String> files) {
-        String name = subject.replaceAll("[^A-Za-z0-9._-]", "_");
+        String name = sanitizeSubject(subject);
         if (!name.endsWith(".proto")) {
             name += ".proto";
         }
@@ -502,6 +502,23 @@ public final class ConfluentSchemaRegistryLoader implements DescriptorLoader, Au
             name = "_" + name;
         }
         return name;
+    }
+
+    /**
+     * Keeps {@code A-Z a-z 0-9 . _ -}; every other code point becomes one underscore, so a
+     * supplementary character (one code point, two chars) folds to a single {@code _}.
+     */
+    static String sanitizeSubject(String subject) {
+        StringBuilder name = new StringBuilder(subject.length());
+        subject.codePoints().forEach(cp -> {
+            if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= '0' && cp <= '9')
+                    || cp == '.' || cp == '_' || cp == '-') {
+                name.appendCodePoint(cp);
+            } else {
+                name.append('_');
+            }
+        });
+        return name.toString();
     }
 
     private static boolean containsMessage(List<Descriptor> messages, String name, boolean fullyQualified) {
