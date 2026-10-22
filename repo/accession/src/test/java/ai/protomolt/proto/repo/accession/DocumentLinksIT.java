@@ -489,6 +489,56 @@ class DocumentLinksIT {
         }
     }
 
+    @Test void anOpaqueAnyIsNotReadThroughATypedSiblingWithTheSameBytes() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var target = address(ACCOUNT, "t");
+            saves.save(processAuthority(), save("t", target, document("t", citation(c -> {}), "reader", "chunker")));
+            var inner = packed(citation(c -> c.setField(CITATION.findFieldByName("cites"), link(fixed(target, null)))));
+            var payload = citation(c -> {
+                c.setField(CITATION.findFieldByName("nested"), inner);
+                c.addRepeatedField(CITATION.findFieldByName("extras"), inner);
+            });
+            // Typed throughout, both siblings are entered. The save records nested's occurrence;
+            // an attestation names the same steps without the Any's own boundary.
+            var typed = address(ACCOUNT, "typed");
+            saves.save(processAuthority(), save("typed", typed, document("typed", payload, "reader", "chunker")));
+            assertThat(f.catalog.links(typed)).extracting(CatalogRecords.Link::fieldPath)
+                    .containsExactly("structured_data.extras[0].cites", "structured_data.nested.cites");
+            var nested = f.catalog.manifest(typed, 1).orElseThrow().getValidation().getResolvedOccurrencesList().stream()
+                    .map(ResolvedOccurrence::getOccurrence)
+                    .filter(locator -> locator.getStepsCount() > 1
+                            && locator.getSteps(locator.getStepsCount() - 2).getFieldNumber() == 6)
+                    .map(locator -> locator.toBuilder().removeSteps(locator.getStepsCount() - 1).build())
+                    .findFirst().orElseThrow();
+
+            // The same bytes with nested attested opaque: only the typed extras[0] is read.
+            var credential = UUID.randomUUID();
+            f.catalog.registerCredential(ISSUER, credential, "chunker");
+            f.opaqueStepGrant(ACCOUNT, credential, "chunker", true, "grant-producer", CITATION_URL);
+            var mixed = address(ACCOUNT, "mixed");
+            var opaqueSaves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), bytes -> () -> {},
+                    Clock.systemUTC(), true);
+            var saved = opaqueSaves.save(writer(ACCOUNT, "chunker", credential, 1),
+                    save("mixed", mixed, document("mixed", payload, "reader", "chunker")).toBuilder()
+                            .setOwner(stepOwner("chunker")).setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+                            .addOpaqueAttestations(OpaqueAttestation.newBuilder().setOccurrence(nested).setTypeUrl(CITATION_URL))
+                            .build());
+            assertThat(saved.getAccession().getValidation().getOpaqueOccurrencesList()).singleElement()
+                    .satisfies(opaque -> assertThat(opaque.getOccurrence()).isEqualTo(nested));
+            var expected = List.of("structured_data.extras[0].cites");
+            assertThat(f.catalog.links(mixed)).extracting(CatalogRecords.Link::fieldPath).isEqualTo(expected);
+            assertThat(linkReads(f).listLinks(reader("reader"), ListLinksRequest.newBuilder().setAddress(mixed).build())
+                    .getLinksList()).extracting(ResolvedLink::getFieldPath).isEqualTo(expected);
+            var edges = f.catalog.links(mixed);
+            try (var connection = DriverManager.getConnection(f.url, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                connection.createStatement().execute("DELETE FROM catalog_document_links");
+            }
+            new CatalogEntryRebuild(f.catalog, f.reads).rebuild(ACCOUNT);
+            assertThat(f.catalog.links(mixed)).isEqualTo(edges);
+        }
+    }
+
     @Test void aLinkUnderAMapValueThroughAnAnyIsRefused() throws Exception {
         try (var f = new AccessionFixture()) {
             var saves = saves(f);
