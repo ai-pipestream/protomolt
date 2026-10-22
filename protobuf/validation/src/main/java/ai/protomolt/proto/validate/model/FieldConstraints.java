@@ -32,6 +32,7 @@ public record FieldConstraints(
         Optional<AnyConstraints> any,
         Optional<FieldMaskConstraints> fieldMask,
         Optional<String> taxonomy,
+        List<String> conceptSchemes,
         boolean inspectOnly,
         List<CelConstraint> cel) {
 
@@ -50,6 +51,7 @@ public record FieldConstraints(
         Objects.requireNonNull(any, "any");
         Objects.requireNonNull(fieldMask, "fieldMask");
         Objects.requireNonNull(taxonomy, "taxonomy");
+        conceptSchemes = List.copyOf(Objects.requireNonNull(conceptSchemes, "conceptSchemes"));
         cel = List.copyOf(Objects.requireNonNull(cel, "cel"));
     }
 
@@ -74,6 +76,7 @@ public record FieldConstraints(
         private AnyConstraints any;
         private FieldMaskConstraints fieldMask;
         private String taxonomy;
+        private final List<String> conceptSchemes = new ArrayList<>();
         private boolean inspectOnly;
         private final List<CelConstraint> cel = new ArrayList<>();
 
@@ -161,6 +164,16 @@ public record FieldConstraints(
             return this;
         }
 
+        /**
+         * Binds the field's ConceptRef values to these concept schemes, in declared order.
+         * Validity of the ids and of the field type is checked at rule compilation.
+         */
+        public Builder conceptSchemes(List<String> schemeIds) {
+            conceptSchemes.clear();
+            conceptSchemes.addAll(Objects.requireNonNull(schemeIds, "schemeIds"));
+            return this;
+        }
+
         public Builder addCel(CelConstraint constraint) {
             cel.add(Objects.requireNonNull(constraint, "constraint"));
             return this;
@@ -183,6 +196,7 @@ public record FieldConstraints(
                     Optional.ofNullable(any),
                     Optional.ofNullable(fieldMask),
                     Optional.ofNullable(taxonomy),
+                    List.copyOf(conceptSchemes),
                     inspectOnly,
                     List.copyOf(cel));
         }
