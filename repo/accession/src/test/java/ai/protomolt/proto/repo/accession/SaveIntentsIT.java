@@ -45,7 +45,11 @@ class SaveIntentsIT {
             var frozen = bytes.readAllBytes();
             var expected = new String(digest.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
             assertThat(SaveIntent.parseFrom(frozen)).isEqualTo(intent);
-            assertThat(intent.getAllFields()).hasSize(SaveIntent.getDescriptor().getFields().size());
+            // Every field but unchanged, which the unchanged-policy vector freezes: v1 predates it,
+            // and an unset policy leaves the encoding, and so every recorded digest, as it was.
+            assertThat(intent.getAllFields().keySet()).extracting(Descriptors.FieldDescriptor::getName)
+                    .containsExactlyInAnyOrderElementsOf(SaveIntent.getDescriptor().getFields().stream()
+                            .map(Descriptors.FieldDescriptor::getName).filter(name -> !name.equals("unchanged")).toList());
             assertThat(ai.protomolt.proto.descriptors.MessageFingerprints.deterministicBytes(intent)).isEqualTo(frozen);
             assertThat(SaveIntents.sha256Hex(frozen)).isEqualTo(expected);
             assertThat(SaveIntents.sha256(intent)).isEqualTo(expected);
@@ -176,6 +180,8 @@ class SaveIntentsIT {
         vectors.put("ordered-writes", orderedWrites());
         vectors.put("attestations", attestations());
         vectors.put("delete-kind", unicodeMetadata().toBuilder().setOperationKind("delete").build());
+        vectors.put("unchanged-policy", unicodeMetadata().toBuilder()
+                .setUnchanged(UnchangedPolicy.UNCHANGED_POLICY_RECORD_OUTCOME).build());
         return vectors;
     }
 
