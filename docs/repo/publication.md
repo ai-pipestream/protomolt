@@ -257,9 +257,15 @@ A concept tag is a value of a `ConceptRef` field in CORE, including the typed
 `structured_data` payload, whose field rules bind it to concept schemes
 (`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
 each tag's membership against the concept schemes the host mounts
-(`DocumentSaves` takes the host's `ConceptSchemeCatalog`): a concept the
-mounted scheme lacks is `concept.member` and a bound scheme the host has not
-mounted is `concept.unmounted`, both `VALIDATION_FAILED`. Reads and catalog
+(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
+repository gets them from `RepoServices.withConceptSchemes` and mounts none
+without it): a concept the mounted scheme lacks is `concept.member` and a
+bound scheme the host has not mounted is `concept.unmounted`, both
+`VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
+its own rules, whatever a self-contained payload schema declares under that
+name: a value whose ids are not strings at fields 1 and 2 is `concept.shape`,
+and one that does not re-parse cleanly or breaks the canonical rules fails the
+save as content. Reads and catalog
 rebuilds decode stored content without deciding membership again, so a host
 that has not mounted a scheme still reads what was admitted. Tags in a typed
 nested `Any` are read as links are, without a path segment for the `Any`. A

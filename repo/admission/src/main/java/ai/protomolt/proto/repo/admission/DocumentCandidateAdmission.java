@@ -429,7 +429,7 @@ public final class DocumentCandidateAdmission {
                         final List<DocumentConcepts.Tag> rootTags;
                         try {
                             rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()), nestedPayloads);
-                        } catch (DocumentConcepts.TagUnderMap refused) {
+                        } catch (DocumentConcepts.TagRefused refused) {
                             throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
                         if (!rootTags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)

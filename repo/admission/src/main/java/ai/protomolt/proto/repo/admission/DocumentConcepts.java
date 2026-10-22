@@ -6,6 +6,7 @@ import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -58,10 +59,17 @@ public final class DocumentConcepts {
         public String at() { return repeated ? fieldPath + "[" + ordinal + "]" : fieldPath; }
     }
 
+    /** Content whose concept tags the repository refuses; the message names the field. */
+    public static class TagRefused extends IllegalArgumentException {
+        TagRefused(String field, String message) {
+            super(field + ": " + message);
+        }
+    }
+
     /** A tag reached from a map value through a typed Any; names the map field. */
-    public static final class TagUnderMap extends IllegalArgumentException {
+    public static final class TagUnderMap extends TagRefused {
         TagUnderMap(String map) {
-            super(map + ": a concept tag cannot sit under a map value");
+            super(map, "a concept tag cannot sit under a map value");
         }
     }
 
@@ -150,7 +158,7 @@ public final class DocumentConcepts {
             for (int i = 0; i < values.size(); i++) {
                 var value = (Message) values.get(i);
                 var at = field.isRepeated() ? path + "[" + i + "]" : path;
-                if (ref) found.add(tag(path, field.isRepeated() ? i : 0, field.isRepeated(), value));
+                if (ref) found.add(tag(field, path, field.isRepeated() ? i : 0, value));
                 else if (isAny(field.getMessageType())) unpacked(value, unpacker).ifPresent(payload -> collect(payload, at, unpacker, found));
                 else collect(value, at, unpacker, found);
             }
@@ -189,9 +197,30 @@ public final class DocumentConcepts {
         }
     }
 
-    private static Tag tag(String path, int ordinal, boolean repeated, Message value) {
-        var type = value.getDescriptorForType();
-        return new Tag(path, ordinal, repeated, (String) value.getField(type.findFieldByName("scheme_id")),
-                (String) value.getField(type.findFieldByName("concept_id")));
+    /**
+     * Reads a tag value as the canonical {@link ConceptRef}, never by the field names of
+     * whatever type the payload schema declares under that full name: a retained schema
+     * is self-contained and can redefine ConceptRef without its rules or with other field
+     * types. The value is re-parsed into the generated type and held to its own rules, so
+     * a forged ConceptRef is refused as content before anything is projected.
+     */
+    private static Tag tag(FieldDescriptor field, String path, int ordinal, Message value) {
+        final ConceptRef ref;
+        if (value instanceof ConceptRef typed) {
+            ref = typed;
+        } else {
+            try {
+                ref = ConceptRef.parseFrom(value.toByteString());
+            } catch (InvalidProtocolBufferException unreadable) {
+                throw new TagRefused(field.getFullName(), "the tag value does not decode as " + CONCEPT_REF_TYPE);
+            }
+        }
+        if (!ref.getUnknownFields().asMap().isEmpty())
+            throw new TagRefused(field.getFullName(), "the tag value carries fields " + CONCEPT_REF_TYPE + " does not declare");
+        var checked = DocumentSchemaAdmission.VALIDATOR.validate(ref);
+        if (!checked.valid())
+            throw new TagRefused(field.getFullName(), "the tag value fails " + checked.violations().getFirst().ruleId()
+                    + " at " + checked.violations().getFirst().path());
+        return new Tag(path, ordinal, field.isRepeated(), ref.getSchemeId(), ref.getConceptId());
     }
 }

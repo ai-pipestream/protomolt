@@ -137,6 +137,92 @@ class DocumentConceptsIT {
         }
     }
 
+    @Test void aConceptFilterMatchesOnlyTheListedAccount() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = follow(config);
+            var saves = saves(f, mounts);
+            var physics = paper(p -> p.setField(PAPER.findFieldByName("subject"), ref("subject", "physics")));
+            for (var account : List.of("a", "b"))
+                for (var doc : List.of(account + "-1", account + "-2"))
+                    saves.save(processAuthority(), save(doc, address(account, doc), Document.newBuilder().setDocId(doc)
+                            .setOwnership(ownership(account, "reader-" + account))
+                            .setSearchMetadata(SearchMetadata.newBuilder().setTitle(doc))
+                            .setStructuredData(Any.newBuilder().setTypeUrl(PAPER_URL).setValue(physics.toByteString()))
+                            .build()));
+            var lists = new DocumentLists(f.catalog, mounts);
+            var filter = filter("subject", "physics", ConceptExpansion.getDefaultInstance());
+            // The same stored pair in another account never matches.
+            assertThat(list(lists, filter, 1).docs()).containsExactly("a-1", "a-2");
+            var readerOfA = writer("a", "reader-a", java.util.UUID.randomUUID(), 1);
+            assertThat(lists.list(readerOfA, request(filter, 10).build()).getDocumentsList())
+                    .extracting(summary -> summary.getAddress().getDocId()).containsExactly("a-1", "a-2");
+            DocumentDeletesIT.assertCode(Status.Code.PERMISSION_DENIED, () -> lists.list(readerOfA,
+                    request(filter, 10).setAccountId("b").build()));
+            assertThat(lists.list(processAuthority(), request(filter, 10).setAccountId("b").build()).getDocumentsList())
+                    .extracting(summary -> summary.getAddress().getDocId()).containsExactly("b-1", "b-2");
+        }
+    }
+
+    @Test void anExpansionOverTheMountBoundIsRefusedNotTruncated() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = ConceptSchemeMounts.follow(config, List.of("subject", "lcsh", "wiki", "region"), 3);
+            assertThat(config.refresh().refused()).isEmpty();
+            var saves = saves(f, mounts);
+            saveTagged(saves, "d1", p -> p.setField(PAPER.findFieldByName("subject"), ref("subject", "physics")));
+            var lists = new DocumentLists(f.catalog, mounts);
+            // physics: itself, its lcsh exact match and old-physics, exactly the bound.
+            assertThat(list(lists, filter("subject", "physics", ConceptExpansion.getDefaultInstance()), 10).docs())
+                    .containsExactly("d1");
+            // With narrower, quantum makes four.
+            DocumentDeletesIT.assertCode(Status.Code.INVALID_ARGUMENT, () -> lists.list(processAuthority(),
+                    request(filter("subject", "physics", ConceptExpansion.newBuilder().setNarrower(true).build()), 10)
+                            .build()));
+        }
+    }
+
+    @Test void aSchemaRedefiningConceptRefIsRefusedAsContentNotInternal() throws Exception {
+        // A retained schema is self-contained, so it can carry its own concepts.proto.
+        var withoutRules = forged(FieldDescriptorProto.Type.TYPE_STRING);
+        var intScheme = forged(FieldDescriptorProto.Type.TYPE_INT64);
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var base = resolver();
+            var noRules = definition(withoutRules, "type.googleapis.com/forged.v1.Paper");
+            var badType = definition(intScheme, "type.googleapis.com/forged.v1.IntPaper");
+            DocumentSchemaAdmission.Resolver forgedSchemas = selection -> switch (selection.typeUrl()) {
+                case "type.googleapis.com/forged.v1.Paper" -> noRules;
+                case "type.googleapis.com/forged.v1.IntPaper" -> badType;
+                default -> base.select(selection);
+            };
+            var saves = new DocumentSaves(f.catalog, f.drives, forgedSchemas, limits(), bytes -> () -> {}, Clock.systemUTC(),
+                    DocumentSchemas.compiled(), false, follow(config));
+            // A set ConceptRef with empty ids: the forged type has no required rules to catch them.
+            var emptyRef = DynamicMessage.getDefaultInstance(withoutRules.findFieldByName("subject").getMessageType());
+            var empty = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("forged-empty",
+                    address(ACCOUNT, "forged-empty"), forgedDocument("forged-empty", "type.googleapis.com/forged.v1.Paper",
+                            DynamicMessage.newBuilder(withoutRules).setField(withoutRules.findFieldByName("subject"), emptyRef)
+                                    .build()))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(empty.getMessage()).contains("forged.v1.Paper.subject").contains("required");
+            // Ids that are not strings never reach a cast.
+            var intRef = intScheme.findFieldByName("subject").getMessageType();
+            var wrongType = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("forged-int",
+                    address(ACCOUNT, "forged-int"), forgedDocument("forged-int", "type.googleapis.com/forged.v1.IntPaper",
+                            DynamicMessage.newBuilder(intScheme).setField(intScheme.findFieldByName("subject"),
+                                    DynamicMessage.newBuilder(intRef).setField(intRef.findFieldByName("scheme_id"), 7L)
+                                            .setField(intRef.findFieldByName("concept_id"), "physics").build()).build()))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(wrongType.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.shape");
+            assertThat(f.catalog.current(address(ACCOUNT, "forged-empty"))).isEmpty();
+            assertThat(f.catalog.current(address(ACCOUNT, "forged-int"))).isEmpty();
+        }
+    }
+
     @Test void conceptFilterRefusalsNameTheirCause() throws Exception {
         var source = new Source();
         mountAll(source);
@@ -476,6 +562,43 @@ class DocumentConceptsIT {
         try {
             return FileDescriptor.buildFrom(file, new FileDescriptor[]{ConceptsProto.getDescriptor(),
                     ValidateProto.getDescriptor(), LinksProto.getDescriptor(), AnyProto.getDescriptor()});
+        } catch (DescriptorValidationException invalid) {
+            throw new IllegalStateException(invalid);
+        }
+    }
+
+    private static Document forgedDocument(String doc, String typeUrl, Message payload) {
+        return Document.newBuilder().setDocId(doc).setOwnership(ownership(ACCOUNT))
+                .setSearchMetadata(SearchMetadata.newBuilder().setTitle(doc))
+                .setStructuredData(Any.newBuilder().setTypeUrl(typeUrl).setValue(payload.toByteString())).build();
+    }
+
+    /**
+     * A payload type whose bound subject field uses a ConceptRef from a forged
+     * ai/protomolt/proto/types/v1/concepts.proto: no field rules, and scheme_id of {@code schemeType}.
+     */
+    private static Descriptor forged(FieldDescriptorProto.Type schemeType) {
+        var concepts = FileDescriptorProto.newBuilder().setName(ConceptsProto.getDescriptor().getName())
+                .setPackage("ai.protomolt.proto.types.v1").setSyntax("proto3")
+                .addMessageType(DescriptorProto.newBuilder().setName("ConceptRef")
+                        .addField(FieldDescriptorProto.newBuilder().setName("scheme_id").setNumber(1).setType(schemeType)
+                                .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                        .addField(FieldDescriptorProto.newBuilder().setName("concept_id").setNumber(2)
+                                .setType(FieldDescriptorProto.Type.TYPE_STRING).setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+                .build();
+        var name = schemeType == FieldDescriptorProto.Type.TYPE_STRING ? "Paper" : "IntPaper";
+        var subject = FieldOptions.newBuilder().setExtension(ValidateProto.field,
+                FieldRules.newBuilder().addConceptSchemes("subject").build()).build();
+        var paper = FileDescriptorProto.newBuilder().setName("forged/v1/" + name.toLowerCase(java.util.Locale.ROOT) + ".proto")
+                .setPackage("forged.v1").setSyntax("proto3")
+                .addDependency(concepts.getName()).addDependency(ValidateProto.getDescriptor().getName())
+                .addMessageType(DescriptorProto.newBuilder().setName(name)
+                        .addField(message("subject", 1, REF, false).setOptions(subject)))
+                .build();
+        try {
+            var forgedConcepts = FileDescriptor.buildFrom(concepts, new FileDescriptor[0]);
+            return FileDescriptor.buildFrom(paper, new FileDescriptor[]{forgedConcepts, ValidateProto.getDescriptor()})
+                    .findMessageTypeByName(name);
         } catch (DescriptorValidationException invalid) {
             throw new IllegalStateException(invalid);
         }
