@@ -86,6 +86,7 @@ message ConsoleSessionStatus {
 // Why a sign-in did not complete; the callback route sends the browser back
 // to the console's sign-in page naming one of these.
 enum SignInFailure {
+  // SIGN_IN_FAILURE_UNSPECIFIED indicates no specific failure reason was recorded.
   SIGN_IN_FAILURE_UNSPECIFIED = 0;
   // The callback's state matched no pending login of this browser.
   SIGN_IN_FAILURE_STATE_MISMATCH = 1;
