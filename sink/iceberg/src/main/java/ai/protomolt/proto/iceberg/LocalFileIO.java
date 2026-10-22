@@ -62,9 +62,25 @@ public final class LocalFileIO implements FileIO {
     private static File toFile(String location) {
         if (location.startsWith("file:")) {
             // Tolerate both file:///abs and the single-slash form metadata sometimes carries.
-            URI uri = URI.create(location.replaceFirst("^file:/+", "file:///"));
+            URI uri = URI.create(normalizeFileUri(location));
             return Path.of(uri).toFile();
         }
         return new File(location);
+    }
+
+    /**
+     * The former {@code replaceFirst("^file:/+", "file:///")} without regex: a leading
+     * {@code file:} followed by one or more slashes becomes {@code file:///}; anything else
+     * passes through unchanged.
+     */
+    static String normalizeFileUri(String location) {
+        if (!location.startsWith("file:/")) {
+            return location;
+        }
+        int end = "file:/".length();
+        while (end < location.length() && location.charAt(end) == '/') {
+            end++;
+        }
+        return "file:///" + location.substring(end);
     }
 }

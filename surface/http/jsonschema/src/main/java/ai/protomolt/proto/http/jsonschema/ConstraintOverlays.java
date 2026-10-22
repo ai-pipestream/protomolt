@@ -81,6 +81,7 @@ final class ConstraintOverlays {
             if (c.any().isPresent()) runtime.add("any");
             if (c.fieldMask().isPresent()) runtime.add("field-mask");
             if (c.taxonomy().isPresent()) runtime.add("taxonomy");
+            if (!c.conceptSchemes().isEmpty()) runtime.add("concept-schemes");
             if (c.inspectOnly()) runtime.add("inspect-only");
         }
         if (!field.hasPresence() && constraints.stream().anyMatch(FieldConstraints::required)) {
@@ -250,7 +251,7 @@ final class ConstraintOverlays {
                     IP_WITH_PREFIXLEN, IPV4_WITH_PREFIXLEN, IPV6_WITH_PREFIXLEN,
                     PROTOBUF_FQN, PROTOBUF_DOT_FQN, MIME_TYPE, LANGUAGE_TAG, CURRENCY_CODE,
                     PHONE_NUMBER, SHA256_HEX, SHA1_HEX, HEX, BASE64, SLUG, REGION_CODE,
-                    PATH_SAFE_NAME, GTIN, DECIMAL, ENDPOINT_ADDRESS, IDENTIFIER ->
+                    PATH_SAFE_NAME, GTIN, DECIMAL, ENDPOINT_ADDRESS, IDENTIFIER, LINK_RELATION ->
                     schemaOf("x-protomolt-format", format.ruleId());
         };
     }

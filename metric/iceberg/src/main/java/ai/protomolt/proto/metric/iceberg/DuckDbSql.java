@@ -153,7 +153,7 @@ record DuckDbSql(String text, List<String> parameters) {
 
     /** Struct extraction per path segment: {@code "a"['b']['c']}. */
     private static String column(String fieldPath) {
-        String[] segments = fieldPath.split("\\.");
+        String[] segments = RollupText.splitOn(fieldPath, '.');
         StringBuilder column = new StringBuilder(
                 "\"" + segments[0].replace("\"", "\"\"") + "\"");
         for (int i = 1; i < segments.length; i++) {

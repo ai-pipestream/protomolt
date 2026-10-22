@@ -66,16 +66,16 @@ public class ClasspathDescriptorLoader implements DescriptorLoader {
      * not recoverable from the proto name alone, so every split point is tried, outermost first.
      */
     private static List<String> candidateClassNames(String fullTypeName) {
-        String[] parts = fullTypeName.split("\\.");
-        List<String> candidates = new ArrayList<>(parts.length);
+        List<String> parts = splitOnDots(fullTypeName);
+        List<String> candidates = new ArrayList<>(parts.size());
         candidates.add(fullTypeName);
-        for (int split = parts.length - 1; split >= 1; split--) {
+        for (int split = parts.size() - 1; split >= 1; split--) {
             StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < parts.length; i++) {
+            for (int i = 0; i < parts.size(); i++) {
                 if (i > 0) {
                     sb.append(i < split ? '.' : '$');
                 }
-                sb.append(parts[i]);
+                sb.append(parts.get(i));
             }
             String candidate = sb.toString();
             if (!candidate.equals(fullTypeName)) {
@@ -83,6 +83,26 @@ public class ClasspathDescriptorLoader implements DescriptorLoader {
             }
         }
         return candidates;
+    }
+
+    /**
+     * Splits a dotted type name into its segments. Trailing empty segments are dropped, the
+     * same segments {@code String.split} with limit 0 would return, so a trailing dot cannot
+     * manufacture an empty candidate class name segment.
+     */
+    private static List<String> splitOnDots(String fullTypeName) {
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        for (int dot = fullTypeName.indexOf('.'); dot >= 0; dot = fullTypeName.indexOf('.', start)) {
+            parts.add(fullTypeName.substring(start, dot));
+            start = dot + 1;
+        }
+        parts.add(fullTypeName.substring(start));
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return end == parts.size() ? parts : parts.subList(0, end);
     }
 
     private FileDescriptor resolveFromClass(String className) {

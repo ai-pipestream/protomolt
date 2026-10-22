@@ -28,7 +28,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Format identification: the seam every consumer of "what is this file"
@@ -256,7 +255,7 @@ public final class Characterizer {
     /** gzip magic: a tar-grammar name means a compressed tar, not a gzip file. */
     private static FormatFact gzipOrTar(String filename,
                                         List<CharacterizationEvidence> evidence) {
-        if (filename != null && FormatGrammars.TAR.matcher(filename).matches()) {
+        if (filename != null && FormatGrammars.TAR.matches(filename)) {
             evidence.add(evidence("probe", "gzip bytes carrying a tar-grammar name"));
             return FormatFact.newBuilder()
                     .setTar(TarArchive.newBuilder().setFilename(filename)).build();
@@ -358,8 +357,8 @@ public final class Characterizer {
     }
 
     /** The filename when it matches the grammar; "" (left unset) otherwise. */
-    private static String matching(String filename, Pattern grammar) {
-        return filename != null && grammar.matcher(filename).matches() ? filename : "";
+    private static String matching(String filename, FormatGrammar grammar) {
+        return grammar.matches(filename) ? filename : "";
     }
 
     private static CharacterizationEvidence evidence(String signal, String observation) {

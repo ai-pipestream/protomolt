@@ -221,6 +221,10 @@ message PartManifestEntry {
   bool opaque = 9;
   // False when the content was not requested, independent of state.
   bool content_included = 10;
+  // When the accession named by written_in_revision committed, set by the save
+  // that writes or sources the part. Carried parts keep it with
+  // written_in_revision; a part written before the time was recorded has none.
+  google.protobuf.Timestamp written_at = 11;
 }
 
 // The public map of one accession.
@@ -241,6 +245,8 @@ message DocumentManifest {
   bool tombstone = 3;
   // Every part of the revision, in codec order.
   repeated PartManifestEntry parts = 4;
+  // When the accession's commit transaction ran.
+  google.protobuf.Timestamp committed_at = 5 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // The overall verdict recorded on a revision.

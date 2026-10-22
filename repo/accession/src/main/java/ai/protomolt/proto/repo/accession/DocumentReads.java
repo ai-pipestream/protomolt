@@ -541,7 +541,7 @@ public final class DocumentReads {
 
     static DocumentManifest manifest(StoredManifest stored, Function<PartSelector, Boolean> included) {
         var manifest = DocumentManifest.newBuilder().setAddress(stored.getAddress()).setRevision(stored.getRevision())
-                .setTombstone(stored.getTombstone());
+                .setTombstone(stored.getTombstone()).setCommittedAt(stored.getCommittedAt());
         for (var part : stored.getPartsList())
             manifest.addParts(part.getEntry().toBuilder().setContentIncluded(
                     part.getEntry().getState() == PartState.PART_STATE_PRESENT && included.apply(part.getEntry().getSelector())));

@@ -326,10 +326,11 @@ class DelegationRuntimeTest {
         private static DocumentManifest manifest(
                 ai.protomolt.proto.repo.v1.NodeAddress address, long revision) {
             return DocumentManifest.newBuilder().setAddress(address).setRevision(revision)
+                    .setCommittedAt(COMMITTED_AT)
                     .addParts(PartManifestEntry.newBuilder()
                             .setSelector(PartSelector.newBuilder().setPart(DocumentPart.DOCUMENT_PART_CORE))
                             .setState(PartState.PART_STATE_PRESENT).setWrittenInRevision(revision)
-                            .setOwner(OWNER))
+                            .setOwner(OWNER).setWrittenAt(COMMITTED_AT))
                     .build();
         }
     }

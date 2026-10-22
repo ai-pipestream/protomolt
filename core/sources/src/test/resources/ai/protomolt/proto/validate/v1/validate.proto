@@ -86,6 +86,12 @@ message StringRules {
   optional bool hex = 27;
   // Value must be base64 (standard alphabet, correct padding).
   optional bool base64 = 28;
+
+  // Value must be a link relation: a Dublin Core relation term
+  // (isPartOf), a name in the IANA Link Relations registry (canonical),
+  // or an absolute URI naming an RFC 8288 extension relation. Bundled
+  // names match exactly as registered.
+  optional bool link_relation = 37;
 }
 
 // Standard constraints for int32 fields.
@@ -331,6 +337,11 @@ message FieldRules {
   // presence (optional, message, oneof) already skip when unset; this is
   // for implicit-presence scalars where empty is a legal non-answer.
   bool ignore_if_zero = 17;
+  // Ids of the concept schemes a value must belong to. Legal only on a
+  // singular or repeated field of ai.protomolt.proto.types.v1.ConceptRef.
+  // This test copy predates the slug string rule, so the element rules the
+  // main validate.proto declares on this field are not repeated here.
+  repeated string concept_schemes = 20;
 }
 
 // Constraints attached to a message as a whole.

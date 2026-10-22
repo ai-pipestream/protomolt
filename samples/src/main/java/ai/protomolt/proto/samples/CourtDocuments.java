@@ -97,10 +97,33 @@ final class CourtDocuments {
         return String.format(Locale.ROOT, SOURCE_URI_TEMPLATE, clusterId, slug(caseName));
     }
 
-    /** Lowercase slug with every non-alphanumeric run collapsed to one dash. */
+    /**
+     * Lowercase slug with every non-alphanumeric run collapsed to one dash, then leading and
+     * trailing dash runs removed.
+     */
     static String slug(String caseName) {
-        String slug = caseName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
-        return slug.replaceAll("^-+|-+$", "");
+        String lower = caseName.toLowerCase(Locale.ROOT);
+        StringBuilder collapsed = new StringBuilder(lower.length());
+        boolean inRun = false;
+        for (int i = 0; i < lower.length(); i++) {
+            char c = lower.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                collapsed.append(c);
+                inRun = false;
+            } else if (!inRun) {
+                collapsed.append('-');
+                inRun = true;
+            }
+        }
+        int start = 0;
+        int end = collapsed.length();
+        while (start < end && collapsed.charAt(start) == '-') {
+            start++;
+        }
+        while (end > start && collapsed.charAt(end - 1) == '-') {
+            end--;
+        }
+        return collapsed.substring(start, end);
     }
 
     /** The embedding input: title plus the first {@value #EMBED_BODY_CHARS} chars of the body. */

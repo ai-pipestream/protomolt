@@ -108,4 +108,42 @@ class EnvCredentialResolverTest {
                 }, REF), CredentialResolutionException.class);
         assertThat(failure.getMessage().contains(secret)).isFalse();
     }
+
+    @Test
+    void checkFormatPinsTheSchemeAndNameGrammar() {
+        CredentialResolver.checkFormat("a:x");
+        CredentialResolver.checkFormat("a-1:X.Y/z_w-2");
+
+        assertThatThrownBy(() -> CredentialResolver.checkFormat(":x"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+        assertThatThrownBy(() -> CredentialResolver.checkFormat("a:"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+        assertThatThrownBy(() -> CredentialResolver.checkFormat("1a:x"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+        assertThatThrownBy(() -> CredentialResolver.checkFormat("a b:x"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+        assertThatThrownBy(() -> CredentialResolver.checkFormat("a:x y"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+        assertThatThrownBy(() -> CredentialResolver.checkFormat("a:b:c"))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("malformed");
+    }
+
+    @Test
+    void bearerMaterialAllowsBase64PaddingOnlyAsATrailingRun() {
+        assertThat(CredentialResolver.resolveBearer(ref -> "abc==", REF)).isEqualTo("abc==");
+        assertThat(CredentialResolver.resolveBearer(ref -> "a-b._~+/c", REF)).isEqualTo("a-b._~+/c");
+
+        assertThatThrownBy(() -> CredentialResolver.resolveBearer(ref -> "=abc", REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("not valid bearer-token");
+        assertThatThrownBy(() -> CredentialResolver.resolveBearer(ref -> "a=b", REF))
+                .isInstanceOf(CredentialResolutionException.class)
+                .hasMessageContaining("not valid bearer-token");
+    }
 }

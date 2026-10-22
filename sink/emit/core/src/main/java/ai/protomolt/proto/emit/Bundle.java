@@ -1,8 +1,10 @@
 package ai.protomolt.proto.emit;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -99,13 +101,37 @@ public final class Bundle {
                 throw new IllegalArgumentException(
                         "Bundle paths are relative files, not absolute or directories: " + path);
             }
-            for (String segment : normalized.split("/")) {
+            for (String segment : splitOnSlash(normalized)) {
                 if (segment.isBlank() || segment.equals(".") || segment.equals("..")) {
                     throw new IllegalArgumentException(
                             "Bundle path segment '" + segment + "' is not allowed: " + path);
                 }
             }
             return normalized;
+        }
+
+        /**
+         * {@link String#split(String)} (limit 0) on {@code '/'} without regex: an empty
+         * input is one empty token, trailing empty tokens are dropped, leading and interior
+         * empty tokens are kept.
+         */
+        private static List<String> splitOnSlash(String path) {
+            if (path.isEmpty()) {
+                return List.of("");
+            }
+            List<String> segments = new ArrayList<>();
+            int start = 0;
+            int slash;
+            while ((slash = path.indexOf('/', start)) >= 0) {
+                segments.add(path.substring(start, slash));
+                start = slash + 1;
+            }
+            segments.add(path.substring(start));
+            int end = segments.size();
+            while (end > 0 && segments.get(end - 1).isEmpty()) {
+                end--;
+            }
+            return segments.subList(0, end);
         }
     }
 }

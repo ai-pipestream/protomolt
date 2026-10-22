@@ -189,6 +189,38 @@ class MspClientTest {
     }
 
     @Test
+    void theClientNameRejectsEmptyUppercaseAndSpacedNames() {
+        TestPipes.End[] ends = TestPipes.pair();
+        try (MspClient client = MspClient.over(ends[0].in(), ends[0].out())) {
+            assertThatThrownBy(() -> client.initialize("", "1"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> client.initialize("Protomolt", "1"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> client.initialize("proto molt", "1"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void theClientNameAcceptsDigitsAndUnderscores() throws Exception {
+        TestPipes.End[] ends = TestPipes.pair();
+        AcpConnection host = AcpConnection.over(ends[1].in(), ends[1].out()).start();
+        host.onRequest((method, params) -> switch (method) {
+            case "initialize" -> {
+                assertThat(params.path("clientInfo").path("name").asText())
+                        .isEqualTo("client_1");
+                yield MAPPER.createObjectNode();
+            }
+            default -> throw new AcpError(-32601, "unknown method: " + method);
+        });
+        try (MspClient client = MspClient.over(ends[0].in(), ends[0].out())) {
+            client.initialize("client_1", "1");
+        } finally {
+            host.close();
+        }
+    }
+
+    @Test
     void uuid7IsVersionSevenAndTimeOrdered() {
         String first = Uuid7.nextString();
         String second = Uuid7.nextString();

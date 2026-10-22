@@ -30,3 +30,21 @@ licenses/LICENSE-droid-signatures.txt.
 DROID format signature definitions
 Copyright (c) 2016 The National Archives
 https://github.com/digital-preservation/droid
+
+This product bundles the relation term names of the DCMI Metadata Terms
+vocabulary, used under the Creative Commons Attribution 4.0 International
+License (https://creativecommons.org/licenses/by/4.0/).
+Bundled at: core/formats/src/main/java/ai/protomolt/proto/formats/LinkRelations.java
+
+DCMI Metadata Terms
+Copyright Dublin Core Metadata Initiative (DCMI)
+https://www.dublincore.org/specifications/dublin-core/dcmi-terms/
+
+This product bundles the relation names of the IANA Link Relations registry
+(link-relations-1.csv, as updated 2026-06-12), which IANA publishes as a
+public registry under RFC 8288.
+Bundled at: core/formats/src/main/java/ai/protomolt/proto/formats/LinkRelations.java
+
+IANA Link Relations registry
+Internet Assigned Numbers Authority (IANA)
+https://www.iana.org/assignments/link-relations/

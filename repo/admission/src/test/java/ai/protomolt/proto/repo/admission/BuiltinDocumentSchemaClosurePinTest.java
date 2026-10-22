@@ -38,7 +38,7 @@ class BuiltinDocumentSchemaClosurePinTest {
      * lowercase hex characters.
      */
     private static final String PINNED_DESCRIPTOR_SHA256 =
-            "dc96ff8a04b7938c5049f9b4858b79efea923f90d4156ee5f04d5f8006edef1a";
+            "50dabaee70843163a0809aaaec00c1f7bb3edfa08e3cf78feb1a0ca845927071";
 
     /**
      * Canonical descriptor fingerprint of the same closure
@@ -46,7 +46,7 @@ class BuiltinDocumentSchemaClosurePinTest {
      * lowercase hex characters.
      */
     private static final String PINNED_DESCRIPTOR_FINGERPRINT =
-            "28e34af7307e15fe3ac791c4db4fc354892c9098831e612fa357653ef84017a6";
+            "20b08edae6a912107a103f23acbb4230b0ea48b50f634f3bc8256baf86ab1d60";
 
     /** Fully qualified name of the builtin container root message. */
     private static final String EXPECTED_ROOT_TYPE_NAME =
@@ -64,9 +64,11 @@ class BuiltinDocumentSchemaClosurePinTest {
     private static final List<String> EXPECTED_CLOSURE_FILES = List.of(
             "google/protobuf/descriptor.proto",
             "ai/protomolt/proto/meta/v1/metadata.proto",
+            "ai/protomolt/proto/repo/v1/address.proto",
+            "google/protobuf/timestamp.proto",
+            "ai/protomolt/proto/repo/v1/manifest.proto",
             "ai/protomolt/proto/repo/v1/security.proto",
             "google/protobuf/duration.proto",
-            "google/protobuf/timestamp.proto",
             "ai/protomolt/proto/validate/v1/validate.proto",
             "ai/protomolt/proto/repo/semantic/v1/semantic.proto",
             "google/protobuf/any.proto",
