@@ -390,14 +390,26 @@ cite them:
 6. **Recorded unchanged outcomes.** `SaveDocumentRequest` gains
    `UnchangedPolicy unchanged` (`UNCHANGED_POLICY_UNSPECIFIED = 0`: a new
    revision for every PUT, as today; `UNCHANGED_POLICY_RECORD_OUTCOME = 1`).
-   It is part of the save's intent. Under `RECORD_OUTCOME`, when every PUT's
-   stored fragment SHA-256 and length equal the expected revision's part
-   entry, every raw blob binds the expected revision's object, and the save
-   names no `PartSource`, `derived_from` or opaque attestation, the commit
-   transaction runs steps 1, 2 and 4 of §7 only: it records the operation
-   outcome (the expected revision's `Accession`, with a new
-   `SaveDocumentResponse.unchanged = true`) and inserts no accession, writes
-   no outbox event and leaves the current-revision pointer alone.
+   It is part of the save's intent. Under `RECORD_OUTCOME`, a save is
+   unchanged only when every `PartWrite` is `WRITE_ACTION_PUT` of a part the
+   expected revision holds as `PART_STATE_PRESENT`, each PUT's stored
+   fragment SHA-256 and length equal that part entry, every raw blob binds
+   the expected revision's object, and the save names no `PartSource`,
+   `derived_from` or opaque attestation. Any `WRITE_ACTION_DELETE` or
+   `WRITE_ACTION_EMPTY`, of a part in any state, and any PUT of a part the
+   expected revision holds as `PART_STATE_EMPTY` or `PART_STATE_DELETED`,
+   commits a new revision and never takes the unchanged path: a DELETE-only
+   save, or an unchanged CORE PUT beside the removal of a populated PARSED
+   part, applies the removal. For an unchanged save the commit transaction
+   runs steps 1, 2 and 4 of §7 only: it records the operation outcome (the
+   expected revision's `Accession` with a new `RecordedOutcome` field
+   `bool unchanged = 5` set to true, answered as a new
+   `SaveDocumentResponse.unchanged = true`) and inserts no accession,
+   writes no outbox event and leaves the current-revision pointer alone.
+   Because the discriminator is persisted with the outcome, a same-key
+   retry replays `unchanged = true` from the recorded outcome, which the
+   archive answers as `deduplicated = true`, and does not advance
+   `current_revision`.
    Authorization, the in-transaction grant recheck and validation of the
    request structure run exactly as for any save, and the expected-revision
    check makes it race-safe: a writer that commits first turns the same
@@ -674,8 +686,8 @@ settle copy are retired.
   - `request_metadata["archive.content_sha256"]` equal to this request's
     content digest: a committed accession is returned with `replayed = true`
     and the revision that operation committed; an unchanged outcome
-    (prerequisite 6) is returned with `replayed = true` and
-    `deduplicated = true` and the revision it matched; a recorded rejection
+    (`RecordedOutcome.unchanged`, prerequisite 6) is returned with
+    `replayed = true` and `deduplicated = true` and the revision it matched; a recorded rejection
     is returned as recorded. No current-revision read and no new save.
   - A different or missing digest, on any arm: `ALREADY_EXISTS` naming
     `operation_id`. A rejection is replayed only to the request that caused
@@ -710,7 +722,8 @@ settle copy are retired.
   caller-supplied and derived IDs.
 - **Deduplication is a recorded outcome.** Every translated save sets
   `unchanged = UNCHANGED_POLICY_RECORD_OUTCOME` (prerequisite 6). When the
-  composed candidate equals the expected revision, v2 commits the operation
+  save meets prerequisite 6's unchanged predicate (PUTs only, each matching a
+  present part of the expected revision), v2 commits the operation
   outcome only, in the same transaction, after the same authorization and
   expected-revision checks as any save, and the archive answers
   `deduplicated = true` with that revision. The archive does no dedup of its
@@ -735,7 +748,10 @@ settle copy are retired.
     rejection;
   - the same retries with no intervening writer;
   - a supplied ID reused with different content after a committed, an
-    unchanged and a rejected outcome, each `ALREADY_EXISTS`.
+    unchanged and a rejected outcome, each `ALREADY_EXISTS`;
+  - a save whose CORE PUT matches the expected revision beside a DELETE or
+    EMPTY of a populated PARSED part, and a DELETE-only save, each commit a
+    new revision with the removal applied and `deduplicated = false`.
 - **`VersionManifest.metadata_snapshot`** is the CORE of that revision,
   projected, so every version keeps the metadata it was saved with.
 
