@@ -168,6 +168,14 @@ message PutEntryRequest {
   // ArchiveOperationKey) from the entry address, the requested
   // expected_version and the request content; never random. A supplied ID
   // shares the account's v2 operation namespace with DocumentService saves.
+  //
+  // A derived ID cannot tell a retry from a second write of the same
+  // content. With expected_version 0, a request whose derived ID is already
+  // recorded at a version that is no longer current is FAILED_PRECONDITION,
+  // naming both versions: replaying it would report a write that is not
+  // current, and saving it again would let a stale retry overwrite a later
+  // writer. To write that content again, send expected_version equal to the
+  // current version, or a new operation_id. A supplied ID always replays.
   string operation_id = 12 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {min_len: 1, max_len: 200}
@@ -240,12 +248,22 @@ message UploadRenditionHeader {
   ai.protomolt.proto.asset.v1.FormatFact declared = 6;
   // Where the asset came from, when it arrived from object storage.
   ai.protomolt.proto.asset.v1.ObjectStoreOrigin origin = 7;
-  // Retry identity, as on PutEntryRequest. Blank requires expected_sha256:
-  // the header must carry the operation ID before any byte arrives.
+  // Retry identity, as on PutEntryRequest, including its rule for a derived
+  // ID recorded at a version that is no longer current. Blank requires
+  // expected_sha256: the header must carry the operation ID before any byte
+  // arrives.
   string operation_id = 8 [
     (ai.protomolt.proto.validate.v1.field) = {
       string: {min_len: 1, max_len: 200}
       ignore_if_zero: true
+    }
+  ];
+  // Optimistic concurrency, as on PutEntryRequest: when non-zero, the upload
+  // lands only if the entry's current version equals this value (ABORTED
+  // otherwise). Zero = no check (last write wins).
+  int64 expected_version = 9 [
+    (ai.protomolt.proto.validate.v1.field) = {
+      int64: {gte: 0}
     }
   ];
 }
@@ -567,8 +585,8 @@ message ArchiveOperationKey {
   // Lowercase hex SHA-256 of the request content: the request's binary
   // encoding with operation_id and expected_version cleared, renditions
   // sorted by (name, sub_key) and metadata entries in unsigned UTF-8 key
-  // order. For an upload, the header's encoding with operation_id cleared
-  // and expected_sha256 kept.
+  // order. For an upload, the header's encoding with operation_id and
+  // expected_version cleared and expected_sha256 kept.
   string content_sha256 = 4;
 }
 
