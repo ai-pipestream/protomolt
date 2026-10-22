@@ -587,7 +587,7 @@ message LinkField {
     string: {link_relation: true}
   }];
   // Protobuf full names of the structured_data types a static target may hold.
-  // Empty means any typed document.
+  // Empty means any target document, typed or opaque.
   repeated string target_types = 2 [(ai.protomolt.proto.validate.v1.field).repeated = {
     unique: true
     items: {string: {protobuf_fqn: true}}
@@ -645,6 +645,31 @@ Schema rules, checked when rules compile (registration and validator build):
   `replaces`/`isReplacedBy`, `references`/`isReferencedBy`, `requires`/
   `isRequiredBy`) for display only.
 
+### Occurrence identity
+
+One link or tag occurrence is named by `(field_path, ordinal)`, and the same pair is
+used in `catalog_document_links`, `catalog_document_concepts`, `ListLinks` and
+`ResolveLink`:
+
+- `field_path` is the field names from the CORE root, joined by `.`, with `[i]`
+  after every repeated ancestor segment: `sections[0].cites`,
+  `sections[3].appendix.sources`, `structured_data.chapters[1].cites`. The leaf
+  link field carries no index.
+- `ordinal` is the element index inside the leaf field when it is repeated, and 0
+  when it is singular.
+- A typed `google.protobuf.Any` is entered without a segment of its own: the path
+  continues with the packed message's field names, as in `structured_data.cites`.
+  A repeated `Any` ancestor takes `[i]` like any repeated field. An opaque `Any`
+  occurrence (§9) is not decoded, so no link or tag inside it is projected.
+- Map values are not entered. A `DocumentLink` or a `concept_schemes`-bound
+  `ConceptRef` reachable only through a map value fails rule compilation, so no
+  map key ever appears in an occurrence identity.
+
+Two occurrences in one revision never share a pair, because every repeated level
+on the way is indexed. Indices are positions in the stored revision, so an
+occurrence identity names a place in one revision, not a link that persists
+across revisions; inserting a section moves the indices of the sections after it.
+
 ### Static targets
 
 A static target names a call number and optionally pins a revision.
@@ -652,13 +677,22 @@ A static target names a call number and optionally pins a revision.
 - **Same account.** The target address's `account_id` must equal the linking
   document's account. A link is a reference, not a grant: cross-account links
   wait for the cross-account read model and are rejected until then.
-- **Checked at save, not held.** Save validation reads the target's catalog row as
-  for a `PartSource` (decision 37): the target must exist, must not be purged, the
-  saving credential must be able to read it, and when `target_types` is non-empty
-  the target's current `structured_data` type (or, for a pinned link, that
-  revision's) must be listed. The type comes from a new `DocumentLookup` field,
-  `structured_data_type` (the full name in the payload's type URL), so the check
-  reads catalog rows and no part bytes. A failure rejects the save with the new reason
+- **Checked at save, not held.** Save validation reads the target's catalog rows as
+  for a `PartSource` (decision 37): the target must exist, must not be purged, and
+  the saving credential must be able to read it. When `target_types` is non-empty,
+  the type of the revision the link addresses must be listed: the target's current
+  revision for an unpinned link, the pinned revision for a pinned one. The current
+  type is not substituted for a pinned revision's.
+- **Type evidence per revision.** Each revision records `structured_data_type` on
+  `catalog_revisions` (and on `RevisionRecord` and `StoredRevision`): the full name
+  in the type URL of CORE's `structured_data` when that payload was admitted typed
+  (§9), and absent when CORE has no `structured_data`, when the payload is an
+  opaque occurrence, and for a tombstone. The check reads this column, never part
+  bytes. A catalog rebuild recomputes it from each revision's CORE and retained
+  schema, as it recomputes every other catalog projection. An absent type matches
+  no `target_types` entry, so an opaque or untyped target is accepted only by a link
+  field whose `target_types` is empty.
+- **Rejection reasons.** A failure rejects the save with the new reason
   `LINK_TARGET_NOT_FOUND` (missing, purged and unreadable collapse to one reason,
   as `NOT_FOUND` does for reads) or `LINK_TARGET_TYPE` (type not allowed). A pinned
   revision must exist. A tombstoned target is accepted: the link is born dangling.
@@ -692,9 +726,9 @@ transaction, next to the lookup rows:
 ```
 catalog_document_links (
   document_id          bigint  -- linking document (catalog_documents)
-  field_path           text    -- descriptor path of the link field, e.g.
-                               -- "structured_data.cites"
-  ordinal              int     -- element index in a repeated field, 0 otherwise
+  field_path           text    -- occurrence path, ancestor indices included,
+                               -- e.g. "sections[0].cites"
+  ordinal              int     -- element index in the leaf field, 0 if singular
   relation             text
   target_account_id    text
   target_graph_id      text
@@ -782,8 +816,9 @@ Filed from this section once approved; each lands proto first.
 1. `link_relation` format in `core/formats`, with the bundled Dublin Core and IANA
    relation tables and NOTICE attribution.
 2. `repo/v2/links.proto`: `LinkField`, `DocumentLink`, targets; compile-time rules;
-   `LINK_TARGET_NOT_FOUND` and `LINK_TARGET_TYPE` reasons;
-   `DocumentLookup.structured_data_type`.
+   occurrence identity and the map-value rejection; `LINK_TARGET_NOT_FOUND` and
+   `LINK_TARGET_TYPE` reasons; per-revision `structured_data_type` on
+   `catalog_revisions`, `RevisionRecord` and `StoredRevision`, rebuilt from CORE.
 3. Save-time static target check and the `catalog_document_links` projection, with
    rebuild.
 4. `ListLinks`, `ResolveLink` and `ListBacklinks`, with target state and access

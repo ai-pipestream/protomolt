@@ -285,7 +285,8 @@ message Concept {
   repeated LangLabel alt_label = 3;
   // Hidden labels: matched by search, not displayed (misspellings).
   repeated LangLabel hidden_label = 4;
-  // Parents in this scheme. Several are allowed; the graph is acyclic.
+  // Parents in this scheme. Several are allowed; the graph is acyclic
+  // (a ProtoMolt profile rule, below).
   repeated string broader = 5 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
   // Associated concepts in this scheme; symmetric, not hierarchical.
   repeated string related = 6 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
@@ -304,6 +305,22 @@ message Concept {
   repeated string replaced_by = 15;
   // The concept's IRI, kept for SKOS round trips. Not an identity.
   optional string iri = 16 [(ai.protomolt.proto.validate.v1.field).string.uri = true];
+  // The concept's skos:notation values, as written in the source, in order.
+  repeated ConceptNotation notation = 17 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
+}
+
+// One skos:notation: a literal and its datatype.
+message ConceptNotation {
+  // The literal, unchanged.
+  string value = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1000}
+  }];
+  // The literal's datatype IRI. Empty for a plain literal.
+  string datatype_iri = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {uri: true}
+  }];
 }
 
 // Text in one language.
@@ -352,12 +369,16 @@ like `Taxonomy`, so a scheme failing any of these does not mount and the previou
 version stays live:
 
 1. Every `broader`, `related` and `replaced_by` id names a concept in the scheme.
-2. The `broader` graph is acyclic. The check is a depth-first walk over the whole
-   scheme, and a violation names one cycle as its concept ids in order.
+2. The `broader` graph is acyclic. SKOS itself permits cycles in
+   `skos:broaderTransitive`; rejecting them is a ProtoMolt profile rule, so that
+   descendants are finite and drill-down counts are well defined. The check is a
+   depth-first walk over the whole scheme, and a violation names one cycle as its
+   concept ids in order.
 3. `related` does not connect a concept to one of its ancestors or descendants
    (SKOS S27).
-4. `replaced_by` is set only on deprecated concepts and does not name a deprecated
-   concept without its own successor (no dead-end chains).
+4. `replaced_by` is set only on deprecated concepts. The `replaced_by` graph is
+   acyclic (a cycle is rejected and named, as for `broader`), and every chain ends
+   at a concept that is not deprecated.
 
 A cross-scheme mapping to a scheme that is not mounted, or to an id the mounted
 scheme lacks, does not block the mount: two schemes evolve independently. It is
@@ -387,6 +408,13 @@ message ConceptExpansion {
 }
 ```
 
+Expansion reads one snapshot: at the start of a query it captures the mounted
+version of every scheme it may touch and uses only those versions until it ends,
+so a remount during a query does not mix two versions of one scheme. Every
+traversal (the `exact_match` closure, `replaced_by` chains, descendants) keeps a
+visited set and adds each concept once, so cycles in the symmetric relations, and
+any cycle a cross-scheme mapping forms, end the walk instead of looping.
+
 Given a queried concept C:
 
 1. **Always:** C, its `exact_match` closure across mounted schemes (symmetric and
@@ -412,14 +440,24 @@ as JSON is for messages: a converter verb reads a SKOS file into a
 `ConceptScheme` and writes one back out. The repository, the config lane and the
 mount store only binary protobuf. Import rules:
 
-- A concept's id comes from its `skos:notation` when the scheme declares one,
-  otherwise it is the UUIDv5 of its IRI under a fixed protomolt namespace; the IRI
-  goes in `iri`. Re-importing the same file gives the same ids.
+- A concept's id is the UUIDv5 of its IRI under a fixed protomolt namespace,
+  for every imported concept, and the IRI goes in `iri`. Re-importing the same
+  file gives the same ids. The id is not taken from a notation, so an id never
+  needs provenance to say where it came from.
+- Every `skos:notation` is kept in `notation`, in source order, with its value
+  unchanged and its datatype IRI (empty for a plain literal). Several notations
+  and typed notations survive the round trip (SKOS reference §6.5). ProtoMolt
+  does not require notations to be unique in a scheme; SKOS states that as a
+  convention, not an integrity condition.
 - `skos:narrower` statements are read as the inverse `broader`; a file whose
   `broader` and `narrower` statements disagree is rejected by name.
 - Constructs without a field (`skos:Collection`, SKOS-XL labels, notes other than
   definition and scope note, mappings to non-SKOS resources) are rejected by name,
   not dropped. Supporting one is a schema change first.
+
+Export writes `iri`, every `notation`, the labels, notes, `broader` with its
+computed `narrower`, `related` and the mappings. A concept without an `iri` is
+rejected by name on export; the converter does not mint IRIs.
 
 The converter lives in its own edge module; `types/v1` and the mount depend on no
 RDF library. Whichever parser the converter uses must meet the licensing rule
