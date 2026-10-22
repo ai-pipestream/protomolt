@@ -9,6 +9,7 @@ import "ai/protomolt/proto/repo/v2/errors.proto";
 import "ai/protomolt/proto/repo/v2/events.proto";
 import "ai/protomolt/proto/repo/v2/manifest.proto";
 import "ai/protomolt/proto/projection/v1/projection.proto";
+import "ai/protomolt/proto/types/v1/concepts.proto";
 import "ai/protomolt/proto/validate/v1/validate.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -819,6 +820,58 @@ message DocumentFilter {
     // A step owner from this module.
     string owner_module_id = 15 [(ai.protomolt.proto.validate.v1.field).string = {min_len: 1, max_len: 200, pattern: ".*\\S.*"}];
   }
+  // Documents whose current revision is tagged with the concept or with one
+  // its expansion reaches (requirements §17, "Subject tags").
+  ConceptFilter concept = 16;
+}
+
+// A concept filter. The catalog stores only the tagged concept ids; the query
+// is expanded against the concept schemes mounted on the host when it runs,
+// so a scheme change needs no catalog rewrite. The queried scheme must be
+// mounted (FAILED_PRECONDITION otherwise) and must hold the concept, and the
+// expansion must stay within the mount's bound (INVALID_ARGUMENT otherwise).
+message ConceptFilter {
+  // The queried concept.
+  ai.protomolt.proto.types.v1.ConceptRef concept = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The optional expansion steps; absent expands through the default steps only.
+  ai.protomolt.proto.types.v1.ConceptExpansion expansion = 2;
+}
+
+// What a concept filter's expansion read, so a listing can be reproduced: the
+// mounted version of every scheme it consulted and the mappings it skipped.
+message ConceptFilterEvidence {
+  // How many concepts the filter matched against.
+  int32 expanded_concepts = 1 [(ai.protomolt.proto.validate.v1.field).int32.gt = 0];
+  // Each consulted scheme and its mounted version, by scheme id.
+  repeated MountedConceptScheme mounted_schemes = 2 [(ai.protomolt.proto.validate.v1.field).repeated.min_items = 1];
+  // Mappings followed but skipped: the target scheme is not mounted or lacks the id.
+  repeated UnresolvedConceptMapping unresolved_mappings = 3;
+}
+
+// One consulted concept scheme.
+message MountedConceptScheme {
+  // The scheme id.
+  string scheme_id = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {slug: true, max_len: 200}
+  }];
+  // The config source's version of the mounted document.
+  string version = 2 [(ai.protomolt.proto.validate.v1.field).required = true];
+}
+
+// A cross-scheme mapping an expansion could not follow.
+message UnresolvedConceptMapping {
+  // The concept carrying the mapping.
+  ai.protomolt.proto.types.v1.ConceptRef from = 1 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // The mapping field: exact_match or close_match.
+  string relation = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 50}
+  }];
+  // The mapping's target.
+  ai.protomolt.proto.types.v1.ConceptRef target = 3 [(ai.protomolt.proto.validate.v1.field).required = true];
+  // Why it did not resolve.
+  string reason = 4 [(ai.protomolt.proto.validate.v1.field).required = true];
 }
 
 // One metadata entry a listed document must carry.
@@ -914,6 +967,8 @@ message ListDocumentsResponse {
   repeated DocumentSummary documents = 1;
   // Empty on the last page.
   string next_page_token = 2;
+  // Set when the filter has a concept: the expansion this page matched against.
+  ConceptFilterEvidence concept_evidence = 3;
 }
 
 // ============================================================================
@@ -1025,6 +1080,8 @@ message ResolveLinkResponse {
   repeated DocumentSummary documents = 1;
   // Empty on the last page.
   string next_page_token = 2;
+  // Set when the selector's filter has a concept: the expansion this page matched against.
+  ConceptFilterEvidence concept_evidence = 3;
 }
 
 // Links into one document.
