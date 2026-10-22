@@ -81,6 +81,7 @@ final class ConstraintOverlays {
             if (c.any().isPresent()) runtime.add("any");
             if (c.fieldMask().isPresent()) runtime.add("field-mask");
             if (c.taxonomy().isPresent()) runtime.add("taxonomy");
+            if (!c.conceptSchemes().isEmpty()) runtime.add("concept-schemes");
             if (c.inspectOnly()) runtime.add("inspect-only");
         }
         if (!field.hasPresence() && constraints.stream().anyMatch(FieldConstraints::required)) {

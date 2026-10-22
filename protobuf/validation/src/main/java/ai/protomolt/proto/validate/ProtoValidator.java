@@ -10,7 +10,9 @@ import ai.protomolt.proto.validate.model.FieldConstraints;
 import ai.protomolt.proto.validate.model.IgnoreMode;
 import ai.protomolt.proto.validate.model.MapConstraints;
 import ai.protomolt.proto.validate.model.MessageConstraints;
+import ai.protomolt.proto.formats.Formats;
 import ai.protomolt.proto.validate.model.RepeatedConstraints;
+import ai.protomolt.proto.validate.spi.ConceptSchemeCatalog;
 import ai.protomolt.proto.validate.spi.TaxonomyCatalog;
 import ai.protomolt.proto.validate.spi.ValidationRuleSource;
 import ai.protomolt.proto.validate.spi.ValidationRuleSources;
@@ -75,6 +77,7 @@ import static ai.protomolt.proto.validate.Violations.violation;
 public final class ProtoValidator {
 
     private static final String TREE_PATH_TYPE = "ai.protomolt.proto.types.v1.TreePath";
+    private static final String CONCEPT_REF_TYPE = "ai.protomolt.proto.types.v1.ConceptRef";
 
     /** Maximum message nesting the recursive walk follows before failing the evaluation. */
     private static final int MAX_NESTING_DEPTH = 500;
@@ -113,6 +116,9 @@ public final class ProtoValidator {
     // leaves the postal code unchecked (the data-free default), unlike the taxonomy
     // rule's fail-closed stance.
     private final ai.protomolt.proto.validate.spi.PostalCodeCatalog postalCodes;
+    // The mounted concept schemes behind the `concept_schemes` field rule. Fail-closed like
+    // the taxonomy rule: the binding is schema truth, the scheme content is mount data.
+    private final ConceptSchemeCatalog conceptSchemes;
     // Message-level CEL is compiled with `this` typed as the message under validation, so a rule on
     // a nested message sees its own fields. Evaluators are built lazily and cached per descriptor.
     private final Map<Descriptor, CelHandle> messageCelByType =
@@ -134,16 +140,19 @@ public final class ProtoValidator {
     public ProtoValidator(CelEvaluator fieldCel, List<ValidationRuleSource> sources) {
         this(new CelHandle(null, Objects.requireNonNull(fieldCel, "fieldCel")), sources,
                 TaxonomyCatalog.empty(),
-                ai.protomolt.proto.validate.spi.PostalCodeCatalog.empty());
+                ai.protomolt.proto.validate.spi.PostalCodeCatalog.empty(),
+                ConceptSchemeCatalog.empty());
     }
 
     private ProtoValidator(
             CelHandle fieldCel, List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies,
-            ai.protomolt.proto.validate.spi.PostalCodeCatalog postalCodes) {
+            ai.protomolt.proto.validate.spi.PostalCodeCatalog postalCodes,
+            ConceptSchemeCatalog conceptSchemes) {
         this.fieldCel = fieldCel;
         this.sources = List.copyOf(Objects.requireNonNull(sources, "sources"));
         this.taxonomies = Objects.requireNonNull(taxonomies, "taxonomies");
         this.postalCodes = Objects.requireNonNull(postalCodes, "postalCodes");
+        this.conceptSchemes = Objects.requireNonNull(conceptSchemes, "conceptSchemes");
     }
 
     /**
@@ -179,10 +188,22 @@ public final class ProtoValidator {
     public static ProtoValidator create(
             List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies,
             ai.protomolt.proto.validate.spi.PostalCodeCatalog postalCodes) {
+        return create(sources, taxonomies, postalCodes, ConceptSchemeCatalog.empty());
+    }
+
+    /**
+     * As {@link #create(List, TaxonomyCatalog, ai.protomolt.proto.validate.spi.PostalCodeCatalog)}
+     * but additionally consulting {@code conceptSchemes} for {@code concept_schemes} rules.
+     * Without it every bound scheme refuses ({@code concept.unmounted}).
+     */
+    public static ProtoValidator create(
+            List<ValidationRuleSource> sources, TaxonomyCatalog taxonomies,
+            ai.protomolt.proto.validate.spi.PostalCodeCatalog postalCodes,
+            ConceptSchemeCatalog conceptSchemes) {
         Cel fieldEnv = celEnv().build();
         return new ProtoValidator(
                 new CelHandle(fieldEnv, new CelEvaluator(fieldEnv)), sources, taxonomies,
-                postalCodes);
+                postalCodes, conceptSchemes);
     }
 
     /**
@@ -367,6 +388,7 @@ public final class ProtoValidator {
             for (FieldConstraints constraints : collected) {
                 compileFieldConstraints(constraints);
                 checkTaxonomy(field, constraints);
+                checkConceptSchemes(field, constraints);
             }
             fields.put(field, collected);
         }
@@ -507,6 +529,60 @@ public final class ProtoValidator {
         return constraints.taxonomy().isPresent() || nestedTaxonomy(constraints);
     }
 
+    /**
+     * A {@code concept_schemes} rule binds only to a singular or repeated field of the
+     * canonical ConceptRef type, only on the field itself, and only with distinct slug ids.
+     * As with taxonomies, a binding the walk would never apply is a schema error, not an
+     * ignored rule.
+     */
+    private static void checkConceptSchemes(FieldDescriptor field, FieldConstraints constraints) {
+        if (nestedConceptSchemes(constraints)) {
+            throw new RuleCompilationException(
+                    "concept_schemes on field " + field.getFullName() + " must be declared on"
+                            + " the ConceptRef field itself, not on repeated items or map entries");
+        }
+        List<String> bound = constraints.conceptSchemes();
+        if (bound.isEmpty()) {
+            return;
+        }
+        if (field.isMapField() || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE
+                || !CONCEPT_REF_TYPE.equals(field.getMessageType().getFullName())) {
+            throw new RuleCompilationException(
+                    "concept_schemes " + bound + " declared on field " + field.getFullName()
+                            + ": only fields of " + CONCEPT_REF_TYPE
+                            + " take a concept_schemes rule");
+        }
+        Set<String> seen = new HashSet<>();
+        for (String schemeId : bound) {
+            if (!Formats.isSlug(schemeId) || schemeId.length() > 200) {
+                throw new RuleCompilationException(
+                        "concept_schemes on field " + field.getFullName() + " names \""
+                                + schemeId + "\", which is not a scheme id (a slug of at most"
+                                + " 200 characters)");
+            }
+            if (!seen.add(schemeId)) {
+                throw new RuleCompilationException(
+                        "concept_schemes on field " + field.getFullName() + " names \""
+                                + schemeId + "\" more than once");
+            }
+        }
+    }
+
+    /** Whether any nested (items/keys/values) constraints declare concept schemes. */
+    private static boolean nestedConceptSchemes(FieldConstraints constraints) {
+        return constraints.repeated().flatMap(RepeatedConstraints::items)
+                .map(ProtoValidator::declaresConceptSchemes).orElse(false)
+                || constraints.map().map(m ->
+                        m.keys().map(ProtoValidator::declaresConceptSchemes).orElse(false)
+                                || m.values().map(ProtoValidator::declaresConceptSchemes)
+                                        .orElse(false))
+                        .orElse(false);
+    }
+
+    private static boolean declaresConceptSchemes(FieldConstraints constraints) {
+        return !constraints.conceptSchemes().isEmpty() || nestedConceptSchemes(constraints);
+    }
+
     /** Clear-on-threshold cache lookup (see the cache-bounds note on the constants). */
     private static <K, V> V cached(
             Map<K, V> cache, int maxSize, K key, java.util.function.Function<K, V> compute) {
@@ -574,6 +650,7 @@ public final class ProtoValidator {
         for (FieldConstraints c : constraints) {
             applyFieldConstraints(field, c, value, path, violations, evaluatedAt);
             applyTaxonomy(c, value, path, violations);
+            applyConceptSchemes(c, value, path, violations);
             runFieldCel(c, celScalar(field, value), path, violations, evaluatedAt);
         }
         // A field declared inspect-only carries a document the receiver examines rather than
@@ -660,6 +737,7 @@ public final class ProtoValidator {
                 for (FieldConstraints c : constraints) {
                     // A taxonomy on a repeated TreePath field binds every element.
                     applyTaxonomy(c, element, elementPath, violations);
+                    applyConceptSchemes(c, element, elementPath, violations);
                 }
                 if (element instanceof Message nested && !inspectOnly(constraints)) {
                     validateChildren(nested, elementPath, depth, violations, evaluatedAt);
@@ -698,6 +776,46 @@ public final class ProtoValidator {
         if (!mounted.nodes().contains(rendered)) {
             violations.add(violation(path, "taxonomy.member",
                     "\"" + rendered + "\" is not a node of taxonomy \"" + name
+                            + "\" at version " + mounted.version()));
+        }
+    }
+
+    /**
+     * The concept-scheme membership rule on a populated ConceptRef value. The scheme must be
+     * one the field binds, the bound scheme must be mounted (fail-closed:
+     * {@code concept.unmounted}), and the concept must be a member of the mounted version
+     * ({@code concept.member}, naming the scheme and version). A deprecated concept is still
+     * a member. An empty scheme or concept id is left to the type's own required rules.
+     */
+    private void applyConceptSchemes(
+            FieldConstraints constraints, Object value, String path,
+            List<ValidationResult.Violation> violations) {
+        List<String> bound = constraints.conceptSchemes();
+        if (bound.isEmpty() || !(value instanceof Message ref)) {
+            return;
+        }
+        Descriptor type = ref.getDescriptorForType();
+        String schemeId = (String) ref.getField(type.findFieldByName("scheme_id"));
+        String conceptId = (String) ref.getField(type.findFieldByName("concept_id"));
+        if (schemeId.isEmpty() || conceptId.isEmpty()) {
+            return;
+        }
+        if (!bound.contains(schemeId)) {
+            violations.add(violation(path, "concept.scheme",
+                    "scheme \"" + schemeId + "\" is not one of the field's bound schemes "
+                            + bound));
+            return;
+        }
+        ConceptSchemeCatalog.Mounted mounted = conceptSchemes.scheme(schemeId).orElse(null);
+        if (mounted == null) {
+            violations.add(violation(path, "concept.unmounted",
+                    "concept scheme \"" + schemeId + "\" is not mounted; declared membership"
+                            + " cannot be checked"));
+            return;
+        }
+        if (!mounted.conceptIds().contains(conceptId)) {
+            violations.add(violation(path, "concept.member",
+                    "\"" + conceptId + "\" is not a concept of scheme \"" + schemeId
                             + "\" at version " + mounted.version()));
         }
     }
