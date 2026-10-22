@@ -31,8 +31,11 @@ class ProtoRestHttpSupportEdgeCasesTest {
     @Test
     void parseServiceMethodRejectsExtraSegmentsAndBlankParts() {
         assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json/a/b/c", "/grpc-json")).isEmpty();
+        assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json/Echo/ping/", "/grpc-json")).isEmpty();
+        assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json/Echo/", "/grpc-json")).isEmpty();
         assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json//ping", "/grpc-json")).isEmpty();
         assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json/ /ping", "/grpc-json")).isEmpty();
+        assertThat(ProtoRestHttpSupport.parseServiceMethod("/grpc-json/Echo/ ", "/grpc-json")).isEmpty();
     }
 
     @Test
@@ -69,6 +72,9 @@ class ProtoRestHttpSupportEdgeCasesTest {
         // "=v" has an empty key and "novalue" has no '='; neither is a usable parameter.
         assertThat(ProtoRestHttpSupport.parseQuery("=v&novalue&ok=1"))
                 .containsExactly(Map.entry("ok", "1"));
+        assertThat(ProtoRestHttpSupport.parseQuery("&a=1&&a=2&b=x=y&"))
+                .containsEntry("a", "1")
+                .containsEntry("b", "x=y");
     }
 
     @Test

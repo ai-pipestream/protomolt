@@ -89,18 +89,22 @@ public interface ProtoApiTokenValidator {
         };
     }
 
-    private static String cookieValue(String cookieHeader, String cookieName) {
+    static String cookieValue(String cookieHeader, String cookieName) {
         if (cookieHeader == null) {
             return null;
         }
-        for (String pair : cookieHeader.split(";")) {
+        int start = 0;
+        while (start <= cookieHeader.length()) {
+            int semi = cookieHeader.indexOf(';', start);
+            String pair = semi < 0 ? cookieHeader.substring(start) : cookieHeader.substring(start, semi);
             int eq = pair.indexOf('=');
-            if (eq <= 0) {
-                continue;
-            }
-            if (pair.substring(0, eq).trim().equals(cookieName)) {
+            if (eq > 0 && pair.substring(0, eq).trim().equals(cookieName)) {
                 return pair.substring(eq + 1).trim();
             }
+            if (semi < 0) {
+                break;
+            }
+            start = semi + 1;
         }
         return null;
     }

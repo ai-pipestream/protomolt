@@ -221,12 +221,39 @@ public final class OidcCallerResolver implements CallerResolver {
                 }
             }
         } else if (value.hasStringValue()) {
-            for (String s : value.getStringValue().split("\\s+")) {
+            for (String s : whitespaceTokens(value.getStringValue())) {
                 if (!s.isBlank()) {
                     out.add(s.trim());
                 }
             }
         }
         return Set.copyOf(out);
+    }
+
+    /**
+     * The maximal non-whitespace runs of {@code value}, where whitespace is the regex
+     * {@code \s} set ({@code ' '}, {@code '\t'}, {@code '\n'}, {@code '\013'}, {@code '\f'},
+     * {@code '\r'}).
+     */
+    static java.util.List<String> whitespaceTokens(String value) {
+        java.util.List<String> tokens = new java.util.ArrayList<>();
+        int from = 0;
+        while (from < value.length()) {
+            while (from < value.length() && isRegexWhitespace(value.charAt(from))) {
+                from++;
+            }
+            int start = from;
+            while (from < value.length() && !isRegexWhitespace(value.charAt(from))) {
+                from++;
+            }
+            if (start < from) {
+                tokens.add(value.substring(start, from));
+            }
+        }
+        return tokens;
+    }
+
+    private static boolean isRegexWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\013' || c == '\f' || c == '\r';
     }
 }
