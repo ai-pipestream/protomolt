@@ -287,8 +287,29 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   author, category, ownership, metadata pairs, commit time range, save owner),
   sort by commit time or title, the tombstone toggle and paging by page token.
   A form value the server would refuse (whitespace only, a metadata key required
-  to equal two values, an unordered time range) is refused by name before any
-  call.
+  to equal two values, an unordered time range, a concept scheme without a
+  concept) is refused by name before any call. The concept filter takes a
+  scheme ID and concept ID (`DocumentFilter.concept`) with the two optional
+  expansion steps, narrower concepts and close matches, and the page shows
+  what the expansion read: how many concepts it matched against, the mounted
+  version of every scheme it consulted, and each mapping it could not follow.
+  A listed query is written to the page's address, so a reload, the back
+  button and a shared link list it again from page 1; page tokens are never
+  in the address, because each is bound to the query it was issued for.
+- **Links.** A document's Links tab reads `ListLinks` for the revision shown:
+  each link's field path, relation and label, and its target. A static target
+  shows its call number, its pinned revision if any, and its state as this
+  reader sees it: `RESOLVED`, `TOMBSTONED`, or `UNAVAILABLE`, which covers a
+  missing, purged or unreadable target alike because the server does not tell
+  them apart. A dynamic target shows its selector condition by condition, and
+  Resolve dynamic target pages through `ResolveLink`, pinned to the same
+  revision, with the concept expansion evidence when the selector names a
+  concept. Inbound backlinks come from `ListBacklinks`: the linking document,
+  its current revision, the field and relation, and the revision it pins. Every
+  target and backlink opens in the console. A relation is shown as text; only
+  an absolute `http:` or `https:` relation URI becomes a link, opened in a new
+  tab with `rel="noopener noreferrer"`, so a `javascript:` or `data:` value can
+  never become an `href`.
 - **Document detail.** The manifest's parts with state, size, SHA-256, the
   revision that wrote each one and its owner; the revision's request metadata;
   the validation record with every schema artifact it binds; revision history

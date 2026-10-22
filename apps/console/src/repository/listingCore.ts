@@ -6,7 +6,9 @@
  */
 import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
+import { ConceptExpansionSchema, ConceptRefSchema } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import {
+  ConceptFilterSchema,
   DocumentFilterSchema,
   DocumentSortField,
   DocumentSortSchema,
@@ -44,6 +46,16 @@ export interface FilterForm {
   committedBefore: string
   metadata: { key: string; value: string }[]
   owner: { kind: 'any' | 'datasource' | 'module'; id: string }
+  /** The SKOS concept filter; blank scheme and concept mean no concept filter. */
+  concept: ConceptForm
+}
+
+/** A concept filter as the form edits it: the ConceptRef and its optional expansion steps. */
+export interface ConceptForm {
+  schemeId: string
+  conceptId: string
+  narrower: boolean
+  closeMatch: boolean
 }
 
 /** Everything a listing query names besides the page token. */
@@ -76,6 +88,7 @@ export function emptyFilterForm(): FilterForm {
     committedBefore: '',
     metadata: [],
     owner: { kind: 'any', id: '' },
+    concept: { schemeId: '', conceptId: '', narrower: false, closeMatch: false },
   }
 }
 
@@ -159,7 +172,34 @@ export function buildFilter(form: FilterForm): DocumentFilter | undefined {
         : { case: 'ownerModuleId', value: id }
     any = true
   }
+  const concept = conceptFilter(form.concept)
+  if (concept !== undefined) {
+    init.concept = concept
+    any = true
+  }
   return any ? create(DocumentFilterSchema, init) : undefined
+}
+
+/**
+ * The ConceptFilter the concept fields describe, or undefined when both IDs are
+ * blank. A scheme without a concept (or the reverse) names no concept and is
+ * refused by name; expansion steps without a concept are refused too, so a
+ * checked box is never silently dropped. The expansion is always sent with a
+ * concept, so the request states both steps explicitly.
+ */
+export function conceptFilter(form: ConceptForm) {
+  const schemeId = present('Concept scheme ID', form.schemeId)
+  const conceptId = present('Concept ID', form.conceptId)
+  if (schemeId === undefined && conceptId === undefined) {
+    if (form.narrower || form.closeMatch) throw new ListingInputError('Concept ID', 'is blank; expansion steps need a concept')
+    return undefined
+  }
+  if (schemeId === undefined) throw new ListingInputError('Concept scheme ID', 'is blank; a concept is named within its scheme')
+  if (conceptId === undefined) throw new ListingInputError('Concept ID', 'is blank; a scheme alone names no concept')
+  return create(ConceptFilterSchema, {
+    concept: create(ConceptRefSchema, { schemeId, conceptId }),
+    expansion: create(ConceptExpansionSchema, { narrower: form.narrower, closeMatch: form.closeMatch }),
+  })
 }
 
 /** The request for one page of the query. */
@@ -260,4 +300,124 @@ export function documentRow(summary: DocumentSummary): DocumentRow {
     sourceMimeType: lookup?.sourceMimeType ?? null,
     owner: summary.owner === undefined ? null : ownerLabel(summary.owner as SaveOwner),
   }
+}
+
+/** A route query as vue-router hands it over: a value, a repeated value, or absent. */
+export type RouteQuery = Record<string, string | null | (string | null)[] | undefined>
+
+const SORT_NAMES: Record<string, DocumentSortField> = {
+  committed_at: DocumentSortField.COMMITTED_AT,
+  title: DocumentSortField.TITLE,
+}
+
+/**
+ * The listing query as route query values, so a listed query survives a
+ * reload, the back button and a shared link. Only what differs from a new
+ * query is written; page tokens never are, because a token is bound to the
+ * query it was issued for and a restored query starts at page 1.
+ */
+export function listingRouteQuery(query: ListingQuery): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {}
+  if (query.graphId !== '') out.graph = query.graphId
+  if (query.graphAddressId !== '') out.node = query.graphAddressId
+  if (query.includeTombstoned) out.tombstoned = '1'
+  if (query.pageSize !== DEFAULT_PAGE_SIZE) out.size = String(query.pageSize)
+  const sort = Object.entries(SORT_NAMES).find(([, field]) => field === query.sortField)
+  if (sort !== undefined) out.sort = sort[0]
+  if (query.descending) out.desc = '1'
+  const f = query.filter
+  for (const { field } of TEXT_FILTERS) if (f.text[field] !== '') out[`f.${field}`] = f.text[field]
+  if (f.committedAfter !== '') out.after = f.committedAfter
+  if (f.committedBefore !== '') out.before = f.committedBefore
+  if (f.metadata.length > 0) {
+    out.mk = f.metadata.map((m) => m.key)
+    out.mv = f.metadata.map((m) => m.value)
+  }
+  if (f.owner.kind !== 'any') {
+    out.owner = f.owner.kind
+    out.ownerId = f.owner.id
+  }
+  if (f.concept.schemeId !== '') out.scheme = f.concept.schemeId
+  if (f.concept.conceptId !== '') out.concept = f.concept.conceptId
+  if (f.concept.narrower) out.narrower = '1'
+  if (f.concept.closeMatch) out.closeMatch = '1'
+  return out
+}
+
+function one(query: RouteQuery, key: string): string {
+  const value = query[key]
+  if (value === undefined || value === null) return ''
+  if (Array.isArray(value)) throw new ListingInputError(`Link parameter "${key}"`, 'is given more than once')
+  return value
+}
+
+function many(query: RouteQuery, key: string): string[] {
+  const value = query[key]
+  if (value === undefined || value === null) return []
+  return (Array.isArray(value) ? value : [value]).map((v) => v ?? '')
+}
+
+function flag(query: RouteQuery, key: string): boolean {
+  const value = one(query, key)
+  if (value === '' || value === '0') return false
+  if (value === '1') return true
+  throw new ListingInputError(`Link parameter "${key}"`, `"${value}" is not 1 or 0`)
+}
+
+/**
+ * The listing query a route names; the inverse of {@link listingRouteQuery}.
+ * A value that does not read back as written (an unknown sort, a page size
+ * that is not a number, unpaired metadata) is refused by name rather than
+ * replaced by a default.
+ */
+export function listingQueryFromRoute(accountId: string, query: RouteQuery): ListingQuery {
+  const out = newListingQuery(accountId)
+  out.graphId = one(query, 'graph')
+  out.graphAddressId = one(query, 'node')
+  out.includeTombstoned = flag(query, 'tombstoned')
+  const size = one(query, 'size')
+  if (size !== '') {
+    const parsed = Number(size)
+    if (!Number.isInteger(parsed)) throw new ListingInputError('Page size', `"${size}" is not a whole number`)
+    out.pageSize = parsed
+  }
+  const sort = one(query, 'sort')
+  if (sort !== '') {
+    const field = SORT_NAMES[sort]
+    if (field === undefined) throw new ListingInputError('Sort by', `"${sort}" is not committed_at or title`)
+    out.sortField = field
+  }
+  out.descending = flag(query, 'desc')
+  for (const { field } of TEXT_FILTERS) out.filter.text[field] = one(query, `f.${field}`)
+  out.filter.committedAfter = one(query, 'after')
+  out.filter.committedBefore = one(query, 'before')
+  const keys = many(query, 'mk')
+  const values = many(query, 'mv')
+  if (keys.length !== values.length) {
+    throw new ListingInputError('Metadata', `${keys.length} keys but ${values.length} values in the link`)
+  }
+  out.filter.metadata = keys.map((key, i) => ({ key, value: values[i] }))
+  const owner = one(query, 'owner')
+  if (owner !== '') {
+    if (owner !== 'datasource' && owner !== 'module') throw new ListingInputError('Owner', `"${owner}" is not datasource or module`)
+    out.filter.owner = { kind: owner, id: one(query, 'ownerId') }
+  }
+  out.filter.concept = {
+    schemeId: one(query, 'scheme'),
+    conceptId: one(query, 'concept'),
+    narrower: flag(query, 'narrower'),
+    closeMatch: flag(query, 'closeMatch'),
+  }
+  return out
+}
+
+/** Whether two route queries hold the same values, whatever their key order. */
+export function sameRouteQuery(a: RouteQuery, b: RouteQuery): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)].filter((k) => a[k] !== undefined || b[k] !== undefined))
+  for (const key of keys) {
+    const left = many(a, key)
+    const right = many(b, key)
+    if (left.length !== right.length || left.some((v, i) => v !== right[i])) return false
+  }
+  return true
 }

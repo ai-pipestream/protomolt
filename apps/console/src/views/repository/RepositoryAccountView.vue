@@ -91,6 +91,25 @@
           </v-col>
         </v-row>
 
+        <v-row dense class="mt-1" data-testid="concept-filter">
+          <v-col cols="12" sm="6" md="3">
+            <v-text-field v-model="query.filter.concept.schemeId" label="Concept scheme ID" density="compact" hide-details
+                          data-testid="concept-scheme" />
+          </v-col>
+          <v-col cols="12" sm="6" md="3">
+            <v-text-field v-model="query.filter.concept.conceptId" label="Concept ID" density="compact" hide-details
+                          data-testid="concept-id" />
+          </v-col>
+          <v-col cols="6" md="3">
+            <v-checkbox v-model="query.filter.concept.narrower" label="Include narrower concepts" density="compact" hide-details
+                        data-testid="concept-narrower" />
+          </v-col>
+          <v-col cols="6" md="3">
+            <v-checkbox v-model="query.filter.concept.closeMatch" label="Include close matches" density="compact" hide-details
+                        data-testid="concept-close-match" />
+          </v-col>
+        </v-row>
+
         <v-expansion-panels variant="accordion" class="my-3">
           <v-expansion-panel title="Filters" data-testid="filter-panel">
             <v-expansion-panel-text>
@@ -142,6 +161,7 @@
           {{ inputError }}
         </v-alert>
         <RpcFailureAlert v-if="listFailure" :failure="listFailure" title="Listing documents" />
+        <ConceptEvidence v-if="evidence" :evidence="evidence" class="mb-2" />
 
         <v-table v-if="rows.length > 0" density="compact" hover data-testid="document-table">
           <thead>
@@ -194,6 +214,7 @@
 import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { create } from '@bufbuild/protobuf'
+import ConceptEvidence from '@/components/repository/ConceptEvidence.vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import type { Archive } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_pb'
 import { ListArchivesRequestSchema } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
@@ -201,6 +222,7 @@ import { DriveStatusSchema, DriveTypeSchema, ListDrivesRequestSchema, type Drive
 import { DocumentSortField } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { useRepositoryClients } from '@/repository/clients'
 import { enumLabel } from '@/repository/formatCore'
+import { evidenceView, type EvidenceView } from '@/repository/linksCore'
 import {
   ListingInputError,
   PageCursor,
@@ -208,7 +230,10 @@ import {
   buildListRequest,
   documentRow,
   emptyFilterForm,
+  listingQueryFromRoute,
+  listingRouteQuery,
   newListingQuery,
+  sameRouteQuery,
   type DocumentRow,
   type ListingQuery,
 } from '@/repository/listingCore'
@@ -302,6 +327,7 @@ const listing = ref(false)
 const listed = ref(false)
 const listFailure = ref<RpcFailure | null>(null)
 const inputError = ref<string | null>(null)
+const evidence = shallowRef<EvidenceView | null>(null)
 
 // The query the page tokens were issued for. Paging uses it, not the form,
 // so editing the form changes nothing until List documents is clicked.
@@ -316,6 +342,7 @@ function structuredQuery(source: ListingQuery): ListingQuery {
       committedBefore: source.filter.committedBefore,
       metadata: source.filter.metadata.map((m) => ({ ...m })),
       owner: { ...source.filter.owner },
+      concept: { ...source.filter.concept },
     },
   }
 }
@@ -338,11 +365,13 @@ async function loadPage() {
   try {
     const page = await clients.documents.listDocuments(request, { signal })
     rows.value = page.documents.map(documentRow)
+    evidence.value = evidenceView(page.conceptEvidence)
     cursor.answered(page.nextPageToken)
     listed.value = true
   } catch (error) {
     if (!isOwnCancellation(error, signal)) {
       rows.value = []
+      evidence.value = null
       listFailure.value = rpcFailure(error)
     }
   } finally {
@@ -350,9 +379,45 @@ async function loadPage() {
   }
 }
 
+// A listed query lives in the route, so a reload, the back button and a shared
+// link list it again. List documents writes the form there; the route watcher
+// below then lists from page 1. Listing the query already shown lists it again.
 function applyQuery() {
-  listedQuery = structuredQuery(query)
+  // A form the server would refuse stays out of the route; it is named here instead.
+  try {
+    buildListRequest(query, '')
+  } catch (error) {
+    if (!(error instanceof ListingInputError)) throw error
+    inputError.value = error.message
+    return
+  }
+  const next = listingRouteQuery(query)
+  if (sameRouteQuery(next, route.query)) {
+    listedQuery = structuredQuery(query)
+    cursor.reset()
+    void loadPage()
+    return
+  }
+  void router.push({ name: 'repository-account', params: { accountId: accountId.value }, query: next })
+}
+
+/** Lists the query the route names from page 1, or names the route value it cannot read. */
+function listFromRoute() {
   cursor.reset()
+  rows.value = []
+  evidence.value = null
+  try {
+    Object.assign(query, listingQueryFromRoute(accountId.value, route.query))
+  } catch (error) {
+    if (!(error instanceof ListingInputError)) throw error
+    Object.assign(query, newListingQuery(accountId.value))
+    listedQuery = structuredQuery(query)
+    listFailure.value = null
+    listed.value = false
+    inputError.value = `The link's listing query cannot be read: ${error.message}`
+    return
+  }
+  listedQuery = structuredQuery(query)
   void loadPage()
 }
 function clearFilters() {
@@ -378,22 +443,30 @@ function openRow(row: DocumentRow) {
 function loadAll() {
   void loadDrives(true)
   void loadArchives()
-  void loadPage()
+  listFromRoute()
 }
 
 onMounted(loadAll)
 
-// The same view serves every account; a different account starts over.
-watch(accountId, (next) => {
-  Object.assign(query, newListingQuery(next))
-  listedQuery = structuredQuery(query)
-  cursor.reset()
-  rows.value = []
-  listed.value = false
-  drives.value = []
-  drivesNext.value = ''
-  loadAll()
-})
+// The same view serves every account; a different account starts over, and a
+// new listing query in the route lists again from page 1. Other routes (a
+// document this screen opened) leave the screen as it is.
+let shownAccount = accountId.value
+watch(
+  () => route.fullPath,
+  () => {
+    if (route.name !== 'repository-account') return
+    if (accountId.value !== shownAccount) {
+      shownAccount = accountId.value
+      listed.value = false
+      drives.value = []
+      drivesNext.value = ''
+      loadAll()
+      return
+    }
+    listFromRoute()
+  },
+)
 
 // Call number order is always ascending; leaving a sort field clears Descending
 // so it cannot linger behind a disabled switch.

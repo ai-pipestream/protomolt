@@ -15,9 +15,13 @@ import {
   PageCursor,
   buildFilter,
   buildListRequest,
+  conceptFilter,
   documentRow,
   emptyFilterForm,
+  listingQueryFromRoute,
+  listingRouteQuery,
   newListingQuery,
+  sameRouteQuery,
 } from './listingCore'
 import { at, routerClients, testAddress } from './repositoryTestKit'
 
@@ -180,5 +184,69 @@ describe('ListDocuments over the in-memory Connect router', () => {
     expect(seen[0].filter?.owner).toEqual({ case: 'ownerDatasourceId', value: 'ds-files' })
     expect(seen[0].filter?.metadata[0].key).toBe('k')
     expect(seen[0].sort?.field).toBe(DocumentSortField.COMMITTED_AT)
+  })
+})
+
+describe('conceptFilter', () => {
+  it('sends the ConceptRef with both expansion steps stated', () => {
+    const filter = buildFilter({ ...emptyFilterForm(), concept: { schemeId: 'topics', conceptId: 'energy', narrower: true, closeMatch: false } })
+    expect(filter?.concept?.concept).toMatchObject({ schemeId: 'topics', conceptId: 'energy' })
+    expect(filter?.concept?.expansion).toMatchObject({ narrower: true, closeMatch: false })
+    const close = conceptFilter({ schemeId: 'topics', conceptId: 'energy', narrower: false, closeMatch: true })
+    expect(close?.expansion).toMatchObject({ narrower: false, closeMatch: true })
+  })
+
+  it('sends no concept for blank IDs and refuses a half-named concept by field', () => {
+    expect(buildFilter(emptyFilterForm())).toBeUndefined()
+    const half = (schemeId: string, conceptId: string, narrower = false) => () =>
+      conceptFilter({ schemeId, conceptId, narrower, closeMatch: false })
+    expect(half('topics', '')).toThrow('Concept ID: is blank; a scheme alone names no concept')
+    expect(half('', 'energy')).toThrow('Concept scheme ID: is blank')
+    expect(half('', '', true)).toThrow('Concept ID: is blank; expansion steps need a concept')
+    expect(half('  ', 'energy')).toThrow('Concept scheme ID: is only whitespace')
+    expect(half('topics', '', false)).toThrow(ListingInputError)
+  })
+})
+
+describe('listing route query', () => {
+  it('writes only what differs from a new query', () => {
+    expect(listingRouteQuery(newListingQuery('acct-a'))).toEqual({})
+  })
+
+  it('round-trips every query field, the concept filter included', () => {
+    const query = newListingQuery('acct-a')
+    query.graphId = 'intake:acct-a'
+    query.graphAddressId = 'ds-files'
+    query.includeTombstoned = true
+    query.pageSize = 20
+    query.sortField = DocumentSortField.TITLE
+    query.descending = true
+    query.filter.text.title = 'Q3 & Q4 = report?'
+    query.filter.text.datasourceId = 'ds-files'
+    query.filter.committedAfter = '2026-10-01T00:00'
+    query.filter.metadata = [{ key: 'a=b', value: 'c&d' }, { key: 'team', value: '' }]
+    query.filter.owner = { kind: 'module', id: 'parser' }
+    query.filter.concept = { schemeId: 'topics', conceptId: 'energy', narrower: true, closeMatch: true }
+    const route = listingRouteQuery(query)
+    expect(route).toMatchObject({ scheme: 'topics', concept: 'energy', narrower: '1', closeMatch: '1', sort: 'title', desc: '1' })
+    const back = listingQueryFromRoute('acct-a', route)
+    expect(back).toEqual(query)
+    expect(buildListRequest(back, '')).toEqual(buildListRequest(query, ''))
+  })
+
+  it('refuses a route value it cannot read instead of defaulting it', () => {
+    expect(() => listingQueryFromRoute('a', { sort: 'size' })).toThrow('Sort by: "size" is not committed_at or title')
+    expect(() => listingQueryFromRoute('a', { size: 'ten' })).toThrow('Page size: "ten" is not a whole number')
+    expect(() => listingQueryFromRoute('a', { narrower: 'yes' })).toThrow('"yes" is not 1 or 0')
+    expect(() => listingQueryFromRoute('a', { mk: ['k1', 'k2'], mv: 'v1' })).toThrow('2 keys but 1 values')
+    expect(() => listingQueryFromRoute('a', { scheme: ['s1', 's2'] })).toThrow('is given more than once')
+    expect(() => listingQueryFromRoute('a', { owner: 'anyone' })).toThrow('"anyone" is not datasource or module')
+  })
+
+  it('compares route queries by value, not key order', () => {
+    expect(sameRouteQuery({ a: '1', b: ['x', 'y'] }, { b: ['x', 'y'], a: '1' })).toBe(true)
+    expect(sameRouteQuery({ a: '1' }, { a: '1', b: 'x' })).toBe(false)
+    expect(sameRouteQuery({ b: ['x', 'y'] }, { b: ['y', 'x'] })).toBe(false)
+    expect(sameRouteQuery({}, {})).toBe(true)
   })
 })

@@ -3,8 +3,12 @@ import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, it } from 'vitest'
 import { DriveSchema, DriveService, DriveStatus, DriveType, ListDrivesResponseSchema } from '@/gen/ai/protomolt/proto/repo/v1/drive_pb'
+import { ConceptRefSchema } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import {
+  ConceptFilterEvidenceSchema,
   DocumentLookupSchema,
+  MountedConceptSchemeSchema,
+  UnresolvedConceptMappingSchema,
   DocumentService,
   DocumentSortField,
   DocumentSummarySchema,
@@ -245,6 +249,125 @@ describe('RepositoryAccountView', () => {
     await settle()
     expect(wrapper.find('[data-testid="input-error"]').exists()).toBe(false)
     expect(seen[seen.length - 1].sort).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('lists by SKOS concept with both expansion steps, shows the evidence and keeps the query in the route', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper, router } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments(request) {
+          seen.push(request)
+          if (request.filter?.concept === undefined) {
+            return create(ListDocumentsResponseSchema, { documents: [summary('d1')], nextPageToken: 'p2' })
+          }
+          return create(ListDocumentsResponseSchema, {
+            documents: [summary('solar', 'Solar')],
+            nextPageToken: request.pageToken === '' ? 'c2' : '',
+            conceptEvidence: create(ConceptFilterEvidenceSchema, {
+              expandedConcepts: 5,
+              mountedSchemes: [create(MountedConceptSchemeSchema, { schemeId: 'topics', version: 'v9' })],
+              unresolvedMappings: [
+                create(UnresolvedConceptMappingSchema, {
+                  from: create(ConceptRefSchema, { schemeId: 'topics', conceptId: 'energy' }),
+                  relation: 'close_match',
+                  target: create(ConceptRefSchema, { schemeId: 'agrovoc', conceptId: 'c_2599' }),
+                  reason: 'scheme agrovoc is not mounted',
+                }),
+              ],
+            }),
+          })
+        },
+      })
+    })
+    // Page 2 of the unfiltered listing: a changed query must start over at page 1.
+    await wrapper.get('[data-testid="page-next"]').trigger('click')
+    await settle()
+    expect(seen[seen.length - 1].pageToken).toBe('p2')
+
+    await wrapper.get('[data-testid="concept-scheme"] input').setValue('topics')
+    await wrapper.get('[data-testid="concept-id"] input').setValue('energy')
+    await wrapper.get('[data-testid="concept-narrower"] input').setValue(true)
+    await wrapper.get('[data-testid="concept-close-match"] input').setValue(true)
+    await wrapper.get('[data-testid="apply-query"]').trigger('click')
+    await settle()
+    const listed = seen[seen.length - 1]
+    expect(listed.pageToken).toBe('')
+    expect(listed.filter?.concept?.concept).toMatchObject({ schemeId: 'topics', conceptId: 'energy' })
+    expect(listed.filter?.concept?.expansion).toMatchObject({ narrower: true, closeMatch: true })
+    expect(router.currentRoute.value.query).toEqual({ scheme: 'topics', concept: 'energy', narrower: '1', closeMatch: '1' })
+    expect(wrapper.get('[data-testid="concept-evidence"]').text()).toContain('Matched against 5 concepts')
+    expect(wrapper.get('[data-testid="evidence-scheme-topics"]').text()).toContain('v9')
+    expect(wrapper.get('[data-testid="evidence-unresolved"]').text()).toContain('agrovoc/c_2599: scheme agrovoc is not mounted')
+
+    await wrapper.get('[data-testid="page-next"]').trigger('click')
+    await settle()
+    expect(seen[seen.length - 1].pageToken).toBe('c2')
+    expect(seen[seen.length - 1].filter?.concept?.expansion).toMatchObject({ narrower: true, closeMatch: true })
+
+    // Unchecking a step and listing again goes back to page 1 with the new expansion.
+    await wrapper.get('[data-testid="concept-close-match"] input').setValue(false)
+    await wrapper.get('[data-testid="apply-query"]').trigger('click')
+    await settle()
+    expect(seen[seen.length - 1].pageToken).toBe('')
+    expect(seen[seen.length - 1].filter?.concept?.expansion).toMatchObject({ narrower: true, closeMatch: false })
+    expect(router.currentRoute.value.query).toEqual({ scheme: 'topics', concept: 'energy', narrower: '1' })
+
+    // The back button restores the earlier query and lists it from page 1.
+    router.back()
+    await settle()
+    expect(seen[seen.length - 1].filter?.concept?.expansion).toMatchObject({ narrower: true, closeMatch: true })
+    expect(seen[seen.length - 1].pageToken).toBe('')
+    const vm = wrapper.vm as unknown as { query: { filter: { concept: { closeMatch: boolean } } } }
+    expect(vm.query.filter.concept.closeMatch).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('opens a shared link on its listing query', async () => {
+    const seen: ListDocumentsRequest[] = []
+    const { wrapper } = await mountRepositoryView(
+      RepositoryAccountView,
+      '/repository/accounts/acct-a?scheme=topics&concept=energy&f.datasourceId=ds-files&tombstoned=1&sort=title',
+      (router) => {
+        drives()(router)
+        router.service(DocumentService, {
+          listDocuments(request) {
+            seen.push(request)
+            return create(ListDocumentsResponseSchema)
+          },
+        })
+      },
+    )
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ includeTombstoned: true, pageToken: '' })
+    expect(seen[0].filter?.datasourceId).toBe('ds-files')
+    expect(seen[0].filter?.concept?.concept).toMatchObject({ schemeId: 'topics', conceptId: 'energy' })
+    expect(seen[0].filter?.concept?.expansion).toMatchObject({ narrower: false, closeMatch: false })
+    expect(seen[0].sort?.field).toBe(DocumentSortField.TITLE)
+    expect((wrapper.get('[data-testid="concept-scheme"] input').element as HTMLInputElement).value).toBe('topics')
+    wrapper.unmount()
+  })
+
+  it('refuses a half-named concept and an unreadable link by name without calling the server', async () => {
+    let calls = 0
+    const { wrapper, router } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a?sort=size', (router) => {
+      drives()(router)
+      router.service(DocumentService, {
+        listDocuments() {
+          calls++
+          return create(ListDocumentsResponseSchema)
+        },
+      })
+    })
+    expect(calls).toBe(0)
+    expect(wrapper.get('[data-testid="input-error"]').text()).toContain('Sort by: "size" is not committed_at or title')
+    await wrapper.get('[data-testid="concept-scheme"] input').setValue('topics')
+    await wrapper.get('[data-testid="apply-query"]').trigger('click')
+    await settle()
+    expect(calls).toBe(0)
+    expect(wrapper.get('[data-testid="input-error"]').text()).toContain('Concept ID: is blank; a scheme alone names no concept')
+    expect(router.currentRoute.value.query).toEqual({ sort: 'size' })
     wrapper.unmount()
   })
 })
