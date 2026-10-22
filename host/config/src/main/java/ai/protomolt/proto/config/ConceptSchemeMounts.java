@@ -147,7 +147,9 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
      * One expansion's result.
      *
      * @param concepts the expanded concepts, ordered by scheme id then concept id
-     * @param mountedVersions the mounted version of every scheme the expansion read, by id
+     * @param mountedVersions the mounted version of every scheme the expansion read, by id;
+     *        the symmetric mapping lookups read every mounted scheme, including those that
+     *        contributed nothing, because a new version of any of them can change the result
      * @param unresolvedMappings the mappings followed but skipped because their target scheme
      *        is not mounted or lacks the target id, in a stable order
      */
@@ -364,10 +366,13 @@ public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
                 }
                 resolved.add(target);
             }
-            for (Key source : snapshot.reverseMappings(from, relation)) {
-                versions.put(source.schemeId(), snapshot.schemes().get(source.schemeId()).version());
-                resolved.add(source);
+            // The reverse lookup reads every mounted scheme, and a scheme that names nothing
+            // here still decides the result: a new version could add an inbound mapping. So
+            // each one is a dependency of the expansion, reported with its version.
+            for (Scheme consulted : snapshot.schemes().values()) {
+                versions.put(consulted.schemeId(), consulted.version());
             }
+            resolved.addAll(snapshot.reverseMappings(from, relation));
             return resolved;
         }
 

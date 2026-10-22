@@ -287,13 +287,40 @@ class ConceptSchemeMountsTest {
                     "subject:natural-philosophy",
                     "subject:old-physics",
                     "subject:physics");
+            // wiki contributes nothing to this expansion, but its version is still a
+            // dependency: the inbound exact_match lookup read it.
             assertThat(expansion.mountedVersions())
                     .containsExactly(Map.entry("dewey", "d1"), Map.entry("lcsh", "l1"),
-                            Map.entry("subject", "s1"));
+                            Map.entry("subject", "s1"), Map.entry("wiki", "w1"));
             assertThat(expansion.unresolvedMappings())
                     .extracting(UnresolvedMapping::relation, m -> m.target().getSchemeId(),
                             UnresolvedMapping::reason)
                     .containsExactly(tuple("exact_match", "absent", "scheme \"absent\" is not mounted"));
+        }
+    }
+
+    @Test
+    void evidenceNamesEverySchemeTheReverseLookupReadEvenWhenItMatchedNothing() {
+        FakeSource source = new FakeSource();
+        source.put("subject", "s1", scheme(concept("physics")));
+        source.put("other", "o1", scheme(concept("unrelated")));
+        try (DistributedConfig config = DistributedConfig.over(source)) {
+            ConceptSchemeMounts mounts = ConceptSchemeMounts.follow(
+                    config, List.of("subject", "other"));
+            config.refresh();
+            Expansion before = mounts.expand(ref("subject", "physics"), DEFAULT);
+            assertThat(rendered(before)).containsExactly("subject:physics");
+            assertThat(before.mountedVersions())
+                    .containsExactly(Map.entry("other", "o1"), Map.entry("subject", "s1"));
+
+            // subject is unchanged; a new version of other adds an inbound exact_match.
+            source.put("other", "o2", scheme(concept("unrelated"),
+                    concept("physik").addExactMatch(ref("subject", "physics"))));
+            config.refresh();
+            Expansion after = mounts.expand(ref("subject", "physics"), DEFAULT);
+            assertThat(rendered(after)).containsExactly("other:physik", "subject:physics");
+            assertThat(after.mountedVersions())
+                    .containsExactly(Map.entry("other", "o2"), Map.entry("subject", "s1"));
         }
     }
 
