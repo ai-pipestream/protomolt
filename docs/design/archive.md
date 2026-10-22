@@ -802,7 +802,8 @@ message ArchiveOperationKey {
   between, and the outcome lookup of section 4 finds the original save. v2
   binds the expected revision it receives into the save's intent
   (`SaveIntents`), which is why the lookup runs before the current-revision
-  read: a recorded outcome is never compared against a newly read revision,
+  read: a recorded outcome is never compared for content against a newly read
+  revision (only its currency is checked, for a derived last-write-wins ID),
   and with no recorded outcome there is no earlier intent to conflict with.
 - **`content_sha256`** for `PutEntry` is the SHA-256 of the binary encoding of
   the request with `operation_id` and `expected_version` cleared, renditions
