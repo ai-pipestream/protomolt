@@ -2,6 +2,7 @@ package ai.protomolt.proto.projection;
 
 import ai.protomolt.proto.projection.test.Address;
 import ai.protomolt.proto.projection.test.ArchiveEntryView;
+import ai.protomolt.proto.projection.test.BadEnumLiteral;
 import ai.protomolt.proto.projection.test.Blob;
 import ai.protomolt.proto.projection.test.BlobBag;
 import ai.protomolt.proto.projection.test.BlobChecksumType;
@@ -13,12 +14,16 @@ import ai.protomolt.proto.projection.test.FlatDoc;
 import ai.protomolt.proto.projection.test.Matter;
 import ai.protomolt.proto.projection.test.MisfedEntryView;
 import ai.protomolt.proto.projection.test.Note;
+import ai.protomolt.proto.projection.test.PartState;
 import ai.protomolt.proto.projection.test.Rendition;
 import ai.protomolt.proto.projection.test.RenditionListView;
+import ai.protomolt.proto.projection.test.RenditionState;
+import ai.protomolt.proto.projection.test.RenditionStatus;
 import ai.protomolt.proto.projection.test.RuntimeErrorProjection;
 import ai.protomolt.proto.projection.test.ScalarZoo;
 import ai.protomolt.proto.projection.test.SearchDoc;
 import ai.protomolt.proto.projection.test.StoredDocument;
+import ai.protomolt.proto.projection.test.StoredPart;
 import ai.protomolt.proto.projection.test.TreeNode;
 import ai.protomolt.proto.projection.test.TreeView;
 import com.google.protobuf.ByteString;
@@ -486,5 +491,31 @@ class MessageProjectionTest {
         assertThat(MessageProjection.resolves(zoo, "name.length")).isFalse();
         // Segments are not trimmed individually.
         assertThat(MessageProjection.resolves(zoo, "nested . leaf")).isFalse();
+    }
+
+    @Test
+    void convertsEnumsOfAnotherTypeAndNumericLiteralsByNumber() throws Exception {
+        MessageProjection projection = MessageProjection.forTarget(
+                RenditionStatus.getDescriptor(), SourceResolver.of(StoredPart.getDescriptor())).orElseThrow();
+
+        RenditionStatus status = RenditionStatus.parseFrom(
+                projection.project(StoredPart.newBuilder().setState(PartState.PART_STATE_CARRIED).build())
+                        .toByteString(),
+                ExtensionRegistry.getEmptyRegistry());
+
+        assertThat(status.getState()).isEqualTo(RenditionState.RENDITION_STATE_INHERITED);
+        // maybe_state is absent, so default_from's number_value 1 applies.
+        assertThat(status.getStateOrStored()).isEqualTo(RenditionState.RENDITION_STATE_STORED);
+        assertThat(status.getViaCel()).isEqualTo(RenditionState.RENDITION_STATE_INHERITED);
+    }
+
+    @Test
+    void refusesANumericLiteralThatIsNoValueOfTheEnum() {
+        MessageProjection projection = MessageProjection.forTarget(
+                BadEnumLiteral.getDescriptor(), SourceResolver.of(StoredPart.getDescriptor())).orElseThrow();
+
+        assertThatThrownBy(() -> projection.project(StoredPart.getDefaultInstance()))
+                .isInstanceOf(ProjectionException.class)
+                .hasMessageContaining("ai.protomolt.proto.projection.test.v1.BadEnumLiteral.state");
     }
 }
