@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,6 +70,27 @@ public final class DistributedConfig implements AutoCloseable {
      */
     public synchronized <T extends Message> Subscription<T> subscribe(
             String subject, T prototype) {
+        return subscribe(subject, prototype, document -> ValidationResult.ok());
+    }
+
+    /**
+     * As {@link #subscribe(String, Message)} with a further document check that runs after
+     * the type's declared rules and before the swap: for invariants over the whole document
+     * that no field rule can state (graph shape, cross-entry uniqueness). A failing or
+     * throwing check refuses the document exactly as a declared-rule violation does, so the
+     * current config keeps serving and the refresh outcome names the reasons.
+     *
+     * @param subject the config subject to read
+     * @param prototype any instance of the expected type; only the type is used
+     * @param check the document check; ok to apply, violations to refuse
+     * @param <T> the config document's type
+     * @return the subscription
+     */
+    public synchronized <T extends Message> Subscription<T> subscribe(
+            String subject, T prototype, Function<? super T, ValidationResult> check) {
+        if (check == null) {
+            throw new IllegalArgumentException("check must not be null");
+        }
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("subject must not be blank");
         }
@@ -79,7 +101,7 @@ public final class DistributedConfig implements AutoCloseable {
             throw new IllegalArgumentException(
                     "subject '" + subject + "' is already subscribed");
         }
-        Subscription<T> subscription = new Subscription<>(subject, prototype);
+        Subscription<T> subscription = new Subscription<>(subject, prototype, check);
         subscriptions.put(subject, subscription);
         return subscription;
     }
@@ -147,6 +169,18 @@ public final class DistributedConfig implements AutoCloseable {
             return One.REFUSED;
         }
         ValidationResult validated = validator.validate(parsed);
+        if (validated.valid()) {
+            try {
+                validated = subscription.check().apply(parsed);
+            } catch (RuntimeException e) {
+                refused.add(new Refusal(subscription.subject(), fetched.get().version(),
+                        "document check failed: " + e.getMessage()));
+                LOG.warn("config '{}' version {} refused: its document check failed; the"
+                        + " current config keeps serving",
+                        subscription.subject(), fetched.get().version(), e);
+                return One.REFUSED;
+            }
+        }
         if (!validated.valid()) {
             String reasons = validated.violations().stream()
                     .map(violation -> violation.path() + ": " + violation.message())
@@ -174,12 +208,15 @@ public final class DistributedConfig implements AutoCloseable {
 
         private final String subject;
         private final T prototype;
+        private final Function<? super T, ValidationResult> check;
         private final AtomicReference<Applied<T>> current = new AtomicReference<>();
         private final List<BiConsumer<T, String>> listeners = new ArrayList<>();
 
-        private Subscription(String subject, T prototype) {
+        private Subscription(
+                String subject, T prototype, Function<? super T, ValidationResult> check) {
             this.subject = subject;
             this.prototype = prototype;
+            this.check = check;
         }
 
         /** The subscribed subject. */
@@ -189,6 +226,10 @@ public final class DistributedConfig implements AutoCloseable {
 
         T prototype() {
             return prototype;
+        }
+
+        Function<? super T, ValidationResult> check() {
+            return check;
         }
 
         /** The currently applied config, or empty before the first apply. */

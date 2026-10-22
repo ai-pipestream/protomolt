@@ -181,6 +181,7 @@ public final class ProtomoltRuleSource implements ValidationRuleSource {
             builder.addCel(toCel(cel));
         }
         builder.taxonomy(rules.getTaxonomy());
+        builder.conceptSchemes(rules.getConceptSchemesList());
         return builder.build();
     }
 

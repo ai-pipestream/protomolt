@@ -392,6 +392,17 @@ message FieldRules {
   // verb exists to explain, so the receiver reads the violations as a value
   // and reports them instead.
   bool inspect_only = 19;
+  // Ids of the concept schemes a value must belong to. Legal only on a
+  // singular or repeated field of ai.protomolt.proto.types.v1.ConceptRef;
+  // anywhere else fails rule compilation. The value's scheme_id must be
+  // one of these and its concept_id a concept of the scheme mounted under
+  // that id (an operator-loaded concept-scheme config document).
+  // Enforcement is fail-closed: a bound scheme with no mount refuses
+  // rather than passes, and a deprecated concept is still a member.
+  repeated string concept_schemes = 20 [(field).repeated = {
+    unique: true
+    items: {string: {slug: true, max_len: 200}}
+  }];
 }
 
 // Constraints attached to a message as a whole.
