@@ -84,6 +84,29 @@ class ConceptSchemeRuleTest {
                         .addField(field("subject", 1, message, ref, optional, bound))
                         .addField(field("tags", 2, message, ref, repeated, bound)))
                 .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Section")
+                        .addField(field("tags", 1, message, ref, repeated, bound)))
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Report")
+                        .addField(field("sections", 1, message,
+                                ".ai.protomolt.proto.types.v1.Section", repeated, null)))
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Wrapper")
+                        .addField(field("section", 1, message,
+                                ".ai.protomolt.proto.types.v1.Section", optional, null)))
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
+                        .setName("Keyed")
+                        .addNestedType(DescriptorProtos.DescriptorProto.newBuilder()
+                                .setName("SectionsEntry")
+                                .setOptions(DescriptorProtos.MessageOptions.newBuilder()
+                                        .setMapEntry(true))
+                                .addField(field("key", 1, string, null, optional, null))
+                                .addField(field("value", 2, message,
+                                        ".ai.protomolt.proto.types.v1.Wrapper", optional, null)))
+                        .addField(field("sections", 1, message,
+                                ".ai.protomolt.proto.types.v1.Keyed.SectionsEntry", repeated,
+                                null)))
+                .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
                         .setName("OnString")
                         .addField(field("tag", 1, string, null, optional, bound)))
                 .addMessageType(DescriptorProtos.DescriptorProto.newBuilder()
@@ -205,6 +228,36 @@ class ConceptSchemeRuleTest {
         assertThat(result.violations())
                 .extracting(ValidationResult.Violation::path, ValidationResult.Violation::ruleId)
                 .containsExactly(tuple("subject.concept_id", "required"));
+    }
+
+    @Test
+    void underARepeatedAncestorTheViolationPathCarriesConcreteIndices() {
+        Descriptors.Descriptor report = FILE.findMessageTypeByName("Report");
+        Descriptors.Descriptor section = FILE.findMessageTypeByName("Section");
+        DynamicMessage first = DynamicMessage.newBuilder(section)
+                .addRepeatedField(section.findFieldByName("tags"), ref("subject", "physics"))
+                .build();
+        DynamicMessage second = DynamicMessage.newBuilder(section)
+                .addRepeatedField(section.findFieldByName("tags"), ref("subject", "physics"))
+                .addRepeatedField(section.findFieldByName("tags"), ref("subject", "biology"))
+                .build();
+        DynamicMessage message = DynamicMessage.newBuilder(report)
+                .addRepeatedField(report.findFieldByName("sections"), first)
+                .addRepeatedField(report.findFieldByName("sections"), second)
+                .build();
+        assertThat(VALIDATOR.validate(message).violations())
+                .extracting(ValidationResult.Violation::path, ValidationResult.Violation::ruleId)
+                .containsExactly(tuple("sections[1].tags[1]", "concept.member"));
+    }
+
+    @Test
+    void aBoundConceptRefAnywhereUnderAMapValueFailsRuleCompilation() {
+        // Two levels down (map value Wrapper, then Section.tags): occurrences under a map
+        // have no field-path identity, so the binding is a schema error.
+        assertThatThrownBy(() -> VALIDATOR.validate(empty("Keyed")))
+                .isInstanceOf(RuleCompilationException.class)
+                .hasMessageContaining("Section.tags")
+                .hasMessageContaining("map field ai.protomolt.proto.types.v1.Keyed.sections");
     }
 
     @Test

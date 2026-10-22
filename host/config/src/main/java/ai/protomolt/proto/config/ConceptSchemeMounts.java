@@ -40,9 +40,12 @@ import java.util.TreeSet;
  * mounted scheme lacks, does not block a mount: it is unresolved, skipped by expansion and
  * reported in the expansion's evidence.</p>
  *
- * <p>Every mount swap publishes one immutable snapshot of all mounted schemes, so an
- * expansion reads one consistent set of versions and, given those versions, is
- * deterministic.</p>
+ * <p>Every mount swap publishes one immutable snapshot of all mounted schemes. An
+ * expansion captures that snapshot once and reads only it, so a swap during the expansion
+ * does not change its result, and every traversal (the {@code exact_match} closure, the
+ * {@code replaced_by} predecessors, the {@code narrower} descendants) keeps a visited set,
+ * so each concept is entered once. Given the snapshot's versions, which the result reports,
+ * the expansion is deterministic.</p>
  */
 public final class ConceptSchemeMounts implements ConceptSchemeCatalog {
 

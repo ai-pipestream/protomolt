@@ -17,12 +17,17 @@ import "ai/protomolt/proto/validate/v1/validate.proto";
 // config source's version is the version; a copy of either inside the
 // document could only agree or lie.
 //
+// Acyclic broader is a ProtoMolt profile rule, stricter than SKOS (which
+// allows broader cycles): a hierarchy with a cycle has no well-defined
+// descendants for query expansion, so such a scheme never mounts.
+//
 // Only one direction of each relation is stored. narrower is the inverse of
 // broader and is computed by the mount; one side of a symmetric relation
 // (related, exact_match, close_match, related_match) is enough, the mount
 // closes it. The graph checks (references resolve, broader acyclic, related
-// disjoint from the hierarchy, replaced_by chains end live, label integrity)
-// run at the mount, so a scheme failing any of them never mounts.
+// disjoint from the hierarchy, replaced_by acyclic with chains ending live,
+// label integrity) run at the mount, so a scheme failing any of them never
+// mounts.
 message ConceptScheme {
   // The scheme's title, at most one per language.
   repeated LangLabel pref_label = 1;
@@ -63,6 +68,24 @@ message Concept {
   repeated string replaced_by = 15;
   // The concept's IRI, kept for SKOS round trips. Not an identity.
   optional string iri = 16 [(ai.protomolt.proto.validate.v1.field).string.uri = true];
+  // The concept's skos:notation values, kept for lossless SKOS round
+  // trips: a concept may carry several, each with its own datatype. A
+  // notation is never the concept's id; the id stays opaque.
+  // A repeated (value, datatype) pair is redundant and rejected.
+  repeated ConceptNotation notation = 17 [(ai.protomolt.proto.validate.v1.field).repeated.unique = true];
+}
+
+// One skos:notation value: the literal and the IRI of its datatype.
+message ConceptNotation {
+  string value = 1 [(ai.protomolt.proto.validate.v1.field) = {
+    required: true
+    string: {min_len: 1, max_len: 1000}
+  }];
+  // The literal's datatype IRI; empty for a plain literal.
+  string datatype_iri = 2 [(ai.protomolt.proto.validate.v1.field) = {
+    ignore_if_zero: true
+    string: {uri: true}
+  }];
 }
 
 // Text in one language.

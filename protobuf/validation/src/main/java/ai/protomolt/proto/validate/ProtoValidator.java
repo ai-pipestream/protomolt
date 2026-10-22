@@ -390,6 +390,7 @@ public final class ProtoValidator {
                 checkTaxonomy(field, constraints);
                 checkConceptSchemes(field, constraints);
             }
+            checkNoConceptSchemesUnderMap(field);
             fields.put(field, collected);
         }
         List<MessageConstraints> messages = new ArrayList<>();
@@ -566,6 +567,52 @@ public final class ProtoValidator {
                                 + schemeId + "\" more than once");
             }
         }
+    }
+
+    /**
+     * A concept_schemes-bound ConceptRef must not sit anywhere under a map value. Tag
+     * occurrences are identified by a field path with concrete indices for repeated
+     * ancestors ({@code sections[0].tags}); map ancestors are not traversed for that
+     * identity, so a binding below one could never be located and is a schema error.
+     */
+    private void checkNoConceptSchemesUnderMap(FieldDescriptor field) {
+        if (!field.isMapField()) {
+            return;
+        }
+        FieldDescriptor value = field.getMessageType().findFieldByName("value");
+        if (value.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+            return;
+        }
+        String bound = boundConceptRefBelow(value.getMessageType(),
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+        if (bound != null) {
+            throw new RuleCompilationException(
+                    "concept_schemes on field " + bound + " is reachable under map field "
+                            + field.getFullName() + "; a bound ConceptRef may not sit under a"
+                            + " map value");
+        }
+    }
+
+    /** The first concept_schemes-bound field reachable in {@code type}, or null. */
+    private String boundConceptRefBelow(Descriptor type, Set<Descriptor> seen) {
+        if (!seen.add(type)) {
+            return null;
+        }
+        for (FieldDescriptor child : type.getFields()) {
+            for (ValidationRuleSource source : sources) {
+                FieldConstraints constraints = source.fieldConstraints(child).orElse(null);
+                if (constraints != null && declaresConceptSchemes(constraints)) {
+                    return child.getFullName();
+                }
+            }
+            if (child.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                String found = boundConceptRefBelow(child.getMessageType(), seen);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     /** Whether any nested (items/keys/values) constraints declare concept schemes. */

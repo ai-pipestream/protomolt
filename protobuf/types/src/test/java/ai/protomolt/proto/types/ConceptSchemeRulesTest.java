@@ -99,6 +99,24 @@ class ConceptSchemeRulesTest {
     }
 
     @Test
+    void notationsKeepTypedAndPlainLiteralsAndRejectMalformedOnes() {
+        ConceptNotation typed = ConceptNotation.newBuilder()
+                .setValue("530").setDatatypeIri("http://example.org/ddc#notation").build();
+        ConceptNotation plain = ConceptNotation.newBuilder().setValue("PHY").build();
+        assertThat(VALIDATOR.validate(scheme(concept("physics")
+                .addNotation(typed).addNotation(plain))).violations()).isEmpty();
+        ConceptScheme malformed = scheme(concept("physics")
+                .addNotation(ConceptNotation.newBuilder().setDatatypeIri("not an iri"))
+                .addNotation(plain).addNotation(plain));
+        assertThat(VALIDATOR.validate(malformed).violations())
+                .extracting(Violation::path, Violation::ruleId)
+                .containsExactlyInAnyOrder(
+                        tuple("concepts[0].notation", "repeated.unique"),
+                        tuple("concepts[0].notation[0].value", "required"),
+                        tuple("concepts[0].notation[0].datatype_iri", "string.uri"));
+    }
+
+    @Test
     void conceptIdsAreUnique() {
         assertThat(check(scheme(concept("physics"), concept("physics"))).violations())
                 .extracting(Violation::path, Violation::ruleId)

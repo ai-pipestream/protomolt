@@ -28,10 +28,13 @@ import java.util.function.Function;
  *   <li>a cross-scheme mapping never names the concept's own scheme;</li>
  *   <li>every {@code broader}, {@code related} and {@code replaced_by} id names a concept
  *       of the scheme, and {@code related} never names the concept itself;</li>
- *   <li>the {@code broader} graph is acyclic, a violation naming one cycle in order;</li>
+ *   <li>the {@code broader} graph is acyclic, a violation naming one cycle in order. This
+ *       is a ProtoMolt profile rule, stricter than SKOS, which permits {@code broader}
+ *       cycles: expansion needs a well-defined set of descendants;</li>
  *   <li>{@code related} never connects a concept to one of its ancestors or descendants
  *       (SKOS S27), either side of the symmetric pair counting;</li>
- *   <li>{@code replaced_by} is set only on deprecated concepts, its graph is acyclic, and
+ *   <li>{@code replaced_by} is set only on deprecated concepts, its graph is acyclic (a
+ *       cycle is rejected at mount, named in order like a {@code broader} cycle), and
  *       it never names a deprecated concept that has no successor of its own, so every
  *       chain ends at a live concept.</li>
  * </ul>
