@@ -117,4 +117,49 @@ class ProtoImportsTest {
         String proto = "syntax = \"proto3\";\nimport \"first.proto\"; import \"second.proto\";\n";
         assertThat(ProtoImports.of(proto)).containsExactly("first.proto");
     }
+
+    @Test
+    void requiresWhitespaceBetweenTheKeywordAndThePath() {
+        String proto = """
+                syntax = "proto3";
+                import"tight.proto";
+                import public"tight-modified.proto";
+                """;
+        assertThat(ProtoImports.of(proto)).isEmpty();
+    }
+
+    @Test
+    void rejectsAnEmptyPath() {
+        assertThat(ProtoImports.of("import \"\";")).isEmpty();
+    }
+
+    @Test
+    void anUnterminatedBlockCommentReadsAsPlainText() {
+        // Without a closing marker the comment never forms, so text after the '/' still
+        // scans: the import on the next line is at a line start and is found, while one
+        // glued to the same line as the marker is not.
+        assertThat(ProtoImports.of("/* unterminated\nimport \"after.proto\";\n"))
+                .containsExactly("after.proto");
+        assertThat(ProtoImports.of("/* import \"hidden.proto\";")).isEmpty();
+    }
+
+    @Test
+    void aBlockCommentOnItsOwnLineDoesNotHideTheNextImport() {
+        String proto = """
+                /* header */
+                import "real.proto";
+                """;
+        assertThat(ProtoImports.of(proto)).containsExactly("real.proto");
+    }
+
+    @Test
+    void aModifierMayBeFollowedByALineBreak() {
+        String proto = "import weak\n    \"broken-line.proto\";\n";
+        assertThat(ProtoImports.of(proto)).containsExactly("broken-line.proto");
+    }
+
+    @Test
+    void aKeywordGluedToTheModifierIsNotAnImport() {
+        assertThat(ProtoImports.of("importpublic \"glued.proto\";")).isEmpty();
+    }
 }

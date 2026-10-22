@@ -415,6 +415,29 @@ class StructuredGeneratorTest {
      * ServiceLoader; wired through the explicit {@link InferenceEngines}
      * constructor.
      */
+    @Test
+    void schemaNamesFoldToTheProviderAlphabet() {
+        assertThat(StructuredGenerator.schemaName(
+                "ai.protomolt.proto.inference.structured.testdata.v1.TestForm"))
+                .isEqualTo("ai_protomolt_proto_inference_structured_testdata_v1_TestForm");
+        assertThat(StructuredGenerator.schemaName("MySchema_1-2")).isEqualTo("MySchema_1-2");
+    }
+
+    @Test
+    void aSupplementaryCodePointFoldsToExactlyOneUnderscore() {
+        // A supplementary character is one code point, so it normalizes to a single '_'.
+        assertThat(StructuredGenerator.schemaName("ab\uD83D\uDE00c")).isEqualTo("ab_c");
+    }
+
+    @Test
+    void schemaNamesLongerThanTheProviderLimitTruncateDeterministically() {
+        String name = StructuredGenerator.schemaName("a".repeat(100));
+
+        assertThat(name).hasSize(64);
+        assertThat(name).startsWith("a".repeat(55) + "_");
+        assertThat(StructuredGenerator.schemaName("a".repeat(100))).isEqualTo(name);
+    }
+
     private static final class ScriptedProvider implements InferenceProvider {
 
         private final Queue<Object> script = new ArrayDeque<>();

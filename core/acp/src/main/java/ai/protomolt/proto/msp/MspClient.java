@@ -111,7 +111,7 @@ public final class MspClient implements AutoCloseable {
      * @return the host's initialize result (server info, schema fingerprint, muse home)
      */
     public JsonNode initialize(String clientName, String clientVersion) {
-        if (clientName == null || !clientName.matches("[a-z0-9_]+")) {
+        if (clientName == null || !isValidClientName(clientName)) {
             throw new IllegalArgumentException("MSP client name must match [a-z0-9_]+");
         }
         ObjectNode params = MAPPER.createObjectNode();
@@ -125,11 +125,24 @@ public final class MspClient implements AutoCloseable {
         return result;
     }
 
+    /** Lowercase ASCII letters, digits and underscores, at least one character. */
+    private static boolean isValidClientName(String clientName) {
+        if (clientName.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < clientName.length(); i++) {
+            char c = clientName.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** The initialize result, empty before the handshake. */
     public JsonNode serverInfo() {
         return serverInfo;
     }
-
     /**
      * Starts a root session rooted at the workspace with the named approval mode, one of the
      * modes the host already defines ({@code allowAll} for an unattended run).
