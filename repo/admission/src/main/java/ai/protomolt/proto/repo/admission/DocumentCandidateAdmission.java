@@ -8,6 +8,8 @@ import ai.protomolt.proto.repo.v1.DocumentPublicationSlot;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
 import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import java.time.Instant;
@@ -120,17 +122,26 @@ public final class DocumentCandidateAdmission {
         private final Map<String, ByteString> artifacts;
         private final DocumentAdmissionResources resources;
         private final List<OpaqueFound> opaque;
+        private final List<DocumentLinks.Link> links;
 
         private Accepted(RepositorySchemaAssetReference container, List<Occurrence> occurrences,
-                Map<String, ByteString> artifacts, DocumentAdmissionResources resources, List<OpaqueFound> opaque) {
+                Map<String, ByteString> artifacts, DocumentAdmissionResources resources, List<OpaqueFound> opaque,
+                List<DocumentLinks.Link> links) {
             this.container = container; this.occurrences = List.copyOf(occurrences);
             this.artifacts = Map.copyOf(artifacts); this.resources = resources; this.opaque = List.copyOf(opaque);
+            this.links = List.copyOf(links);
         }
         public RepositorySchemaAssetReference container() { return container; }
         public List<Occurrence> occurrences() { return occurrences; }
         public Map<String, ByteString> artifacts() { return artifacts; }
         /** Attested occurrences accepted undecoded; empty for a fully typed candidate. */
         public List<OpaqueFound> opaque() { return opaque; }
+        /**
+         * The links of the admitted CORE fragment (requirements §17): its own link
+         * fields and those of each typed Any root it holds, structured_data among
+         * them, in field order. Empty when no CORE fragment was admitted.
+         */
+        public List<DocumentLinks.Link> links() { return links; }
         @Override public void close() { resources.close(); }
     }
 
@@ -239,6 +250,8 @@ public final class DocumentCandidateAdmission {
             // Fragments decode with the container version, not the compiled Document: a field
             // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
             var type = container.schema().type();
+            requireLinks(type, "container");
+            var links = new ArrayList<DocumentLinks.Link>();
             var written = DynamicMessage.newBuilder(type);
             long total = 0;
             var seen = new java.util.HashSet<List<Object>>();
@@ -261,6 +274,12 @@ public final class DocumentCandidateAdmission {
                     if (input.getTotalBytesRead() != fragment.bytes().size())
                         throw new InvalidProtocolBufferException("Fragment was not completely consumed");
                     requireNoUnknownFields(parsed, fragment.part(), "", 0, active);
+                    // Links are CORE content (requirements §17); a link value in any other part is refused.
+                    var found = DocumentLinks.extract(parsed, "");
+                    if (!found.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                        throw new ContentRefused(fragment.part() + " fragment holds link " + found.getFirst().fieldPath()
+                                + "; links belong in CORE", null);
+                    links.addAll(found);
                     switch (fragment.part()) {
                         case DOCUMENT_PART_CHUNKS -> DocumentFragmentConfinement.requireConfinedSegmentation(parsed,
                                 fragment.key().get(0), request.docId());
@@ -363,6 +382,13 @@ public final class DocumentCandidateAdmission {
                     List<DocumentSchemaOccurrences.Occurrence> found;
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
                         found = accepted.checked().payload().occurrences();
+                        var decoded = accepted.checked().payload().decoded();
+                        requireLinks(decoded.getDescriptorForType(), envelope.getTypeUrl());
+                        var rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()));
+                        if (!rootLinks.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
+                            throw new ContentRefused(fragment.part() + " payload " + envelope.getTypeUrl()
+                                    + " holds link " + rootLinks.getFirst().fieldPath() + "; links belong in CORE", null);
+                        links.addAll(rootLinks);
                         decodedRemaining -= accepted.checked().payload().decodedBytes();
                         for (var terminal : accepted.checked().payload().opaqueTerminals()) {
                             var steps = new ArrayList<>(locator.getAccessList());
@@ -389,6 +415,15 @@ public final class DocumentCandidateAdmission {
                         var reference = definitions.references.get(
                                 new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
                         if (reference == null) throw new IllegalStateException("occurrence schema was not selected");
+                        // A nested Any is a schema boundary the link walk does not cross, so a type
+                        // that declares links is refused there rather than stored with unread links.
+                        if (occurrence.path().size() > 1) {
+                            var nested = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(),
+                                    boundary.artifactSha256()));
+                            if (nested != null && declaresLinks(nested.type(), boundary.typeUrl()))
+                                throw new ContentRefused("payload " + boundary.typeUrl()
+                                        + " declares links inside a nested Any; links are read from CORE and its Any roots", null);
+                        }
                         occurrences.add(new Occurrence(fragment.part(), steps, reference.toProto(),
                                 boundary.valueSha256(), boundary.valueSizeBytes()));
                     }
@@ -397,7 +432,7 @@ public final class DocumentCandidateAdmission {
             active.run();
             if (!violations.isEmpty()) return new Rejected(violations);
             var accepted = new Accepted(definitions.references.get(containerKey).toProto(), occurrences,
-                    definitions.artifacts, resources, opaqueFound);
+                    definitions.artifacts, resources, opaqueFound, links);
             transferred = true;
             return accepted;
         } catch (DocumentAdmissionResources.ReservationFailure failed) {
@@ -405,6 +440,54 @@ public final class DocumentCandidateAdmission {
         } finally {
             if (!transferred) resources.close();
         }
+    }
+
+    /** Checks the link declarations reachable from a type; a broken one refuses the content. */
+    private static void requireLinks(Descriptor type, String where) {
+        try {
+            DocumentLinks.requireLinkSchema(type);
+        } catch (DocumentLinks.SchemaRefused refused) {
+            throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
+        }
+    }
+
+    private static boolean declaresLinks(Descriptor type, String where) {
+        try {
+            return DocumentLinks.declaresLinks(type);
+        } catch (DocumentLinks.SchemaRefused refused) {
+            throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
+        }
+    }
+
+    /** The field path of an Any root: its access steps named against the container type. */
+    static String rootPath(Descriptor container,
+            List<DocumentSchemaOccurrences.Step> access) {
+        var path = new StringBuilder();
+        var current = container;
+        FieldDescriptor field = null;
+        for (var step : access) {
+            switch (step) {
+                case DocumentSchemaOccurrences.Field named -> {
+                    field = current == null ? null : current.findFieldByNumber(named.number());
+                    if (field == null) throw new IllegalStateException("Any root access names an undeclared field " + named.number());
+                    if (!path.isEmpty()) path.append('.');
+                    path.append(field.getName());
+                    current = field.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            && !field.isMapField() ? field.getMessageType() : null;
+                }
+                case DocumentSchemaOccurrences.Index index -> path.append('[').append(index.index()).append(']');
+                case DocumentSchemaOccurrences.MapKey key -> {
+                    path.append(DocumentLinks.subscript(key.value()));
+                    var value = field == null ? null : field.getMessageType().findFieldByName("value");
+                    current = value != null && value.getJavaType() == FieldDescriptor.JavaType.MESSAGE
+                            ? value.getMessageType() : null;
+                }
+                case DocumentSchemaOccurrences.Boundary boundary ->
+                        throw new IllegalStateException("Any root access crosses a boundary");
+            }
+        }
+        if (path.isEmpty()) throw new IllegalStateException("Any root access is empty");
+        return path.toString();
     }
 
     /**
@@ -444,7 +527,7 @@ public final class DocumentCandidateAdmission {
      *
      * @throws HostFailure when the definition does not bind
      */
-    public static com.google.protobuf.Descriptors.Descriptor containerType(DocumentSchemaAdmission.Definition container) {
+    public static Descriptor containerType(DocumentSchemaAdmission.Definition container) {
         try {
             return DocumentSchemaAssetBinding.bind(container.metadata(), container.descriptors(),
                     new ai.protomolt.proto.descriptors.ClosedDescriptorSet.Limits(16 * 1024 * 1024, 256, 4096, 64), () -> {})
@@ -464,7 +547,7 @@ public final class DocumentCandidateAdmission {
         if (message.getDescriptorForType().getFullName().equals("google.protobuf.Any")) return;
         for (var entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
-            if (field.getJavaType() != com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
             String child = path.isEmpty() ? field.getName() : path + "." + field.getName();
             if (field.isRepeated()) {
                 for (var element : (List<?>) entry.getValue())
