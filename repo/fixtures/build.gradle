@@ -31,3 +31,17 @@ dependencies {
 application {
     mainClass = 'ai.protomolt.proto.repo.fixtures.CorpusSeederMain'
 }
+
+// The console browser leg boots the seeded host with Keycloak sign-in and runs the
+// Playwright specs in apps/console against it. It needs the console built there
+// first (npm ci && npm run build; Gradle never runs npm) and Playwright's Chromium.
+optInSuite('**/ConsoleBrowserIT*', ['PROTOMOLT_CONSOLE_BROWSER_IT=1'])
+tasks.named('integrationTest') {
+    systemProperty 'protomolt.console.dir', "${rootDir}/apps/console"
+    // The specs and the built bundle are inputs, so a changed spec or console reruns the suite
+    // instead of coming back from the build cache.
+    def console = "${rootDir}/apps/console"
+    inputs.files(fileTree("${console}/e2e") { exclude '.auth/**' }, fileTree("${console}/dist"),
+            "${console}/playwright.config.ts", "${console}/package-lock.json")
+            .withPropertyName('consoleBrowserLeg').withPathSensitivity(PathSensitivity.RELATIVE)
+}

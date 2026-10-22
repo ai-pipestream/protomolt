@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.9.0",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "2.16.0",
+    "@playwright/test": "1.63.0",
     "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "^6.0.4",
     "@vue/test-utils": "^2.4.11",

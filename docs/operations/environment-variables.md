@@ -476,3 +476,13 @@ for the ledger and object store, plus:
 | `PROTOMOLT_CORPUS_SEED` | unset = the seeder exits with status 2 before touching the store | exactly `dev`; the compose dev profile sets it |
 | `PROTOMOLT_CORPUS_SEED_VALUE` | `542` (the default corpus) | integer; the corpus seed |
 | `PROTOMOLT_CORPUS_LARGE_BLOB_BYTES` | `3145745` (3 MiB plus 17) | integer >= 1; the length of the streamed large blob |
+
+## Opt-in browser test (`repo/fixtures`)
+
+Read by Gradle, not by any service: `optInSuite` in the root build leaves the
+suite out of the `test` and `integrationTest` tasks unless the variable is set,
+so a plain run neither runs nor skips it.
+
+| Variable | Default | Accepted |
+|---|---|---|
+| `PROTOMOLT_CONSOLE_BROWSER_IT` | unset = the console browser leg is left out | exactly `1`; runs `ConsoleBrowserIT`, which boots the seeded repository host with Keycloak sign-in and runs the Playwright specs in `apps/console/e2e` against it. Needs `npm ci && npm run build` in `apps/console` and Playwright's Chromium first |
