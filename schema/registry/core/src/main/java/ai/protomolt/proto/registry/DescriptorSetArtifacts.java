@@ -23,10 +23,24 @@ public final class DescriptorSetArtifacts {
     }
 
     public static void requireFingerprint(String fingerprint) {
-        if (fingerprint == null || !fingerprint.matches("[0-9a-f]{64}")) {
+        if (fingerprint == null || !isLowercaseSha256Hex(fingerprint)) {
             throw new IllegalArgumentException(
                     "descriptor fingerprint must be a lowercase SHA-256 hex string");
         }
+    }
+
+    /** Exactly 64 chars, each in {@code 0-9} or {@code a-f}. */
+    private static boolean isLowercaseSha256Hex(String fingerprint) {
+        if (fingerprint.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < fingerprint.length(); i++) {
+            char c = fingerprint.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static void validate(String fingerprint, ByteString descriptorSet) {

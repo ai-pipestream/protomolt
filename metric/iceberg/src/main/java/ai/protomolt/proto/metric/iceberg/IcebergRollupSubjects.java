@@ -79,7 +79,7 @@ public final class IcebergRollupSubjects implements MetricSubjectResolver {
         }
         List<String> dimensions = dimensionsCsv.isEmpty()
                 ? List.of()
-                : List.of(dimensionsCsv.split(","));
+                : List.of(RollupText.splitOn(dimensionsCsv, ','));
         List<String> measureNames = new ArrayList<>();
         CatalogMetricHintSource declarations = new CatalogMetricHintSource();
         for (String dimension : dimensions) {
@@ -87,7 +87,7 @@ public final class IcebergRollupSubjects implements MetricSubjectResolver {
                     .setRole(MemberRole.MEMBER_ROLE_DIMENSION)
                     .build());
         }
-        for (String entry : measuresCsv.split(",")) {
+        for (String entry : RollupText.splitOn(measuresCsv, ',')) {
             String member = measureMember(entry, identifier);
             Aggregate source = measureAggregate(entry, identifier);
             measureNames.add(member);

@@ -9,6 +9,7 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.ExtensionRegistry;
 import org.apache.kafka.connect.errors.ConnectException;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,12 +58,36 @@ final class ConnectDescriptors {
             return null;
         }
         String relative = pkg.isEmpty() ? fullName : fullName.substring(pkg.length() + 1);
-        String[] parts = relative.split("\\.");
+        String[] parts = splitOnDot(relative);
         Descriptor current = file.findMessageTypeByName(parts[0]);
         for (int i = 1; current != null && i < parts.length; i++) {
             current = current.findNestedTypeByName(parts[i]);
         }
         return current;
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code '.'} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    private static String[] splitOnDot(String text) {
+        if (text.isEmpty()) {
+            return new String[]{""};
+        }
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        int dot;
+        while ((dot = text.indexOf('.', start)) >= 0) {
+            parts.add(text.substring(start, dot));
+            start = dot + 1;
+        }
+        parts.add(text.substring(start));
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end).toArray(String[]::new);
     }
 
     private static List<FileDescriptor> link(FileDescriptorSet set) {

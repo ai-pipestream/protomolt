@@ -157,14 +157,38 @@ public final class MavenProtoGatherer implements ProtoGatherer {
 
     /** Parses {@code group:artifact:version} or {@code group:artifact:version:classifier}. */
     private static Artifact parse(String coordinate) throws GatherException {
-        String[] parts = coordinate.split(":");
-        if ((parts.length != 3 && parts.length != 4)
-                || List.of(parts).stream().anyMatch(String::isBlank)) {
+        List<String> parts = splitOnColon(coordinate);
+        if ((parts.size() != 3 && parts.size() != 4)
+                || parts.stream().anyMatch(String::isBlank)) {
             throw new GatherException("Invalid Maven coordinate '" + coordinate
                     + "'; expected group:artifact:version[:classifier]");
         }
-        String classifier = parts.length == 4 ? parts[3] : "";
-        return new DefaultArtifact(parts[0], parts[1], classifier, "jar", parts[2]);
+        String classifier = parts.size() == 4 ? parts.get(3) : "";
+        return new DefaultArtifact(parts.get(0), parts.get(1), classifier, "jar", parts.get(2));
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code ':'} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    private static List<String> splitOnColon(String coordinate) {
+        if (coordinate.isEmpty()) {
+            return List.of("");
+        }
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        int colon;
+        while ((colon = coordinate.indexOf(':', start)) >= 0) {
+            parts.add(coordinate.substring(start, colon));
+            start = colon + 1;
+        }
+        parts.add(coordinate.substring(start));
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end);
     }
 
     @Override

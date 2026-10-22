@@ -76,7 +76,7 @@ final class IngestComparisons {
     }
 
     private static Blob normalized(Blob blob, String sha, long length) {
-        return blob.toBuilder().clearData().clearStorageRef().setChecksum(sha)
+        return blob.toBuilder().clearData().clearStorageRef().clearWritten().setChecksum(sha)
                 .setChecksumType(ChecksumType.CHECKSUM_TYPE_SHA256).setSizeBytes(length).build();
     }
 

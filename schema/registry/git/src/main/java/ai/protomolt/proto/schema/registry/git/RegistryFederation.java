@@ -31,8 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Registry federation: another mesh's git-backed registry, added as an ordinary git remote of
@@ -71,9 +69,6 @@ public final class RegistryFederation {
     /** Separator between the origin (remote name) and the remote subject name. */
     public static final String ORIGIN_SEPARATOR = ":";
 
-    private static final Pattern REMOTE_NAME = Pattern.compile("[a-z][a-z0-9-]{0,63}");
-    private static final Pattern VERSION_PROTO = Pattern.compile("v(\\d+)\\.proto");
-    private static final Pattern VERSION_META = Pattern.compile("v(\\d+)\\.json");
     private static final String SUBJECTS_PREFIX = "subjects/";
     private static final String DESCRIPTORS_PREFIX = "descriptors/sha256/";
     private static final int MAX_BLOB_BYTES = 32 * 1024 * 1024;
@@ -249,24 +244,24 @@ public final class RegistryFederation {
                 if (!path.startsWith(SUBJECTS_PREFIX)) {
                     continue;
                 }
-                String[] parts = path.split("/");
-                if (parts.length != 3) {
+                List<String> parts = splitOnSlash(path);
+                if (parts.size() != 3) {
                     continue; // the layout is subjects/<encoded>/<file>; anything else is noise
                 }
-                String subject = URLDecoder.decode(parts[1], StandardCharsets.UTF_8);
-                String file = parts[2];
-                Matcher proto = VERSION_PROTO.matcher(file);
-                if (proto.matches()) {
+                String subject = URLDecoder.decode(parts.get(1), StandardCharsets.UTF_8);
+                String file = parts.get(2);
+                String protoDigits = versionDigits(file, ".proto");
+                if (protoDigits != null) {
                     texts.computeIfAbsent(subject, key -> new TreeMap<>())
-                            .put(Integer.parseInt(proto.group(1)),
+                            .put(Integer.parseInt(protoDigits),
                                     new String(bytes, StandardCharsets.UTF_8));
                     continue;
                 }
-                Matcher meta = VERSION_META.matcher(file);
-                if (meta.matches()) {
+                String metaDigits = versionDigits(file, ".json");
+                if (metaDigits != null) {
                     try {
                         references.computeIfAbsent(subject, key -> new TreeMap<>())
-                                .put(Integer.parseInt(meta.group(1)), parseReferences(bytes));
+                                .put(Integer.parseInt(metaDigits), parseReferences(bytes));
                     } catch (Exception e) {
                         errors.add(path + ": unparseable metadata in remote '" + remoteName
                                 + "': " + e.getMessage());
@@ -440,9 +435,68 @@ public final class RegistryFederation {
     }
 
     private static void requireRemoteName(String name) {
-        if (name == null || !REMOTE_NAME.matcher(name).matches()) {
+        if (name == null || !isRemoteName(name)) {
             throw new IllegalArgumentException(
                     "remote names use [a-z][a-z0-9-]* (max 64 chars); got '" + name + "'");
         }
+    }
+
+    /** One {@code a-z} then up to 63 of {@code a-z 0-9 -}. */
+    static boolean isRemoteName(String name) {
+        if (name.isEmpty() || name.length() > 64 || name.charAt(0) < 'a' || name.charAt(0) > 'z') {
+            return false;
+        }
+        for (int i = 1; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The digits of a {@code v<digits><suffix>} file name, or null when the name is anything
+     * else: no other characters, at least one digit, ASCII digits only.
+     */
+    static String versionDigits(String file, String suffix) {
+        if (!file.startsWith("v") || !file.endsWith(suffix)) {
+            return null;
+        }
+        String digits = file.substring(1, file.length() - suffix.length());
+        if (digits.isEmpty()) {
+            return null;
+        }
+        for (int i = 0; i < digits.length(); i++) {
+            char c = digits.charAt(i);
+            if (c < '0' || c > '9') {
+                return null;
+            }
+        }
+        return digits;
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code '/'} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    static List<String> splitOnSlash(String path) {
+        if (path.isEmpty()) {
+            return List.of("");
+        }
+        List<String> parts = new ArrayList<>();
+        int start = 0;
+        int slash;
+        while ((slash = path.indexOf('/', start)) >= 0) {
+            parts.add(path.substring(start, slash));
+            start = slash + 1;
+        }
+        parts.add(path.substring(start));
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end);
     }
 }
