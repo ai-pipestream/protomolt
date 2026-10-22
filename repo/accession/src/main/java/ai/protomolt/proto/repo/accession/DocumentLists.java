@@ -1,9 +1,11 @@
 package ai.protomolt.proto.repo.accession;
 
+import ai.protomolt.proto.config.ConceptSchemeMounts;
 import ai.protomolt.proto.repo.catalog.*;
 import ai.protomolt.proto.repo.spi.RepositoryCaller;
 import ai.protomolt.proto.repo.spi.RepositoryException;
 import ai.protomolt.proto.repo.v2.*;
+import ai.protomolt.proto.types.ConceptRef;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
@@ -20,13 +22,31 @@ import java.util.Optional;
  * Current document metadata listing (requirements §8): the catalog applies the
  * scope, the typed filters and the sort; access filtering follows, before
  * pagination, so a page never carries a row or a count the caller cannot read.
+ * A concept filter (requirements §17) is expanded against the host's mounted
+ * concept schemes once per page, from one snapshot, and the catalog matches the
+ * expanded pairs against the stored tags; the page reports the expansion's
+ * evidence.
  */
 public final class DocumentLists {
     /** The page token format this listing issues and accepts. */
     static final int TOKEN_VERSION = 2;
     private final Catalog catalog;
+    private final Optional<ConceptSchemeMounts> concepts;
 
-    public DocumentLists(Catalog catalog) { this.catalog = Objects.requireNonNull(catalog); }
+    /** A listing on a host that mounts no concept scheme: a concept filter is refused. */
+    public DocumentLists(Catalog catalog) {
+        this.catalog = Objects.requireNonNull(catalog);
+        this.concepts = Optional.empty();
+    }
+
+    /**
+     * @param catalog the catalog
+     * @param concepts the host's mounted concept schemes, which expand concept filters
+     */
+    public DocumentLists(Catalog catalog, ConceptSchemeMounts concepts) {
+        this.catalog = Objects.requireNonNull(catalog);
+        this.concepts = Optional.of(Objects.requireNonNull(concepts));
+    }
 
     public ListDocumentsResponse list(RepositoryCaller caller, ListDocumentsRequest request) {
         try {
@@ -48,10 +68,16 @@ public final class DocumentLists {
         requireConsistentSort(request.getSort());
         DocumentReads.requireBinding(caller);
         DocumentReads.requireAccount(caller, request.getAccountId());
-        var listing = new CatalogRecords.Listing(request.getAccountId(), request.getGraphId(), request.getGraphAddressId(),
-                request.getIncludeTombstoned(), request.getFilter(), request.getSort());
         var after = cursor(request);
         var response = ListDocumentsResponse.newBuilder();
+        List<ConceptRef> expanded = List.of();
+        if (request.getFilter().hasConcept()) {
+            var expansion = expand(request.getFilter().getConcept());
+            expanded = expansion.concepts();
+            response.setConceptEvidence(evidence(expansion));
+        }
+        var listing = new CatalogRecords.Listing(request.getAccountId(), request.getGraphId(), request.getGraphAddressId(),
+                request.getIncludeTombstoned(), request.getFilter(), request.getSort(), expanded);
         CatalogRecords.Cursor lastReturned = null;
         // Each query is bounded. Skip denied rows without leaking their identities in tokens.
         while (true) {
@@ -72,6 +98,34 @@ public final class DocumentLists {
             }
             if (rows.size() < request.getPageSize() + 1) return response.build();
         }
+    }
+
+    /**
+     * Expands a concept filter against one snapshot of the mounted schemes. A host
+     * without mounts, or a queried scheme that is not mounted, is FAILED_PRECONDITION;
+     * a concept the scheme lacks, or an expansion over the mount's bound, is
+     * INVALID_ARGUMENT, never a truncated match.
+     */
+    private ConceptSchemeMounts.Expansion expand(ConceptFilter filter) {
+        var mounts = concepts.orElseThrow(() -> new AccessionException(Status.Code.FAILED_PRECONDITION,
+                "This host mounts no concept schemes; a concept filter cannot be expanded", null));
+        try {
+            return mounts.expand(filter.getConcept(), filter.getExpansion());
+        } catch (IllegalStateException unmounted) {
+            throw new AccessionException(Status.Code.FAILED_PRECONDITION, unmounted.getMessage(), null, unmounted);
+        } catch (IllegalArgumentException refused) {
+            throw new AccessionException(Status.Code.INVALID_ARGUMENT, refused.getMessage(), null, refused);
+        }
+    }
+
+    private static ConceptFilterEvidence evidence(ConceptSchemeMounts.Expansion expansion) {
+        var evidence = ConceptFilterEvidence.newBuilder().setExpandedConcepts(expansion.concepts().size());
+        expansion.mountedVersions().forEach((scheme, version) ->
+                evidence.addMountedSchemes(MountedConceptScheme.newBuilder().setSchemeId(scheme).setVersion(version)));
+        for (var skipped : expansion.unresolvedMappings())
+            evidence.addUnresolvedMappings(UnresolvedConceptMapping.newBuilder().setFrom(skipped.from())
+                    .setRelation(skipped.relation()).setTarget(skipped.target()).setReason(skipped.reason()));
+        return evidence.build();
     }
 
     /** Whether the request and every message inside it carry only known fields. */

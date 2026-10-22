@@ -23,7 +23,7 @@ import java.util.Optional;
  * never the source of truth). Each document's current manifest supplies identity,
  * ownership and owner; its CORE part, read and verified from the stack, supplies
  * the lookup, and the same part decoded with its retained schema supplies the
- * static link rows (requirements §17). Every earlier revision's CORE part
+ * static link rows and the concept tag rows (requirements §17). Every earlier revision's CORE part
  * supplies that revision's admitted structured_data type, which pinned links
  * check. An administrative routine for the host, not a DocumentService call.
  */
@@ -58,9 +58,10 @@ public final class CatalogEntryRebuild {
                 // One CORE read serves the lookup, the link entries and the revision's type.
                 var core = core(row.address(), manifest);
                 var lookup = core.map(bytes -> lookup(bytes, manifest));
-                var links = core.map(bytes -> DocumentLinkReads.rows(reads.decodeRetained(manifest, DocumentSaves.CORE_SELECTOR, bytes)))
-                        .orElse(List.of());
-                if (catalog.rewriteEntry(row.address(), row.revision(), lookup, links)) rebuilt++;
+                var retained = core.map(bytes -> reads.decodeRetained(manifest, DocumentSaves.CORE_SELECTOR, bytes));
+                var links = retained.map(found -> DocumentLinkReads.rows(found.links())).orElse(List.of());
+                var concepts = retained.map(found -> DocumentSaves.conceptRows(found.concepts())).orElse(List.of());
+                if (catalog.rewriteEntry(row.address(), row.revision(), lookup, links, concepts)) rebuilt++;
                 rebuildRevisionTypes(row.address(), manifest, lookup);
             }
             if (rows.size() < PAGE) return rebuilt;
