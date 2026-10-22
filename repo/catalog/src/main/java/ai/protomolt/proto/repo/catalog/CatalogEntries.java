@@ -5,6 +5,7 @@ import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v2.CatalogEntry;
 import ai.protomolt.proto.repo.v2.DocumentLookup;
 import ai.protomolt.proto.repo.v2.StoredManifest;
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
@@ -61,7 +62,26 @@ public final class CatalogEntries {
                     }
             }
         }
+        structuredDataType(core).ifPresent(lookup::setStructuredDataType);
         return lookup.build();
+    }
+
+    /**
+     * The protobuf full name in a CORE fragment's structured_data type URL: the
+     * text after its last slash, as the Any contract defines it.
+     *
+     * @param core the decoded CORE fragment
+     * @return the full name; empty when structured_data is unset or names no type
+     */
+    public static Optional<String> structuredDataType(Message core) {
+        var field = core.getDescriptorForType().findFieldByName("structured_data");
+        if (field == null || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE || field.isRepeated()
+                || !field.getMessageType().getFullName().equals(Any.getDescriptor().getFullName()) || !core.hasField(field))
+            return Optional.empty();
+        var any = (Message) core.getField(field);
+        var typeUrl = (String) any.getField(any.getDescriptorForType().findFieldByName("type_url"));
+        var name = typeUrl.substring(typeUrl.lastIndexOf('/') + 1);
+        return name.isEmpty() ? Optional.empty() : Optional.of(name);
     }
 
     /** The longest title the catalog stores, in UTF-8 bytes: it sits in a btree index row. */
@@ -103,6 +123,7 @@ public final class CatalogEntries {
     private static String path(FieldDescriptor field) {
         return switch (field.getName()) {
             case "datasource_id", "connector_id" -> "ownership." + field.getName();
+            case "structured_data_type" -> "structured_data.type_url";
             default -> "search_metadata." + field.getName();
         };
     }

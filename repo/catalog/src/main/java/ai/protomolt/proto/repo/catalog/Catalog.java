@@ -99,9 +99,58 @@ public interface Catalog extends AutoCloseable {
      * @param address the document
      * @param revision the current revision the lookup was read for
      * @param lookup the lookup of that revision's CORE part; empty for a tombstone
+     * @param links the static links of that CORE part, which replace the document's
+     *        link rows; empty for a tombstone
      * @return whether the entry was rewritten
      */
-    boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup);
+    boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup,
+            List<CatalogRecords.Link> links);
+
+    // ------------------------------------------------------------------ links
+
+    /**
+     * Rewrites one revision's admitted structured_data type, derived from its CORE
+     * part (requirements §17); the revision's other columns are immutable.
+     *
+     * @param address the document
+     * @param revision the revision
+     * @param structuredDataType the type; empty for a tombstone, no structured_data or an opaque one
+     * @return whether the revision exists unpurged
+     */
+    boolean rewriteRevisionType(NodeAddress address, long revision, Optional<String> structuredDataType);
+
+    /**
+     * What a static link check reads about its target (requirements §17), in one
+     * transaction: the current pointer and entry, and the named revision.
+     *
+     * @param target the target's call number
+     * @param revision the pinned revision, or empty for the current one
+     * @return empty when the document does not exist or is purged
+     */
+    Optional<CatalogRecords.LinkTarget> linkTarget(NodeAddress target, OptionalLong revision);
+
+    /**
+     * The static link rows of a document's current revision, by field path in
+     * unsigned UTF-8 order and then ordinal.
+     *
+     * @param address the linking document
+     * @return the rows; empty for a missing or purged document
+     */
+    List<CatalogRecords.Link> links(NodeAddress address);
+
+    /**
+     * Edges into a target from unpurged documents, ordered by linking call number
+     * (graph, graph address, document, unsigned UTF-8), then field path, then
+     * ordinal, strictly after the cursor. Access filtering is the caller's.
+     *
+     * @param target the linked-to call number
+     * @param relation only edges of this relation; empty for every relation
+     * @param after the last edge of the previous page; empty for the first page
+     * @param limit the most edges to return
+     * @return the edges, each with its linking document's current entry
+     */
+    List<CatalogRecords.Backlink> backlinks(NodeAddress target, Optional<String> relation,
+            Optional<CatalogRecords.BacklinkCursor> after, int limit);
 
     // ------------------------------------------------------------------ commit
 
