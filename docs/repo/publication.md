@@ -103,6 +103,20 @@ with the claim check filled and the bytes elided; fetch the bytes with
 `ReadBlob`. A repeated write of byte-identical content reuses the base
 revision's object (still a `REPLACED` change with a new revision).
 
+A blob in a BLOBS PUT that carries no `data` and is not the streamed upload
+names a blob of the expected revision by its `blob_id`: the save keeps that
+blob's binding without resending or copying its bytes, and the commit fails
+as `SOURCE_PURGED` if the object was purged meanwhile. A `blob_id` the
+expected revision does not have, or any such blob on a create, is a
+malformed request. Reads fill each blob's `size_bytes`, `checksum` (SHA-256
+hex) and `checksum_type` from its binding, and `written` with the revision,
+commit time and producing step of the write that bound it; a carried blob
+keeps its original `written`. A save that sets `written`, a `checksum_type`
+other than SHA-256, or a `size_bytes` or `checksum` that disagrees with the
+bytes is refused: as a malformed request for inline and carried blobs, and
+as a recorded `UPLOAD_MISMATCH` for a streamed blob. `schema_subject` is
+recorded as sent and not enforced.
+
 **Response.** `SaveDocumentResponse` carries the `operation_id`, the
 committed `Accession` (address, revision, previous revision, commit time,
 per-part changes), and `replayed`.
@@ -182,7 +196,8 @@ marking what the selection actually returned.
   filename; a full read ends with a SHA-256 check, and a mismatch ends the
   stream with `DATA_LOSS`.
 - **`GetManifest`** — manifest + validation record only; fetches no
-  payloads (`content_included` false throughout).
+  payloads (`content_included` false throughout). Every manifest carries
+  the accession's `committed_at`.
 - **`ListRevisions`** — history newest-first, `page_size` 1–1000 with
   opaque page tokens; each summary names revision, predecessor, commit
   time, committing operation, owner, tombstone flag, validation verdict,

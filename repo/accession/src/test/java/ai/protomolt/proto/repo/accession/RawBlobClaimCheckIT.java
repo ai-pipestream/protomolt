@@ -4,6 +4,7 @@ import static ai.protomolt.proto.repo.accession.AccessionFixture.*;
 import static org.assertj.core.api.Assertions.*;
 
 import ai.protomolt.proto.repo.v1.Blob;
+import ai.protomolt.proto.repo.v1.BlobWrite;
 import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.Blobs;
 import ai.protomolt.proto.repo.v1.Document;
@@ -124,12 +125,19 @@ class RawBlobClaimCheckIT {
         assertThat(f.stack.puts.get()).as("CORE only; the sourced BLOBS part and its raw blobs are reused").isEqualTo(1);
         var sourced = blobsEntry(f.catalog.manifest(other, 1).orElseThrow());
         assertThat(sourced.getRef()).isEqualTo(first.getRef());
-        assertThat(sourced.getBlobRefsList()).isEqualTo(first.getBlobRefsList());
+        // The same objects, bound in the sourcing revision: a sourced part is written in
+        // that revision, so its bindings carry that revision's stamp.
+        var otherStored = f.catalog.manifest(other, 1).orElseThrow();
+        assertThat(sourced.getBlobRefsList()).extracting(BlobObjectRef::getBlobId, BlobObjectRef::getRef)
+                .containsExactlyElementsOf(first.getBlobRefsList().stream()
+                        .map(ref -> tuple(ref.getBlobId(), ref.getRef())).toList());
+        assertThat(sourced.getBlobRefsList()).allSatisfy(ref -> assertThat(ref.getWritten()).isEqualTo(
+                BlobWrite.newBuilder().setRevision(1)
+                        .setCommittedAt(otherStored.getCommittedAt()).build()));
         var read = f.reads.getDocument(processAuthority(), GetDocumentRequest.newBuilder().setAddress(other)
                 .setSelection(PartSelection.newBuilder().addSelectors(PartSelector.newBuilder()
                         .setPart(DocumentPart.DOCUMENT_PART_BLOBS))).build());
-        assertThat(read.getDocument().getBlobBag()).isEqualTo(claimChecked(document, f.catalog.manifest(address, 1)
-                .orElseThrow()).getBlobBag());
+        assertThat(read.getDocument().getBlobBag()).isEqualTo(claimChecked(document, otherStored).getBlobBag());
 
         // Both documents reference the same raw blob objects: the reference set a purge
         // of one document counts before deleting bytes (purge itself is #318).
