@@ -3,7 +3,9 @@ package ai.protomolt.proto.parse.service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -130,7 +132,7 @@ public final class ParseCoordinatorMain {
                     + " is required (format: <parser_name>=<target>,...)");
         }
         Map<String, String> targets = new LinkedHashMap<>();
-        for (String entry : spec.split(",")) {
+        for (String entry : commaSegments(spec)) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) {
                 continue;
@@ -147,5 +149,32 @@ public final class ParseCoordinatorMain {
                     + " names no parsers");
         }
         return targets;
+    }
+
+    /**
+     * The spec's comma-separated segments without regex, with the same limit-0
+     * split behavior the entry walk relied on: an empty spec yields one empty
+     * segment, trailing empty segments drop, inner ones stay to be skipped.
+     */
+    private static List<String> commaSegments(String spec) {
+        if (spec.isEmpty()) {
+            return List.of("");
+        }
+        List<String> parts = new ArrayList<>();
+        int from = 0;
+        while (true) {
+            int comma = spec.indexOf(',', from);
+            if (comma < 0) {
+                parts.add(spec.substring(from));
+                break;
+            }
+            parts.add(spec.substring(from, comma));
+            from = comma + 1;
+        }
+        int end = parts.size();
+        while (end > 0 && parts.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return parts.subList(0, end);
     }
 }
