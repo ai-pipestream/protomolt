@@ -861,6 +861,9 @@ public final class ProtoValidator {
                             + bound));
             return;
         }
+        if (!conceptSchemes.decidesMembership()) {
+            return;
+        }
         ConceptSchemeCatalog.Mounted mounted = conceptSchemes.scheme(schemeId).orElse(null);
         if (mounted == null) {
             violations.add(violation(path, "concept.unmounted",

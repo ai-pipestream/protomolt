@@ -194,6 +194,27 @@ class ConceptSchemeRuleTest {
     }
 
     @Test
+    void theAdmittedCatalogKeepsTheBindingButDoesNotDecideMembership() {
+        ProtoValidator rereading = ProtoValidator.create(ValidationRuleSources.defaults(),
+                TaxonomyCatalog.empty(), PostalCodeCatalog.empty(), ConceptSchemeCatalog.admitted());
+        Descriptors.FieldDescriptor tags = DOC.findFieldByName("tags");
+        DynamicMessage message = DynamicMessage.newBuilder(DOC)
+                .addRepeatedField(tags, ref("subject", "physics"))
+                .addRepeatedField(tags, ref("region", "emea"))
+                .addRepeatedField(tags, ref("department", "physics"))
+                .build();
+        // Unmounted and unknown concepts pass; a scheme the field does not bind is still refused.
+        assertThat(rereading.validate(message).violations())
+                .extracting(ValidationResult.Violation::path, ValidationResult.Violation::ruleId)
+                .containsExactly(tuple("tags[2]", "concept.scheme"));
+        assertThat(VALIDATOR.validate(message).violations())
+                .extracting(ValidationResult.Violation::ruleId)
+                .containsExactly("concept.unmounted", "concept.scheme");
+        assertThat(ConceptSchemeCatalog.admitted().scheme("subject")).isEmpty();
+        assertThat(ConceptSchemeCatalog.empty().decidesMembership()).isTrue();
+    }
+
+    @Test
     void aSchemeOutsideTheBindingIsRefusedEvenWhenMounted() {
         ConceptSchemeCatalog everything = schemeId -> Optional.of(
                 new ConceptSchemeCatalog.Mounted(schemeId, "v1", Set.of("physics")));
