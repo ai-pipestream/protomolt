@@ -82,8 +82,8 @@ services:
       # Dev-only authentication examples. Unset, this stack is an open node:
       # every surface answers without a credential, which is what the seeded
       # demo and the read-only console expect. Uncomment the token to guard
-      # gRPC and HTTP (dev value, never production); console reads then need
-      # the token too until a session can write (#581).
+      # gRPC and HTTP (dev value, never production). Console reads then need
+      # the token. A signed-in session writes when the binding lists intake_writers (#593).
       #   PROTOMOLT_API_TOKEN: "dev-only-operator-token"
       # Console OIDC sign-in needs a reachable provider: the host fetches the
       # issuer's discovery document at startup, so placeholder values refuse
