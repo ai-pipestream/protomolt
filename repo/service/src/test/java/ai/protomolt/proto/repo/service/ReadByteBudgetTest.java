@@ -27,11 +27,29 @@ class ReadByteBudgetTest {
         assertThatThrownBy(() -> budget.reserve(31))
                 .isInstanceOfSatisfying(RepositoryException.class, failure -> {
                     assertThat(failure.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED);
-                    assertThat(failure.getMessage()).contains("31").contains("30").contains("100");
+                    assertThat(failure.getMessage())
+                            .startsWith("Read buffer budget exhausted:")
+                            .contains("31").contains("30").contains("100");
                 });
         assertThat(budget.remainingBytes()).as("a refused reservation takes nothing").isEqualTo(30);
         held.close();
         assertThat(budget.reserve(100)).isNotNull();
+    }
+
+    @Test
+    void saveBudgetReportsSaveBufferExhaustionAndRejectsBlankLabels() {
+        var saveBudget = ReadByteBudget.forSaves(100);
+        var held = saveBudget.reserve(80);
+        assertThatThrownBy(() -> saveBudget.reserve(25))
+                .isInstanceOfSatisfying(RepositoryException.class, failure -> {
+                    assertThat(failure.code()).isEqualTo(RepositoryException.Code.RESOURCE_EXHAUSTED);
+                    assertThat(failure.getMessage())
+                            .isEqualTo("Save buffer budget exhausted: 25 bytes requested, 20 of 100 available");
+                });
+        held.close();
+        assertThat(saveBudget.remainingBytes()).isEqualTo(100);
+        assertThatThrownBy(() -> new ReadByteBudget(100, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ReadByteBudget(100, "   ")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
