@@ -244,6 +244,55 @@ class DocumentConceptsIT {
         }
     }
 
+    @Test void anOpaqueAnyIsNotReadThroughATypedSiblingWithTheSameBytes() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = follow(config);
+            var inner = tagged("physics");
+            Consumer<DynamicMessage.Builder> both = p -> {
+                p.setField(PAPER.findFieldByName("inner"), inner);
+                p.addRepeatedField(PAPER.findFieldByName("others"), inner);
+            };
+            // Typed throughout, both siblings are entered.
+            var typed = saveTagged(saves(f, mounts), "typed", both);
+            assertThat(f.catalog.concepts(typed)).extracting(CatalogRecords.ConceptTag::fieldPath)
+                    .containsExactly("structured_data.inner.subject", "structured_data.others[0].subject");
+            // The attestation names inner's occurrence steps without the Any's own boundary.
+            var nested = f.catalog.manifest(typed, 1).orElseThrow().getValidation().getResolvedOccurrencesList().stream()
+                    .map(ResolvedOccurrence::getOccurrence)
+                    .filter(locator -> locator.getStepsCount() > 1
+                            && locator.getSteps(locator.getStepsCount() - 2).getFieldNumber() == 6)
+                    .map(locator -> locator.toBuilder().removeSteps(locator.getStepsCount() - 1).build())
+                    .findFirst().orElseThrow();
+
+            // The same bytes with inner attested opaque: only the typed others[0] is read.
+            var credential = java.util.UUID.randomUUID();
+            f.catalog.registerCredential(ISSUER, credential, "chunker");
+            f.opaqueStepGrant(ACCOUNT, credential, "chunker", true, "grant-producer", TAGGED_URL);
+            var opaqueSaves = new DocumentSaves(f.catalog, f.drives, resolver(), limits(), bytes -> () -> {},
+                    Clock.systemUTC(), DocumentSchemas.compiled(), true, mounts);
+            var mixed = address(ACCOUNT, "mixed");
+            var document = Document.newBuilder().setDocId("mixed").setOwnership(ownership(ACCOUNT, "chunker"))
+                    .setSearchMetadata(SearchMetadata.newBuilder().setTitle("mixed"))
+                    .setStructuredData(Any.newBuilder().setTypeUrl(PAPER_URL).setValue(paper(both).toByteString())).build();
+            var saved = opaqueSaves.save(writer(ACCOUNT, "chunker", credential, 1), save("mixed", mixed, document).toBuilder()
+                    .setOwner(stepOwner("chunker")).setValidationMode(ValidationMode.VALIDATION_MODE_OPAQUE_ALLOWED)
+                    .addOpaqueAttestations(OpaqueAttestation.newBuilder().setOccurrence(nested).setTypeUrl(TAGGED_URL))
+                    .build());
+            assertThat(saved.getAccession().getValidation().getOpaqueOccurrencesList()).singleElement()
+                    .satisfies(opaque -> assertThat(opaque.getOccurrence()).isEqualTo(nested));
+            var expected = List.of(new CatalogRecords.ConceptTag("structured_data.others[0].subject", 0, "subject", "physics"));
+            assertThat(f.catalog.concepts(mixed)).isEqualTo(expected);
+            assertThat(list(new DocumentLists(f.catalog, mounts), filter("subject", "physics",
+                    ConceptExpansion.getDefaultInstance()), 10).docs()).containsExactly("mixed", "typed");
+            // A rebuild reads the stored occurrences the same way.
+            execute(f, "DELETE FROM catalog_document_concepts");
+            new CatalogEntryRebuild(f.catalog, f.reads).rebuild(ACCOUNT);
+            assertThat(f.catalog.concepts(mixed)).isEqualTo(expected);
+        }
+    }
+
     @Test void conceptFilterRefusalsNameTheirCause() throws Exception {
         var source = new Source();
         mountAll(source);
@@ -553,7 +602,8 @@ class DocumentConceptsIT {
     /**
      * test.concepts.v1: Paper binds subject and Section binds tags to schemes;
      * Paper.mapped is an unbound ConceptRef, Paper.related a dynamic link and
- * Paper.inner an Any and Paper.extras a map of Any; Tagged binds its subject.
+ * Paper.inner an Any, Paper.extras a map of Any and Paper.others a repeated Any;
+ * Tagged binds its subject.
      */
     private static FileDescriptor file() {
         var subject = FieldOptions.newBuilder().setExtension(ValidateProto.field,
@@ -577,6 +627,7 @@ class DocumentConceptsIT {
                         .addField(message("inner", 6, ".google.protobuf.Any", false))
                         .addField(message(LONG_NAME, 7, REF, false).setOptions(subject))
                         .addField(message("extras", 8, ".test.concepts.v1.Paper.ExtrasEntry", true))
+                        .addField(message("others", 9, ".google.protobuf.Any", true))
                         .addNestedType(DescriptorProto.newBuilder().setName("ExtrasEntry")
                                 .setOptions(MessageOptions.newBuilder().setMapEntry(true))
                                 .addField(FieldDescriptorProto.newBuilder().setName("key").setNumber(1)
