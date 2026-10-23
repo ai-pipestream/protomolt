@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.accession;
 
 import ai.protomolt.proto.repo.v1.Blob;
+import ai.protomolt.proto.repo.v1.BlobBag;
 import ai.protomolt.proto.repo.v1.ChecksumType;
 import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.FileStorageReference;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -41,8 +43,15 @@ final class RawBlobs {
     /** A blob's raw bytes as the client sent them inline. */
     record Raw(String blobId, ByteString data) {}
 
-    /** The fragment to store and the raw blobs it no longer carries, in fragment order. */
-    record Extracted(ByteString stored, List<Raw> blobs) {}
+    /**
+     * The fragment to store, its decoded {@link BlobBag}, and the raw blobs it no
+     * longer carries, in fragment order.
+     */
+    record Extracted(ByteString stored, BlobBag bag, List<Raw> blobs) {
+        Extracted(ByteString stored, List<Raw> blobs) {
+            this(stored, parse(stored).getBlobBag(), blobs);
+        }
+    }
 
     /** A stored blob's descriptive metadata for {@code ReadBlob} headers. */
     record Metadata(String mimeType, String filename) {}
@@ -57,16 +66,25 @@ final class RawBlobs {
      * requests, found before authorization and never recorded.
      */
     static Extracted extract(ByteString fragment) {
+        return extract(fragment, parse(fragment));
+    }
+
+    /**
+     * Splits an already-decoded BLOBS fragment document without re-parsing {@code fragment}.
+     */
+    static Extracted extract(ByteString fragment, Document document) {
+        Objects.requireNonNull(document, "document");
         var blobs = new ArrayList<Raw>();
         var ids = new HashSet<String>();
-        var stored = rewrite(fragment, blob -> {
+        var rewritten = rewrite(document, blob -> {
             requireClientShape(blob, ids);
             if (blob.getContentCase() != Blob.ContentCase.DATA) return blob;
             requireDeclaredFacts(blob, blob.getData().size(), () -> DocumentSaves.sha256(blob.getData()));
             blobs.add(new Raw(blob.getBlobId(), blob.getData()));
             return blob.toBuilder().clearData().build();
         });
-        return new Extracted(stored, List.copyOf(blobs));
+        var stored = !document.hasBlobBag() && fragment != null ? fragment : deterministic(rewritten);
+        return new Extracted(stored, rewritten.getBlobBag(), List.copyOf(blobs));
     }
 
     /**
@@ -78,10 +96,21 @@ final class RawBlobs {
     static Extracted extractForUpload(ByteString fragment, String uploadedBlobId) {
         if (uploadedBlobId == null || uploadedBlobId.isBlank())
             throw DocumentSaves.malformedException("Uploaded blob_id must not be blank");
+        return extractForUpload(fragment, parse(fragment), uploadedBlobId);
+    }
+
+    /**
+     * Splits an already-decoded BLOBS fragment document for an {@code UploadDocument}
+     * raw-blob stream without re-parsing {@code fragment}.
+     */
+    static Extracted extractForUpload(ByteString fragment, Document document, String uploadedBlobId) {
+        Objects.requireNonNull(document, "document");
+        if (uploadedBlobId == null || uploadedBlobId.isBlank())
+            throw DocumentSaves.malformedException("Uploaded blob_id must not be blank");
         var blobs = new ArrayList<Raw>();
         var ids = new HashSet<String>();
         boolean[] found = {false};
-        var stored = rewrite(fragment, blob -> {
+        var rewritten = rewrite(document, blob -> {
             requireClientShape(blob, ids);
             if (blob.getBlobId().equals(uploadedBlobId)) {
                 if (blob.getContentCase() != Blob.ContentCase.CONTENT_NOT_SET)
@@ -97,7 +126,8 @@ final class RawBlobs {
         });
         if (!found[0])
             throw DocumentSaves.malformedException("Uploaded blob " + uploadedBlobId + " is not present in blob_bag");
-        return new Extracted(stored, List.copyOf(blobs));
+        var stored = !document.hasBlobBag() && fragment != null ? fragment : deterministic(rewritten);
+        return new Extracted(stored, rewritten.getBlobBag(), List.copyOf(blobs));
     }
 
     /**
@@ -106,22 +136,39 @@ final class RawBlobs {
      * revision.
      */
     static List<Blob> unbound(ByteString stored, Set<String> bound) {
-        var found = new ArrayList<Blob>();
-        rewrite(stored, blob -> {
+        return unbound(parse(stored).getBlobBag(), bound);
+    }
+
+    /**
+     * The blobs of a decoded {@link BlobBag} that no binding in {@code bound} covers,
+     * in fragment order. A save carries each of them forward from its expected
+     * revision without re-parsing or re-serializing the BLOBS fragment.
+     */
+    static List<Blob> unbound(BlobBag bag, Set<String> bound) {
+        var list = blobs(bag);
+        if (list.isEmpty()) return List.of();
+        var found = new ArrayList<Blob>(list.size());
+        for (var blob : list) {
             if (!bound.contains(blob.getBlobId())) found.add(blob);
-            return blob;
-        });
+        }
         return List.copyOf(found);
     }
 
     /** The stored metadata of one blob in a BLOBS fragment, if the fragment names it. */
     static Optional<Blob> stored(ByteString stored, String blobId) {
-        Blob[] found = {null};
-        rewrite(stored, blob -> {
-            if (blob.getBlobId().equals(blobId)) found[0] = blob;
-            return blob;
-        });
-        return Optional.ofNullable(found[0]);
+        return stored(parse(stored).getBlobBag(), blobId);
+    }
+
+    /**
+     * The stored metadata of one blob in a decoded {@link BlobBag}, if the bag names
+     * it, without re-parsing or re-serializing the BLOBS fragment.
+     */
+    static Optional<Blob> stored(BlobBag bag, String blobId) {
+        Blob found = null;
+        for (var blob : blobs(bag)) {
+            if (blob.getBlobId().equals(blobId)) found = blob;
+        }
+        return Optional.ofNullable(found);
     }
 
     /**
@@ -179,14 +226,22 @@ final class RawBlobs {
      */
     static List<BlobObjectRef> orderRefs(ByteString stored, List<BlobObjectRef> refs) {
         if (refs.size() <= 1) return List.copyOf(refs);
+        return orderRefs(parse(stored).getBlobBag(), refs);
+    }
+
+    /**
+     * Orders blob object references to match the blob order in the decoded
+     * {@link BlobBag}, without re-parsing or re-serializing the BLOBS fragment.
+     */
+    static List<BlobObjectRef> orderRefs(BlobBag bag, List<BlobObjectRef> refs) {
+        if (refs.size() <= 1) return List.copyOf(refs);
         var byId = new HashMap<String, BlobObjectRef>();
         for (var ref : refs) byId.put(ref.getBlobId(), ref);
         var ordered = new ArrayList<BlobObjectRef>(refs.size());
-        rewrite(stored, blob -> {
+        for (var blob : blobs(bag)) {
             var ref = byId.get(blob.getBlobId());
             if (ref != null) ordered.add(ref);
-            return blob;
-        });
+        }
         return ordered.size() == refs.size() ? List.copyOf(ordered) : List.copyOf(refs);
     }
 
@@ -215,15 +270,22 @@ final class RawBlobs {
      * Extracts the MIME type and filename of a stored blob from its BLOBS fragment.
      */
     static Metadata metadata(ByteString stored, String blobId) {
-        Metadata[] found = {null};
-        rewrite(stored, blob -> {
+        return metadata(parse(stored).getBlobBag(), blobId);
+    }
+
+    /**
+     * Extracts the MIME type and filename of a stored blob from its decoded
+     * {@link BlobBag}, without re-building or re-serializing the BLOBS fragment.
+     */
+    static Metadata metadata(BlobBag bag, String blobId) {
+        Metadata found = null;
+        for (var blob : blobs(bag)) {
             if (blob.getBlobId().equals(blobId))
-                found[0] = new Metadata(blob.getMimeType(), blob.getFilename());
-            return blob;
-        });
-        if (found[0] == null)
+                found = new Metadata(blob.getMimeType(), blob.getFilename());
+        }
+        if (found == null)
             throw new AccessionException(Status.Code.DATA_LOSS, "Stored blob " + blobId + " is absent from BLOBS fragment", null);
-        return found[0];
+        return found;
     }
 
     /**
@@ -232,10 +294,11 @@ final class RawBlobs {
      * without a binding, or a binding without a blob, is data loss.
      */
     static ByteString withClaimChecks(ByteString stored, List<BlobObjectRef> refs) {
+        var document = parse(stored);
         var bound = new HashMap<String, BlobObjectRef>();
         for (var ref : refs) bound.put(ref.getBlobId(), ref);
         var used = new HashSet<String>();
-        var filled = rewrite(stored, blob -> {
+        var filled = rewrite(document, blob -> {
             var ref = bound.get(blob.getBlobId());
             if (ref == null || !used.add(blob.getBlobId()))
                 throw new AccessionException(Status.Code.DATA_LOSS, "Stored blob has no claim check binding", null);
@@ -249,17 +312,30 @@ final class RawBlobs {
         });
         if (used.size() != bound.size())
             throw new AccessionException(Status.Code.DATA_LOSS, "A claim check binding names no stored blob", null);
-        return filled;
+        return document.hasBlobBag() ? deterministic(filled) : stored;
     }
 
-    private static ByteString rewrite(ByteString fragment, UnaryOperator<Blob> change) {
-        final Document document;
+    /** Decodes a BLOBS fragment once; a corrupt payload is {@code DATA_LOSS}. */
+    static Document parse(ByteString fragment) {
         try {
-            document = Document.parseFrom(fragment);
+            return Document.parseFrom(fragment);
         } catch (InvalidProtocolBufferException corrupt) {
             throw new AccessionException(Status.Code.DATA_LOSS, "BLOBS fragment does not decode", null, corrupt);
         }
-        if (!document.hasBlobBag()) return fragment;
+    }
+
+    /** Returns the blobs carried in {@code bag} in fragment order without copying or serializing. */
+    static List<Blob> blobs(BlobBag bag) {
+        if (bag == null) return List.of();
+        return switch (bag.getBlobDataCase()) {
+            case BLOB -> List.of(bag.getBlob());
+            case BLOBS -> bag.getBlobs().getBlobList();
+            case BLOBDATA_NOT_SET -> List.of();
+        };
+    }
+
+    private static Document rewrite(Document document, UnaryOperator<Blob> change) {
+        if (!document.hasBlobBag()) return document;
         var bag = document.getBlobBag();
         var rewritten = switch (bag.getBlobDataCase()) {
             case BLOB -> bag.toBuilder().setBlob(change.apply(bag.getBlob())).build();
@@ -270,7 +346,7 @@ final class RawBlobs {
             }
             case BLOBDATA_NOT_SET -> bag;
         };
-        return deterministic(document.toBuilder().setBlobBag(rewritten).build());
+        return document.toBuilder().setBlobBag(rewritten).build();
     }
 
     /** Map entries sorted by key; field presence and unknown fields unchanged. */
