@@ -58,10 +58,10 @@
  * Looks up one operation ID in the account and shows its durable outcome: a
  * committed accession (with a link to the revision), a recorded rejection with
  * its violations, or the no-outcome state. The account comes from the hosting
- * view; an initial operation ID (a ?operationId deep link) is looked up on
- * mount.
+ * view. An initial operation ID (a ?operationId deep link) is looked up on
+ * mount, and a later initial ID is looked up when it changes.
  */
-import { onMounted, ref, shallowRef } from 'vue'
+import { onMounted, ref, shallowRef, watch } from 'vue'
 import RpcFailureAlert from '@/components/repository/RpcFailureAlert.vue'
 import { useRepositoryClients } from '@/repository/clients'
 import { OutcomeInputError } from '@/repository/lookupCore'
@@ -98,4 +98,13 @@ async function lookUp() {
 onMounted(() => {
   if ((props.initialOperationId ?? '').trim() !== '') void lookUp()
 })
+
+watch(
+  () => props.initialOperationId ?? '',
+  (next, previous) => {
+    if (next === previous || next.trim() === '') return
+    operationId.value = next
+    void lookUp()
+  },
+)
 </script>

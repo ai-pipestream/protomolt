@@ -133,8 +133,8 @@
       </v-card-text>
     </v-card>
 
-    <OperationOutcomeInspector v-if="form.accountId" :account-id="form.accountId"
-                               :initial-operation-id="queryText('operationId')" />
+    <OperationOutcomeInspector v-if="form.accountId" :key="form.accountId" :account-id="form.accountId"
+                               :initial-operation-id="accountFromQuery ? queryText('operationId') : ''" />
   </div>
 </template>
 
@@ -180,6 +180,10 @@ function queryText(name: string): string {
 }
 
 const form = reactive(emptyUploadForm(queryText('account')))
+const accountFromQuery = computed(() => {
+  const account = queryText('account')
+  return account !== '' && form.accountId === account
+})
 form.datasourceId = queryText('datasource')
 form.docId = queryText('doc')
 form.expectedRevision = queryText('expected')

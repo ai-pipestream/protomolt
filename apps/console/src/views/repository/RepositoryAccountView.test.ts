@@ -12,7 +12,10 @@ import {
   DocumentService,
   DocumentSortField,
   DocumentSummarySchema,
+  GetOperationOutcomeResponseSchema,
   ListDocumentsResponseSchema,
+  NoRecordedOutcomeSchema,
+  type GetOperationOutcomeRequest,
   type ListDocumentsRequest,
 } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import { ArchiveService } from '@/gen/ai/protomolt/proto/repo/archive/v1/archive_service_pb'
@@ -52,6 +55,37 @@ function drives() {
 }
 
 describe('RepositoryAccountView', () => {
+  it('looks up a changed operation id and keeps it when the listing is applied', async () => {
+    const seen: GetOperationOutcomeRequest[] = []
+    const { wrapper, router } = await mountRepositoryView(
+      RepositoryAccountView,
+      '/repository/accounts/acct-a?operationId=op-1',
+      (connect) => {
+        drives()(connect)
+        connect.service(DocumentService, {
+          listDocuments() {
+            return create(ListDocumentsResponseSchema, { documents: [summary('doc-1', 'Report')] })
+          },
+          getOperationOutcome(request) {
+            seen.push(request)
+            return create(GetOperationOutcomeResponseSchema, {
+              state: { case: 'none', value: create(NoRecordedOutcomeSchema) },
+            })
+          },
+        })
+      },
+    )
+    expect(seen.map((request) => request.operationId)).toEqual(['op-1'])
+    await router.push('/repository/accounts/acct-a?operationId=op-2')
+    await settle()
+    expect(seen.map((request) => request.operationId)).toEqual(['op-1', 'op-2'])
+    await wrapper.get('[data-testid="apply-query"]').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.query.operationId).toBe('op-2')
+    expect(seen).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('shows the drives and the first page of documents for the account', async () => {
     const seen: ListDocumentsRequest[] = []
     const { wrapper } = await mountRepositoryView(RepositoryAccountView, '/repository/accounts/acct-a', (router) => {

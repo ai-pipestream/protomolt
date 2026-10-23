@@ -247,7 +247,8 @@ const clients = useRepositoryClients()
 const route = useRoute()
 const router = useRouter()
 const accountId = computed(() => String(route.params.accountId))
-const initialOperationId = typeof route.query.operationId === 'string' ? route.query.operationId : ''
+const initialOperationId = computed(() =>
+  typeof route.query.operationId === 'string' ? route.query.operationId : '')
 
 const sortItems = [
   { title: 'Call number', value: DocumentSortField.UNSPECIFIED },
@@ -396,6 +397,7 @@ function applyQuery() {
     return
   }
   const next = listingRouteQuery(query)
+  if (initialOperationId.value !== '') next.operationId = initialOperationId.value
   if (sameRouteQuery(next, route.query)) {
     listedQuery = structuredQuery(query)
     cursor.reset()

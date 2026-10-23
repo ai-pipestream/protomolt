@@ -82,6 +82,20 @@ describe('OperationOutcomeInspector', () => {
     wrapper.unmount()
   })
 
+  it('looks up a later initial operation ID and ignores a cleared one', async () => {
+    const { wrapper, seen } = await mounted(() => committed,
+        { accountId: 'acct-a', initialOperationId: 'op-1' })
+    expect(seen).toHaveLength(1)
+    await wrapper.setProps({ initialOperationId: 'op-9' })
+    await settle()
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toMatchObject({ accountId: 'acct-a', operationId: 'op-9' })
+    await wrapper.setProps({ initialOperationId: '' })
+    await settle()
+    expect(seen).toHaveLength(2)
+    wrapper.unmount()
+  })
+
   it('shows a recorded rejection with its reason and violations', async () => {
     const rejected: Response = create(GetOperationOutcomeResponseSchema, {
       state: {
