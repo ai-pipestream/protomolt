@@ -470,9 +470,11 @@ above (Apache Jena is ASF).
 **Link relations.** The `link_relation` Tier 1 format (§17 of the requirements)
 checks a relation name against two bundled vocabularies, both allowed by the
 licensing rule: Dublin Core terms (CC-BY 4.0, NOTICE attribution) and the IANA
-link relations registry. Anything else must parse as an absolute URI, the RFC 8288
-form of an extension relation. Relation names are validated strings, not an enum,
-for the reason given above.
+link relations registry. Anything else must parse as an http(s) URI with a
+non-empty authority, the RFC 8288 form of an extension relation; other schemes
+(javascript, data, file, urn, tag) refuse, since a relation becomes an href in
+renderers. Relation names are validated strings, not an enum, for the reason
+given above.
 
 ## Screening is not validation
 

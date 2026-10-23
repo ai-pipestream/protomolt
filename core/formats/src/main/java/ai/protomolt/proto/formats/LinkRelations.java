@@ -68,13 +68,41 @@ final class LinkRelations {
 
     /**
      * Whether the value is a link relation: a bundled Dublin Core term, a bundled IANA
-     * registered name, or an absolute URI naming an extension relation.
+     * registered name, or an http(s) URI naming an extension relation. Other URI schemes
+     * refuse: a relation becomes an href in renderers, so schemes with side effects
+     * (javascript, data, vbscript, file) never pass, and locator-less schemes (urn, tag)
+     * are not accepted as extension relations either.
      */
     static boolean isLinkRelation(String value) {
         if (value.isEmpty()) {
             return false;
         }
-        return isDublinCore(value) || isRegistered(value) || Rfc3986.isUri(value);
+        return isDublinCore(value) || isRegistered(value) || isHttpExtension(value);
+    }
+
+    /**
+     * An RFC 8288 extension relation this format accepts: an absolute URI whose scheme is
+     * http or https (case-insensitive, RFC 3986 schemes compare case-insensitively) with a
+     * non-empty authority.
+     */
+    private static boolean isHttpExtension(String value) {
+        int colon = value.indexOf(':');
+        if (colon < 0) {
+            return false;
+        }
+        String scheme = value.substring(0, colon);
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            return false;
+        }
+        String rest = value.substring(colon + 1);
+        if (rest.length() < 3 || rest.charAt(0) != '/' || rest.charAt(1) != '/') {
+            return false;
+        }
+        char authorityStart = rest.charAt(2);
+        if (authorityStart == '/' || authorityStart == '?' || authorityStart == '#') {
+            return false; // an empty authority is no host to link to
+        }
+        return Rfc3986.isUri(value);
     }
 
     /** Whether the value is one of the bundled Dublin Core relation terms. */
@@ -87,15 +115,31 @@ final class LinkRelations {
         return Arrays.binarySearch(IANA, value) >= 0;
     }
 
+    /** The namespace prefixes a Dublin Core term may carry in its URI form. */
+    private static final String[] DUBLIN_CORE_PREFIXES = {
+            "http://purl.org/dc/terms/", "https://purl.org/dc/terms/",
+    };
+
     /**
      * The Dublin Core inverse of a relation: {@code isPartOf} and {@code hasPart},
      * {@code replaces} and {@code isReplacedBy}, {@code references} and
      * {@code isReferencedBy}, {@code requires} and {@code isRequiredBy}, {@code hasFormat}
-     * and {@code isFormatOf}, {@code hasVersion} and {@code isVersionOf}. Empty for every
-     * other value, including Dublin Core terms with no paired inverse ({@code source},
-     * {@code relation}, {@code conformsTo}).
+     * and {@code isFormatOf}, {@code hasVersion} and {@code isVersionOf}. A term in its
+     * {@code http://purl.org/dc/terms/} or {@code https://purl.org/dc/terms/} URI form
+     * answers its inverse in the same prefix form. Empty for every other value, including
+     * Dublin Core terms with no paired inverse ({@code source}, {@code relation},
+     * {@code conformsTo}).
      */
     static Optional<String> inverse(String value) {
+        for (String prefix : DUBLIN_CORE_PREFIXES) {
+            if (value.startsWith(prefix)) {
+                return bareInverse(value.substring(prefix.length())).map(name -> prefix + name);
+            }
+        }
+        return bareInverse(value);
+    }
+
+    private static Optional<String> bareInverse(String value) {
         return Optional.ofNullable(switch (value) {
             case "isPartOf" -> "hasPart";
             case "hasPart" -> "isPartOf";

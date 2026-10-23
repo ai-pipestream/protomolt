@@ -125,6 +125,32 @@ public final class ConceptSchemeRules {
                     "concept_scheme.replaced_by_live",
                     "concept \"" + concept.getId() + "\" names successors but is not deprecated"));
         }
+
+        if (concept.hasIri()) {
+            requireIriScheme(concept.getIri(), path + ".iri", violations);
+        }
+        var notations = concept.getNotationList();
+        for (int j = 0; j < notations.size(); j++) {
+            String datatype = notations.get(j).getDatatypeIri();
+            if (!datatype.isEmpty()) {
+                requireIriScheme(datatype, path + ".notation[" + j + "].datatype_iri", violations);
+            }
+        }
+    }
+
+    /**
+     * SKOS round-trip IRIs stay inert: only http, https, and urn schemes
+     * (case-insensitive) are kept, so a scheme with side effects in a renderer
+     * (javascript, data, vbscript, file) never rides along.
+     */
+    private static void requireIriScheme(String iri, String path, List<Violation> violations) {
+        int colon = iri.indexOf(':');
+        String scheme = colon < 0 ? "" : iri.substring(0, colon);
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)
+                || "urn".equalsIgnoreCase(scheme))) {
+            violations.add(new Violation(path, "concept_scheme.iri_scheme",
+                    "IRI \"" + iri + "\" must use the http, https, or urn scheme"));
+        }
     }
 
     /** SKOS S13: at most one label of this kind per language. */
