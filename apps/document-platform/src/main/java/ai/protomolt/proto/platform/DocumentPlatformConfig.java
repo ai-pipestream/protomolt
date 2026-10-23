@@ -435,7 +435,7 @@ public record DocumentPlatformConfig(
         }
         List<String> roles = new ArrayList<>();
         Map<String, String> spellings = new LinkedHashMap<>();
-        for (String entry : value.split(",")) {
+        for (String entry : splitOnComma(value)) {
             if (entry.isBlank()) {
                 continue;
             }
@@ -450,6 +450,30 @@ public record DocumentPlatformConfig(
             roles.add(role);
         }
         return List.copyOf(roles);
+    }
+
+    /**
+     * {@link String#split(String)} (limit 0) on {@code ','} without regex: an empty input is
+     * one empty token, trailing empty tokens are dropped, leading and interior empty tokens
+     * are kept.
+     */
+    private static List<String> splitOnComma(String value) {
+        if (value.isEmpty()) {
+            return List.of("");
+        }
+        List<String> entries = new ArrayList<>();
+        int start = 0;
+        int comma;
+        while ((comma = value.indexOf(',', start)) >= 0) {
+            entries.add(value.substring(start, comma));
+            start = comma + 1;
+        }
+        entries.add(value.substring(start));
+        int end = entries.size();
+        while (end > 0 && entries.get(end - 1).isEmpty()) {
+            end--;
+        }
+        return entries.subList(0, end);
     }
 
     private static String env(String name, String fallback) {

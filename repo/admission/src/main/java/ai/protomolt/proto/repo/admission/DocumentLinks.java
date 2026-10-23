@@ -207,19 +207,28 @@ public final class DocumentLinks {
 
     /**
      * Decodes one nested {@link Any} for the link walk with the exact schema admission
-     * resolved for it.
+     * resolved for that occurrence. Opacity and schema belong to an occurrence, not to
+     * its bytes, so the Any is named by its location as well as its contents.
      */
-    @FunctionalInterface public interface Unpacker {
+    @FunctionalInterface interface Unpacker {
         /**
+         * @param at the Any's occurrence path: the steps from the root boundary to the Any,
+         *         without its own boundary
          * @param typeUrl the Any's type URL
          * @param value the Any's value bytes
-         * @return the decoded payload, or empty when the occurrence is opaque and was not decoded
+         * @return the decoded payload and its boundary step, or empty when the occurrence is
+         *         opaque and was not decoded
          */
-        Optional<Message> unpack(String typeUrl, ByteString value);
+        Optional<Entered> unpack(List<DocumentSchemaOccurrences.Step> at, String typeUrl, ByteString value);
+    }
+
+    /** A nested Any admission decoded: its payload and the boundary step that ends its occurrence path. */
+    record Entered(Message payload, DocumentSchemaOccurrences.Boundary boundary) {
+        Entered { Objects.requireNonNull(payload); Objects.requireNonNull(boundary); }
     }
 
     /** Enters no Any: for a CORE fragment, whose Any roots admission walks on their own. */
-    private static final Unpacker NONE = (typeUrl, value) -> Optional.empty();
+    private static final Unpacker NONE = (at, typeUrl, value) -> Optional.empty();
 
     /**
      * The links in a message, in field number order and then element order, without
@@ -233,7 +242,7 @@ public final class DocumentLinks {
      *         carries fields this server's {@link DocumentLink} does not know
      */
     public static List<Link> extract(Message message, String prefix) {
-        return extract(message, prefix, NONE);
+        return extract(message, prefix, List.of(), NONE);
     }
 
     /**
@@ -245,15 +254,16 @@ public final class DocumentLinks {
      *
      * @param message a decoded message
      * @param prefix the message's path in the document, or empty for the root
-     * @param unpacker decodes nested typed Any values
+     * @param at the message's occurrence path, the steps admission recorded down to it
+     * @param unpacker decodes nested typed Any values by occurrence
      * @return the links found
      * @throws SchemaRefused when a declaration breaks a rule or a link value
      *         carries fields this server's {@link DocumentLink} does not know
      */
-    public static List<Link> extract(Message message, String prefix, Unpacker unpacker) {
+    static List<Link> extract(Message message, String prefix, List<DocumentSchemaOccurrences.Step> at, Unpacker unpacker) {
         Objects.requireNonNull(message); Objects.requireNonNull(prefix); Objects.requireNonNull(unpacker);
         var found = new ArrayList<Link>();
-        collect(message, prefix, unpacker, found);
+        collect(message, prefix, new ArrayList<>(at), unpacker, found);
         return List.copyOf(found);
     }
 
@@ -261,7 +271,11 @@ public final class DocumentLinks {
         return type.getFullName().equals(Any.getDescriptor().getFullName());
     }
 
-    private static void collect(Message message, String prefix, Unpacker unpacker, List<Link> found) {
+    // The occurrence steps follow DocumentPayloadCheck's evidence walk: a field step for
+    // each message field, then an index or map-key step for each element, with no field
+    // step for a map entry's value, and the Any's boundary before its payload.
+    private static void collect(Message message, String prefix, ArrayList<DocumentSchemaOccurrences.Step> at,
+            Unpacker unpacker, List<Link> found) {
         for (Map.Entry<FieldDescriptor, Object> entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
@@ -269,10 +283,7 @@ public final class DocumentLinks {
             if (field.isMapField()) {
                 // Map values are not entered; the schema rules keep links out of them, and an
                 // Any under a map value must not bring one in.
-                var valueField = field.getMessageType().findFieldByName("value");
-                if (valueField.getJavaType() == FieldDescriptor.JavaType.MESSAGE)
-                    for (var element : (List<?>) entry.getValue())
-                        requireNoLinkUnder(field, (Message) ((Message) element).getField(valueField), unpacker);
+                requireNoLinkUnderMap(field, field, (List<?>) entry.getValue(), at, unpacker);
                 continue;
             }
             var declared = linkField(field);
@@ -281,44 +292,77 @@ public final class DocumentLinks {
                 throw new SchemaRefused(field.getFullName(), declared.isPresent()
                         ? "the link option needs a " + LINK_TYPE + " field" : "a " + LINK_TYPE + " field needs the link option");
             var values = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
+            at.add(new DocumentSchemaOccurrences.Field(field.getNumber()));
             for (int i = 0; i < values.size(); i++) {
                 var value = (Message) values.get(i);
-                var at = field.isRepeated() ? path + "[" + i + "]" : path;
+                var element = field.isRepeated() ? path + "[" + i + "]" : path;
+                if (field.isRepeated()) at.add(new DocumentSchemaOccurrences.Index(i));
                 if (link) found.add(new Link(path, field.isRepeated() ? i : 0, field.isRepeated(), declared.get(), value(field, value)));
-                else if (isAny(field.getMessageType())) unpacked(value, unpacker).ifPresent(payload -> collect(payload, at, unpacker, found));
-                else collect(value, at, unpacker, found);
+                else if (isAny(field.getMessageType())) unpacked(value, at, unpacker).ifPresent(entered -> {
+                    at.add(entered.boundary());
+                    collect(entered.payload(), element, at, unpacker, found);
+                    at.removeLast();
+                });
+                else collect(value, element, at, unpacker, found);
+                if (field.isRepeated()) at.removeLast();
             }
+            at.removeLast();
         }
     }
 
-    /** The typed payload of an Any value, its link declarations checked; empty when it is opaque. */
-    private static Optional<Message> unpacked(Message any, Unpacker unpacker) {
+    /** The typed payload of the Any at this occurrence path, its link declarations checked; empty when it is opaque. */
+    private static Optional<Entered> unpacked(Message any, List<DocumentSchemaOccurrences.Step> at, Unpacker unpacker) {
         var type = any.getDescriptorForType();
-        var payload = unpacker.unpack((String) any.getField(type.findFieldByName("type_url")),
+        var entered = unpacker.unpack(List.copyOf(at), (String) any.getField(type.findFieldByName("type_url")),
                 (ByteString) any.getField(type.findFieldByName("value")));
-        payload.ifPresent(decoded -> requireLinkSchema(decoded.getDescriptorForType()));
-        return payload;
+        entered.ifPresent(decoded -> requireLinkSchema(decoded.payload().getDescriptorForType()));
+        return entered;
+    }
+
+    /** Refuses a link reached from the values of a map field through a typed Any. */
+    private static void requireNoLinkUnderMap(FieldDescriptor map, FieldDescriptor field, List<?> entries,
+            ArrayList<DocumentSchemaOccurrences.Step> at, Unpacker unpacker) {
+        var keyField = field.getMessageType().findFieldByNumber(1);
+        var valueField = field.getMessageType().findFieldByName("value");
+        if (valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) return;
+        at.add(new DocumentSchemaOccurrences.Field(field.getNumber()));
+        for (var element : entries) {
+            var entry = (Message) element;
+            at.add(new DocumentSchemaOccurrences.MapKey(keyField.getType(), entry.getField(keyField)));
+            requireNoLinkUnder(map, (Message) entry.getField(valueField), at, unpacker);
+            at.removeLast();
+        }
+        at.removeLast();
     }
 
     /** Refuses a link reached from a map value through a typed Any. */
-    private static void requireNoLinkUnder(FieldDescriptor map, Message value, Unpacker unpacker) {
+    private static void requireNoLinkUnder(FieldDescriptor map, Message value, ArrayList<DocumentSchemaOccurrences.Step> at,
+            Unpacker unpacker) {
         if (isAny(value.getDescriptorForType())) {
-            var payload = unpacked(value, unpacker);
-            if (payload.isEmpty()) return;
-            if (declaresLinks(payload.get().getDescriptorForType()))
+            var entered = unpacked(value, at, unpacker);
+            if (entered.isEmpty()) return;
+            if (declaresLinks(entered.get().payload().getDescriptorForType()))
                 throw new SchemaRefused(map.getFullName(), "a link cannot sit under a map value");
-            requireNoLinkUnder(map, payload.get(), unpacker);
+            at.add(entered.get().boundary());
+            requireNoLinkUnder(map, entered.get().payload(), at, unpacker);
+            at.removeLast();
             return;
         }
         for (Map.Entry<FieldDescriptor, Object> entry : value.getAllFields().entrySet()) {
             var field = entry.getKey();
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
-            var valueField = field.isMapField() ? field.getMessageType().findFieldByName("value") : null;
-            if (valueField != null && valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (field.isMapField()) {
+                requireNoLinkUnderMap(map, field, (List<?>) entry.getValue(), at, unpacker);
+                continue;
+            }
             var elements = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
-            for (var element : elements)
-                requireNoLinkUnder(map, valueField != null ? (Message) ((Message) element).getField(valueField) : (Message) element,
-                        unpacker);
+            at.add(new DocumentSchemaOccurrences.Field(field.getNumber()));
+            for (int i = 0; i < elements.size(); i++) {
+                if (field.isRepeated()) at.add(new DocumentSchemaOccurrences.Index(i));
+                requireNoLinkUnder(map, (Message) elements.get(i), at, unpacker);
+                if (field.isRepeated()) at.removeLast();
+            }
+            at.removeLast();
         }
     }
 

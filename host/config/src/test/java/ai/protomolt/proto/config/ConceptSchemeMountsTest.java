@@ -156,6 +156,16 @@ class ConceptSchemeMountsTest {
     }
 
     @Test
+    void emptyMountsRefuseEverySchemeLikeAnUnappliedFollow() {
+        ConceptSchemeMounts mounts = ConceptSchemeMounts.empty();
+        assertThat(mounts.scheme("subject")).isEmpty();
+        assertThat(mounts.decidesMembership()).isTrue();
+        assertThatThrownBy(() -> mounts.expand(ref("subject", "physics"), DEFAULT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subject");
+    }
+
+    @Test
     void aSchemeFailingTheGraphChecksIsRefusedAndThePreviousVersionKeepsServing() {
         FakeSource source = new FakeSource();
         source.put("subject", "s1", subjects());

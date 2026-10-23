@@ -34,7 +34,6 @@ import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 /**
  * The search console: one pure-JDK HTTP server, one page, no build step (the playground
@@ -68,7 +67,6 @@ public final class SearchConsoleServer implements AutoCloseable {
     public static final String COOKIE = "__Host-protomolt_search_session";
 
     private static final Logger LOG = LoggerFactory.getLogger(SearchConsoleServer.class);
-    private static final Pattern ACTION_NAME = Pattern.compile("[a-z][a-z0-9-]*");
     private static final Metadata.Key<String> API_TOKEN_HEADER =
             Metadata.Key.of("api_token", Metadata.ASCII_STRING_MARSHALLER);
     private static final int MAX_CREDENTIAL_BYTES = 4 * 1024;
@@ -336,7 +334,7 @@ public final class SearchConsoleServer implements AutoCloseable {
                 return;
             }
             String name = path.startsWith("/actions/") ? path.substring("/actions/".length()) : "";
-            if (!ACTION_NAME.matcher(name).matches()
+            if (!isActionName(name)
                     || !"POST".equals(exchange.getRequestMethod())) {
                 respond(exchange, 404, "text/plain; charset=utf-8", "not found");
                 return;
@@ -352,6 +350,20 @@ public final class SearchConsoleServer implements AutoCloseable {
             respond(exchange, 502, "application/json; charset=utf-8",
                     errorJson("the actions route did not answer: " + e.getMessage()));
         }
+    }
+
+    /** An action name: one {@code a-z} then any run of {@code a-z 0-9 -}. */
+    private static boolean isActionName(String name) {
+        if (name.isEmpty() || name.charAt(0) < 'a' || name.charAt(0) > 'z') {
+            return false;
+        }
+        for (int i = 1; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void forward(HttpExchange exchange, HttpRequest.Builder request)

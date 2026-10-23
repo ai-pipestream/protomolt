@@ -233,8 +233,9 @@ final class AccessionFixture implements AutoCloseable {
         return Document.newBuilder().setDocId(doc).setOwnership(ownership(account, writers))
                 .setSearchMetadata(SearchMetadata.newBuilder().setTitle(title).setBody("body of " + title))
                 .setStructuredData(Any.pack(Int64Value.of(Long.MAX_VALUE)))
-                .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder().setBlobId("b1").setSizeBytes(Long.MAX_VALUE - 7).setData(
-                        com.google.protobuf.ByteString.copyFromUtf8("raw bytes of " + title))))
+                .setBlobBag(BlobBag.newBuilder().setBlob(Blob.newBuilder().setBlobId("b1")
+                        .setSizeBytes(("raw bytes of " + title).getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                        .setData(com.google.protobuf.ByteString.copyFromUtf8("raw bytes of " + title))))
                 .putParserResults("tika", ParserResult.newBuilder().setParserName("tika").setParserVersion("1")
                         .setStatus(ParseStatus.PARSE_STATUS_OK).build())
                 .build();
@@ -242,15 +243,21 @@ final class AccessionFixture implements AutoCloseable {
 
     /**
      * What a read returns for a saved document: each raw blob's inline data is
-     * replaced by the claim check the server bound it to (decision 45).
+     * replaced by the claim check the server bound it to (decision 45), with the
+     * bound object's size, SHA-256 and write stamp.
      */
     static Document claimChecked(Document sent, StoredManifest stored) {
-        var refs = new java.util.HashMap<String, StackRef>();
-        stored.getPartsList().forEach(part -> part.getBlobRefsList().forEach(ref -> refs.put(ref.getBlobId(), ref.getRef())));
-        java.util.function.UnaryOperator<Blob> swap = blob -> blob.toBuilder().clearData()
-                .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
-                        .setDriveName(refs.get(blob.getBlobId()).getStackId())
-                        .setObjectKey(refs.get(blob.getBlobId()).getKey())).build();
+        var refs = new java.util.HashMap<String, BlobObjectRef>();
+        stored.getPartsList().forEach(part -> part.getBlobRefsList().forEach(ref -> refs.put(ref.getBlobId(), ref)));
+        java.util.function.UnaryOperator<Blob> swap = blob -> {
+            var bound = refs.get(blob.getBlobId());
+            return blob.toBuilder().clearData()
+                    .setStorageRef(ai.protomolt.proto.repo.v1.FileStorageReference.newBuilder()
+                            .setDriveName(bound.getRef().getStackId()).setObjectKey(bound.getRef().getKey()))
+                    .setSizeBytes(bound.getRef().getLength()).setChecksum(bound.getRef().getSha256())
+                    .setChecksumType(ai.protomolt.proto.repo.v1.ChecksumType.CHECKSUM_TYPE_SHA256)
+                    .setWritten(bound.getWritten()).build();
+        };
         if (!sent.hasBlobBag()) return sent;
         var bag = sent.getBlobBag().toBuilder();
         if (bag.hasBlob()) bag.setBlob(swap.apply(bag.getBlob()));

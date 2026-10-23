@@ -307,8 +307,13 @@ class IntakeServiceIT {
         assertThat(second.getDeduplicated()).isFalse();
         assertThat(current.getPartsList().stream().map(p -> p.getRef()).toList())
                 .isEqualTo(original.getPartsList().stream().map(p -> p.getRef()).toList());
-        assertThat(current.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream()).toList())
-                .isEqualTo(original.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream()).toList());
+        // The resent bytes reuse the stored object; the binding is this revision's write.
+        assertThat(current.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream())
+                .map(ref -> ref.getBlobId() + "|" + ref.getRef()).toList())
+                .isEqualTo(original.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream())
+                        .map(ref -> ref.getBlobId() + "|" + ref.getRef()).toList());
+        assertThat(current.getPartsList().stream().flatMap(p -> p.getBlobRefsList().stream()))
+                .allSatisfy(ref -> assertThat(ref.getWritten().getRevision()).isEqualTo(2));
         assertThat(repo.client.listObjectsV2(b -> b.bucket("intake-it-repo")).keyCount()).isEqualTo(objectsBefore);
         assertThat(repo.retainedBlob(first.getAddress(), 1)).isEqualTo("same bytes".getBytes());
         assertThat(repo.retainedBlob(second.getAddress(), 2)).isEqualTo("same bytes".getBytes());
@@ -319,7 +324,8 @@ class IntakeServiceIT {
                 .getDocument();
         var changedBytes = ByteString.copyFromUtf8("diff bytes");
         var changed = retained.toBuilder().setBlobBag(retained.getBlobBag().toBuilder().setBlob(
-                retained.getBlobBag().getBlob().toBuilder().clearStorageRef().setData(changedBytes)
+                retained.getBlobBag().getBlob().toBuilder().clearStorageRef().clearWritten().setData(changedBytes)
+                        .setSizeBytes(changedBytes.size())
                         .setChecksum(RawIngests.sha256Hex(changedBytes.toByteArray())))).build();
         var third = intakeStub.ingestDocument(IngestDocumentRequest.newBuilder().setDatasourceId("ds-sha-reuse")
                 .setExpected(ai.protomolt.proto.repo.v2.ExpectedRevision.newBuilder().setRevision(2))

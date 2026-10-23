@@ -418,7 +418,8 @@ public final class DocumentCandidateAdmission {
                         var nestedPayloads = nestedPayloads(found, definitions, active);
                         final List<DocumentLinks.Link> rootLinks;
                         try {
-                            rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()), nestedPayloads);
+                            rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()),
+                                    rootOccurrence(found), nestedPayloads);
                         } catch (DocumentLinks.SchemaRefused refused) {
                             throw new ContentRefused("link schema of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
@@ -428,8 +429,9 @@ public final class DocumentCandidateAdmission {
                         links.addAll(rootLinks);
                         final List<DocumentConcepts.Tag> rootTags;
                         try {
-                            rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()), nestedPayloads);
-                        } catch (DocumentConcepts.TagUnderMap refused) {
+                            rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()),
+                                    rootOccurrence(found), nestedPayloads);
+                        } catch (DocumentConcepts.TagRefused refused) {
                             throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
                         if (!rootTags.isEmpty() && fragment.part() != DocumentPart.DOCUMENT_PART_CORE)
@@ -489,25 +491,41 @@ public final class DocumentCandidateAdmission {
         }
     }
 
+    /** The occurrence path of an accepted root payload: its own boundary, the first step of every nested path. */
+    private static List<DocumentSchemaOccurrences.Step> rootOccurrence(List<DocumentSchemaOccurrences.Occurrence> occurrences) {
+        for (var occurrence : occurrences)
+            if (occurrence.path().size() == 1) return occurrence.path();
+        throw new IllegalStateException("accepted payload has no root occurrence");
+    }
+
     /**
-     * Decodes the nested Any values of one root for the link and tag walks, each with the exact
-     * schema admission resolved for that occurrence: an Any is matched by its type URL
-     * and the SHA-256 of its value. An attested opaque occurrence has no resolved
-     * schema, so it is not decoded and its links are not read.
+     * Decodes the nested Any values of one root for the link and tag walks, each with the
+     * exact schema admission resolved for that occurrence. An Any is found by its occurrence
+     * path, never by its bytes: identical bytes elsewhere, typed or opaque, lend it
+     * nothing. An attested opaque occurrence has no resolved schema at its path, so it
+     * is not decoded and its links and tags are not read.
      */
     private static DocumentLinks.Unpacker nestedPayloads(List<DocumentSchemaOccurrences.Occurrence> occurrences,
             DocumentSchemaDefinitions definitions, Runnable control) {
-        var schemas = new HashMap<List<String>, Descriptor>();
-        for (var occurrence : occurrences)
-            if (occurrence.path().getLast() instanceof DocumentSchemaOccurrences.Boundary boundary) {
-                var schema = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
-                if (schema != null) schemas.putIfAbsent(List.of(boundary.typeUrl(), boundary.valueSha256()), schema.type());
-            }
-        return (typeUrl, value) -> {
-            var schema = schemas.get(List.of(typeUrl, DocumentSchemaOccurrences.sha256(value, control)));
-            if (schema == null) return Optional.empty();
+        record Resolved(DocumentSchemaOccurrences.Boundary boundary, Descriptor type) {}
+        var resolved = new HashMap<List<DocumentSchemaOccurrences.Step>, Resolved>();
+        for (var occurrence : occurrences) {
+            var path = occurrence.path();
+            if (!(path.getLast() instanceof DocumentSchemaOccurrences.Boundary boundary))
+                throw new IllegalStateException("occurrence path does not end at an Any boundary");
+            var schema = definitions.schemas.get(new DocumentPayloadCheck.SchemaKey(boundary.typeUrl(), boundary.artifactSha256()));
+            if (schema == null) throw new IllegalStateException("occurrence schema was not selected");
+            resolved.put(List.copyOf(path.subList(0, path.size() - 1)), new Resolved(boundary, schema.type()));
+        }
+        return (at, typeUrl, value) -> {
+            var found = resolved.get(at);
+            if (found == null) return Optional.empty();
+            var boundary = found.boundary();
+            if (!boundary.typeUrl().equals(typeUrl) || boundary.valueSizeBytes() != value.size()
+                    || !boundary.valueSha256().equals(DocumentSchemaOccurrences.sha256(value, control)))
+                throw new IllegalStateException("An admitted Any occurrence does not match the value at its path");
             try {
-                return Optional.of(DynamicMessage.parseFrom(schema, value));
+                return Optional.of(new DocumentLinks.Entered(DynamicMessage.parseFrom(found.type(), value), boundary));
             } catch (InvalidProtocolBufferException impossible) {
                 throw new IllegalStateException("An admitted Any value failed to decode", impossible);
             }

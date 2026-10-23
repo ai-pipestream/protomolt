@@ -103,6 +103,20 @@ with the claim check filled and the bytes elided; fetch the bytes with
 `ReadBlob`. A repeated write of byte-identical content reuses the base
 revision's object (still a `REPLACED` change with a new revision).
 
+A blob in a BLOBS PUT that carries no `data` and is not the streamed upload
+names a blob of the expected revision by its `blob_id`: the save keeps that
+blob's binding without resending or copying its bytes, and the commit fails
+as `SOURCE_PURGED` if the object was purged meanwhile. A `blob_id` the
+expected revision does not have, or any such blob on a create, is a
+malformed request. Reads fill each blob's `size_bytes`, `checksum` (SHA-256
+hex) and `checksum_type` from its binding, and `written` with the revision,
+commit time and producing step of the write that bound it; a carried blob
+keeps its original `written`. A save that sets `written`, a `checksum_type`
+other than SHA-256, or a `size_bytes` or `checksum` that disagrees with the
+bytes is refused: as a malformed request for inline and carried blobs, and
+as a recorded `UPLOAD_MISMATCH` for a streamed blob. `schema_subject` is
+recorded as sent and not enforced.
+
 **Response.** `SaveDocumentResponse` carries the `operation_id`, the
 committed `Accession` (address, revision, previous revision, commit time,
 per-part changes), and `replayed`.
@@ -182,7 +196,9 @@ marking what the selection actually returned.
   filename; a full read ends with a SHA-256 check, and a mismatch ends the
   stream with `DATA_LOSS`.
 - **`GetManifest`** — manifest + validation record only; fetches no
-  payloads (`content_included` false throughout).
+  payloads (`content_included` false throughout). Each manifest has the
+  accession's `committed_at`, and each part entry has `written_at`, the
+  commit time of the revision in `written_in_revision`.
 - **`ListRevisions`** — history newest-first, `page_size` 1–1000 with
   opaque page tokens; each summary names revision, predecessor, commit
   time, committing operation, owner, tombstone flag, validation verdict,
@@ -241,9 +257,15 @@ A concept tag is a value of a `ConceptRef` field in CORE, including the typed
 `structured_data` payload, whose field rules bind it to concept schemes
 (`concept_schemes`, well-known types "Concept schemes (SKOS)"). A save decides
 each tag's membership against the concept schemes the host mounts
-(`DocumentSaves` takes the host's `ConceptSchemeCatalog`): a concept the
-mounted scheme lacks is `concept.member` and a bound scheme the host has not
-mounted is `concept.unmounted`, both `VALIDATION_FAILED`. Reads and catalog
+(`DocumentSaves` takes the host's `ConceptSchemeCatalog`; the served
+repository gets them from `RepoServices.withConceptSchemes` and mounts none
+without it): a concept the mounted scheme lacks is `concept.member` and a
+bound scheme the host has not mounted is `concept.unmounted`, both
+`VALIDATION_FAILED`. A tag is read as the canonical `ConceptRef` and held to
+its own rules, whatever a self-contained payload schema declares under that
+name: a value whose ids are not strings at fields 1 and 2 is `concept.shape`,
+and one that does not re-parse cleanly or breaks the canonical rules fails the
+save as content. Reads and catalog
 rebuilds decode stored content without deciding membership again, so a host
 that has not mounted a scheme still reads what was admitted. Tags in a typed
 nested `Any` are read as links are, without a path segment for the `Any`. A

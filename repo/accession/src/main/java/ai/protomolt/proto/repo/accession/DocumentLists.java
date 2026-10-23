@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Current document metadata listing (requirements §8): the catalog applies the
@@ -31,7 +32,7 @@ public final class DocumentLists {
     /** The page token format this listing issues and accepts. */
     static final int TOKEN_VERSION = 2;
     private final Catalog catalog;
-    private final Optional<ConceptSchemeMounts> concepts;
+    private final Optional<Supplier<ConceptSchemeMounts>> concepts;
 
     /** A listing on a host that mounts no concept scheme: a concept filter is refused. */
     public DocumentLists(Catalog catalog) {
@@ -44,6 +45,19 @@ public final class DocumentLists {
      * @param concepts the host's mounted concept schemes, which expand concept filters
      */
     public DocumentLists(Catalog catalog, ConceptSchemeMounts concepts) {
+        Objects.requireNonNull(concepts);
+        this.catalog = Objects.requireNonNull(catalog);
+        this.concepts = Optional.of(() -> concepts);
+    }
+
+    /**
+     * A listing whose host binds its mounts after construction: {@code concepts} is
+     * asked once per concept-filtered page, and a page expands against what it returns.
+     *
+     * @param catalog the catalog
+     * @param concepts the host's mounted concept schemes, never null when asked
+     */
+    public DocumentLists(Catalog catalog, Supplier<ConceptSchemeMounts> concepts) {
         this.catalog = Objects.requireNonNull(catalog);
         this.concepts = Optional.of(Objects.requireNonNull(concepts));
     }
@@ -108,7 +122,8 @@ public final class DocumentLists {
      */
     private ConceptSchemeMounts.Expansion expand(ConceptFilter filter) {
         var mounts = concepts.orElseThrow(() -> new AccessionException(Status.Code.FAILED_PRECONDITION,
-                "This host mounts no concept schemes; a concept filter cannot be expanded", null));
+                "This host mounts no concept schemes; a concept filter cannot be expanded", null)).get();
+        Objects.requireNonNull(mounts, "the host's concept scheme mounts");
         try {
             return mounts.expand(filter.getConcept(), filter.getExpansion());
         } catch (IllegalStateException unmounted) {

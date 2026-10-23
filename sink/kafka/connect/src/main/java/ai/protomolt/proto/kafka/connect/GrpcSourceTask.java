@@ -272,7 +272,7 @@ public final class GrpcSourceTask extends SourceTask {
     static List<FieldDescriptor> resolveTokenPath(Descriptor root, String dotted) {
         List<FieldDescriptor> path = new ArrayList<>();
         Descriptor current = root;
-        String[] segments = dotted.split("\\.");
+        String[] segments = GrpcConnectorSupport.splitOnDot(dotted);
         for (int i = 0; i < segments.length; i++) {
             FieldDescriptor field = current.findFieldByName(segments[i]);
             if (field == null || field.isRepeated()) {
