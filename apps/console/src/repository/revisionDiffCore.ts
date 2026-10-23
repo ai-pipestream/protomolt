@@ -8,14 +8,15 @@
  * changes by field path. Lines come from protobuf reflection over the message
  * decoded with the schema the revision retained, never from JSON. A typed Any
  * is entered without a path segment of its own, as the repository walks it,
- * when the revision retained a schema for that exact payload (type URL and
- * value SHA-256); otherwise it is shown as its type URL and length.
+ * when the revision retained a schema for that exact occurrence and payload;
+ * otherwise it is shown as its type URL and length.
  */
-import { ScalarType, create, equals, fromBinary, getOption, type DescField, type DescMessage, type Message } from '@bufbuild/protobuf'
+import { ScalarType, create, equals, fromBinary, getOption, toBinary, type DescField, type DescMessage, type Message } from '@bufbuild/protobuf'
 import { reflect, type ReflectList, type ReflectMap, type ReflectMessage } from '@bufbuild/protobuf/reflect'
 import { timestampDate, type Any, type Timestamp } from '@bufbuild/protobuf/wkt'
 import type { Client } from '@connectrpc/connect'
 import type { NodeAddress } from '@/gen/ai/protomolt/proto/repo/v1/address_pb'
+import { RepositoryOccurrenceKeyType, RepositorySchemaOccurrenceStepSchema, type RepositorySchemaOccurrenceStep } from '@/gen/ai/protomolt/proto/repo/v1/schema_occurrence_pb'
 import { GetManifestRequestSchema, type DocumentService } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   DocumentPart,
@@ -23,7 +24,9 @@ import {
   PartState,
   PartStateSchema,
   type DocumentManifest,
+  type OccurrenceLocator,
   type PartSelector,
+  type ResolvedOccurrence,
   type RevisionValidation,
 } from '@/gen/ai/protomolt/proto/repo/v2/manifest_pb'
 import { field as fieldRules } from '@/gen/ai/protomolt/proto/validate/v1/validate_pb'
@@ -96,12 +99,12 @@ export function revisionFacts(manifest: DocumentManifest): RevisionFacts {
 }
 
 /**
- * Schemas for the typed Any payloads of one revision, keyed by type URL and
- * value SHA-256, from the occurrences its validation record resolved. Each
+ * Schemas for the typed Any occurrences of one revision, keyed by part and
+ * complete locator, from the occurrences its validation record resolved. Each
  * distinct descriptor set is fetched once and checked against its digest.
  */
 export class AnySchemas {
-  private constructor(private readonly byPayload: Map<string, DescMessage>) {}
+  private constructor(private readonly byOccurrence: Map<string, { desc: DescMessage; retained: ResolvedOccurrence }>) {}
 
   static none(): AnySchemas {
     return new AnySchemas(new Map())
@@ -115,10 +118,21 @@ export class AnySchemas {
     signal: AbortSignal,
   ): Promise<AnySchemas> {
     const registries = new Map<string, Awaited<ReturnType<typeof retainedRegistry>>>()
-    const byPayload = new Map<string, DescMessage>()
+    const byOccurrence = new Map<string, { desc: DescMessage; retained: ResolvedOccurrence }>()
+    const opaque = new Set(validation.opaqueOccurrences.map((occurrence) => retainedLocationKey(occurrence.occurrence)))
     for (const occurrence of validation.resolvedOccurrences) {
       const schema = occurrence.schema
       if (schema === undefined) throw new Error(`Revision ${revision} resolved an Any occurrence without a schema reference.`)
+      const locator = occurrence.occurrence
+      const terminal = locator?.steps.at(-1)
+      const boundary = terminal?.step.case === 'anyBoundary' ? terminal.step.value : undefined
+      if (boundary !== undefined && (boundary.outcome.case !== 'resolved'
+        || boundaryKey(boundary.typeUrl, boundary.valueSha256, boundary.valueSizeBytes, boundary.outcome.value.artifactSha256)
+          !== boundaryKey(schema.typeUrl, occurrence.payloadSha256, occurrence.payloadLength, schema.descriptorSha256))) {
+        throw new Error(`Revision ${revision} has an Any boundary that differs from its retained binding.`)
+      }
+      const key = retainedLocationKey(terminal?.step.case === 'anyBoundary' ? { ...locator!, steps: locator!.steps.slice(0, -1) } : locator)
+      if (byOccurrence.has(key) || opaque.has(key)) throw new Error(`Revision ${revision} has conflicting Any occurrence bindings.`)
       let registry = registries.get(schema.descriptorSha256)
       if (registry === undefined) {
         registry = await retainedRegistry(client, address, revision, schema.descriptorSha256, signal)
@@ -129,19 +143,79 @@ export class AnySchemas {
       if (desc === undefined) {
         throw new Error(`The retained descriptor set ${schema.descriptorSha256} does not define ${typeName}.`)
       }
-      byPayload.set(payloadKey(schema.typeUrl, occurrence.payloadSha256), desc)
+      byOccurrence.set(key, { desc, retained: occurrence })
     }
-    return new AnySchemas(byPayload)
+    return new AnySchemas(byOccurrence)
   }
 
-  /** The schema the revision retained for exactly this payload, or null. */
-  schemaOf(any: Any): DescMessage | null {
-    return this.byPayload.get(payloadKey(any.typeUrl, new Sha256().update(any.value).hex())) ?? null
+  /** The schema retained for this location and exact payload, or null. */
+  schemaOf(any: Any, location: AnyLocation): { desc: DescMessage; boundary: string } | null {
+    const binding = this.byOccurrence.get(locationKey(location))
+    if (binding === undefined) return null
+    const { retained, desc } = binding
+    const schema = retained.schema!
+    if (schema.typeUrl !== any.typeUrl || retained.payloadLength !== BigInt(any.value.length)
+      || retained.payloadSha256 !== new Sha256().update(any.value).hex()) return null
+    const terminal = retained.occurrence!.steps.at(-1)!
+    return { desc, boundary: terminal.step.case === 'anyBoundary' ? stepKey(terminal)
+      : boundaryKey(any.typeUrl, retained.payloadSha256, retained.payloadLength, schema.descriptorSha256) }
   }
 }
 
-function payloadKey(typeUrl: string, sha256: string): string {
-  return `${typeUrl}\u0000${sha256}`
+interface AnyLocation {
+  part: PartSelector
+  steps: string[]
+}
+
+function keyOf(...values: string[]): string {
+  return values.map((value) => `${value.length}:${value}`).join('')
+}
+
+function locationKey(location: AnyLocation): string {
+  const selector = location.part.selector
+  if (selector.case === undefined) throw new Error('An Any occurrence has no part selector.')
+  return keyOf(selector.case, String(selector.value), ...location.steps)
+}
+
+function retainedLocationKey(locator: OccurrenceLocator | undefined): string {
+  if (locator?.part === undefined || locator.steps.length === 0) throw new Error('An Any occurrence has no complete locator.')
+  return locationKey({ part: locator.part, steps: locator.steps.map(stepKey) })
+}
+
+function boundaryKey(typeUrl: string, sha256: string, length: bigint, descriptorSha256: string): string {
+  return keyOf('anyBoundary', typeUrl, sha256, String(length), descriptorSha256)
+}
+
+function stepKey(value: RepositorySchemaOccurrenceStep): string {
+  const step = value.step
+  switch (step.case) {
+    case 'fieldNumber':
+    case 'repeatedIndex':
+      return `${step.case}:${step.value}`
+    case 'mapKey': {
+      const key = step.value
+      if (key.value.case === undefined) throw new Error('An Any occurrence has a map key without a value.')
+      return keyOf('mapKey', String(key.type), key.value.case, String(key.value.value))
+    }
+    case 'anyBoundary': {
+      const boundary = step.value
+      if (boundary.outcome.case !== 'resolved') throw new Error('An Any occurrence crosses an unresolved Any boundary.')
+      return keyOf('anyBoundary', new Sha256().update(toBinary(RepositorySchemaOccurrenceStepSchema, value)).hex())
+    }
+    default:
+      throw new Error('An Any occurrence has an empty locator step.')
+  }
+}
+
+function mapStepKey(scalar: ScalarType, value: unknown): string {
+  const type = RepositoryOccurrenceKeyType[ScalarType[scalar] as keyof typeof RepositoryOccurrenceKeyType]
+  const kind = scalar === ScalarType.STRING ? 'stringValue' : scalar === ScalarType.BOOL ? 'boolValue'
+    : [ScalarType.UINT32, ScalarType.FIXED32, ScalarType.UINT64, ScalarType.FIXED64].includes(scalar) ? 'unsignedValue' : 'signedValue'
+  return keyOf('mapKey', String(type), kind, String(value))
+}
+
+function descend(location: AnyLocation, ...steps: string[]): AnyLocation {
+  return { part: location.part, steps: [...location.steps, ...steps] }
 }
 
 /** The flattened lines of one decoded fragment and the concept tags found in it. */
@@ -155,9 +229,9 @@ export interface Flattened {
  * field that declares `concept_schemes` is a tag: it is listed in `concepts`
  * as `path = scheme/concept` as well as in `lines`.
  */
-export function flatten(desc: DescMessage, message: Message, schemas: AnySchemas): Flattened {
+export function flatten(desc: DescMessage, message: Message, schemas: AnySchemas, part: PartSelector): Flattened {
   const out: Flattened = { lines: [], concepts: [] }
-  walk(reflect(desc, message), '', out, schemas)
+  walk(reflect(desc, message), '', out, schemas, { part, steps: [] })
   return out
 }
 
@@ -186,12 +260,13 @@ function boundConcept(field: DescField): boolean {
   return getOption(field, fieldRules).conceptSchemes.length > 0
 }
 
-function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchemas): void {
+function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchemas, location: AnyLocation): void {
   let any = false
   for (const field of r.sortedFields) {
     if (!r.isSet(field)) continue
     any = true
     const at = join(path, field.name)
+    const fieldLocation = descend(location, `fieldNumber:${field.number}`)
     switch (field.fieldKind) {
       case 'scalar':
         out.lines.push(`${at} = ${scalarText(field.scalar, r.get(field))}`)
@@ -200,14 +275,14 @@ function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchem
         out.lines.push(`${at} = ${enumText(field, r.get(field) as number)}`)
         break
       case 'message':
-        entry(r.get(field) as ReflectMessage, at, out, schemas, boundConcept(field))
+        entry(r.get(field) as ReflectMessage, at, out, schemas, fieldLocation, boundConcept(field))
         break
       case 'list': {
         const list = r.get(field) as ReflectList
         const tag = boundConcept(field)
         for (const [i, item] of list.entries()) {
           const element = `${at}[${i}]`
-          if (field.listKind === 'message') entry(item as ReflectMessage, element, out, schemas, tag)
+          if (field.listKind === 'message') entry(item as ReflectMessage, element, out, schemas, descend(fieldLocation, `repeatedIndex:${i}`), tag)
           else if (field.listKind === 'enum') out.lines.push(`${element} = ${enumText(field, item as number)}`)
           else out.lines.push(`${element} = ${scalarText(field.scalar, item)}`)
         }
@@ -218,7 +293,7 @@ function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchem
         const entries = [...map.entries()].sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
         for (const [key, value] of entries) {
           const element = `${at}[${JSON.stringify(String(key))}]`
-          if (field.mapKind === 'message') entry(value as ReflectMessage, element, out, schemas, false)
+          if (field.mapKind === 'message') entry(value as ReflectMessage, element, out, schemas, descend(fieldLocation, mapStepKey(field.mapKey, key)), false)
           else if (field.mapKind === 'enum') out.lines.push(`${element} = ${field.enum.value[value as number]?.name ?? `UNKNOWN(${value})`}`)
           else out.lines.push(`${element} = ${scalarText(field.scalar, value)}`)
         }
@@ -233,7 +308,7 @@ function walk(r: ReflectMessage, path: string, out: Flattened, schemas: AnySchem
   if (!any && path !== '') out.lines.push(`${path} = {}`)
 }
 
-function entry(r: ReflectMessage, at: string, out: Flattened, schemas: AnySchemas, conceptTag: boolean): void {
+function entry(r: ReflectMessage, at: string, out: Flattened, schemas: AnySchemas, location: AnyLocation, conceptTag: boolean): void {
   const typeName = r.desc.typeName
   if (typeName === TIMESTAMP) {
     out.lines.push(`${at} = ${timestampDate(r.message as Timestamp).toISOString()}`)
@@ -242,12 +317,15 @@ function entry(r: ReflectMessage, at: string, out: Flattened, schemas: AnySchema
   if (typeName === ANY) {
     const any = r.message as Any
     out.lines.push(`${at} @type = ${any.typeUrl}`)
-    const desc = schemas.schemaOf(any)
-    if (desc === null) {
+    const binding = schemas.schemaOf(any, location)
+    if (binding === null) {
       out.lines.push(`${at} = ${any.value.length} B, no schema retained for this payload`)
       return
     }
-    walk(reflect(desc, fromBinary(desc, any.value)), at, out, schemas)
+    const decoded = reflect(binding.desc, fromBinary(binding.desc, any.value))
+    const nested = descend(location, binding.boundary)
+    if (binding.desc.typeName === ANY) entry(decoded, at, out, schemas, nested, false)
+    else walk(decoded, at, out, schemas, nested)
     return
   }
   if (conceptTag && typeName === CONCEPT_REF) {
@@ -259,7 +337,7 @@ function entry(r: ReflectMessage, at: string, out: Flattened, schemas: AnySchema
         : `${at} = ${String(r.get(scheme))}/${String(r.get(concept))}`,
     )
   }
-  walk(r, at, out, schemas)
+  walk(r, at, out, schemas, location)
 }
 
 /** The lines of a fragment under `search_metadata`, the document's lookup fields. */
@@ -354,7 +432,7 @@ export async function readSide(
           flattened: { lines: [`(raw) ${decoded.reason}`, `(raw) ${part.bytes.length} B sha256:${new Sha256().update(part.bytes).hex()}`], concepts: [] },
         }
       }
-      return { kind: 'lines', decodedAs: decoded.typeUrl, flattened: flatten(decoded.desc, decoded.message, schemas) }
+      return { kind: 'lines', decodedAs: decoded.typeUrl, flattened: flatten(decoded.desc, decoded.message, schemas, selector) }
     } catch (error) {
       return { kind: 'failed', failure: rpcFailure(error) }
     }
