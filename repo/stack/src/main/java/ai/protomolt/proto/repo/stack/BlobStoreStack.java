@@ -17,12 +17,14 @@ import java.util.UUID;
  * are {@code <prefix>/<random UUID>}, never derived from content or address, so
  * no write targets an existing key. Nothing here depends on versioning or ETags.
  * <p>
- * A streamed put of at most one part is read into memory and written from the
- * array, so the provider can retry it. A larger or unknown-length put is a
- * multipart upload sent from one part buffer at a time: memory stays bounded by
- * the part size and a retry resends a part, never rewinding the caller's stream.
- * A provider without multipart takes a larger known-length body through its
- * required streaming put instead, digest still computed while streaming, so a
+ * A known-length streamed put of at most one part streams directly through the
+ * provider's single-part streaming put without buffering the body on heap; the
+ * counting stream refuses mark/reset and checks for excess bytes before the
+ * final byte is delivered. A larger or unknown-length put is a multipart upload
+ * sent from one part buffer at a time: memory stays bounded by the part size and
+ * a retry resends a part, never rewinding the caller's stream. A provider
+ * without multipart takes a larger known-length body through its required
+ * streaming put instead, digest still computed while streaming, so a
  * Redis-backed stack accepts any object its own limits allow.
  */
 public final class BlobStoreStack implements Stack {
@@ -89,42 +91,52 @@ public final class BlobStoreStack implements Stack {
         Objects.requireNonNull(body, "body");
         if (expectedLength < UNKNOWN_LENGTH) throw new IllegalArgumentException("Expected length must be exact or unknown");
         var counted = new CountingInputStream(body, expectedLength);
-        if (expectedLength >= 0 && expectedLength <= partSize) {
-            byte[] bytes = counted.readNBytes((int) expectedLength);
+        if (expectedLength == 0) {
             counted.requireEnd();
-            return put(bytes);
         }
         var key = newKey();
         var spec = new BlobStore.PutSpec(bucket, key, CONTENT_TYPE, Map.of(), null);
-        try {
-            store.putMultipart(spec, counted, partSize);
-        } catch (UncheckedIOException failure) {
-            throw failure.getCause();
-        } catch (UnsupportedOperationException multipartUnsupported) {
-            // A provider without multipart (Redis; the caching wrapper over such a
-            // backing) still has the required known-length streaming put, with no
-            // extra size ceiling of this stack's own. The refusal is thrown before
-            // the body is touched; a partially consumed body cannot be retried, and
-            // an unknown-length body has no known-length route, so both rethrow.
-            if (counted.count > 0 || expectedLength < 0) {
-                throw multipartUnsupported;
-            }
+        if (expectedLength >= 0 && expectedLength <= partSize) {
+            putStreamed(spec, counted, expectedLength);
+        } else {
             try {
-                store.put(spec, counted, expectedLength);
+                store.putMultipart(spec, counted, partSize);
             } catch (UncheckedIOException failure) {
                 throw failure.getCause();
-            } catch (UnsupportedOperationException unsupported) {
-                throw unsupported;
+            } catch (UnsupportedOperationException multipartUnsupported) {
+                // A provider without multipart (Redis; the caching wrapper over such a
+                // backing) still has the required known-length streaming put, with no
+                // extra size ceiling of this stack's own. The refusal is thrown before
+                // the body is touched; a partially consumed body cannot be retried, and
+                // an unknown-length body has no known-length route, so both rethrow.
+                if (counted.count > 0 || expectedLength < 0) {
+                    throw multipartUnsupported;
+                }
+                putStreamed(spec, counted, expectedLength);
             } catch (RuntimeException failure) {
+                if (counted.bodyFailure != null) throw counted.bodyFailure;
                 throw new IOException("Stack write failed", failure);
             }
-        } catch (RuntimeException failure) {
-            throw new IOException("Stack write failed", failure);
         }
         // The counting stream fails a short or long body before the upload completes.
         if (expectedLength >= 0 && counted.count != expectedLength)
             throw new IllegalStateException("Provider stopped reading before the body ended");
+        counted.requireEnd();
         return ref(key, counted.digest.digest(), counted.count);
+    }
+
+    private void putStreamed(BlobStore.PutSpec spec, CountingInputStream counted, long expectedLength)
+            throws IOException {
+        try {
+            store.put(spec, counted, expectedLength);
+        } catch (UncheckedIOException failure) {
+            throw failure.getCause();
+        } catch (UnsupportedOperationException unsupported) {
+            throw unsupported;
+        } catch (RuntimeException failure) {
+            if (counted.bodyFailure != null) throw counted.bodyFailure;
+            throw new IOException("Stack write failed", failure);
+        }
     }
 
     @Override public InputStream open(StackRef ref) throws IOException {
@@ -234,13 +246,15 @@ public final class BlobStoreStack implements Stack {
         final MessageDigest digest = VerifyingInputStream.sha256();
         private final long expected;
         long count;
+        private boolean endVerified;
+        IOException bodyFailure;
 
         CountingInputStream(InputStream in, long expected) { super(in); this.expected = expected; }
 
         @Override public boolean markSupported() { return false; }
         @Override public void mark(int limit) {}
-        @Override public void reset() throws IOException { throw new IOException("Stack write streams cannot be rewound"); }
-        @Override public long skip(long n) throws IOException { throw new IOException("Stack write streams cannot skip"); }
+        @Override public void reset() throws IOException { throw fail("Stack write streams cannot be rewound"); }
+        @Override public long skip(long n) throws IOException { throw fail("Stack write streams cannot skip"); }
         @Override public void close() {}
 
         @Override public int read() throws IOException {
@@ -252,21 +266,44 @@ public final class BlobStoreStack implements Stack {
             if (length == 0) return 0;
             if (expected >= 0 && count == expected) { requireEnd(); return -1; }
             int want = expected >= 0 ? (int) Math.min(length, expected - count) : length;
-            int read = in.read(buffer, offset, want);
+            final int read;
+            try {
+                read = in.read(buffer, offset, want);
+            } catch (IOException failure) {
+                bodyFailure = failure;
+                throw failure;
+            }
             if (read < 0) {
-                if (expected >= 0) throw new IOException("Stack write body ended at " + count + " of " + expected + " bytes");
+                if (expected >= 0) throw fail("Stack write body ended at " + count + " of " + expected + " bytes");
                 return -1;
             }
             digest.update(buffer, offset, read);
             count += read;
+            if (expected >= 0 && count == expected) requireEnd();
             return read;
         }
 
         void requireEnd() throws IOException {
             if (expected >= 0 && count != expected)
-                throw new IOException("Stack write body ended at " + count + " of " + expected + " bytes");
-            if (expected >= 0 && in.read() >= 0)
-                throw new IOException("Stack write body is longer than its declared length " + expected);
+                throw fail("Stack write body ended at " + count + " of " + expected + " bytes");
+            if (expected >= 0 && !endVerified) {
+                final int next;
+                try {
+                    next = in.read();
+                } catch (IOException failure) {
+                    bodyFailure = failure;
+                    throw failure;
+                }
+                if (next >= 0)
+                    throw fail("Stack write body is longer than its declared length " + expected);
+                endVerified = true;
+            }
+        }
+
+        private IOException fail(String message) {
+            var failure = new IOException(message);
+            bodyFailure = failure;
+            return failure;
         }
     }
 }
