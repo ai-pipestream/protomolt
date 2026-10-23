@@ -132,6 +132,22 @@
   defense in depth). If the job starts failing on auth again, the token
   needs rotation, not a workflow change.
 
+## Protovalidate conformance maintenance
+
+- Follow [the validation conformance maintenance procedure](docs/transform/validation.md#assistant-maintenance-procedure)
+  when changing validation, Buf annotation handling, descriptors/options, CEL,
+  shared format rules, the conformance harness or their dependencies.
+- `buf lint` and the curated JUnit harness do not prove full upstream runtime
+  conformance. Run the pinned upstream runner against the production executor
+  with no case/suite filters or expected-failure list, and require zero failures
+  and zero skips. Use `--max-workers=2` for the documented Gradle checks.
+- Preserve exact commit/tool versions, flags, totals and logs in review evidence.
+  Never suppress, skip, delete or weaken tests to obtain conformance. Fix causes.
+- Before releases or validation dependency/pin updates, check upstream changes
+  and test an exact candidate SHA separately; a green pinned CI run does not
+  establish compliance with newer upstream versions. Follow the guide for
+  vendored schemas, NOTICE files, pin changes and updating published claims.
+
 ## Dependency updates (renovate)
 
 Renovate runs on the Forgejo instance and opens its PRs there, but Forgejo

@@ -39,9 +39,11 @@ cd protomolt
 ```
 
 `build` compiles all modules, runs every unit test and every integration
-suite (`integrationTest`, the `*IT` and `*IntegrationTest` classes), and runs the in-build
-protovalidate conformance gate (which fails the build on any drift from the
-expected 100% pass rate). It does not run `buf lint`; that hangs off the
+suite (`integrationTest`, the `*IT` and `*IntegrationTest` classes), and runs the
+curated local protovalidate harness (all 15 cases must pass). The complete
+upstream corpus runs separately in the CI `conformance` job; see
+[Conformance against buf's own runner](#conformance-against-bufs-own-runner).
+It does not run `buf lint`; that hangs off the
 root `check` task (see [Proto linting](#proto-linting)).
 
 The catalog inventory is generated from the built-in, standalone MCP, and full
@@ -227,10 +229,15 @@ tests that exercise the agent as an IDE actually drives it.
 
 ## Conformance against buf's own runner
 
-Beyond the in-build gate, the conformance executor can be scored by buf's
-`protovalidate-conformance` binary; see
-[Validation](../transform/validation.md#conformance-harness). CI runs this full-suite
-scoring on every push, so the pass rate is enforced, not just documented.
+Beyond the curated in-build harness, Buf's `protovalidate-conformance`
+binary scores the executor against the full upstream corpus. The
+[validation guide](../transform/validation.md#conformance-harness) documents
+the binary protocol, separate schema/runner pins, comparison-mode limits,
+reproducible installation and commands, and the
+[assistant maintenance procedure](../transform/validation.md#assistant-maintenance-procedure).
+The dedicated GitHub job runs on pull requests, pushes to `main`, and manual
+dispatches, without filters or an expected-failure list. A green `buf lint`
+or curated JUnit run is not a full-suite conformance result.
 
 ## Continuous integration
 
