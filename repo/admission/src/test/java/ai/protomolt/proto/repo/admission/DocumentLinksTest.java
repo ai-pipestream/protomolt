@@ -10,6 +10,7 @@ import ai.protomolt.proto.repo.v2.DynamicTarget;
 import ai.protomolt.proto.repo.v2.LinkField;
 import ai.protomolt.proto.repo.v2.LinksProto;
 import ai.protomolt.proto.repo.v2.StaticTarget;
+import com.google.protobuf.Any;
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FieldOptions;
@@ -19,7 +20,9 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -131,6 +134,70 @@ class DocumentLinksTest {
         var file = retained(DescriptorProto.newBuilder().setName("Plain")
                 .addField(message("self", 1, ".acme.v1.Plain", false)));
         assertThat(DocumentLinks.declaresLinks(file.findMessageTypeByName("Plain"))).isFalse();
+    }
+
+    @Test void anAnyHoldingAnAnyIsUnwrappedWithItsOccurrencePath() throws Exception {
+        var proto = FileDescriptorProto.newBuilder().setName("acme/v1/wrap.proto").setPackage("acme.v1").setSyntax("proto3")
+                .addDependency(LinksProto.getDescriptor().getName()).addDependency(Any.getDescriptor().getFile().getName())
+                .addMessageType(DescriptorProto.newBuilder().setName("Report")
+                        .addField(link("cites", 1, false, LinkField.newBuilder().setRelation("references")))
+                        .addField(message("nested", 2, ".google.protobuf.Any", false)))
+                .build();
+        var report = FileDescriptor.buildFrom(proto, new FileDescriptor[]{LinksProto.getDescriptor(), Any.getDescriptor().getFile()})
+                .findMessageTypeByName("Report");
+        var inner = DynamicMessage.newBuilder(report)
+                .setField(report.findFieldByName("cites"), dynamicLink(report.findFieldByName("cites").getMessageType(), target("t1")))
+                .build();
+        var reportUrl = "type.googleapis.com/acme.v1.Report";
+        var anyUrl = "type.googleapis.com/google.protobuf.Any";
+        var wrapped = Any.newBuilder().setTypeUrl(anyUrl)
+                .setValue(Any.newBuilder().setTypeUrl(reportUrl).setValue(inner.toByteString()).build().toByteString()).build();
+        var outer = DynamicMessage.newBuilder(report).setField(report.findFieldByName("nested"), wrapped).build();
+
+        var asked = new ArrayList<List<DocumentSchemaOccurrences.Step>>();
+        DocumentLinks.Unpacker unpacker = (at, typeUrl, value) -> {
+            asked.add(at);
+            var type = typeUrl.equals(anyUrl) ? Any.getDescriptor() : report;
+            try {
+                return Optional.of(new DocumentLinks.Entered(DynamicMessage.parseFrom(type, value),
+                        new DocumentSchemaOccurrences.Boundary(typeUrl, "", "", value.size())));
+            } catch (com.google.protobuf.InvalidProtocolBufferException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        };
+        var root = new DocumentSchemaOccurrences.Boundary(reportUrl, "", "", outer.toByteString().size());
+        var links = DocumentLinks.extract(outer, "structured_data", List.of(root), unpacker,
+                new DocumentLinks.SchemaChecks(() -> {}));
+        assertThat(links).extracting(DocumentLinks.Link::fieldPath).containsExactly("structured_data.nested.cites");
+        var field = new DocumentSchemaOccurrences.Field(2);
+        assertThat(asked).containsExactly(List.of(root, field),
+                List.of(root, field, new DocumentSchemaOccurrences.Boundary(anyUrl, "", "", wrapped.getValue().size())));
+    }
+
+    @Test void theSchemaCheckIsLinearRememberedAndCancellable() throws Exception {
+        // A 4096-type chain whose last type holds the only link: the old fixed point took
+        // one pass per type over every type.
+        int length = 4096;
+        var chain = new DescriptorProto.Builder[length];
+        for (int i = 0; i < length - 1; i++)
+            chain[i] = DescriptorProto.newBuilder().setName("C" + i).addField(message("next", 1, ".acme.v1.C" + (i + 1), false));
+        chain[length - 1] = DescriptorProto.newBuilder().setName("C" + (length - 1))
+                .addField(link("cites", 1, false, LinkField.newBuilder().setRelation("references")));
+        var head = retained(chain).findMessageTypeByName("C0");
+
+        var runs = new int[1];
+        var checks = new DocumentLinks.SchemaChecks(() -> runs[0]++);
+        assertThat(checks.declares(head)).isTrue();
+        assertThat(runs[0]).isPositive().isLessThanOrEqualTo(4 * length + 8);
+        int first = runs[0];
+        assertThat(checks.declares(head)).isTrue();
+        assertThat(runs[0]).isEqualTo(first);
+
+        var stopped = new IllegalStateException("deadline");
+        var limited = new int[1];
+        assertThatThrownBy(() -> new DocumentLinks.SchemaChecks(() -> {
+            if (++limited[0] > 100) throw stopped;
+        }).declares(head)).isSameAs(stopped);
     }
 
     // ------------------------------------------------------------------ fixtures
