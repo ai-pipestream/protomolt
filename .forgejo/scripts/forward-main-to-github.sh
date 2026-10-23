@@ -6,9 +6,10 @@
 #   2. The head is pushed to a GitHub branch and a pull request is opened so the
 #      required status checks run on this exact commit. Nothing is merged on
 #      GitHub; the pull request exists only to attach check runs to the commit.
-#   3. Once every required context has a successful check run, GitHub main is
-#      pushed to the head without force. GitHub accepts the push because the
-#      commit's required checks passed, so both remotes end on the same commit.
+#   3. The documented CI contexts, plus any contexts configured on branch
+#      protection or branch rules, must have a successful check run. A missing
+#      protection configuration does not waive them. An API or auth failure
+#      stops the forward. GitHub main is then pushed to the head without force.
 #   4. The pull request is closed and the forward branch deleted.
 #
 # Environment: see github-main.sh. Optional:
@@ -16,6 +17,21 @@
 #   FORWARD_POLL_SECONDS   polling interval (default 60)
 set -euo pipefail
 source "$(dirname "$0")/github-main.sh"
+source "$(dirname "$0")/forward-main-checks.sh"
+
+# Writes the response body to the given file and prints the HTTP status.
+# A transport failure stops the forward; an HTTP error status is returned.
+gh_http() { # outfile method path
+  local out=$1 method=$2 path=$3 status
+  status=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" \
+    -H "Authorization: token $GITHUB_FORWARD_TOKEN" \
+    -H 'Accept: application/vnd.github+json' \
+    "${GITHUB_API}${path}") || {
+    echo "::error::GitHub API request failed (${method} ${path}). GitHub main was not moved." >&2
+    exit 1
+  }
+  printf '%s' "$status"
+}
 
 head=$(git rev-parse HEAD)
 short=${head:0:12}
@@ -50,40 +66,49 @@ if [ -z "$pr_number" ]; then
 fi
 echo "Forward pull request #${pr_number} open; waiting for required checks on ${short}"
 
-required=$(gh_api GET /branches/main/protection/required_status_checks | jq -r '.contexts // [] | .[]' 2>/dev/null || true)
-if [ -z "$required" ]; then
-  echo "GitHub main requires no status checks"
-else
-  deadline=$(( $(date +%s) + wait_minutes * 60 ))
-  while :; do
-    runs=$(gh_api GET "/commits/${head}/check-runs?per_page=100")
-    pending=0; failed=""
-    while IFS= read -r context; do
-      [ -n "$context" ] || continue
-      state=$(printf '%s' "$runs" | jq -r --arg n "$context" '[.check_runs[] | select(.name==$n)] | sort_by(.started_at) | last | "\(.status // "missing")/\(.conclusion // "")"')
-      case "$state" in
-        completed/success) ;;
-        completed/neutral|completed/skipped) ;;
-        completed/*) failed="${failed} ${context}(${state#completed/})" ;;
-        *) pending=$((pending + 1)) ;;
-      esac
-    done <<< "$required"
-    if [ -n "$failed" ]; then
-      echo "::error::required checks failed on ${short}:${failed}. GitHub main was not moved; pull request #${pr_number} stays open for inspection." >&2
-      exit 1
-    fi
-    if [ "$pending" -eq 0 ]; then
-      echo "All required checks passed on ${short}"
-      break
-    fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "::error::required checks did not finish within ${wait_minutes} minutes on ${short}; pull request #${pr_number} stays open." >&2
-      exit 1
-    fi
-    echo "${pending} required check(s) still running; next poll in ${poll_seconds}s"
-    sleep "$poll_seconds"
-  done
+protection_file=$(mktemp)
+rules_file=$(mktemp)
+protection_status=$(gh_http "$protection_file" GET /branches/main/protection/required_status_checks)
+rules_status=$(gh_http "$rules_file" GET /rules/branches/main)
+if ! contexts=$(required_contexts "$protection_status" "$(cat "$protection_file")" "$rules_status" "$(cat "$rules_file")"); then
+  rm -f "$protection_file" "$rules_file"
+  exit 1
 fi
+rm -f "$protection_file" "$rules_file"
+if [ "$protection_status" = 404 ]; then
+  echo "GitHub branch protection has no required status checks (HTTP 404). The documented CI contexts are still required."
+fi
+echo "Required checks:"
+printf '%s\n' "$contexts" | sed 's/^/  /'
+deadline=$(( $(date +%s) + wait_minutes * 60 ))
+while :; do
+  runs_file=$(mktemp)
+  runs_status=$(gh_http "$runs_file" GET "/commits/${head}/check-runs?per_page=100")
+  if [ "$runs_status" != 200 ]; then
+    echo "::error::Cannot read check runs for ${short} (HTTP ${runs_status}). GitHub main was not moved; pull request #${pr_number} stays open." >&2
+    rm -f "$runs_file"
+    exit 1
+  fi
+  if ! evaluate_required_checks "$(cat "$runs_file")" "$contexts"; then
+    rm -f "$runs_file"
+    exit 1
+  fi
+  rm -f "$runs_file"
+  if [ -n "$failed_checks" ]; then
+    echo "::error::required checks failed on ${short}:${failed_checks}. GitHub main was not moved; pull request #${pr_number} stays open for inspection." >&2
+    exit 1
+  fi
+  if [ "$pending_checks" -eq 0 ]; then
+    echo "All required checks passed on ${short}"
+    break
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "::error::required checks did not finish within ${wait_minutes} minutes on ${short}; pull request #${pr_number} stays open." >&2
+    exit 1
+  fi
+  echo "${pending_checks} required check(s) still running; next poll in ${poll_seconds}s"
+  sleep "$poll_seconds"
+done
 
 echo "Fast-forwarding GitHub main to ${short}"
 if ! git "${GIT_AUTH[@]}" push --quiet "$GITHUB_URL" "${head}:refs/heads/main"; then
