@@ -9,8 +9,9 @@ import java.util.Set;
 
 /**
  * Header-time admission for explicitly selected synchronous unary handlers.
- * Reserves two maximum serialized requests: gRPC's unary handler requests two
- * messages to detect a protocol violation. This does not measure decoded heap,
+ * Reserves two maximum serialized requests conservatively for gRPC's unary
+ * request window. gRPC 1.85.1 rejects duplicates before protobuf decoding and
+ * delays decoding a valid request until half-close. This does not measure decoded heap,
  * network buffers or detached work. Selected protobuf responses reserve an
  * additional fixed allowance through terminal delivery. Never install on handlers that
  * return before their request-consuming work completes.
