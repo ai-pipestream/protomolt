@@ -2,9 +2,11 @@ package ai.protomolt.proto.repo.catalog;
 
 import ai.protomolt.proto.projection.MessageProjection;
 import ai.protomolt.proto.repo.v1.Document;
+import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v2.CatalogEntry;
 import ai.protomolt.proto.repo.v2.DocumentLookup;
 import ai.protomolt.proto.repo.v2.StoredManifest;
+import com.google.protobuf.Any;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
@@ -61,13 +63,64 @@ public final class CatalogEntries {
                     }
             }
         }
+        structuredDataType(core).ifPresent(lookup::setStructuredDataType);
         return lookup.build();
+    }
+
+    /**
+     * The protobuf full name in a CORE fragment's structured_data type URL: the
+     * text after its last slash, as the Any contract defines it.
+     *
+     * @param core the decoded CORE fragment
+     * @return the full name; empty when structured_data is unset or names no type
+     */
+    public static Optional<String> structuredDataType(Message core) {
+        var field = core.getDescriptorForType().findFieldByName("structured_data");
+        if (field == null || field.getJavaType() != FieldDescriptor.JavaType.MESSAGE || field.isRepeated()
+                || !field.getMessageType().getFullName().equals(Any.getDescriptor().getFullName()) || !core.hasField(field))
+            return Optional.empty();
+        var any = (Message) core.getField(field);
+        var typeUrl = (String) any.getField(any.getDescriptorForType().findFieldByName("type_url"));
+        var name = typeUrl.substring(typeUrl.lastIndexOf('/') + 1);
+        return name.isEmpty() ? Optional.empty() : Optional.of(name);
     }
 
     /** The longest title the catalog stores, in UTF-8 bytes: it sits in a btree index row. */
     public static final int MAX_TITLE_BYTES = 2000;
     /** The longest metadata key the catalog stores, in UTF-8 bytes: it is half of a primary key. */
     public static final int MAX_METADATA_KEY_BYTES = 200;
+
+    /** The longest link field path the catalog stores, in UTF-8 bytes: it is part of the edge table's primary key. */
+    public static final int MAX_LINK_FIELD_PATH_BYTES = 1024;
+    /** The longest link relation plus target call number the catalog stores, in UTF-8 bytes: the backlink index key. */
+    public static final int MAX_LINK_KEY_BYTES = 2048;
+
+    /**
+     * Why the catalog's edge table could not hold a link, if it could not. PostgreSQL
+     * caps a btree entry at 2704 bytes: the field path is bounded for the primary key,
+     * and the relation with the target's four call number components for the backlink
+     * index. Checked at admission so the save is refused by name instead of failing
+     * inside the commit.
+     *
+     * @param fieldPath the link's field path
+     * @param relation the link field's relation
+     * @param target the static target's call number; empty for a dynamic link
+     * @return the problem, empty when the link fits
+     */
+    public static Optional<String> unstorableLink(String fieldPath, String relation, Optional<NodeAddress> target) {
+        if (utf8Length(fieldPath) > MAX_LINK_FIELD_PATH_BYTES)
+            return Optional.of("field path exceeds " + MAX_LINK_FIELD_PATH_BYTES + " bytes");
+        if (fieldPath.indexOf('\0') >= 0) return Optional.of("field path contains a NUL character");
+        if (target.isEmpty()) return Optional.empty();
+        var address = target.get();
+        long key = utf8Length(relation);
+        for (var component : List.of(address.getAccountId(), address.getGraphId(), address.getGraphAddressId(), address.getDocId())) {
+            if (component.indexOf('\0') >= 0) return Optional.of("target call number contains a NUL character");
+            key += utf8Length(component);
+        }
+        return key > MAX_LINK_KEY_BYTES
+                ? Optional.of("relation and target call number exceed " + MAX_LINK_KEY_BYTES + " bytes") : Optional.empty();
+    }
 
     /** One lookup value the catalog cannot store, named by its path in the document. */
     public record Unstorable(String fieldPath, String message) {}
@@ -103,6 +156,7 @@ public final class CatalogEntries {
     private static String path(FieldDescriptor field) {
         return switch (field.getName()) {
             case "datasource_id", "connector_id" -> "ownership." + field.getName();
+            case "structured_data_type" -> "structured_data.type_url";
             default -> "search_metadata." + field.getName();
         };
     }

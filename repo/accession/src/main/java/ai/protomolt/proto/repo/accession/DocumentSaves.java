@@ -3,6 +3,7 @@ package ai.protomolt.proto.repo.accession;
 import ai.protomolt.proto.repo.admission.BuiltinDocumentSchema;
 import ai.protomolt.proto.repo.admission.DocumentAdmissionReservations;
 import ai.protomolt.proto.repo.admission.DocumentCandidateAdmission;
+import ai.protomolt.proto.repo.admission.DocumentLinks;
 import ai.protomolt.proto.repo.admission.DocumentSchemaAdmission;
 import ai.protomolt.proto.repo.admission.DocumentSchemaRetention;
 import ai.protomolt.proto.repo.admission.DocumentSchemas;
@@ -28,6 +29,7 @@ import ai.protomolt.proto.repo.v1.Document;
 import ai.protomolt.proto.repo.v1.NodeAddress;
 import ai.protomolt.proto.repo.v1.OwnershipContext;
 import ai.protomolt.proto.repo.v1.RepositorySchemaAssetReference;
+import ai.protomolt.proto.repo.v1.RepositorySchemaOccurrenceStep;
 import ai.protomolt.proto.repo.v1.WriteProvenance;
 import ai.protomolt.proto.repo.v2.*;
 import ai.protomolt.proto.validate.ProtoValidator;
@@ -49,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -903,6 +906,7 @@ public final class DocumentSaves {
         Map<String, ByteString> artifacts = new HashMap<>(authority.grantSchema().artifacts());
         RepositorySchemaAssetReference fragmentSchema = null;
         var admissionOpaque = new ArrayList<DocumentCandidateAdmission.OpaqueFound>();
+        List<DocumentLinks.Link> coreLinks = List.of();
         if (!admitted.isEmpty()) {
             var attested = new HashSet<DocumentCandidateAdmission.AttestedOpaque>();
             for (var resolved : resolvedOpaque.values())
@@ -930,6 +934,7 @@ public final class DocumentSaves {
                 }
                 var accepted = (DocumentCandidateAdmission.Accepted) result;
                 admissionOpaque.addAll(accepted.opaque());
+                coreLinks = accepted.links();
                 fragmentSchema = accepted.container();
                 for (var occurrence : accepted.occurrences())
                     validation.addResolvedOccurrences(ResolvedOccurrence.newBuilder()
@@ -1019,6 +1024,14 @@ public final class DocumentSaves {
                 parts.put(part, rebuilt.build());
             }
         }
+
+        // S11b: static link targets (requirements §17), a point-in-time catalog read outside
+        // the commit transaction. A carried CORE is not admitted and its links are not rechecked.
+        var linkRefusal = linkRefusal(caller, account, coreLinks);
+        if (linkRefusal.isPresent())
+            return reject(caller, request, address, intentSha, authorized, linkRefusal.get().reason(),
+                    linkRefusal.get().message(), linkRefusal.get().violations());
+        var linkRows = DocumentLinkReads.rows(coreLinks);
 
         // S12: write new bytes to the drive's stack, before the commit transaction. Each raw
         // blob is its own object, bound to its blob ID on the BLOBS entry (decision 45).
@@ -1121,7 +1134,7 @@ public final class DocumentSaves {
         var coreBytes = writes.get(CORE_SELECTOR) == WriteAction.WRITE_ACTION_PUT
                 ? storedFragments.get(CORE_SELECTOR) : sourcedBytes.get(CORE_SELECTOR);
         var lookup = coreBytes == null ? Optional.<DocumentLookup>empty()
-                : Optional.of(CatalogEntries.lookup(parseCore(coreBytes, documentType)));
+                : Optional.of(admittedLookup(CatalogEntries.lookup(parseCore(coreBytes, documentType)), stored.getValidation()));
         // The catalog indexes the title and metadata keys and holds every lookup string in a
         // text column, so what it cannot store is refused here by field, not inside the commit.
         var unstorable = lookup.map(CatalogEntries::unstorable).orElse(List.of());
@@ -1132,7 +1145,8 @@ public final class DocumentSaves {
                                     .setRuleId("catalog-lookup-storable").setMessage(problem.message()).build()).toList());
         var result = catalog.commit(new CatalogRecords.Commit(address, request.getOperationId(), intentSha,
                 request.getExpected(), stored, outcome, event, newObjects, carriedObjects, artifacts,
-                authorized.grantIds(), authorized.credential(), lookup));
+                authorized.grantIds(), authorized.credential(), lookup,
+                lookup.isPresent() ? linkRows : List.of()));
         return switch (result) {
             case CatalogRecords.Committed ignored -> SaveDocumentResponse.newBuilder()
                     .setOperationId(request.getOperationId()).setAccession(accession).build();
@@ -1696,6 +1710,23 @@ public final class DocumentSaves {
         return ownership;
     }
 
+    /**
+     * A CORE lookup as the catalog records it: a structured_data stored opaque was
+     * never decoded, so it has no admitted type and a link's target_types never
+     * matches it (requirements §17).
+     *
+     * @param lookup the lookup projected from the CORE bytes
+     * @param validation the revision's validation record
+     * @return the lookup, without structured_data_type when that root is opaque
+     */
+    static DocumentLookup admittedLookup(DocumentLookup lookup, RevisionValidation validation) {
+        var root = RepositorySchemaOccurrenceStep.newBuilder().setFieldNumber(Document.STRUCTURED_DATA_FIELD_NUMBER).build();
+        boolean opaque = validation.getOpaqueOccurrencesList().stream().anyMatch(occurrence ->
+                occurrence.getOccurrence().getPart().equals(CORE_SELECTOR)
+                        && occurrence.getOccurrence().getStepsList().equals(List.of(root)));
+        return opaque ? lookup.toBuilder().clearStructuredDataType().build() : lookup;
+    }
+
     /** Decodes admitted CORE bytes as the host's document type; they were verified to parse. */
     private static Message parseCore(ByteString core, Descriptors.Descriptor documentType) {
         try {
@@ -1714,6 +1745,74 @@ public final class DocumentSaves {
                 && (!ownership.hasConnectorId()
                     || !owner.getIntake().getConnectorId().equals(ownership.getConnectorId())))
             throw WriterAuthority.denied("The intake owner differs from the document's connector");
+    }
+
+    /**
+     * Why the admitted CORE part's links refuse the save, if they do (requirements §17).
+     * A static target must be in the saving account, exist unpurged, be readable by the
+     * saving caller, and hold the named revision when one is pinned; otherwise
+     * LINK_TARGET_NOT_FOUND, one reason for all four, as a read's NOT_FOUND is. When the
+     * link field lists target_types, the target's structured_data type at the pinned
+     * revision, or at its current one, must be listed; otherwise LINK_TARGET_TYPE. A
+     * tombstoned current target is accepted unpinned: the link is born dangling. A
+     * dynamic target's filter must select something and be consistent, as a listing's
+     * is; it is not evaluated here. A pinned revision must be a document revision, not
+     * a tombstone. Every link must also fit the catalog's edge index, checked first, so
+     * an oversized path or key is refused by name rather than failing inside the commit.
+     */
+    private Optional<SemanticRejection> linkRefusal(RepositoryCaller caller, String account, List<DocumentLinks.Link> links) {
+        var violations = new ArrayList<FieldViolation>();
+        for (var link : links) {
+            var target = link.link().hasStaticTarget() ? Optional.of(link.link().getStaticTarget().getAddress())
+                    : Optional.<NodeAddress>empty();
+            CatalogEntries.unstorableLink(link.fieldPath(), link.field().getRelation(), target)
+                    .ifPresent(problem -> violations.add(linkViolation(link, "link-catalog-storable", problem)));
+        }
+        if (!violations.isEmpty())
+            return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_VALIDATION_FAILED,
+                    "A link does not fit the catalog", List.copyOf(violations)));
+        for (var link : links) {
+            var at = link.at();
+            if (link.link().hasDynamicTarget()) {
+                var dynamic = link.link().getDynamicTarget();
+                if (dynamic.getFilter().equals(DocumentFilter.getDefaultInstance()))
+                    violations.add(linkViolation(link, "link-dynamic-filter-required", "a dynamic link's filter sets at least one field"));
+                try {
+                    DocumentLists.requireConsistentFilter(dynamic.getFilter());
+                    DocumentLists.requireConsistentSort(dynamic.getSort());
+                } catch (AccessionException inconsistent) {
+                    violations.add(linkViolation(link, "link-dynamic-filter-consistent", inconsistent.getMessage()));
+                }
+                continue;
+            }
+            var target = link.link().getStaticTarget();
+            var address = target.getAddress();
+            var pinned = target.hasRevision() ? OptionalLong.of(target.getRevision()) : OptionalLong.empty();
+            var found = !address.getAccountId().equals(account) || address.getGraphId().isBlank()
+                    || address.getGraphAddressId().isBlank() || address.getDocId().isBlank()
+                    ? Optional.<CatalogRecords.LinkTarget>empty() : catalog.linkTarget(address, pinned);
+            if (found.isEmpty() || !DocumentReads.canRead(caller, address, found.get().entry().getOwnership())
+                    || (pinned.isPresent() && (found.get().pinned().isEmpty() || found.get().pinned().get().tombstone())))
+                return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND,
+                        "The target of link " + at + " is not found", List.of()));
+            if (link.field().getTargetTypesCount() == 0) continue;
+            Optional<String> type;
+            if (pinned.isPresent()) type = found.get().pinned().get().structuredDataType();
+            else if (found.get().tombstone()) continue;
+            else type = found.get().currentType();
+            if (type.isEmpty() || !link.field().getTargetTypesList().contains(type.get()))
+                return Optional.of(new SemanticRejection(RejectionReason.REJECTION_REASON_LINK_TARGET_TYPE,
+                        "The target of link " + at + " holds " + type.map(name -> "structured_data " + name)
+                                .orElse("no structured_data") + ", which the link does not allow", List.of()));
+        }
+        return violations.isEmpty() ? Optional.empty() : Optional.of(new SemanticRejection(
+                RejectionReason.REJECTION_REASON_VALIDATION_FAILED, "A dynamic link's selector is invalid", List.copyOf(violations)));
+    }
+
+    private static FieldViolation linkViolation(DocumentLinks.Link link, String ruleId, String message) {
+        return FieldViolation.newBuilder().setPart(CORE_SELECTOR)
+                .setFieldPath(link.at())
+                .setRuleId(ruleId).setMessage(message).build();
     }
 
     /**

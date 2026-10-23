@@ -81,6 +81,10 @@ final class PostgresPurges {
         try (var delete = connection.prepareStatement("DELETE FROM catalog_document_metadata WHERE document_id = ?")) {
             delete.setLong(1, documentId); delete.executeUpdate();
         }
+        // A purged document links to nothing; links into it stay with their linkers and dangle.
+        try (var delete = connection.prepareStatement("DELETE FROM catalog_document_links WHERE document_id = ?")) {
+            delete.setLong(1, documentId); delete.executeUpdate();
+        }
         var record = CatalogPurge.newBuilder().setRequest(request).setMarkedAt(now).setReferencesPurged(references);
         long shared = 0;
         // Fresh READ COMMITTED statement after the object locks sees a save that won the lock first.

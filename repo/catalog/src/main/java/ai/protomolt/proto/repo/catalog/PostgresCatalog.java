@@ -35,8 +35,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -366,7 +368,11 @@ public final class PostgresCatalog implements Catalog {
         return entry;
     }
 
-    @Override public boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup) {
+    @Override public boolean rewriteEntry(NodeAddress address, long revision, Optional<DocumentLookup> lookup,
+            List<CatalogRecords.Link> links) {
+        if (lookup.isEmpty() && !links.isEmpty())
+            throw new IllegalArgumentException("Link rows go with the lookup of a CORE part");
+        CatalogRecords.requireDistinct(links);
         return inTransaction("Catalog entry rebuild", connection -> {
             final long documentId;
             try (var select = connection.prepareStatement("""
@@ -400,8 +406,158 @@ public final class PostgresCatalog implements Catalog {
                 update.executeUpdate();
             }
             writeMetadata(connection, documentId, lookup);
+            writeLinks(connection, documentId, links);
             return true;
         });
+    }
+
+    /** Replaces the document's static link rows; an empty list clears them. */
+    private static void writeLinks(Connection connection, long documentId, List<CatalogRecords.Link> links) throws SQLException {
+        try (var delete = connection.prepareStatement("DELETE FROM catalog_document_links WHERE document_id = ?")) {
+            delete.setLong(1, documentId);
+            delete.executeUpdate();
+        }
+        if (links.isEmpty()) return;
+        try (var insert = connection.prepareStatement("""
+                INSERT INTO catalog_document_links (document_id, field_path, ordinal, relation, target_account_id,
+                    target_graph_id, target_graph_address_id, target_doc_id, pinned_revision)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+            for (var link : links) {
+                insert.setLong(1, documentId);
+                insert.setString(2, link.fieldPath());
+                insert.setInt(3, link.ordinal());
+                insert.setString(4, link.relation());
+                bindAddress(insert, 5, link.target());
+                if (link.pinnedRevision().isPresent()) insert.setLong(9, link.pinnedRevision().getAsLong());
+                else insert.setNull(9, Types.BIGINT);
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+    }
+
+    // ------------------------------------------------------------------ links
+
+    @Override public Optional<CatalogRecords.LinkTarget> linkTarget(NodeAddress target, OptionalLong revision) {
+        return inTransaction("Link target lookup", connection -> {
+            final long documentId;
+            final long current;
+            final boolean tombstone;
+            final CatalogEntry entry;
+            try (var select = connection.prepareStatement("""
+                    SELECT document_id, current_revision, tombstone, catalog_entry, catalog_entry_sha256 FROM catalog_documents
+                    WHERE NOT purged AND account_id = ? AND graph_id = ? AND graph_address_id = ? AND doc_id = ?""")) {
+                bindAddress(select, 1, target);
+                try (var rows = select.executeQuery()) {
+                    if (!rows.next()) return Optional.empty();
+                    documentId = rows.getLong(1);
+                    current = rows.getLong(2);
+                    tombstone = rows.getBoolean(3);
+                    entry = parseEntry(rows.getBytes(4), rows.getString(5), target);
+                }
+            }
+            Optional<CatalogRecords.PinnedRevision> pinned = Optional.empty();
+            if (revision.isPresent()) {
+                try (var select = connection.prepareStatement(
+                        "SELECT tombstone, structured_data_type FROM catalog_revisions WHERE document_id = ? AND revision = ?")) {
+                    select.setLong(1, documentId);
+                    select.setLong(2, revision.getAsLong());
+                    try (var rows = select.executeQuery()) {
+                        if (rows.next()) pinned = Optional.of(new CatalogRecords.PinnedRevision(revision.getAsLong(),
+                                rows.getBoolean(1), Optional.ofNullable(rows.getString(2))));
+                    }
+                }
+            }
+            return Optional.of(new CatalogRecords.LinkTarget(current, tombstone, entry, pinned));
+        });
+    }
+
+    @Override public boolean rewriteRevisionType(NodeAddress address, long revision, Optional<String> structuredDataType) {
+        return inTransaction("Revision type rebuild", connection -> {
+            try (var update = connection.prepareStatement("""
+                    UPDATE catalog_revisions r SET structured_data_type = ? FROM catalog_documents d
+                    WHERE d.document_id = r.document_id AND NOT d.purged AND d.account_id = ? AND d.graph_id = ?
+                      AND d.graph_address_id = ? AND d.doc_id = ? AND r.revision = ?""")) {
+                update.setString(1, structuredDataType.orElse(null));
+                bindAddress(update, 2, address);
+                update.setLong(6, revision);
+                return update.executeUpdate() == 1;
+            }
+        });
+    }
+
+    @Override public List<CatalogRecords.Link> links(NodeAddress address) {
+        return inTransaction("Link rows", connection -> {
+            try (var select = connection.prepareStatement("""
+                    SELECT l.field_path, l.ordinal, l.relation, l.target_account_id, l.target_graph_id,
+                        l.target_graph_address_id, l.target_doc_id, l.pinned_revision
+                    FROM catalog_document_links l JOIN catalog_documents d ON d.document_id = l.document_id
+                    WHERE NOT d.purged AND d.account_id = ? AND d.graph_id = ? AND d.graph_address_id = ? AND d.doc_id = ?
+                    ORDER BY l.field_path COLLATE "C", l.ordinal""")) {
+                bindAddress(select, 1, address);
+                var result = new ArrayList<CatalogRecords.Link>();
+                try (var rows = select.executeQuery()) { while (rows.next()) result.add(link(rows)); }
+                return List.copyOf(result);
+            }
+        });
+    }
+
+    private static final String LINKING_DOCUMENT = "(d.graph_id COLLATE \"C\", d.graph_address_id COLLATE \"C\", d.doc_id COLLATE \"C\")";
+
+    @Override public List<CatalogRecords.Backlink> backlinks(NodeAddress target, Optional<String> relation,
+            Optional<CatalogRecords.BacklinkCursor> after, int limit) {
+        if (limit < 1 || limit > 1001) throw new IllegalArgumentException("Invalid backlink page size");
+        var where = new StringBuilder("NOT d.purged AND l.target_account_id = ? AND l.target_graph_id = ?"
+                + " AND l.target_graph_address_id = ? AND l.target_doc_id = ?");
+        if (relation.isPresent()) where.append(" AND l.relation = ?");
+        if (after.isPresent())
+            where.append(" AND (").append(LINKING_DOCUMENT).append(" > (?, ?, ?) OR (").append(LINKING_DOCUMENT)
+                    .append(" = (?, ?, ?) AND (l.field_path COLLATE \"C\" > ? OR (l.field_path = ? AND l.ordinal > ?))))");
+        var sql = "SELECT l.field_path, l.ordinal, l.relation, l.target_account_id, l.target_graph_id,"
+                + " l.target_graph_address_id, l.target_doc_id, l.pinned_revision, d.account_id, d.graph_id,"
+                + " d.graph_address_id, d.doc_id, d.current_revision, d.catalog_entry, d.catalog_entry_sha256"
+                + " FROM catalog_document_links l JOIN catalog_documents d ON d.document_id = l.document_id WHERE " + where
+                + " ORDER BY d.graph_id COLLATE \"C\", d.graph_address_id COLLATE \"C\", d.doc_id COLLATE \"C\","
+                + " l.field_path COLLATE \"C\", l.ordinal LIMIT ?";
+        return inTransaction("Backlink listing", connection -> {
+            try (var select = connection.prepareStatement(sql)) {
+                int next = 1;
+                bindAddress(select, next, target);
+                next += 4;
+                if (relation.isPresent()) select.setString(next++, relation.get());
+                if (after.isPresent()) {
+                    var cursor = after.get();
+                    for (int twice = 0; twice < 2; twice++) {
+                        select.setString(next++, cursor.source().getGraphId());
+                        select.setString(next++, cursor.source().getGraphAddressId());
+                        select.setString(next++, cursor.source().getDocId());
+                    }
+                    select.setString(next++, cursor.fieldPath());
+                    select.setString(next++, cursor.fieldPath());
+                    select.setInt(next++, cursor.ordinal());
+                }
+                select.setInt(next, limit);
+                var result = new ArrayList<CatalogRecords.Backlink>();
+                try (var rows = select.executeQuery()) {
+                    while (rows.next()) {
+                        var linking = NodeAddress.newBuilder().setAccountId(rows.getString(9)).setGraphId(rows.getString(10))
+                                .setGraphAddressId(rows.getString(11)).setDocId(rows.getString(12)).build();
+                        result.add(new CatalogRecords.Backlink(linking, rows.getLong(13),
+                                parseEntry(rows.getBytes(14), rows.getString(15), linking), link(rows)));
+                    }
+                }
+                return List.copyOf(result);
+            }
+        });
+    }
+
+    /** One link row from its first eight columns. */
+    private static CatalogRecords.Link link(ResultSet rows) throws SQLException {
+        var target = NodeAddress.newBuilder().setAccountId(rows.getString(4)).setGraphId(rows.getString(5))
+                .setGraphAddressId(rows.getString(6)).setDocId(rows.getString(7)).build();
+        long pinned = rows.getLong(8);
+        var revision = rows.wasNull() ? OptionalLong.empty() : OptionalLong.of(pinned);
+        return new CatalogRecords.Link(rows.getString(1), rows.getInt(2), rows.getString(3), target, revision);
     }
 
     /** The derived columns of a revision, in the order {@link #bindLookup} binds them. */
@@ -485,9 +641,9 @@ public final class PostgresCatalog implements Catalog {
                     connection.rollback();
                     return denied.get();
                 }
-                var documentId = compareAndSet(connection, commit, commit.expected().hasNone(), next - 1,
+                var applied = compareAndSet(connection, commit, commit.expected().hasNone(), next - 1,
                         manifest.getTombstone(), manifest);
-                if (documentId.isEmpty()) {
+                if (applied.isEmpty()) {
                     connection.rollback();
                     conflicted = true;
                 } else {
@@ -496,7 +652,7 @@ public final class PostgresCatalog implements Catalog {
                         connection.rollback();
                         return new SourcePurged(purged.get());
                     }
-                    var sent = writeAccession(connection, documentId.get(), commit, next);
+                    var sent = writeAccession(connection, applied.get().documentId(), commit, next, applied.get().lookup());
                     connection.commit();
                     remember(sent);
                     return new Committed();
@@ -600,7 +756,10 @@ public final class PostgresCatalog implements Catalog {
      * sets them from the commit's lookup, a tombstone clears them, and a commit
      * that carries CORE keeps the row's current lookup.
      */
-    private static Optional<Long> compareAndSet(Connection connection, Commit commit, boolean create,
+    /** The moved pointer's row and the lookup the revision now has: written, sourced or carried. */
+    private record Applied(long documentId, Optional<DocumentLookup> lookup) {}
+
+    private static Optional<Applied> compareAndSet(Connection connection, Commit commit, boolean create,
             long expectedRevision, boolean tombstone, StoredManifest manifest) throws SQLException {
         var address = commit.address();
         var now = toTimestamp(manifest.getCommittedAt());
@@ -623,7 +782,8 @@ public final class PostgresCatalog implements Catalog {
                     if (!rows.next()) return Optional.empty();
                     long documentId = rows.getLong(1);
                     writeMetadata(connection, documentId, lookup);
-                    return Optional.of(documentId);
+                    writeLinks(connection, documentId, commit.links());
+                    return Optional.of(new Applied(documentId, lookup));
                 }
             }
         }
@@ -664,8 +824,13 @@ public final class PostgresCatalog implements Catalog {
             try (var rows = update.executeQuery()) {
                 if (!rows.next()) return Optional.empty();
                 long documentId = rows.getLong(1);
-                if (!carried) writeMetadata(connection, documentId, lookup);
-                return Optional.of(documentId);
+                // A carried CORE keeps its metadata and link rows; a write or source replaces
+                // them, and a tombstone, which carries neither, clears them.
+                if (!carried) {
+                    writeMetadata(connection, documentId, lookup);
+                    writeLinks(connection, documentId, commit.links());
+                }
+                return Optional.of(new Applied(documentId, lookup));
             }
         }
     }
@@ -703,8 +868,8 @@ public final class PostgresCatalog implements Catalog {
     }
 
     /** Writes the accession's rows; returns the artifact digests it sent. */
-    private List<String> writeAccession(Connection connection, long documentId, Commit commit, long revision)
-            throws SQLException {
+    private List<String> writeAccession(Connection connection, long documentId, Commit commit, long revision,
+            Optional<DocumentLookup> lookup) throws SQLException {
         var now = Timestamp.from(Instant.now());
         try (var insert = connection.prepareStatement("""
                 INSERT INTO catalog_objects (stack_id, object_key, sha256, length, created_at) VALUES (?, ?, ?, ?, ?)""")) {
@@ -739,8 +904,8 @@ public final class PostgresCatalog implements Catalog {
         var manifestBytes = manifest.toByteArray();
         try (var insert = connection.prepareStatement("""
                 INSERT INTO catalog_revisions (document_id, revision, previous_revision, operation_id, intent_sha256,
-                    tombstone, validation_status, committed_at, manifest, manifest_sha256)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+                    tombstone, validation_status, committed_at, manifest, manifest_sha256, structured_data_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
             insert.setLong(1, documentId);
             insert.setLong(2, revision);
             insert.setLong(3, revision - 1);
@@ -751,6 +916,8 @@ public final class PostgresCatalog implements Catalog {
             insert.setTimestamp(8, toTimestamp(manifest.getCommittedAt()));
             insert.setBytes(9, manifestBytes);
             insert.setString(10, sha256Hex(manifestBytes));
+            insert.setString(11, lookup.filter(DocumentLookup::hasStructuredDataType)
+                    .map(DocumentLookup::getStructuredDataType).orElse(null));
             insert.executeUpdate();
         }
         try (var insert = connection.prepareStatement("""

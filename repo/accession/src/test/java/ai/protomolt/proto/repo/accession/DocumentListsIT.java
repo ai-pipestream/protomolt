@@ -335,7 +335,9 @@ class DocumentListsIT {
 
             f.stack.reset();
             assertThat(new CatalogEntryRebuild(f.catalog, f.reads).rebuild("a")).isEqualTo(2);
-            assertThat(f.stack.opens.get()).as("one CORE read per live document").isEqualTo(1);
+            // One read per CORE object: d1's current CORE serves its lookup, links and type; d2's
+            // tombstone has none, and its revision 1 CORE is read once to rebuild that revision's type.
+            assertThat(f.stack.opens.get()).as("one read per stored CORE object").isEqualTo(2);
             assertThat(ids(lists, filtered(request, DocumentFilter.newBuilder().setTitle("Kept")))).containsExactly("d1");
             assertThat(ids(lists, filtered(request, DocumentFilter.newBuilder().setTitle("Wrong")))).isEmpty();
             assertThat(ids(lists, filtered(request, DocumentFilter.newBuilder().setSourceMimeType("text/plain")))).containsExactly("d1");
