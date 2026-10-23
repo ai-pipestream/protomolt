@@ -6,13 +6,16 @@ import {
   FileDescriptorProtoSchema,
   FileDescriptorSetSchema,
   anyPack,
+  file_google_protobuf_any,
   type FileDescriptorProto,
 } from '@bufbuild/protobuf/wkt'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { file_ai_protomolt_proto_types_v1_concepts } from '@/gen/ai/protomolt/proto/types/v1/concepts_pb'
 import { DocumentSchema, SearchMetadataSchema } from '@/gen/ai/protomolt/proto/repo/v1/document_pb'
+import { RepositoryAnyResolutionSchema } from '@/gen/ai/protomolt/proto/repo/v1/any_resolution_pb'
 import { RepositorySchemaAssetReferenceSchema } from '@/gen/ai/protomolt/proto/repo/v1/schema_asset_reference_pb'
+import { RepositorySchemaOccurrenceStepSchema } from '@/gen/ai/protomolt/proto/repo/v1/schema_occurrence_pb'
 import { DocumentService, GetSchemaDescriptorResponseSchema } from '@/gen/ai/protomolt/proto/repo/v2/document_service_pb'
 import {
   DocumentManifestSchema,
@@ -20,6 +23,7 @@ import {
   PartManifestEntrySchema,
   PartSelectorSchema,
   PartState,
+  OccurrenceLocatorSchema,
   ResolvedOccurrenceSchema,
   RevisionValidationSchema,
   SaveOwnerSchema,
@@ -92,7 +96,7 @@ function taggedSchema(): { set: Uint8Array; desc: DescMessage } {
     name: 'test/v1/tagged.proto',
     package: 'test.v1',
     syntax: 'proto3',
-    dependency: ['ai/protomolt/proto/types/v1/concepts.proto', 'ai/protomolt/proto/validate/v1/validate.proto'],
+    dependency: ['ai/protomolt/proto/types/v1/concepts.proto', 'ai/protomolt/proto/validate/v1/validate.proto', 'google/protobuf/any.proto'],
     messageType: [
       {
         name: 'Tagged',
@@ -101,12 +105,13 @@ function taggedSchema(): { set: Uint8Array; desc: DescMessage } {
           { name: 'extra', number: 2, jsonName: 'extra', label: FieldDescriptorProto_Label.REPEATED, type: FieldDescriptorProto_Type.MESSAGE, typeName: ref, options: bound() },
           { name: 'untagged', number: 3, jsonName: 'untagged', label: FieldDescriptorProto_Label.OPTIONAL, type: FieldDescriptorProto_Type.MESSAGE, typeName: ref },
           { name: 'title', number: 4, jsonName: 'title', label: FieldDescriptorProto_Label.OPTIONAL, type: FieldDescriptorProto_Type.STRING },
+          { name: 'payloads', number: 5, jsonName: 'payloads', label: FieldDescriptorProto_Label.REPEATED, type: FieldDescriptorProto_Type.MESSAGE, typeName: '.google.protobuf.Any' },
         ],
       },
     ],
   })
   const files = new Map<string, FileDescriptorProto>()
-  for (const dep of [file_ai_protomolt_proto_types_v1_concepts, file_ai_protomolt_proto_validate_v1_validate]) {
+  for (const dep of [file_ai_protomolt_proto_types_v1_concepts, file_ai_protomolt_proto_validate_v1_validate, file_google_protobuf_any]) {
     for (const f of fromBinary(FileDescriptorSetSchema, descriptorSetOf(dep)).file) files.set(f.name, f)
   }
   files.set(file.name, file)
@@ -125,7 +130,7 @@ describe('flatten', () => {
       untagged: { schemeId: 'topics', conceptId: 'not-a-tag' },
       title: 'Q3 "draft"',
     } as never)
-    const flat = flatten(desc, message, AnySchemas.none())
+    const flat = flatten(desc, message, AnySchemas.none(), part(DocumentPart.CORE))
     expect(flat.lines).toEqual([
       'subject.scheme_id = "topics"',
       'subject.concept_id = "energy"',
@@ -138,23 +143,40 @@ describe('flatten', () => {
     expect(flat.concepts).toEqual(['subject = topics/energy', 'extra[0] = topics/solar'])
   })
 
-  it('enters a typed Any only with the schema the revision retained for that exact payload', async () => {
+  it('enters a typed Any only where the revision resolved it, by part and occurrence path', async () => {
     const { set, desc } = taggedSchema()
-    const payload = create(desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never)
+    const setSha = createHash('sha256').update(set).digest('hex')
+    // The same inner payload twice in a repeated Any, inside the root structured_data Any.
+    const inner = anyPack(desc, create(desc, { subject: { schemeId: 'topics', conceptId: 'wind' } } as never))
+    const root = anyPack(desc, create(desc, { title: 'Wind report', payloads: [inner, inner] } as never))
     const document = create(DocumentSchema, {
       docId: 'doc-1',
       searchMetadata: create(SearchMetadataSchema, { title: 'Wind report' }),
-      structuredData: anyPack(desc, payload),
+      structuredData: root,
     })
-    const packed = document.structuredData!
-    const setSha = createHash('sha256').update(set).digest('hex')
+    const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+    const boundary = (any: typeof root) =>
+      create(RepositorySchemaOccurrenceStepSchema, {
+        step: {
+          case: 'anyBoundary',
+          value: create(RepositoryAnyResolutionSchema, { typeUrl: any.typeUrl, valueSha256: sha(any.value), valueSizeBytes: BigInt(any.value.length) }),
+        },
+      })
+    const field = (value: number) => create(RepositorySchemaOccurrenceStepSchema, { step: { case: 'fieldNumber', value } })
+    const index = (value: number) => create(RepositorySchemaOccurrenceStepSchema, { step: { case: 'repeatedIndex', value } })
+    const resolved = (steps: ReturnType<typeof field>[], any: typeof root) =>
+      create(ResolvedOccurrenceSchema, {
+        occurrence: create(OccurrenceLocatorSchema, { part: part(DocumentPart.CORE), steps }),
+        schema: create(RepositorySchemaAssetReferenceSchema, { typeUrl: any.typeUrl, descriptorSha256: setSha }),
+        payloadSha256: sha(any.value),
+        payloadLength: BigInt(any.value.length),
+      })
+    const structuredData = DocumentSchema.field.structuredData.number
+    // Only payloads[0] is resolved: payloads[1] has identical bytes but was attested opaque.
     const validation = create(RevisionValidationSchema, {
       resolvedOccurrences: [
-        create(ResolvedOccurrenceSchema, {
-          schema: create(RepositorySchemaAssetReferenceSchema, { typeUrl: packed.typeUrl, descriptorSha256: setSha }),
-          payloadSha256: createHash('sha256').update(packed.value).digest('hex'),
-          payloadLength: BigInt(packed.value.length),
-        }),
+        resolved([field(structuredData), boundary(root)], root),
+        resolved([field(structuredData), boundary(root), field(5), index(0), boundary(inner)], inner),
       ],
     })
     const asked: string[] = []
@@ -167,21 +189,28 @@ describe('flatten', () => {
       }),
     )
     const schemas = await AnySchemas.load(clients.documents, testAddress(), 2n, validation, new AbortController().signal)
-    const flat = flatten(DocumentSchema, document, schemas)
     expect(asked).toEqual([setSha])
+    const flat = flatten(DocumentSchema, document, schemas, part(DocumentPart.CORE))
     expect(searchMetadataLines(flat.lines)).toEqual(['search_metadata.title = "Wind report"'])
-    expect(flat.lines).toContain(`structured_data @type = ${packed.typeUrl}`)
-    expect(flat.lines).toContain('structured_data.subject.concept_id = "wind"')
-    expect(flat.concepts).toEqual(['structured_data.subject = topics/wind'])
+    expect(flat.lines).toContain(`structured_data @type = ${root.typeUrl}`)
+    expect(flat.lines).toContain('structured_data.title = "Wind report"')
+    expect(flat.lines).toContain('structured_data.payloads[0].subject.concept_id = "wind"')
+    expect(flat.lines).toContain(`structured_data.payloads[1] = ${inner.value.length} B, not resolved at this place in this revision`)
+    expect(flat.lines.some((line) => line.startsWith('structured_data.payloads[1].subject'))).toBe(false)
+    expect(flat.concepts).toEqual(['structured_data.payloads[0].subject = topics/wind'])
 
-    // Another payload of the same type was not resolved at this revision: it is not entered.
-    const other = create(DocumentSchema, { structuredData: anyPack(desc, create(desc, { title: 'other' } as never)) })
-    const unresolved = flatten(DocumentSchema, other, schemas)
-    expect(unresolved.lines).toEqual([
-      `structured_data @type = ${packed.typeUrl}`,
-      `structured_data = ${other.structuredData!.value.length} B, no schema retained for this payload`,
-    ])
-    expect(unresolved.concepts).toEqual([])
+    // The same resolved path in another part is not this occurrence.
+    const parsed = flatten(DocumentSchema, document, schemas, part(DocumentPart.PARSED))
+    expect(parsed.lines).toHaveLength(4)
+    expect(parsed.lines).toEqual(
+      expect.arrayContaining([
+        'doc_id = "doc-1"',
+        `structured_data @type = ${root.typeUrl}`,
+        `structured_data = ${root.value.length} B, not resolved at this place in this revision`,
+        'search_metadata.title = "Wind report"',
+      ]),
+    )
+    expect(parsed.concepts).toEqual([])
   })
 
   it('refuses a descriptor set that does not hash to the retained digest', async () => {
@@ -189,6 +218,7 @@ describe('flatten', () => {
     const validation = create(RevisionValidationSchema, {
       resolvedOccurrences: [
         create(ResolvedOccurrenceSchema, {
+          occurrence: create(OccurrenceLocatorSchema, { part: part(DocumentPart.CORE) }),
           schema: create(RepositorySchemaAssetReferenceSchema, { typeUrl: 'type.googleapis.com/test.v1.Tagged', descriptorSha256: 'f'.repeat(64) }),
           payloadSha256: 'e'.repeat(64),
         }),

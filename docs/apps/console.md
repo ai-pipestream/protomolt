@@ -328,8 +328,10 @@ the procedures the screens call, listed in `ConsoleProcedures` in
   the search metadata, the bound SKOS concept tags, the outbound links, and the
   decoded CORE and PARSED fragments. A fragment is decoded with the schema its
   revision retained and flattened into one `path = value` line per set field
-  by protobuf reflection; a typed Any is entered only when the revision
-  retained a schema for that exact payload (type URL and SHA-256), and a
+  by protobuf reflection; a typed Any is entered only where the revision's
+  validation record resolved it (the same part and occurrence path, ending at
+  a boundary with the payload's type URL, SHA-256 and size), so an opaque
+  payload with the same bytes as a typed one elsewhere stays opaque, and a
   `ConceptRef` field that declares `concept_schemes` is listed as a tag. Link
   lines leave out the target status, which describes the target now rather
   than the revision. A section whose read failed shows its failure while the
