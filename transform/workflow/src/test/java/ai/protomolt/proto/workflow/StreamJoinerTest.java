@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -315,29 +317,47 @@ class StreamJoinerTest {
         assertThat(leftCancelled).isTrue();
     }
 
-    /**
-     * Both sides wait in turn inside one take(), so a quiet interval must not spend the
-     * caller's budget twice over.
-     */
+    /** The left poll consumes the deadline; the right must not begin another wait. */
     @Test
-    void takeStaysInsideTheRequestedTimeout() throws Exception {
+    void takeDoesNotWaitOnRightAfterLeftConsumesTheDeadline() throws Exception {
         List<FileDescriptor> files = List.of(file);
+        Duration timeout = Duration.ofMillis(20);
+        AtomicLong now = new AtomicLong();
+        AtomicInteger leftRequests = new AtomicInteger();
+        AtomicInteger rightRequests = new AtomicInteger();
+        Channel left = recordingRequests(leftRequests, () -> now.set(timeout.toNanos()));
+        Channel right = recordingRequests(rightRequests, () -> { });
         joiner = new StreamJoiner(StreamJoiner.Mode.ZIP,
-                new StreamJoiner.Side("click", channel,
+                new StreamJoiner.Side("click", left,
                         CompiledWorkflow.resolveMethod(files, "sj.test.Quiet/Watch"),
                         subscribe(0, false), null),
-                new StreamJoiner.Side("profile", channel,
+                new StreamJoiner.Side("profile", right,
                         CompiledWorkflow.resolveMethod(files, "sj.test.Quiet/Watch"),
                         subscribe(0, false), null),
-                10, file.findMessageTypeByName("Enriched"), List.of(), List.of());
+                10, file.findMessageTypeByName("Enriched"), List.of(), List.of(), now::get);
 
-        long start = System.nanoTime();
-        for (int i = 0; i < 20; i++) {
-            assertThat(joiner.take(1, Duration.ofMillis(20))).isEmpty();
-        }
-        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
-        // 20 x 20ms of budget; twice the budget per side would land near 800ms.
-        assertThat(elapsedMillis).isLessThan(600);
+        assertThat(joiner.take(1, timeout)).isEmpty();
+        assertThat(leftRequests).hasValue(1);
+        assertThat(rightRequests).hasValue(0);
+    }
+
+    private static Channel recordingRequests(AtomicInteger requests, Runnable requested) {
+        return new Channel() {
+            @Override
+            public <I, O> ClientCall<I, O> newCall(MethodDescriptor<I, O> method,
+                                                  CallOptions options) {
+                return new ForwardingClientCall.SimpleForwardingClientCall<>(channel.newCall(method, options)) {
+                    @Override public void request(int count) {
+                        if (count > 0) {
+                            requests.addAndGet(count);
+                            requested.run();
+                        }
+                        super.request(count);
+                    }
+                };
+            }
+            @Override public String authority() { return channel.authority(); }
+        };
     }
 
     @Test
