@@ -160,6 +160,7 @@ def supportedModules = [
         'protomolt-repo-archive',
         'protomolt-repo-engine',
         'protomolt-repo-service',
+        'protomolt-repo-fixtures',
         'protomolt-repo-admission',
         'protomolt-repo-schema-registry',
         'protomolt-account-proto',
