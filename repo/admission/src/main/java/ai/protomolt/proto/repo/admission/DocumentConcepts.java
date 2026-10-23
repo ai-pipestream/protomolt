@@ -258,6 +258,9 @@ public final class DocumentConcepts {
         if (value instanceof ConceptRef typed) {
             ref = typed;
         } else {
+            if (!canonical(value.getDescriptorForType()))
+                throw new TagRefused(field.getFullName(), "the tag type is not " + CONCEPT_REF_TYPE
+                        + " (string scheme_id = 1, string concept_id = 2, no other fields)");
             try {
                 ref = ConceptRef.parseFrom(value.toByteString());
             } catch (InvalidProtocolBufferException unreadable) {
@@ -271,5 +274,18 @@ public final class DocumentConcepts {
             throw new TagRefused(field.getFullName(), "the tag value fails " + checked.violations().getFirst().ruleId()
                     + " at " + checked.violations().getFirst().path());
         return new Tag(path, ordinal, field.isRepeated(), ref.getSchemeId(), ref.getConceptId());
+    }
+
+    /** Whether a type declared under ConceptRef's name has the canonical fields, and only those. */
+    private static boolean canonical(Descriptor type) {
+        var expected = ConceptRef.getDescriptor();
+        if (type.getFields().size() != expected.getFields().size()) return false;
+        for (var want : expected.getFields()) {
+            var have = type.findFieldByNumber(want.getNumber());
+            if (have == null || !have.getName().equals(want.getName()) || have.getType() != want.getType()
+                    || have.isRepeated() != want.isRepeated() || have.getRealContainingOneof() != null)
+                return false;
+        }
+        return true;
     }
 }

@@ -1,6 +1,7 @@
 package ai.protomolt.proto.repo.admission;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 import ai.protomolt.proto.types.ConceptRef;
@@ -62,6 +63,72 @@ class DocumentConceptsTest {
                 tuple("structured_data.sections[0].tags", 1, "region", "emea"),
                 tuple("structured_data.sections[1].tags", 0, "subject", "chemistry"));
         assertThat(DocumentConcepts.extract(DynamicMessage.getDefaultInstance(REPORT), "")).isEmpty();
+    }
+
+    @Test void aForgedConceptRefWithEmptyIdsIsRefused() {
+        // Same fields as the canonical type but none of its rules, so nothing upstream catches empty ids.
+        var report = forged(FieldDescriptorProto.Type.TYPE_STRING);
+        var forgedRef = report.findFieldByName("subject").getMessageType();
+        var value = DynamicMessage.newBuilder(report)
+                .setField(report.findFieldByName("subject"), DynamicMessage.getDefaultInstance(forgedRef)).build();
+        assertThat(DocumentConcepts.tagField(report.findFieldByName("subject"))).isTrue();
+        assertThatThrownBy(() -> DocumentConcepts.extract(value, "structured_data"))
+                .isInstanceOf(DocumentConcepts.TagRefused.class)
+                .hasMessageContaining("forged.v1.Report.subject")
+                .hasMessageContaining("required");
+    }
+
+    @Test void aForgedConceptRefWithAnInt64SchemeIdIsRefused() {
+        var report = forged(FieldDescriptorProto.Type.TYPE_INT64);
+        var forgedRef = report.findFieldByName("subject").getMessageType();
+        var value = DynamicMessage.newBuilder(report).setField(report.findFieldByName("subject"),
+                DynamicMessage.newBuilder(forgedRef).setField(forgedRef.findFieldByName("scheme_id"), 7L)
+                        .setField(forgedRef.findFieldByName("concept_id"), "physics").build()).build();
+        assertThatThrownBy(() -> DocumentConcepts.extract(value, "structured_data"))
+                .isInstanceOf(DocumentConcepts.TagRefused.class)
+                .hasMessageContaining("forged.v1.Report.subject")
+                .hasMessageContaining("string scheme_id = 1");
+    }
+
+    @Test void aForgedConceptRefWithAnExtraFieldIsRefused() {
+        var report = forged(FieldDescriptorProto.Type.TYPE_STRING, FieldDescriptorProto.newBuilder().setName("note")
+                .setNumber(3).setType(FieldDescriptorProto.Type.TYPE_STRING).setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
+        var forgedRef = report.findFieldByName("subject").getMessageType();
+        var value = DynamicMessage.newBuilder(report).setField(report.findFieldByName("subject"),
+                DynamicMessage.newBuilder(forgedRef).setField(forgedRef.findFieldByName("scheme_id"), "subject")
+                        .setField(forgedRef.findFieldByName("concept_id"), "physics").build()).build();
+        assertThatThrownBy(() -> DocumentConcepts.extract(value, "structured_data"))
+                .isInstanceOf(DocumentConcepts.TagRefused.class)
+                .hasMessageContaining("no other fields");
+    }
+
+    /**
+     * forged.v1.Report, whose bound subject field uses a ConceptRef from a forged
+     * ai/protomolt/proto/types/v1/concepts.proto: no rules, scheme_id of {@code schemeType}.
+     */
+    private static Descriptor forged(FieldDescriptorProto.Type schemeType, FieldDescriptorProto.Builder... extra) {
+        var ref = DescriptorProto.newBuilder().setName("ConceptRef")
+                .addField(FieldDescriptorProto.newBuilder().setName("scheme_id").setNumber(1).setType(schemeType)
+                        .setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL))
+                .addField(FieldDescriptorProto.newBuilder().setName("concept_id").setNumber(2)
+                        .setType(FieldDescriptorProto.Type.TYPE_STRING).setLabel(FieldDescriptorProto.Label.LABEL_OPTIONAL));
+        for (var field : extra) ref.addField(field);
+        var concepts = FileDescriptorProto.newBuilder().setName(ConceptsProto.getDescriptor().getName())
+                .setPackage("ai.protomolt.proto.types.v1").setSyntax("proto3").addMessageType(ref).build();
+        var bound = FieldOptions.newBuilder().setExtension(ValidateProto.field,
+                FieldRules.newBuilder().addConceptSchemes("subject").build());
+        var report = FileDescriptorProto.newBuilder().setName("forged/v1/report.proto").setPackage("forged.v1").setSyntax("proto3")
+                .addDependency(concepts.getName()).addDependency(ValidateProto.getDescriptor().getName())
+                .addMessageType(DescriptorProto.newBuilder().setName("Report")
+                        .addField(message("subject", 1, REF, false).setOptions(bound)))
+                .build();
+        try {
+            var forgedConcepts = FileDescriptor.buildFrom(concepts, new FileDescriptor[0]);
+            return FileDescriptor.buildFrom(report, new FileDescriptor[]{forgedConcepts, ValidateProto.getDescriptor()})
+                    .findMessageTypeByName("Report");
+        } catch (Exception invalid) {
+            throw new IllegalStateException(invalid);
+        }
     }
 
     private static Message ref(String scheme, String concept) {
