@@ -551,4 +551,79 @@ class ConnectGatewayTest {
         assertThat(gateway.procedures()).containsExactlyInAnyOrder(
                 "test.v1.Echo/Say", "test.v1.Echo/Count", "test.v1.Echo/Collect");
     }
+
+    @Test
+    void anUnauthenticatedRequestIsRefusedWithoutReadingTheBody() throws Exception {
+        BodyProbeExchange exchange = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE);
+        gateway.handle(exchange);
+        assertThat(exchange.status).isEqualTo(401);
+        assertThat(new String(exchange.body.toByteArray(), StandardCharsets.UTF_8))
+                .contains("unauthenticated");
+        assertThat(exchange.bodyReads).hasValue(0);
+        assertThat(invocations).hasValue(0);
+    }
+
+    @Test
+    void anAuthenticatedRequestStillReadsTheBodyAfterTheCredentialCheck() throws Exception {
+        BodyProbeExchange exchange = new BodyProbeExchange(
+                ConnectGateway.PATH + "/" + SERVICE + "/Say", ConnectGateway.UNARY_CONTENT_TYPE);
+        exchange.getRequestHeaders().put("Authorization", List.of("Bearer " + OPERATOR));
+        gateway.handle(exchange);
+        assertThat(exchange.status).isEqualTo(200);
+        assertThat(exchange.bodyReads.get()).isPositive();
+        assertThat(invocations).hasValue(1);
+    }
+
+    /** An exchange whose request body counts its reads, so a pre-auth read is visible. */
+    private static final class BodyProbeExchange extends com.sun.net.httpserver.HttpExchange {
+
+        final java.util.concurrent.atomic.AtomicInteger bodyReads = new java.util.concurrent.atomic.AtomicInteger();
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        volatile int status = -1;
+
+        private final com.sun.net.httpserver.Headers request = new com.sun.net.httpserver.Headers();
+        private final com.sun.net.httpserver.Headers response = new com.sun.net.httpserver.Headers();
+        private final URI uri;
+        private final java.io.InputStream requestBody;
+
+        private BodyProbeExchange(String path, String contentType) {
+            this.uri = URI.create(path);
+            this.request.put("Content-Type", List.of(contentType));
+            byte[] payload = StringValue.of("x").toByteArray();
+            this.requestBody = new java.io.InputStream() {
+                private final ByteArrayInputStream bytes = new ByteArrayInputStream(payload);
+
+                @Override
+                public int read() {
+                    bodyReads.incrementAndGet();
+                    return bytes.read();
+                }
+
+                @Override
+                public int read(byte[] buffer, int offset, int length) {
+                    bodyReads.incrementAndGet();
+                    return bytes.read(buffer, offset, length);
+                }
+            };
+        }
+
+        @Override public com.sun.net.httpserver.Headers getRequestHeaders() { return request; }
+        @Override public com.sun.net.httpserver.Headers getResponseHeaders() { return response; }
+        @Override public URI getRequestURI() { return uri; }
+        @Override public String getRequestMethod() { return "POST"; }
+        @Override public com.sun.net.httpserver.HttpContext getHttpContext() { return null; }
+        @Override public void close() { }
+        @Override public java.io.InputStream getRequestBody() { return requestBody; }
+        @Override public java.io.OutputStream getResponseBody() { return body; }
+        @Override public void sendResponseHeaders(int code, long length) { status = code; }
+        @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(0); }
+        @Override public int getResponseCode() { return status; }
+        @Override public InetSocketAddress getLocalAddress() { return new InetSocketAddress(0); }
+        @Override public String getProtocol() { return "HTTP/1.1"; }
+        @Override public Object getAttribute(String name) { return null; }
+        @Override public void setAttribute(String name, Object value) { }
+        @Override public void setStreams(java.io.InputStream in, java.io.OutputStream out) { }
+        @Override public com.sun.net.httpserver.HttpPrincipal getPrincipal() { return null; }
+    }
 }

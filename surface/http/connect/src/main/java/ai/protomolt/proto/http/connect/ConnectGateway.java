@@ -306,13 +306,9 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
             reject(exchange, streaming, Status.INVALID_ARGUMENT.withDescription(e.getMessage()));
             return;
         }
-        byte[] request;
-        try {
-            request = streaming ? readEnvelope(exchange.getRequestBody()) : readBounded(exchange.getRequestBody());
-        } catch (RequestRefused e) {
-            reject(exchange, streaming, e.status);
-            return;
-        }
+        // Resolve the caller from headers alone before touching the body, so an
+        // unauthenticated request is rejected without the gateway reading (and
+        // buffering) anything it sent.
         AuthenticatedCaller caller;
         try {
             caller = callers.resolve(view(headers)).orElse(null);
@@ -325,6 +321,13 @@ public final class ConnectGateway implements HttpHandler, AutoCloseable {
         if (caller == null) {
             reject(exchange, streaming, Status.UNAUTHENTICATED.withDescription(
                     "missing, unknown or expired credential"));
+            return;
+        }
+        byte[] request;
+        try {
+            request = streaming ? readEnvelope(exchange.getRequestBody()) : readBounded(exchange.getRequestBody());
+        } catch (RequestRefused e) {
+            reject(exchange, streaming, e.status);
             return;
         }
         CallOptions options = deadline == null ? CallOptions.DEFAULT : CallOptions.DEFAULT.withDeadline(deadline);
