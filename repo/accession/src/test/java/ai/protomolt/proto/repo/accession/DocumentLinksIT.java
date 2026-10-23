@@ -63,6 +63,7 @@ class DocumentLinksIT {
     static final Descriptor UNLINKED = FILE.findMessageTypeByName("Unlinked");
     static final String CITATION_URL = "type.googleapis.com/test.links.v1.Citation";
     static final String UNLINKED_URL = "type.googleapis.com/test.links.v1.Unlinked";
+    static final String ANY_URL = "type.googleapis.com/google.protobuf.Any";
     static final Descriptor DEEP = FILE.findMessageTypeByName("Deep0");
     static final String DEEP_URL = "type.googleapis.com/test.links.v1.Deep0";
     private static final String CITATION_TYPE = "test.links.v1.Citation";
@@ -539,6 +540,29 @@ class DocumentLinksIT {
         }
     }
 
+    @Test void anAnyHoldingAnAnyIsUnwrappedForItsLinks() throws Exception {
+        try (var f = new AccessionFixture()) {
+            var saves = saves(f);
+            var target = address(ACCOUNT, "t");
+            saves.save(processAuthority(), save("t", target, document("t", citation(c -> {}), "reader")));
+            var src = address(ACCOUNT, "src");
+            saves.save(processAuthority(), save("src", src, document("src", citation(c -> c.setField(
+                    CITATION.findFieldByName("nested"), wrapped(link(fixed(target, null))))), "reader")));
+            assertThat(f.catalog.links(src)).extracting(CatalogRecords.Link::fieldPath)
+                    .containsExactly("structured_data.nested.cites");
+            assertThat(linkReads(f).listLinks(reader("reader"), ListLinksRequest.newBuilder().setAddress(src).build())
+                    .getLinksList()).extracting(ResolvedLink::getFieldPath).containsExactly("structured_data.nested.cites");
+
+            // The doubly wrapped target is gated like any other.
+            var rejection = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("wrapped-missing",
+                    address(ACCOUNT, "wrapped-missing"), document("wrapped-missing", citation(c -> c.setField(
+                            CITATION.findFieldByName("nested"), wrapped(link(fixed(address(ACCOUNT, "nope"), null))))),
+                            "reader"))),
+                    Status.Code.FAILED_PRECONDITION, RejectionReason.REJECTION_REASON_LINK_TARGET_NOT_FOUND);
+            assertThat(rejection.getMessage()).isEqualTo("The target of link structured_data.nested.cites is not found");
+        }
+    }
+
     @Test void aLinkUnderAMapValueThroughAnAnyIsRefused() throws Exception {
         try (var f = new AccessionFixture()) {
             var saves = saves(f);
@@ -604,15 +628,17 @@ class DocumentLinksIT {
                 Clock.systemUTC());
     }
 
-    /** The fixture's registered types, plus Citation and Unlinked. */
+    /** The fixture's registered types, plus Citation, Unlinked, Deep0 and google.protobuf.Any. */
     static DocumentSchemaAdmission.Resolver resolver() {
         var base = AccessionFixture.resolver();
         var citation = definition(CITATION, CITATION_URL);
         var unlinked = definition(UNLINKED, UNLINKED_URL);
         var deep = definition(DEEP, DEEP_URL);
+        var any = definition(Any.getDescriptor(), ANY_URL);
         return selection -> CITATION_URL.equals(selection.typeUrl()) ? citation
                 : UNLINKED_URL.equals(selection.typeUrl()) ? unlinked
-                : DEEP_URL.equals(selection.typeUrl()) ? deep : base.select(selection);
+                : DEEP_URL.equals(selection.typeUrl()) ? deep
+                : ANY_URL.equals(selection.typeUrl()) ? any : base.select(selection);
     }
 
     private static DocumentSchemaAdmission.Definition definition(Descriptor type, String typeUrl) {
@@ -683,6 +709,12 @@ class DocumentLinksIT {
         var builder = DynamicMessage.newBuilder(CITATION).setField(CITATION.findFieldByName("title"), "citation");
         fill.accept(builder);
         return builder.build();
+    }
+
+    /** A Citation holding one link, packed into an Any that is itself packed into an Any. */
+    static Message wrapped(Message link) {
+        var inner = packed(citation(c -> c.setField(CITATION.findFieldByName("cites"), link)));
+        return Any.newBuilder().setTypeUrl(ANY_URL).setValue(inner.toByteString()).build();
     }
 
     /** A Citation packed into a nested Any. */

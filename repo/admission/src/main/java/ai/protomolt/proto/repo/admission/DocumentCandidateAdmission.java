@@ -252,7 +252,9 @@ public final class DocumentCandidateAdmission {
             // Fragments decode with the container version, not the compiled Document: a field
             // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
             var type = container.schema().type();
-            requireLinks(type, "container");
+            // One set of link-schema checks for the whole candidate: each type is checked once.
+            var linkSchemas = new DocumentLinks.SchemaChecks(active);
+            requireLinks(linkSchemas, type, "container");
             var links = new ArrayList<DocumentLinks.Link>();
             var written = DynamicMessage.newBuilder(type);
             long total = 0;
@@ -385,11 +387,11 @@ public final class DocumentCandidateAdmission {
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
                         found = accepted.checked().payload().occurrences();
                         var decoded = accepted.checked().payload().decoded();
-                        requireLinks(decoded.getDescriptorForType(), envelope.getTypeUrl());
+                        requireLinks(linkSchemas, decoded.getDescriptorForType(), envelope.getTypeUrl());
                         final List<DocumentLinks.Link> rootLinks;
                         try {
                             rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()),
-                                    rootOccurrence(found), nestedPayloads(found, definitions, active));
+                                    rootOccurrence(found), nestedPayloads(found, definitions, active), linkSchemas);
                         } catch (DocumentLinks.SchemaRefused refused) {
                             throw new ContentRefused("link schema of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
@@ -442,9 +444,9 @@ public final class DocumentCandidateAdmission {
     }
 
     /** Checks the link declarations reachable from a type; a broken one refuses the content. */
-    private static void requireLinks(Descriptor type, String where) {
+    private static void requireLinks(DocumentLinks.SchemaChecks checks, Descriptor type, String where) {
         try {
-            DocumentLinks.requireLinkSchema(type);
+            checks.declares(type);
         } catch (DocumentLinks.SchemaRefused refused) {
             throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
         }
