@@ -274,7 +274,9 @@ public final class DocumentCandidateAdmission {
             // Fragments decode with the container version, not the compiled Document: a field
             // that version does not know is SCHEMA_MISSING, never dropped (decision 35).
             var type = container.schema().type();
-            requireLinks(type, "container");
+            // One set of link-schema checks for the whole candidate: each type is checked once.
+            var linkSchemas = new DocumentLinks.SchemaChecks(active);
+            requireLinks(linkSchemas, type, "container");
             var links = new ArrayList<DocumentLinks.Link>();
             var concepts = new ArrayList<DocumentConcepts.Tag>();
             var written = DynamicMessage.newBuilder(type);
@@ -414,12 +416,12 @@ public final class DocumentCandidateAdmission {
                     if (assessment instanceof DocumentPayloadAssessment.Accepted accepted) {
                         found = accepted.checked().payload().occurrences();
                         var decoded = accepted.checked().payload().decoded();
-                        requireLinks(decoded.getDescriptorForType(), envelope.getTypeUrl());
+                        requireLinks(linkSchemas, decoded.getDescriptorForType(), envelope.getTypeUrl());
                         var nestedPayloads = nestedPayloads(found, definitions, active);
                         final List<DocumentLinks.Link> rootLinks;
                         try {
                             rootLinks = DocumentLinks.extract(decoded, rootPath(type, root.access()),
-                                    rootOccurrence(found), nestedPayloads);
+                                    rootOccurrence(found), nestedPayloads, linkSchemas);
                         } catch (DocumentLinks.SchemaRefused refused) {
                             throw new ContentRefused("link schema of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
@@ -430,7 +432,7 @@ public final class DocumentCandidateAdmission {
                         final List<DocumentConcepts.Tag> rootTags;
                         try {
                             rootTags = DocumentConcepts.extract(decoded, rootPath(type, root.access()),
-                                    rootOccurrence(found), nestedPayloads);
+                                    rootOccurrence(found), nestedPayloads, active);
                         } catch (DocumentConcepts.TagRefused refused) {
                             throw new ContentRefused("concept tags of " + envelope.getTypeUrl() + ": " + refused.getMessage(), refused);
                         }
@@ -483,9 +485,9 @@ public final class DocumentCandidateAdmission {
     }
 
     /** Checks the link declarations reachable from a type; a broken one refuses the content. */
-    private static void requireLinks(Descriptor type, String where) {
+    private static void requireLinks(DocumentLinks.SchemaChecks checks, Descriptor type, String where) {
         try {
-            DocumentLinks.requireLinkSchema(type);
+            checks.declares(type);
         } catch (DocumentLinks.SchemaRefused refused) {
             throw new ContentRefused("link schema of " + where + ": " + refused.getMessage(), refused);
         }

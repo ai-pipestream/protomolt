@@ -118,40 +118,56 @@ public final class DocumentConcepts {
      * @return the tags found
      */
     public static List<Tag> extract(Message message, String prefix) {
-        return extract(message, prefix, List.of(), (at, typeUrl, value) -> Optional.empty());
+        return extract(message, prefix, List.of(), (at, typeUrl, value) -> Optional.empty(), () -> {});
     }
 
     /**
      * The tags in a message, entering each typed nested {@link Any} the unpacker
      * decodes without a path segment of its own, as the link walk does; a repeated
-     * Any takes {@code [i]} and an opaque one is not entered.
+     * Any takes {@code [i]}, an Any whose payload is itself an Any is unwrapped the same
+     * way, and an opaque one is not entered.
      *
      * @param message a decoded message
      * @param prefix the message's path in the document, or empty for the root
      * @param at the message's occurrence path, the steps admission recorded down to it
      * @param unpacker decodes nested typed Any values by occurrence, with their admitted schemas
+     * @param control run at every walk step, so a deadline or cancellation stops a large message
      * @return the tags found
      * @throws TagRefused when a map value reaches a tag through a typed Any, or a tag
      *         value is not a valid canonical ConceptRef
      */
     static List<Tag> extract(Message message, String prefix, List<DocumentSchemaOccurrences.Step> at,
-            DocumentLinks.Unpacker unpacker) {
-        Objects.requireNonNull(message); Objects.requireNonNull(prefix); Objects.requireNonNull(unpacker);
+            DocumentLinks.Unpacker unpacker, Runnable control) {
+        Objects.requireNonNull(message); Objects.requireNonNull(prefix); Objects.requireNonNull(at);
+        var walk = new Walk(Objects.requireNonNull(unpacker), Objects.requireNonNull(control));
         var found = new ArrayList<Tag>();
-        collect(message, prefix, new ArrayList<>(at), unpacker, found);
+        collect(message, prefix, new ArrayList<>(at), walk, found);
         return List.copyOf(found);
     }
 
     // The occurrence steps follow the link walk, which follows DocumentPayloadCheck's
     // evidence walk: a field step for each message field, then an index or map-key step
     // for each element, and the Any's boundary before its payload.
+    /** One extraction: the unpacker and the admission's control. */
+    private record Walk(DocumentLinks.Unpacker unpacker, Runnable control) {}
+
     private static void collect(Message message, String prefix, ArrayList<DocumentSchemaOccurrences.Step> at,
-            DocumentLinks.Unpacker unpacker, List<Tag> found) {
+            Walk walk, List<Tag> found) {
+        walk.control().run();
+        if (isAny(message.getDescriptorForType())) {
+            // A typed Any adds its boundary step and no path segment; an opaque one is not entered.
+            unpacked(message, at, walk).ifPresent(entered -> {
+                at.add(entered.boundary());
+                collect(entered.payload(), prefix, at, walk, found);
+                at.removeLast();
+            });
+            return;
+        }
         for (Map.Entry<FieldDescriptor, Object> entry : message.getAllFields().entrySet()) {
             var field = entry.getKey();
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
             if (field.isMapField()) {
-                requireNoTagUnderMap(field, field, (List<?>) entry.getValue(), at, unpacker);
+                requireNoTagUnderMap(field, field, (List<?>) entry.getValue(), at, walk);
                 continue;
             }
             var path = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
@@ -162,15 +178,9 @@ public final class DocumentConcepts {
             at.add(new DocumentSchemaOccurrences.Field(field.getNumber()));
             for (int i = 0; i < values.size(); i++) {
                 var value = (Message) values.get(i);
-                var element = field.isRepeated() ? path + "[" + i + "]" : path;
                 if (field.isRepeated()) at.add(new DocumentSchemaOccurrences.Index(i));
                 if (ref) found.add(tag(field, path, field.isRepeated() ? i : 0, value));
-                else if (isAny(field.getMessageType())) unpacked(value, at, unpacker).ifPresent(entered -> {
-                    at.add(entered.boundary());
-                    collect(entered.payload(), element, at, unpacker, found);
-                    at.removeLast();
-                });
-                else collect(value, element, at, unpacker, found);
+                else collect(value, field.isRepeated() ? path + "[" + i + "]" : path, at, walk, found);
                 if (field.isRepeated()) at.removeLast();
             }
             at.removeLast();
@@ -183,15 +193,15 @@ public final class DocumentConcepts {
 
     /** The typed payload of the Any at this occurrence path; empty when it is opaque. */
     private static Optional<DocumentLinks.Entered> unpacked(Message any, List<DocumentSchemaOccurrences.Step> at,
-            DocumentLinks.Unpacker unpacker) {
+            Walk walk) {
         var type = any.getDescriptorForType();
-        return unpacker.unpack(List.copyOf(at), (String) any.getField(type.findFieldByName("type_url")),
+        return walk.unpacker().unpack(List.copyOf(at), (String) any.getField(type.findFieldByName("type_url")),
                 (ByteString) any.getField(type.findFieldByName("value")));
     }
 
     /** Refuses a tag reached from the values of a map field through a typed Any. */
     private static void requireNoTagUnderMap(FieldDescriptor map, FieldDescriptor field, List<?> entries,
-            ArrayList<DocumentSchemaOccurrences.Step> at, DocumentLinks.Unpacker unpacker) {
+            ArrayList<DocumentSchemaOccurrences.Step> at, Walk walk) {
         var keyField = field.getMessageType().findFieldByNumber(1);
         var valueField = field.getMessageType().findFieldByName("value");
         if (valueField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) return;
@@ -199,7 +209,7 @@ public final class DocumentConcepts {
         for (var element : entries) {
             var entry = (Message) element;
             at.add(new DocumentSchemaOccurrences.MapKey(keyField.getType(), entry.getField(keyField)));
-            requireNoTagUnder(map, (Message) entry.getField(valueField), at, unpacker);
+            requireNoTagUnder(map, (Message) entry.getField(valueField), at, walk);
             at.removeLast();
         }
         at.removeLast();
@@ -207,13 +217,14 @@ public final class DocumentConcepts {
 
     /** Refuses a tag reached from a map value through a typed Any. */
     private static void requireNoTagUnder(FieldDescriptor map, Message value, ArrayList<DocumentSchemaOccurrences.Step> at,
-            DocumentLinks.Unpacker unpacker) {
+            Walk walk) {
+        walk.control().run();
         if (isAny(value.getDescriptorForType())) {
-            var entered = unpacked(value, at, unpacker);
+            var entered = unpacked(value, at, walk);
             if (entered.isEmpty()) return;
             if (declaresTags(entered.get().payload().getDescriptorForType())) throw new TagUnderMap(map.getFullName());
             at.add(entered.get().boundary());
-            requireNoTagUnder(map, entered.get().payload(), at, unpacker);
+            requireNoTagUnder(map, entered.get().payload(), at, walk);
             at.removeLast();
             return;
         }
@@ -221,14 +232,14 @@ public final class DocumentConcepts {
             var field = entry.getKey();
             if (field.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
             if (field.isMapField()) {
-                requireNoTagUnderMap(map, field, (List<?>) entry.getValue(), at, unpacker);
+                requireNoTagUnderMap(map, field, (List<?>) entry.getValue(), at, walk);
                 continue;
             }
             var elements = field.isRepeated() ? (List<?>) entry.getValue() : List.of(entry.getValue());
             at.add(new DocumentSchemaOccurrences.Field(field.getNumber()));
             for (int i = 0; i < elements.size(); i++) {
                 if (field.isRepeated()) at.add(new DocumentSchemaOccurrences.Index(i));
-                requireNoTagUnder(map, (Message) elements.get(i), at, unpacker);
+                requireNoTagUnder(map, (Message) elements.get(i), at, walk);
                 if (field.isRepeated()) at.removeLast();
             }
             at.removeLast();

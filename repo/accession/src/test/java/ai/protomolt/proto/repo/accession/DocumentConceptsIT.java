@@ -223,6 +223,27 @@ class DocumentConceptsIT {
         }
     }
 
+    @Test void anAnyHoldingAnAnyIsUnwrappedForItsTags() throws Exception {
+        var source = new Source();
+        mountAll(source);
+        try (var f = new AccessionFixture(); var config = DistributedConfig.over(source)) {
+            var mounts = follow(config);
+            var saves = saves(f, mounts);
+            var nested = saveTagged(saves, "wrapped", p -> p.setField(PAPER.findFieldByName("inner"), wrapped("physics")));
+            assertThat(f.catalog.concepts(nested)).containsExactly(
+                    new CatalogRecords.ConceptTag("structured_data.inner.subject", 0, "subject", "physics"));
+            assertThat(list(new DocumentLists(f.catalog, mounts), filter("subject", "physics",
+                    ConceptExpansion.getDefaultInstance()), 10).docs()).containsExactly("wrapped");
+            // The doubly wrapped tag is held to membership like any other.
+            var biology = SemanticPartsIT.rejected(() -> saves.save(processAuthority(), save("wrapped-bad",
+                    address(ACCOUNT, "wrapped-bad"), document("wrapped-bad", paper(p -> p.setField(
+                            PAPER.findFieldByName("inner"), wrapped("biology")))))),
+                    Status.Code.INVALID_ARGUMENT, RejectionReason.REJECTION_REASON_VALIDATION_FAILED);
+            assertThat(biology.getViolationsList()).extracting(FieldViolation::getRuleId).containsExactly("concept.member");
+            assertThat(f.catalog.current(address(ACCOUNT, "wrapped-bad"))).isEmpty();
+        }
+    }
+
     @Test void conceptFilterRefusalsNameTheirCause() throws Exception {
         var source = new Source();
         mountAll(source);
@@ -480,6 +501,11 @@ class DocumentConceptsIT {
     static Any tagged(String concept) {
         var tagged = DynamicMessage.newBuilder(TAGGED).setField(TAGGED.findFieldByName("subject"), ref("subject", concept)).build();
         return Any.newBuilder().setTypeUrl(TAGGED_URL).setValue(tagged.toByteString()).build();
+    }
+
+    /** A Tagged payload packed in an Any that is itself packed in an Any. */
+    static Any wrapped(String concept) {
+        return Any.newBuilder().setTypeUrl(DocumentLinksIT.ANY_URL).setValue(tagged(concept).toByteString()).build();
     }
 
     static Message section(Message... tags) {
